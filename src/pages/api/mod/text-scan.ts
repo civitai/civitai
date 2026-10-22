@@ -19,6 +19,7 @@ export default defineModeratorEndpoint('textScan.harness', {
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
     "scanEntity/batchEntities/scanTexts/quoteEntities/quoteTexts take pass: 'main' (default; every profile label, no tools) or 'web-search' (only poi/minor, with the civitai:web_search tool, as production's Model web-search pass runs them; other entity types are refused). Run both passes for a full picture: results carry pass, labels and, for scans, costTotal.",
     'literalModelRules matches texts against the saved Model rules (no LLM, no workflow, nothing billed); its ruleOverrides (lab only) apply to that action alone: a positive id replaces that Model rule, a negative id adds an unsaved one, enabled:false drops it. Every other action ignores ruleOverrides.',
+    'suggestModelRuleAliases { subject, description?, existingAliases? } runs ONE billed orchestrator chat completion with web search and returns { ok: true, suggestions: [{ alias, kind, note?, source? }], costTotal } with the subject, existing aliases and terms the matcher would ignore already removed, or { ok: false, error } (never retried).',
   ],
   rateLimit: { max: 120, windowSeconds: 60 },
   input: textScanHarnessSchema,

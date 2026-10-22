@@ -1,4 +1,4 @@
-import { submitWorkflow } from '@civitai/orchestration-client';
+import { submitWorkflow, type ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import {
   MODEL_RULE_LIMITS,
   modelRuleAliasesField,
@@ -28,6 +28,13 @@ import {
   applyModelRuleOverrides,
   getEnabledModelRules,
 } from '~/server/services/text-scan/model-rules';
+import {
+  ALIAS_SUGGEST_RESPONSE_FORMAT,
+  buildAliasSuggestionMessages,
+  filterAliasSuggestions,
+  parseAliasSuggestions,
+  suggestAliasesInput,
+} from '~/server/services/text-scan/model-rule-aliases';
 import { findLiteralMatchesInSubject } from '~/server/services/text-scan/model-rules-literal';
 import {
   getTextScanProfile,
@@ -79,6 +86,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'scanTexts',
   'quoteTexts',
   'literalModelRules',
+  'suggestModelRuleAliases',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -333,6 +341,10 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     ruleOverrides,
   }),
   z.object({
+    action: z.literal('suggestModelRuleAliases'),
+    ...suggestAliasesInput,
+  }),
+  z.object({
     action: z.literal('quoteTexts'),
     entityType,
     texts,
@@ -499,6 +511,60 @@ function unfinishedWorkflowError(
       .join(': ');
   }
   return `workflow ${workflow.id} still ${status} after ${wait}s`;
+}
+
+const SUGGEST_ALIASES_WAIT_SECONDS = 90;
+const SUGGEST_ALIASES_MAX_TOKENS = 2048;
+
+/** One billed web-search completion per call: no retry, and a workflow still running after the wait is reported, not awaited. */
+async function suggestAliases(input: {
+  subject: string;
+  description: string;
+  existingAliases: string[];
+}) {
+  const config = await getTextScanConfig();
+  const { data, error } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: { wait: SUGGEST_ALIASES_WAIT_SECONDS },
+    body: {
+      currencies: [],
+      steps: [
+        {
+          $type: 'chatCompletion',
+          name: 'suggestModelRuleAliases',
+          input: {
+            model: config.model,
+            messages: buildAliasSuggestionMessages(input),
+            temperature: 0,
+            maxTokens: SUGGEST_ALIASES_MAX_TOKENS,
+            responseFormat: ALIAS_SUGGEST_RESPONSE_FORMAT,
+            tools: [{ type: 'civitai:web_search' }],
+          },
+        } as ChatCompletionStepTemplate,
+      ],
+    },
+  });
+  if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
+
+  const workflow = data as {
+    id: string;
+    status?: string;
+    steps?: unknown;
+    cost?: { total?: number };
+  };
+  const step = (Array.isArray(workflow.steps) ? workflow.steps[0] : undefined) as
+    | ChatCompletionStepLike
+    | undefined;
+  const unfinished = unfinishedWorkflowError(workflow, step, SUGGEST_ALIASES_WAIT_SECONDS);
+  if (unfinished) return { ok: false as const, error: unfinished, workflowId: workflow.id };
+
+  const parsed = parseAliasSuggestions(step);
+  if (!parsed.ok) return { ok: false as const, error: parsed.error, workflowId: workflow.id };
+  return {
+    ok: true as const,
+    suggestions: filterAliasSuggestions(parsed.suggestions, input),
+    costTotal: workflow.cost?.total,
+  };
 }
 
 async function scanComposed(input: ComposeInput & { wait: number }) {
@@ -1007,6 +1073,11 @@ export async function runTextScanHarnessAction(
           })),
         },
       };
+    }
+
+    case 'suggestModelRuleAliases': {
+      const { action: _action, ...rule } = input;
+      return { kind: 'json', body: await suggestAliases(rule) };
     }
 
     case 'quoteTexts': {

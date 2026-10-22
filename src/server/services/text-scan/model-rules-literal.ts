@@ -15,6 +15,14 @@ function normalizeForLiteralMatch(value: string) {
 
 const wordsIn = (term: string) => term.split(' ').length;
 
+/** The form the matcher compares a term in, or null when it would ignore the term. */
+export function literalTermKey(term: string): string | null {
+  const normalized = normalizeForLiteralMatch(term);
+  return normalized.length < MIN_TERM_LENGTH || wordsIn(normalized) > MODEL_RULE_LIMITS.termWords
+    ? null
+    : normalized;
+}
+
 type CompiledRules = {
   /** Normalized term -> the rules and authored spellings that produce it. */
   byTerm: Map<string, { ruleId: number; term: string }[]>;
@@ -37,9 +45,8 @@ function compileRules(rules: LiteralModelRule[]): CompiledRules {
   for (const rule of rules) {
     const authored = new Map<string, string>();
     for (const term of [rule.subject, ...rule.aliases]) {
-      const normalized = normalizeForLiteralMatch(term);
-      if (normalized.length < MIN_TERM_LENGTH || wordsIn(normalized) > MODEL_RULE_LIMITS.termWords)
-        continue;
+      const normalized = literalTermKey(term);
+      if (normalized === null) continue;
       if (!authored.has(normalized)) authored.set(normalized, term);
     }
     for (const [normalized, term] of authored) {
