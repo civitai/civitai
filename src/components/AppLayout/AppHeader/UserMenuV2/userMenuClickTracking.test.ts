@@ -270,6 +270,31 @@ describe('UserMenu_Click', () => {
     }
   );
 
+  // The profile row is in no group, so its own pin toggle is the only way to pin it again.
+  it.each([
+    [
+      'desktop',
+      (onTogglePin: () => void) => inMenu(createElement(DesktopHeaderRows, { onTogglePin })),
+      '[title="Pin"]',
+    ],
+    [
+      'mobile',
+      (onTogglePin: () => void) => createElement(MobileHeaderRows, { onTogglePin }),
+      '[aria-label="Pin Your Profile"]',
+    ],
+  ] as const)(
+    'toggles the %s profile pin without opening or recording the profile',
+    async (_surface, node, toggleSelector) => {
+      const onTogglePin = vi.fn();
+      await mount(node(onTogglePin));
+      await click(document.querySelector(toggleSelector));
+
+      expect(onTogglePin).toHaveBeenCalledTimes(1);
+      expect(mocks.actions).toEqual([]);
+      expect(handleClose).not.toHaveBeenCalled();
+    }
+  );
+
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
   it('closes the legacy Buzz row without onOpen, and records nothing', async () => {
     await mount(createElement(BuzzMenuItem));

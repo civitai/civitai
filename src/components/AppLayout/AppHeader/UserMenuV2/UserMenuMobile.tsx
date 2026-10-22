@@ -33,11 +33,13 @@ import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './reso
 import {
   MenuItemLabel,
   PinGlyph,
+  PROFILE_PIN,
   useDragClickGuard,
   usePinActions,
   useTrackHeaderOpen,
   useTrackMenuOpen,
 } from './UserMenuParts';
+import type { PinTarget } from './UserMenuParts';
 import { useResolvedUserMenu } from './useResolvedUserMenu';
 import type { UserMenuShellProps } from './UserMenuV2';
 import classes from './UserMenuMobile.module.scss';
@@ -183,7 +185,7 @@ function TopLevel({
   pinned: ResolvedMenuItem[];
   nodes: ResolvedMenuNode[];
   pins: Pins;
-  onToggle?: (item: ResolvedMenuItem) => void;
+  onToggle?: (item: PinTarget) => void;
   onEnter: (group: GroupNode) => void;
   close: () => void;
   announce: (text: string) => void;
@@ -194,7 +196,12 @@ function TopLevel({
 
   return (
     <>
-      {currentUser && <MobileHeaderRows />}
+      {currentUser && (
+        <MobileHeaderRows
+          pinned={pins.pins.includes(PROFILE_PIN.id)}
+          onTogglePin={onToggle ? () => onToggle(PROFILE_PIN) : undefined}
+        />
+      )}
       {currentUser && features.buzzSpendPop && features.canWrite && (
         <MenuItemLink href={support.href}>
           <support.icon stroke={1.5} />
@@ -221,7 +228,13 @@ function TopLevel({
   );
 }
 
-export function MobileHeaderRows() {
+export function MobileHeaderRows({
+  pinned = false,
+  onTogglePin,
+}: {
+  pinned?: boolean;
+  onTogglePin?: () => void;
+}) {
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
   const { handleClose } = useContext(UserMenuCtx);
@@ -230,16 +243,31 @@ export function MobileHeaderRows() {
 
   return (
     <>
-      <MenuItemLink
-        href={`/user/${currentUser.username}`}
-        onClick={() => {
-          trackHeader('profile');
-          handleClose();
-        }}
-        data-panel-row
-      >
-        <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-      </MenuItemLink>
+      <div className="flex items-center pr-2">
+        <MenuItemLink
+          href={`/user/${currentUser.username}`}
+          className={clsx({ ['flex-1']: !!onTogglePin })}
+          onClick={() => {
+            trackHeader('profile');
+            handleClose();
+          }}
+          data-panel-row
+        >
+          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
+        </MenuItemLink>
+        {onTogglePin && (
+          <LegacyActionIcon
+            size="lg"
+            variant="subtle"
+            color="gray"
+            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
+            aria-pressed={pinned}
+            onClick={onTogglePin}
+          >
+            <PinGlyph pinned={pinned} touch />
+          </LegacyActionIcon>
+        )}
+      </div>
       <BuzzMenuItem onOpen={() => trackHeader('buzz-dashboard')} />
     </>
   );
