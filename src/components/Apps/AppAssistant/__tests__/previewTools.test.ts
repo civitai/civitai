@@ -3,6 +3,7 @@ import type { PreviewSession, PreviewToolDeps } from '~/components/Apps/AppAssis
 import {
   PREVIEW_NOT_ENABLED,
   createPreviewTools,
+  runnerPreviewAction,
 } from '~/components/Apps/AppAssistant/previewTools';
 
 const KEY =
@@ -199,6 +200,58 @@ describe('stop_preview', () => {
 
   it('is a no-op without a session', async () => {
     expect(await stop()).toEqual({ stopped: false });
+    expect(deps.stopDevTunnel).not.toHaveBeenCalled();
+  });
+});
+
+describe('a preview the server runner started', () => {
+  const HOST = 'dev-0123456789abcdef.civit.ai';
+  const reported = (name: string, output: unknown, isError = false) => ({
+    name,
+    input: {},
+    output,
+    isError,
+  });
+
+  it('is shown from the block and host the runner reported', () => {
+    expect(
+      runnerPreviewAction(
+        reported('start_preview', { shown: true, blockId: 'my-app', host: HOST, next_step: 'x' })
+      )
+    ).toEqual({ show: { blockId: 'my-app', host: HOST } });
+  });
+
+  it('carries no tunnel id onward, whatever else the result holds', () => {
+    const action = runnerPreviewAction(
+      reported('start_preview', { blockId: 'my-app', host: HOST, sessionId: 'bki_TEST_ONLY' })
+    );
+    expect(JSON.stringify(action)).not.toContain('bki_TEST_ONLY');
+  });
+
+  it('is hidden on the runner’s stop_preview', () => {
+    expect(runnerPreviewAction(reported('stop_preview', { stopped: true }))).toEqual({
+      hide: true,
+    });
+  });
+
+  it.each([
+    ['a failed start', reported('start_preview', { error: 'no' }, true)],
+    ['a failed stop', reported('stop_preview', { error: 'no' }, true)],
+    ['no block id', reported('start_preview', { host: HOST })],
+    ['a block id that is not one', reported('start_preview', { blockId: 'My App', host: HOST })],
+    ['no host', reported('start_preview', { blockId: 'my-app' })],
+    ['a host that is not one', reported('start_preview', { blockId: 'my-app', host: 'a b/c' })],
+    ['a URL for a host', reported('start_preview', { blockId: 'my-app', host: `https://${HOST}` })],
+    ['another tool', reported('sandbox__run_command', { blockId: 'my-app', host: HOST })],
+  ])('does nothing for %s', (_, result) => {
+    expect(runnerPreviewAction(result)).toBeNull();
+  });
+
+  it('stop_preview on the page never stops a tunnel it has no id for', async () => {
+    session = { blockId: 'my-app', sessionId: null, host: HOST };
+    expect(await createPreviewTools(deps).stop_preview.execute({}, ctx)).toEqual({
+      stopped: false,
+    });
     expect(deps.stopDevTunnel).not.toHaveBeenCalled();
   });
 });

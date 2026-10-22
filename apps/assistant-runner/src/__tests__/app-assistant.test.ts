@@ -1,5 +1,5 @@
 import {
-  REMOTE_NO_PREVIEW,
+  REMOTE_PREVIEW,
   TURN_LIMIT_REFUSAL,
   assistantRules,
   assistantSubagentRules,
@@ -97,7 +97,7 @@ async function passAll(tools: ToolSet) {
 }
 
 describe('App Assistant’s tools on the runner', () => {
-  it('offers the open app’s sandbox tools and the page tools the runner can run, never the preview', async () => {
+  it('offers the open app’s sandbox tools and the page tools the runner can run, the preview’s included', async () => {
     fake.add('my-app');
     const { tools } = await open();
     const names = Object.keys(tools.tools);
@@ -109,16 +109,23 @@ describe('App Assistant’s tools on the runner', () => {
         'create_app',
         'set_checklist',
         'report_ready',
+        'start_preview',
+        'stop_preview',
       ])
     );
-    expect(names).not.toContain('start_preview');
-    expect(names).not.toContain('stop_preview');
-    expect(tools.hostTools?.sort()).toEqual(['create_app', 'report_ready', 'set_checklist']);
+    expect(tools.hostTools?.sort()).toEqual([
+      'create_app',
+      'report_ready',
+      'set_checklist',
+      'start_preview',
+      'stop_preview',
+    ]);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
     expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${assistantRules('remote')}`);
-    expect(tools.instructions).toContain(REMOTE_NO_PREVIEW);
+    expect(tools.instructions).toContain(REMOTE_PREVIEW);
     expect(tools.instructions).toContain('sb-my-app-1');
-    expect(tools.instructions).not.toContain('call start_preview with');
+    // The runner does the tunnel steps itself: the assistant is never told to.
+    expect(tools.instructions).not.toMatch(/sandbox__tunnel_/);
   });
 
   it('asks the sandbox service and the MCP server with sandbox tokens only', async () => {
@@ -252,7 +259,7 @@ describe('App Assistant’s tools on the runner', () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it('does not offer the tunnel tools, which serve only the page’s preview', async () => {
+  it('does not offer the raw tunnel tools, which only the runner’s start_preview drives', async () => {
     fake.add('my-app');
     const { tools } = await open();
     expect(Object.keys(tools.tools).filter((name) => name.includes('tunnel'))).toEqual([]);
@@ -557,7 +564,6 @@ describe('the runner’s prompt', () => {
       previewHost: null,
     })}`;
     expect(page).toMatch(/sandbox__tunnel_\*/);
-    expect(page).toMatch(/\bstart_preview\b/);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   createAssistantGate,
   exitCodeOf,
   previewVerdictOf,
+  READY_CARD_TEXT,
 } from '~/components/Apps/AppAssistant/assistantGate';
 
 const ctx = { conversationId: 'conv-1', reply: 1 };
@@ -524,5 +525,13 @@ describe('report_ready while a subagent runs', () => {
     gate.onToolResult(childRead);
     gate.onToolResult(dispatched);
     await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
+  });
+});
+
+describe('the ready card', () => {
+  it('says what was checked: a test browser in the sandbox, not the user’s live preview', () => {
+    expect(READY_CARD_TEXT).toBe(
+      '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.'
+    );
   });
 });
