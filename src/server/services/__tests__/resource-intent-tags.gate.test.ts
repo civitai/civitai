@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  baseModelGeneratesMediaType,
   ecosystemBaseModelGate,
   gateEligibleEcosystems,
+  modalityEligibleEcosystems,
+  v1GateFingerprint,
   V1_TAGS_MIN_ECOSYSTEM_RESOURCES,
 } from '~/server/services/resource-intent-tags/gate';
 import type { TagIndex } from '~/server/services/resource-intent-tags/score';
@@ -83,5 +86,41 @@ describe('gateEligibleEcosystems', () => {
     const idx = index(fill(floor, [2]));
     expect([...gateEligibleEcosystems(idx, 'addon', ['LORA'])]).toEqual([2]);
     expect([...gateEligibleEcosystems(idx, 'checkpoint', ['Checkpoint'])]).toEqual([]);
+  });
+});
+
+describe('🔴 modality: the base-model record decides which ecosystems an image request may choose', () => {
+  it.each([
+    ['SDXL 1.0', 'image', true],
+    ['MiniMax H3', 'image', false],
+    ['Wan Video 2.2 T2V-A14B', 'image', false],
+    ['Seedance', 'image', false],
+    ['ACE Audio', 'image', false],
+    // A record that lists both media types generates both.
+    ['Grok', 'image', true],
+    ['Grok', 'video', true],
+    ['MiniMax H3', 'video', true],
+    ['SDXL 1.0', 'video', false],
+  ] as const)('%s generates %s: %s', (baseModel, mediaType, expected) => {
+    expect(baseModelGeneratesMediaType(baseModel, mediaType)).toBe(expected);
+  });
+
+  it('a name with no base-model record is not excluded (its media type is unknown)', () => {
+    expect(baseModelGeneratesMediaType('Not A Base Model', 'image')).toBe(true);
+    expect(baseModelGeneratesMediaType('Not A Base Model', 'video')).toBe(true);
+  });
+
+  it("returns the ids of the index's ecosystems that generate the media type", () => {
+    const idx = {
+      ecosystems: ['Illustrious', 'LTXV 2.3', 'Grok', 'LTXV 2.5', 'Not A Base Model'].map(
+        (name, i) => ({ name, users: 100 + i, observations: 10 + i })
+      ),
+    };
+    expect([...modalityEligibleEcosystems(idx, 'image')]).toEqual([0, 2, 4]);
+    expect([...modalityEligibleEcosystems(idx, 'video')]).toEqual([1, 2, 3, 4]);
+  });
+
+  it('the v1 gate spec hash covers the media type and the modality predicate', () => {
+    expect(v1GateFingerprint()).toMatchObject({ mediaType: 'image', modalityEligible: [0, 2, 4] });
   });
 });
