@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from './db';
 import { flagClearHoldLegs, holdMarkerState } from './csam-flag-clear';
 import { insertModActivityBatch } from './mod-activity';
 import { SYSTEM_USER_ID } from './users.service';
+import { logAxiomError } from './axiom';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 
 /**
@@ -218,7 +219,7 @@ export async function enqueueUnpublishedVersionPosts({
       cursor = last;
     }
   } catch (e) {
-    console.error('[unpublished-version-posts] a page failed', { reported, error: e });
+    void logAxiomError(e, { event: 'enqueue unpublished version posts page failed', reported });
     return { ok: false, reason: 'failed', reported, plan };
   }
   return { ok: true, reported, plan };

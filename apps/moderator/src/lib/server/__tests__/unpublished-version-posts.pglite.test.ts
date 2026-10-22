@@ -23,6 +23,9 @@ vi.mock('../db', () => ({
   },
 }));
 
+const { logAxiomError } = vi.hoisted(() => ({ logAxiomError: vi.fn(async () => {}) }));
+vi.mock('../axiom', () => ({ logAxiomError }));
+
 const { planEnqueue, enqueueUnpublishedVersionPosts, ENQUEUE_SOURCE } = await import(
   '../unpublished-version-posts'
 );
@@ -313,5 +316,10 @@ describe('enqueueing posts on unpublished resources for review', () => {
     expect(reports.rows[0].n).toBe(1);
     const activity = await pg.query<{ entityId: number }>(`SELECT "entityId" FROM "ModActivity"`);
     expect(activity.rows.map((r) => r.entityId)).toEqual([101]);
+    // The structured error line the alerting reads, not a console line.
+    expect(logAxiomError).toHaveBeenCalledExactlyOnceWith(expect.any(Error), {
+      event: 'enqueue unpublished version posts page failed',
+      reported: 1,
+    });
   });
 });
