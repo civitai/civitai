@@ -203,7 +203,10 @@ export async function updateGenerationPreset({
   isModerator: boolean;
   input: UpdateGenerationPresetInput;
 }) {
-  const existing = await dbRead.generationPreset.findUnique({ where: { id: input.id } });
+  const existing = await dbRead.generationPreset.findUnique({
+    where: { id: input.id },
+    select: { userId: true },
+  });
   if (!existing) throw throwNotFoundError('Preset not found');
   if (existing.userId === SYSTEM_USER_ID) {
     if (!isModerator) throw throwAuthorizationError();
@@ -238,13 +241,12 @@ export async function deleteGenerationPreset({
   isModerator: boolean;
   id: number;
 }) {
-  const existing = await dbRead.generationPreset.findUnique({ where: { id } });
+  const existing = await dbRead.generationPreset.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
   if (!existing) throw throwNotFoundError('Preset not found');
-  if (existing.userId === SYSTEM_USER_ID) {
-    if (!isModerator) throw throwAuthorizationError();
-  } else if (existing.userId !== userId) {
-    throw throwAuthorizationError();
-  }
+  if (existing.userId === SYSTEM_USER_ID && !isModerator) throw throwAuthorizationError();
 
   await dbWrite.generationPreset.delete({ where: { id } });
   return { id };
