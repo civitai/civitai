@@ -169,8 +169,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               // to be riding on. Otherwise the plan may have changed, and an owed month is
               // armed against the plan as it now stands.
               const ended = event.type === 'customer.subscription.deleted';
-              const settleGifts = ended ? honorGiftResidualsForUser : armNextGiftMonth;
-              await settleGifts({ userId: user.id }).catch((err) =>
+              const settleGifts = ended
+                ? honorGiftResidualsForUser({ userId: user.id, endedSubscription: subscription })
+                : armNextGiftMonth({ userId: user.id });
+              await settleGifts.catch((err) =>
                 log({
                   type: 'error',
                   stage: ended ? 'gift-residual' : 'gift-arm',

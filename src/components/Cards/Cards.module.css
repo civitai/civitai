@@ -125,31 +125,45 @@
 }
 
 /* Reactions */
-.reactions {
-  border-radius: var(--mantine-radius-sm);
+/* The backing the creator pill shares with the reactions bar, so the two rows match. */
+.reactions,
+.creatorPill {
   background-color: rgba(0, 0, 0, 0.31);
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.reactions {
+  border-radius: var(--mantine-radius-sm);
   height: 28px;
   padding-right: 3px;
 }
 
-/* Scrim behind an image card's footer rows (user + reactions). The ramp reaches its
-   dark stop above the user row, which is the topmost row and otherwise sits on the
-   transparent end of the gradient. The negative margin cancels the footer padding
-   so the scrim spans the card edge to edge. */
-.footerScrim {
+/* Grows out from under the avatar: the negative margin tucks the pill's left end behind it,
+   and the left padding puts the name 8px from the avatar's edge. */
+.creatorPill {
   display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  margin: -8px;
-  padding: 40px 8px 8px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6) 40%, rgba(0, 0, 0, 0.85));
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  margin-left: -20px;
+  padding: 0 12px 0 20px;
+  border-radius: 9999px;
+
+  /* A long unbroken username has to wrap for the line clamp to ellipsize it. */
+  & > * {
+    overflow-wrap: anywhere;
+  }
+
+  /* No avatar before it, so nothing to tuck under. */
+  &:first-child {
+    margin-left: 0;
+    padding-left: 12px;
+  }
 }
 
-/* Darkens the browsing-level badge tint so its white label stays readable on a white image. */
-.badgeScrim {
-  background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5));
+.creatorAvatar {
+  z-index: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.5));
 }
 
 /* Stat chip */
