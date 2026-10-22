@@ -7,6 +7,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import Lightbox from '$lib/components/Lightbox.svelte';
+  import type { LightboxItem } from '$lib/lightbox';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
@@ -50,6 +52,20 @@
   const resolver = $derived(
     row.resolver ? (row.resolver.username ?? `User #${row.resolver.id}`) : null
   );
+  const lightboxItems = $derived<LightboxItem[]>(
+    row.preview.images.map((img, i) => ({
+      id: img.url,
+      type: img.type === 'video' ? 'video' : 'image',
+      caption: `${img.type === 'video' ? 'Video' : 'Image'} ${i + 1} of ${row.preview.images.length} · ${getBrowsingLevelLabel(img.nsfwLevel)}`,
+    }))
+  );
+  let openIndex = $state<number | null>(null);
+  // A modified click keeps the link's own behaviour: a new tab with the full-size original.
+  const openInLightbox = (e: MouseEvent, i: number) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    openIndex = i;
+  };
   const disputesHref = $derived(
     urlWith(page.url, {
       owner: row.user.id,
@@ -165,8 +181,9 @@
                   href={getEdgeUrl(img.url, { type: media, original: true })}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label="Open {media} {i + 1} of {row.preview.images.length} full size"
+                  aria-label="Open {media} {i + 1} of {row.preview.images.length}"
                   class="block size-full"
+                  onclick={(e) => openInLightbox(e, i)}
                 >
                   <EdgeMedia
                     src={img.url}
@@ -190,6 +207,13 @@
         {:else}
           <p class="m-0 text-sm text-dark-2">No images</p>
         {/if}
+        <Lightbox
+          items={lightboxItems}
+          index={openIndex}
+          onIndex={(next) => (openIndex = next)}
+          onClose={() => (openIndex = null)}
+          label="Dispute image"
+        />
       </section>
 
       {#if row.scannedText}

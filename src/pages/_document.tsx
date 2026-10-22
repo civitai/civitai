@@ -2,6 +2,7 @@ import { ColorSchemeScript, mantineHtmlProps } from '@mantine/core';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
 import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
+import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
 import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 
@@ -15,6 +16,8 @@ export default class _Document extends Document {
       Document.getInitialProps(ctx)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
+    // Not awaited: a flag evaluation or log write must never delay the response.
+    void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);
     return initialProps;
   }
 
