@@ -19,12 +19,12 @@ export type HoldMarkerState = 'view' | 'none' | 'drift';
 
 /**
  * Whether `notes` match, case-insensitively, the pattern deployed in `MOD_HOLD_BAN_NOTES_PATTERN`.
- * Unset or empty matches everything, so every "Other" ban holds until the pattern is configured.
+ * Unset or blank matches everything, so every "Other" ban holds until the pattern is configured.
  * It is a Postgres regex: word boundaries are `\m` (start), `\M` (end) and `\y` (either), never
  * `\b`, which Postgres reads as a backspace.
  */
 function banNotesMatchSql(notes: RawBuilder<string>) {
-  const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN;
+  const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN?.trim();
   return deployed ? sql<boolean>`${notes} ~* ${deployed}` : sql<boolean>`true`;
 }
 

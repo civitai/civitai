@@ -45,8 +45,8 @@ const MOD = 9;
 const PATTERN = '\\mzzfixture';
 
 // Every user owns three CSAM-flagged images: two removed, one still live. A held user keeps all three.
-const ban = (reasonCode: string | null, detailsInternal?: string) =>
-  JSON.stringify({ banDetails: { reasonCode, detailsInternal } });
+const ban = (reasonCode: string | null, detailsInternal?: string, detailsExternal?: string) =>
+  JSON.stringify({ banDetails: { reasonCode, detailsInternal, detailsExternal } });
 const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> = {
   clean: { id: 100 },
   otherClean: { id: 101 },
@@ -56,7 +56,8 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   minorBan: { id: 120, bannedAt: true, meta: ban('SexualMinor') },
   minorTrainingBan: { id: 121, bannedAt: true, meta: ban('SexualMinorTraining') },
   noReasonBan: { id: 122, bannedAt: true, meta: ban(null) },
-  otherBanNoted: { id: 123, bannedAt: true, meta: ban('Other', 'see zzfixture ticket') },
+  otherBanNoted: { id: 123, bannedAt: true, meta: ban('Other', 'see ZZFIXTURE ticket') },
+  otherBanNotedExternally: { id: 126, bannedAt: true, meta: ban('Other', undefined, 'zzfixture') },
   otherBanPlain: { id: 124, bannedAt: true, meta: ban('Other', 'spam') },
   harassmentBan: { id: 125, bannedAt: true, meta: ban('Harassment') },
   held: { id: 130 },
@@ -200,6 +201,7 @@ const HELD = [
   'minorTrainingBan',
   'noReasonBan',
   'otherBanNoted',
+  'otherBanNotedExternally',
   'reportedImage',
 ];
 
@@ -226,7 +228,7 @@ describe('the ban-notes pattern', () => {
     process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   });
 
-  it.each([undefined, ''])('holds every "Other" ban when it is %j', async (pattern) => {
+  it.each([undefined, '', ' '])('holds every "Other" ban when it is %j', async (pattern) => {
     if (pattern === undefined) delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
     else process.env.MOD_HOLD_BAN_NOTES_PATTERN = pattern;
     const id = USERS.otherBanUnset.id;
