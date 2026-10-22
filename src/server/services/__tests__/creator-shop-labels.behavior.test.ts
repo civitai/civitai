@@ -16,7 +16,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const ATTACH_BYTES = path.resolve(
   __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261122120000_label_store_attach_bytes/migration.sql'
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261124120000_label_store_attach_bytes/migration.sql'
 );
 
 const db = { pg: null as unknown as PGlite };

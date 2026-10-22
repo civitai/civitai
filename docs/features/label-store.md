@@ -8,7 +8,7 @@ functions. Do not add a per-feature label table. Queue tables (claims, quotas, l
 feature.
 
 Migrations: `packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/`, then
-`20261122120000_label_store_attach_bytes/`. The schema sits
+`20261124120000_label_store_attach_bytes/`. The schema sits
 outside Prisma (the drift guard reads `public` only), so there is no Prisma model; call it with raw SQL.
 
 ## Tables

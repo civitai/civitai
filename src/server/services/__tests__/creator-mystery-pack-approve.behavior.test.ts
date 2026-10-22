@@ -79,7 +79,7 @@ const MIGRATIONS = [
 
 const LABEL_STORE_ATTACH_BYTES = join(
   process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261122120000_label_store_attach_bytes/migration.sql'
+  'packages/civitai-db-schema/prisma/migrations/20261124120000_label_store_attach_bytes/migration.sql'
 );
 
 const CREATOR = 10;
