@@ -10,8 +10,8 @@ import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop
 import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 
 // The committed label-store migrations on real Postgres: a mocked statement can't show that a label
-// lands on the right subject, that a retry or a backfill records nothing twice, or that a store
-// failure leaves the verdict standing.
+// lands on the right subject, that a retry records nothing twice, or that a store failure leaves the
+// verdict standing.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -39,7 +39,7 @@ const tx = {
     return (await db.pg.query(text, params as unknown[])).affectedRows ?? 0;
   },
 };
-// The backfill runs on dbWrite; here that is the same Postgres, one transaction at a time.
+// dbWrite's transactions run on the same Postgres, one at a time.
 async function inTransaction<T>(fn: (client: typeof tx) => Promise<T>) {
   await db.pg.exec('BEGIN');
   try {
@@ -60,9 +60,6 @@ const {
   SHOP_REVIEW_QUESTION,
   SHOP_TAKEDOWN_QUESTION,
 } = await import('~/server/services/creator-shop-labels.service');
-const { runShopLabelBackfill, planShopLabelBackfill } = await import(
-  '~/server/services/creator-shop-label-backfill.service'
-);
 
 const LISTING = 42;
 const COSMETIC = 7;
@@ -449,186 +446,6 @@ describe('the subject a verdict is about', () => {
     const [{ h }] = await rows<{ h: string }>(`SELECT label_store.text_hash($1) AS h`, [content]);
     expect(hash()).toBe(h);
     expect(h).toBe(createHash('sha256').update(content).digest('hex'));
-  });
-});
-
-describe('the backfill', () => {
-  const run = (dryRun = false) => runShopLabelBackfill({ dryRun, afterId: 0, limit: 200 });
-
-  it('records nothing for a verdict already recorded live', async () => {
-    await seed();
-    await review('request-changes', 2);
-
-    const result = await run();
-
-    expect(result).toMatchObject({ alreadyRecorded: 1, recorded: 0 });
-    expect(await labels()).toHaveLength(1);
-    expect(await subjectCount()).toBe(1);
-  });
-
-  it('records each verdict against the content it judged, undoing the edits made after it', async () => {
-    await seed({
-      title: 'Cap',
-      status: 'Published',
-      artworkKey: 'art-2',
-      history: [
-        { at: at(1), userId: CREATOR, kind: 'submitted', status: 'PendingReview' },
-        {
-          at: at(2),
-          userId: OTHER_MOD,
-          kind: 'reviewed',
-          action: 'request-changes',
-          status: 'RequestedChanges',
-          note: 'too dark',
-        },
-        {
-          at: at(3),
-          userId: CREATOR,
-          kind: 'edited',
-          status: 'PendingReview',
-          changes: [
-            { field: 'name', from: 'Hat', to: 'Cap' },
-            { field: 'artwork', from: 'art-1', to: 'art-2' },
-            { field: 'price', from: 400, to: 500 },
-          ],
-        },
-        { at: at(4), userId: MOD, kind: 'reviewed', action: 'approve', status: 'Published' },
-      ],
-    });
-
-    const dry = await run(true);
-    expect(dry).toMatchObject({
-      fromHistory: {
-        total: 2,
-        byAnswer: {
-          [`${SHOP_REVIEW_QUESTION}=request_changes`]: 1,
-          [`${SHOP_REVIEW_QUESTION}=approve`]: 1,
-        },
-      },
-      inferred: { total: 0 },
-      recorded: 0,
-    });
-    expect(await labels()).toEqual([]);
-
-    expect(await run()).toMatchObject({ recorded: 2, notRecorded: 0 });
-    const [first, second] = await labels();
-    expect(first).toMatchObject({
-      value: 'request_changes',
-      labellerRef: await personHash('labeller', OTHER_MOD),
-      bytesRef: 'cf-image:art-1',
-      sourceRef: `CreatorShopReview:${LISTING}:${at(2)}:request_changes`,
-    });
-    expect(first.snapshot).toMatchObject({
-      contentAt: 'reconstructed',
-      title: 'Hat',
-      artworkKey: 'art-1',
-      unitAmount: 400,
-      imageHash: null,
-      pHashHex: null,
-    });
-    expect(second).toMatchObject({ value: 'approve', bytesRef: 'cf-image:art-2' });
-    expect(second.snapshot).toMatchObject({
-      title: 'Cap',
-      artworkKey: 'art-2',
-      imageHash: 'bytes-of-art-2',
-      queuedAt: at(3),
-    });
-    expect(first.contentHash).not.toBe(second.contentHash);
-
-    expect(await run()).toMatchObject({ alreadyRecorded: 2, recorded: 0 });
-    expect(await labels()).toHaveLength(2);
-  });
-
-  it('infers one verdict for a listing reviewed before the history log, counted apart', async () => {
-    await seed({
-      status: 'Rejected',
-      history: [],
-      reviewedById: MOD,
-      reviewedAt: at(6),
-      rejectionReason: 'copied',
-    });
-
-    const result = await run();
-
-    expect(result).toMatchObject({
-      fromHistory: { total: 0 },
-      inferred: { total: 1, byAnswer: { [`${SHOP_REVIEW_QUESTION}=reject`]: 1 } },
-      recorded: 1,
-    });
-    const [label] = await labels();
-    expect(label).toMatchObject({
-      value: 'reject',
-      reasonNote: 'copied',
-      sourceRef: `CreatorShopReviewInferred:${LISTING}:${at(6)}:reject`,
-    });
-    expect(label.snapshot).toMatchObject({ contentAt: 'backfill', inferred: true });
-  });
-
-  it('infers nothing for a verdict recorded live whose history entry has aged out', async () => {
-    await seed({ status: 'Rejected', history: [], reviewedById: MOD, reviewedAt: at(6) });
-    await inTransaction((client) =>
-      recordShopVerdict(client, LISTING, {
-        action: 'reject',
-        moderatorId: MOD,
-        at: at(6),
-        statusAfter: 'Rejected',
-      })
-    );
-
-    expect(await run()).toMatchObject({ alreadyRecorded: 1, recorded: 0 });
-    expect(await labels()).toHaveLength(1);
-  });
-
-  it('leaves mystery packs to the live path', async () => {
-    await db.pg.query(`INSERT INTO "ItemDefinition" (id, "sellerId") VALUES (5, $1)`, [CREATOR]);
-    await db.pg.query(
-      `INSERT INTO "CosmeticShopItem" (id, title, "unitAmount", "addedById", "itemDefinitionId", status, meta)
-       VALUES ($1, 'Pack', 500, $2, 5, 'RequestedChanges', $3)`,
-      [
-        LISTING,
-        CREATOR,
-        JSON.stringify({
-          purchases: 0,
-          history: [
-            {
-              at: at(2),
-              userId: MOD,
-              kind: 'reviewed',
-              action: 'request-changes',
-              status: 'RequestedChanges',
-            },
-          ],
-        }),
-      ]
-    );
-
-    expect(await run()).toMatchObject({
-      skippedMysteryPacks: 1,
-      fromHistory: { total: 0 },
-      recorded: 0,
-    });
-  });
-
-  it('infers nothing for a listing whose status no longer says what was decided', () => {
-    expect(
-      planShopLabelBackfill({
-        listingId: LISTING,
-        title: 'Hat',
-        description: null,
-        unitAmount: 500,
-        availableQuantity: null,
-        meta: { purchases: 0 },
-        addedById: CREATOR,
-        cosmetic: null,
-        members: [],
-        box: null,
-        revision: null,
-        status: 'Archived',
-        reviewedById: MOD,
-        reviewedAt: at(6),
-        rejectionReason: null,
-      })
-    ).toEqual([]);
   });
 });
 

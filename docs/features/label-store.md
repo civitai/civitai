@@ -77,10 +77,11 @@ price is in the snapshot, not the hash. Family `creator_shop`; question `creator
 (`approve`, `request_changes`, `reject`, `revert`) or `creator_shop.listing.takedown` (`takedown`); the
 moderator's note is the `reasonNote`. `attach_bytes` points the subject at the artwork
 (`cf-image:<key>`, no expiry). The ref is `CreatorShopReview:<listingId>:<history entry at>:<value>`
-(`CreatorShopTakedown:<listingId>:<at>`), shared with the temporary backfill endpoint
-`POST /api/admin/temp/creator-shop-label-backfill` (deleted after the production run), which records past verdicts from each listing's review history. Listings reviewed before that history
-existed get one label inferred from their status, ref `CreatorShopReviewInferred:…` and `inferred: true`
-in the snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
+(`CreatorShopTakedown:<listingId>:<at>`). Verdicts made before the live path existed were backfilled
+once from each listing's review history under the same refs, with snapshot `contentAt: 'reconstructed'`
+(live labels say `verdict`). Listings reviewed before that history existed got one label inferred from
+their status, ref `CreatorShopReviewInferred:…`, `contentAt: 'backfill'` and `inferred: true` in the
+snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the

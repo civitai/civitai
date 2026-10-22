@@ -65,11 +65,6 @@ export type ShopListingState = {
   revision: { id: number; baseVersion: number; proposal: unknown } | null;
 };
 
-/**
- * `contentAt` says when the snapshot's content was read: `verdict` on the live path, `reconstructed`
- * when a backfill rebuilt it from the listing's edit history, `backfill` when it is the listing as it
- * stood at backfill time (an inferred verdict).
- */
 export type ShopVerdict = {
   action: ShopVerdictAction;
   moderatorId: number;
@@ -79,8 +74,6 @@ export type ShopVerdict = {
   statusBefore?: string | null;
   statusAfter: string;
   finalReject?: boolean;
-  contentAt: 'verdict' | 'reconstructed' | 'backfill';
-  inferred?: boolean;
 };
 
 export const shopLabelQuestion = (action: ShopVerdictAction) =>
@@ -88,10 +81,8 @@ export const shopLabelQuestion = (action: ShopVerdictAction) =>
 
 export const shopLabelValue = (action: ShopVerdictAction) => VALUES[action];
 
-/** The history entry's `at` is written in the verdict's own statement, so a live label and a backfill of the same entry must share this ref. */
+/** Keyed on the verdict's history entry `at`; the labels backfilled from history carry the same refs, so the shape must not change. */
 export function shopVerdictSourceRef(listingId: number, verdict: ShopVerdict) {
-  if (verdict.inferred)
-    return `CreatorShopReviewInferred:${listingId}:${verdict.at}:${shopLabelValue(verdict.action)}`;
   if (verdict.action === 'takedown') return `CreatorShopTakedown:${listingId}:${verdict.at}`;
   return `CreatorShopReview:${listingId}:${verdict.at}:${shopLabelValue(verdict.action)}`;
 }
@@ -164,8 +155,8 @@ export function shopLabelSnapshot(state: ShopListingState, verdict: ShopVerdict)
   return {
     v: 1,
     kind: subjectType,
-    contentAt: verdict.contentAt,
-    ...(verdict.inferred ? { inferred: true } : {}),
+    // Backfilled labels say `reconstructed` or `backfill` here; consumers read it.
+    contentAt: 'verdict',
     listingId: state.listingId,
     title: state.title,
     description: state.description,
@@ -326,13 +317,13 @@ async function readRevision(tx: LabelStoreTx, revisionId: number) {
 async function writeVerdictLabel(
   tx: LabelStoreTx,
   listingId: number,
-  verdict: Omit<ShopVerdict, 'contentAt' | 'inferred'>,
+  verdict: ShopVerdict,
   revisionId?: number | null
 ) {
   const [state] = await readShopListingStates(tx, [listingId]);
   if (!state) return false;
   if (revisionId != null) state.revision = await readRevision(tx, revisionId);
-  return writeShopLabel(tx, state, { ...verdict, contentAt: 'verdict' });
+  return writeShopLabel(tx, state, verdict);
 }
 
 const logVerdictNotRecorded = (listingId: number, action: ShopVerdictAction) => (error: unknown) =>
@@ -353,7 +344,7 @@ const logVerdictNotRecorded = (listingId: number, action: ShopVerdictAction) => 
 export function recordShopVerdict(
   tx: LabelStoreTx,
   listingId: number,
-  verdict: Omit<ShopVerdict, 'contentAt' | 'inferred'>,
+  verdict: ShopVerdict,
   revisionId?: number | null
 ) {
   return recordUnderSavepoint(
@@ -369,7 +360,7 @@ export function recordShopVerdict(
  */
 export async function recordShopTakedownLabel(
   listingId: number,
-  verdict: Omit<ShopVerdict, 'contentAt' | 'inferred' | 'action'>
+  verdict: Omit<ShopVerdict, 'action'>
 ) {
   const takedown = { ...verdict, action: 'takedown' as const };
   let failed = false;
