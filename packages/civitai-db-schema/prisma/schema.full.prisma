@@ -6560,6 +6560,22 @@ model CsamReportAudit {
   @@index([csamReportId])
 }
 
+/// One admin release of a held user's removed-image review flags. Its images are the ModActivity
+/// rows written in the same transaction.
+model CsamFlagRelease {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  moderatorId    Int
+  approvalRef    String
+  reason         String
+  /// The hold legs the release overrode.
+  overriddenLegs Json
+  imageCount     Int
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
 /// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
 model CsamReportArchiveObject {
   id            Int      @id @default(autoincrement())
