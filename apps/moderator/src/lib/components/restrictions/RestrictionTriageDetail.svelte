@@ -268,24 +268,9 @@
   </div>
 {/snippet}
 
-<!-- What tripped the restriction, and the account's generations, in the middle. -->
+<!-- The triggers themselves, and the account's generations, in the middle: prompts need the width. -->
 {#snippet evidence()}
   <div class="space-y-5">
-    {#if row.triggers.length > 1}
-      <TriggerSummary
-        triggers={row.triggers}
-        recheck={typeof recheck === 'object' ? recheck : undefined}
-      />
-    {/if}
-
-    {#if notBlocking > 0}
-      <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-        {notBlocking} of {row.triggers.length}
-        {row.triggers.length === 1 ? 'trigger' : 'triggers'} would not block under the current word
-        list. They were likely warnings counted toward the mute.
-      </div>
-    {/if}
-
     <div class="space-y-4">
       {#each groups as group (group.triggers[0].key)}
         {@const trigger = group.triggers[0]}
@@ -314,8 +299,23 @@
   </div>
 {/snippet}
 
-<!-- The user's side and the ruling in the sidebar. -->
+<!-- What the triggers add up to, the user's side and the ruling, in the sidebar. -->
 {#snippet info()}
+  {#if row.triggers.length > 1}
+    <TriggerSummary
+      triggers={row.triggers}
+      recheck={typeof recheck === 'object' ? recheck : undefined}
+    />
+  {/if}
+
+  {#if notBlocking > 0}
+    <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+      {notBlocking} of {row.triggers.length}
+      {row.triggers.length === 1 ? 'trigger' : 'triggers'} would not block under the current word
+      list. They were likely warnings counted toward the mute.
+    </div>
+  {/if}
+
   {#if row.userMessage}
     <TriageCard dense title="What the user says">
       <p class="m-0 break-words whitespace-pre-wrap text-dark-0">{row.userMessage}</p>
