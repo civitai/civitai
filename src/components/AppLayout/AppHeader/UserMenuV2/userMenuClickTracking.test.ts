@@ -142,7 +142,7 @@ describe('UserMenu_Click', () => {
     expect(mocks.actions).toEqual([
       {
         type: 'UserMenu_Click',
-        details: { item: 'inventory', group: 'rewards', pinned: false, surface: 'mobile' },
+        details: { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'mobile' },
       },
     ]);
     // A row's own handler is replaced, so it must still close the menu.
@@ -155,7 +155,7 @@ describe('UserMenu_Click', () => {
     await mount(createElement(MobileItem, { item: inventory, pinned: true, fromPins: true }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
@@ -180,7 +180,7 @@ describe('UserMenu_Click', () => {
     await mount(desktop({ item: inventory, onToggle: vi.fn() }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: false, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'desktop' },
     ]);
   });
 
@@ -206,7 +206,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'desktop' },
     ]);
   });
 
@@ -221,7 +221,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
