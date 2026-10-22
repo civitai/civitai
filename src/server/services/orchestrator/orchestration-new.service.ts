@@ -803,6 +803,14 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * (computed values like `triggerWords` are derived, not user input).
  */
 export function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
+  // The tRPC entries are `.input(z.any())`, and `generateFromGraph` reads its form values off
+  // `input.input`, so a payload sent flat arrives as `undefined` — refuse it as a 400 here
+  // rather than let `normalizeInput` throw a TypeError (a 500) dereferencing it.
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw throwBadRequestError(
+      'Validation failed: input: expected an object of generation form values'
+    );
+  }
   const normalized = normalizeInput(input);
   // `reconcileSelectors` first: it settles the model/workflow/ecosystem trio before the
   // hub dispatches on them.
