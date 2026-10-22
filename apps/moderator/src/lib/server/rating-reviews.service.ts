@@ -72,6 +72,88 @@ function moderatorLevelsFor(
 
 type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
 
+export type RatingReviewImage = {
+  id: number;
+  url: string;
+  type: MediaType;
+  nsfwLevel: number;
+};
+
+const IMAGE_FIELDS = ['i.id', 'i.url', 'i.type', 'i.nsfwLevel'] as const;
+
+async function imagesById(ids: (number | null)[]): Promise<Map<number, RatingReviewImage>> {
+  const wanted = [...new Set(ids.filter((id): id is number => id != null))];
+  if (!wanted.length) return new Map();
+  const found = await dbRead
+    .selectFrom('Image as i')
+    .select(IMAGE_FIELDS)
+    .where('i.id', 'in', wanted)
+    .execute();
+  return new Map(found.map((r) => [r.id, r]));
+}
+
+// A post's images in the author's order; `index` ties are broken by id so the first image is stable.
+async function postCovers(ids: number[]): Promise<Map<number, RatingReviewImage>> {
+  if (!ids.length) return new Map();
+  const found = await dbRead
+    .selectFrom('Image as i')
+    .distinctOn('i.postId')
+    .select(['i.postId', ...IMAGE_FIELDS])
+    .where('i.postId', 'in', ids)
+    .orderBy('i.postId')
+    .orderBy(sql`i."index" asc nulls last`)
+    .orderBy('i.id')
+    .execute();
+  return new Map(found.map((r) => [r.postId!, r]));
+}
+
+async function connectionCovers(
+  entityType: 'Bounty' | 'BountyEntry',
+  ids: number[]
+): Promise<Map<number, RatingReviewImage>> {
+  if (!ids.length) return new Map();
+  const found = await dbRead
+    .selectFrom('ImageConnection as ic')
+    .innerJoin('Image as i', 'i.id', 'ic.imageId')
+    .distinctOn('ic.entityId')
+    .select(['ic.entityId', ...IMAGE_FIELDS])
+    .where('ic.entityType', '=', entityType)
+    .where('ic.entityId', 'in', ids)
+    .orderBy('ic.entityId')
+    .orderBy('i.id')
+    .execute();
+  return new Map(found.map((r) => [r.entityId, r]));
+}
+
+// Mirrors the cover the main app picks for a model (image.service getImagesForModelsCover): the
+// first published version that has a visible image. A version with none falls through to the next
+// rather than leaving the model blank.
+const modelGalleryJoins = sql`
+  FROM "Model" m
+  JOIN "ModelVersion" mv ON mv."modelId" = m."id" AND mv."status" = 'Published'
+  JOIN "Post" p ON p."modelVersionId" = mv."id"
+    AND (p."userId" = m."userId" OR m."userId" = -1)
+    AND p."publishedAt" IS NOT NULL
+  JOIN "Image" i ON i."postId" = p."id" AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`;
+
+async function modelCovers(
+  ids: number[]
+): Promise<Map<number, RatingReviewImage & { versionId: number }>> {
+  if (!ids.length) return new Map();
+  const { rows } = await sql<RatingReviewImage & { modelId: number; versionId: number }>`
+    SELECT DISTINCT ON (m."id") m."id" AS "modelId", mv."id" AS "versionId",
+      i."id", i."url", i."type", i."nsfwLevel"
+    ${modelGalleryJoins}
+    WHERE m."id" IN (${sql.join(ids)})
+    ORDER BY m."id", mv."index", p."id", i."index", i."id"`.execute(dbRead);
+  return new Map(rows.map((r) => [r.modelId, r]));
+}
+
+const asCover = (img: RatingReviewImage | undefined) => ({
+  coverUrl: img?.url ?? null,
+  coverType: img?.type ?? null,
+});
+
 async function loadSummaries(
   entityType: RatingReviewEntityType,
   ids: number[]
@@ -116,8 +198,16 @@ async function loadSummaries(
         .where('id', 'in', ids)
         .where('deletedAt', 'is', null)
         .execute();
+      const covers = await modelCovers(found.map((r) => r.id));
       for (const r of found)
-        put({ ...base, id: r.id, title: r.name, nsfwLevel: r.nsfwLevel, override: null });
+        put({
+          ...base,
+          ...asCover(covers.get(r.id)),
+          id: r.id,
+          title: r.name,
+          nsfwLevel: r.nsfwLevel,
+          override: null,
+        });
       break;
     }
     case 'Post': {
@@ -126,9 +216,11 @@ async function loadSummaries(
         .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await postCovers(found.map((r) => r.id));
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.id)),
           id: r.id,
           title: r.title ?? `Post #${r.id}`,
           nsfwLevel: r.nsfwLevel,
@@ -142,9 +234,14 @@ async function loadSummaries(
         .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await connectionCovers(
+        'Bounty',
+        found.map((r) => r.id)
+      );
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.id)),
           id: r.id,
           title: r.name,
           nsfwLevel: r.nsfwLevel,
@@ -158,9 +255,14 @@ async function loadSummaries(
         .select(['id', 'bountyId', 'nsfwLevel', 'moderatorNsfwLevel'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await connectionCovers(
+        'BountyEntry',
+        found.map((r) => r.id)
+      );
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.id)),
           id: r.id,
           title: `Entry #${r.id}`,
           nsfwLevel: r.nsfwLevel,
@@ -172,12 +274,14 @@ async function loadSummaries(
     case 'Challenge': {
       const found = await dbRead
         .selectFrom('Challenge')
-        .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel'])
+        .select(['id', 'title', 'nsfwLevel', 'moderatorNsfwLevel', 'coverImageId'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await imagesById(found.map((r) => r.coverImageId));
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.coverImageId ?? 0)),
           id: r.id,
           title: r.title,
           nsfwLevel: r.nsfwLevel,
@@ -188,12 +292,14 @@ async function loadSummaries(
     case 'Crucible': {
       const found = await dbRead
         .selectFrom('Crucible')
-        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel', 'imageId', 'heroImageId'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await imagesById(found.map((r) => r.imageId ?? r.heroImageId));
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.imageId ?? r.heroImageId ?? 0)),
           id: r.id,
           title: r.name,
           nsfwLevel: r.nsfwLevel,
@@ -204,12 +310,14 @@ async function loadSummaries(
     case 'Collection': {
       const found = await dbRead
         .selectFrom('Collection')
-        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel', 'imageId'])
         .where('id', 'in', ids)
         .execute();
+      const covers = await imagesById(found.map((r) => r.imageId));
       for (const r of found)
         put({
           ...base,
+          ...asCover(covers.get(r.imageId ?? 0)),
           id: r.id,
           title: r.name,
           nsfwLevel: collectionRatingLevel(r.nsfwLevel),
@@ -219,6 +327,108 @@ async function loadSummaries(
     }
   }
   return out;
+}
+
+/** The images a moderator rates an entity from; `total` is the full count, `images` at most `limit`. */
+export async function getRatingReviewImages(
+  entityType: RatingReviewEntityType,
+  entityId: number,
+  limit = 6
+): Promise<{ total: number; images: RatingReviewImage[] }> {
+  const empty = { total: 0, images: [] };
+  const single = async (imageId: number | null | undefined) => {
+    const img = (await imagesById([imageId ?? null])).get(imageId ?? 0);
+    return img ? { total: 1, images: [img] } : empty;
+  };
+
+  switch (entityType) {
+    case 'Post': {
+      const where = dbRead.selectFrom('Image as i').where('i.postId', '=', entityId);
+      const [images, count] = await Promise.all([
+        where
+          .select(IMAGE_FIELDS)
+          .orderBy(sql`i."index" asc nulls last`)
+          .orderBy('i.id')
+          .limit(limit)
+          .execute(),
+        where.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
+      ]);
+      return { total: Number(count?.c ?? 0), images };
+    }
+    case 'Model': {
+      const cover = (await modelCovers([entityId])).get(entityId);
+      if (!cover) return empty;
+      const [{ rows }, count] = await Promise.all([
+        sql<RatingReviewImage>`
+          SELECT i."id", i."url", i."type", i."nsfwLevel" ${modelGalleryJoins}
+          WHERE m."id" = ${entityId} AND mv."id" = ${cover.versionId}
+          ORDER BY p."id", i."index", i."id" LIMIT ${limit}`.execute(dbRead),
+        sql<{ c: string }>`
+          SELECT count(*) AS c ${modelGalleryJoins}
+          WHERE m."id" = ${entityId} AND mv."id" = ${cover.versionId}`.execute(dbRead),
+      ]);
+      return { total: Number(count.rows[0]?.c ?? 0), images: rows };
+    }
+    case 'Article': {
+      const article = await dbRead
+        .selectFrom('Article')
+        .select('coverId')
+        .where('id', '=', entityId)
+        .executeTakeFirst();
+      return connected('Article', entityId, limit, article?.coverId ?? null);
+    }
+    case 'Bounty':
+    case 'BountyEntry':
+      return connected(entityType, entityId, limit, null);
+    case 'Challenge': {
+      const row = await dbRead
+        .selectFrom('Challenge')
+        .select('coverImageId')
+        .where('id', '=', entityId)
+        .executeTakeFirst();
+      return single(row?.coverImageId);
+    }
+    case 'Crucible': {
+      const row = await dbRead
+        .selectFrom('Crucible')
+        .select(['imageId', 'heroImageId'])
+        .where('id', '=', entityId)
+        .executeTakeFirst();
+      return single(row?.imageId ?? row?.heroImageId);
+    }
+    case 'Collection': {
+      const row = await dbRead
+        .selectFrom('Collection')
+        .select('imageId')
+        .where('id', '=', entityId)
+        .executeTakeFirst();
+      return single(row?.imageId);
+    }
+  }
+}
+
+// Connection ids first, then images by id: the same shape as bulk-image's getImagesForConnection,
+// minus its appeal lookups, which a thumbnail strip has no use for.
+async function connected(
+  entityType: 'Article' | 'Bounty' | 'BountyEntry',
+  entityId: number,
+  limit: number,
+  coverId: number | null
+) {
+  const links = await dbRead
+    .selectFrom('ImageConnection')
+    .select('imageId')
+    .where('entityType', '=', entityType)
+    .where('entityId', '=', entityId)
+    .orderBy('imageId')
+    .limit(5000)
+    .execute();
+  const ids = [...new Set([...(coverId ? [coverId] : []), ...links.map((l) => l.imageId)])];
+  const byId = await imagesById(ids.slice(0, limit));
+  return {
+    total: ids.length,
+    images: ids.slice(0, limit).flatMap((id) => byId.get(id) ?? []),
+  };
 }
 
 async function loadScans(entityType: RatingReviewEntityType, ids: number[]) {
