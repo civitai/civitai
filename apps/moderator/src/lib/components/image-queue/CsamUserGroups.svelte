@@ -8,6 +8,7 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import { csamReportUrl } from '$lib/entity-url';
+  import { holdLegLabels } from '$lib/csam-hold-legs';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
   import { enhance } from '$app/forms';
@@ -106,8 +107,10 @@
             >
           </TableCell>
           <TableCell class="whitespace-nowrap text-sm">
-            {#if user.held}
-              <span class="text-xs text-dark-2">Review one by one</span>
+            {#if user.heldBy.length}
+              <span class="text-xs text-dark-2">
+                Held: {holdLegLabels(user.heldBy)} · review one by one
+              </span>
             {:else if user.removed > 0}
               <form
                 method="POST"

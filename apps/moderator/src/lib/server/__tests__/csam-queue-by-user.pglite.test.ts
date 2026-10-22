@@ -58,12 +58,15 @@ let db: PGlite;
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
-  // 101: three flagged (one removed), reported twice, newest sent 2026-02-01.
+  // 101: three flagged (one removed), reported twice, newest sent 2026-02-01, banned for a reason
+  // that holds, and its removed image listed on a report.
   // 102: one flagged, report filed but never sent. 103: one flagged, no report.
   // 104: flagged in another queue only. 105: CSAM flag on an errored image only.
   await db.exec(`
     INSERT INTO "User" ("id", "username") VALUES
       (101, 'a'), (102, 'b'), (103, 'c'), (104, 'd'), (105, 'e');
+    UPDATE "User" SET "bannedAt" = '2026-01-01',
+      "meta" = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = 101;
     INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "nsfwLevel") VALUES
       (1, 101, 'csam', 'Scanned', 4),
       (2, 101, 'csam', 'Blocked', 32),
@@ -73,8 +76,8 @@ beforeAll(async () => {
       (6, 104, 'minor', 'Scanned', 4),
       (7, 105, 'csam', 'Error', 4),
       (8, 101, NULL, 'Scanned', 4);
-    INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES
-      (101, '2026-01-01'), (101, '2026-02-01'), (102, NULL);
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "images") VALUES
+      (101, '2026-01-01', '[{"id": 2}]'), (101, '2026-02-01', '[]'), (102, NULL, '[]');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -114,12 +117,12 @@ describe('the CSAM queue by user', () => {
 
   it('says what a bulk clear would take, whatever the level filter, and whom it would refuse', async () => {
     const { users } = await getCsamQueueByUser({ browsingLevel: 4 });
-    expect(users.map(({ userId, removed, held }) => ({ userId, removed, held }))).toEqual([
-      { userId: 101, removed: 1, held: true },
-      { userId: 102, removed: 0, held: true },
+    expect(users.map(({ userId, removed, heldBy }) => ({ userId, removed, heldBy }))).toEqual([
+      { userId: 101, removed: 1, heldBy: ['csamReport', 'ban', 'reportedImage'] },
+      { userId: 102, removed: 0, heldBy: ['csamReport'] },
     ]);
     const all = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
-    expect(all.users.find((u) => u.userId === 103)).toMatchObject({ removed: 1, held: false });
+    expect(all.users.find((u) => u.userId === 103)).toMatchObject({ removed: 1, heldBy: [] });
   });
 
   it('applies the browsing-level filter the flat queue applies', async () => {

@@ -2,7 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
-import { getFlagClearHolds } from './csam-flag-clear';
+import { getFlagClearHolds, type FlagClearHoldLeg } from './csam-flag-clear';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -196,8 +196,8 @@ export type CsamQueueUser = {
   reportSentAt: Date | null;
   /** Any CSAM report row for the user, sent or not. */
   reported: boolean;
-  /** A bulk clear of this user's flags would be refused. */
-  held: boolean;
+  /** Why a bulk clear of this user's flags would be refused; empty when it would not be. */
+  heldBy: FlagClearHoldLeg[];
 };
 
 /** The CSAM review queue as one row per owning user, most flagged first. Same rows and browsing-level
@@ -259,7 +259,7 @@ export async function getCsamQueueByUser({
       latestImageId: Number(g.latestImageId),
       reportSentAt: reportsByUser.get(g.userId) ?? null,
       reported: reportsByUser.has(g.userId),
-      held: holds.has(g.userId),
+      heldBy: holds.get(g.userId) ?? [],
     })),
     truncated,
   };
