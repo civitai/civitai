@@ -40,7 +40,7 @@ const tokens: TokenSource = async (purpose) => `${purpose}-token`;
 function runnerProcess(
   orchestration: FakeChatOrchestration,
   ledger: MemoryModelCalls,
-  options: { log?: Logger; reuseWaitMs?: number } = {}
+  options: { log?: Logger } = {}
 ) {
   return new OrchestrationModels({
     baseUrl: BASE,
@@ -207,15 +207,15 @@ describe('model calls kept across a crash', () => {
     }
   });
 
-  it('cancels a workflow still running past the wait, then sends the request again', async () => {
+  it('cancels a workflow whose state cannot be read, then sends the request again', async () => {
     const orchestration = new FakeChatOrchestration();
     const ledger = new MemoryModelCalls();
-    await crashMidStream(orchestration, ledger, FIRST, { text: 'Too slow.' });
-    orchestration.script(FIRST, ['processing']);
+    await crashMidStream(orchestration, ledger, FIRST, { text: 'Unreadable.' });
+    orchestration.failReads(FIRST);
 
     const { log, calls } = logger();
     orchestration.next(SECOND, { text: 'Asked again.' });
-    const recovered = ask(runnerProcess(orchestration, ledger, { log, reuseWaitMs: 40 }));
+    const recovered = ask(runnerProcess(orchestration, ledger, { log }));
     expect(await recovered.text).toBe('Asked again.');
     expect(orchestration.puts).toEqual([{ id: FIRST, body: { status: 'canceled' } }]);
     // Cancelled before the request went again.
@@ -223,7 +223,27 @@ describe('model calls kept across a crash', () => {
     expect(order.indexOf(`put ${FIRST}`)).toBeGreaterThan(-1);
     expect(order.indexOf(`put ${FIRST}`)).toBeLessThan(order.indexOf(`post ${SECOND}`));
     expect(orchestration.posts.map((post) => post.id)).toEqual([FIRST, SECOND]);
-    expect(calls()).toEqual(['waiting', 'cancelled', 'asked-again']);
+    expect(calls()).toEqual(['cancelled', 'asked-again']);
+  });
+
+  it('waits for a workflow still running until the run stops, then cancels it', async () => {
+    const orchestration = new FakeChatOrchestration();
+    const ledger = new MemoryModelCalls();
+    await crashMidStream(orchestration, ledger, FIRST, { text: 'Never needed.' });
+    orchestration.script(FIRST, ['processing']);
+
+    const { log, calls } = logger();
+    const models = runnerProcess(orchestration, ledger, { log });
+    const stop = new AbortController();
+    const { text } = ask(models, { signal: stop.signal });
+    // No wait of its own runs out: it reads again and again until the run's signal ends it.
+    await until('several status reads', () => orchestration.gets.length >= 3);
+    stop.abort();
+    await text;
+    await (models as ModelProvider).settle?.('run-a');
+    expect(orchestration.puts).toEqual([{ id: FIRST, body: { status: 'canceled' } }]);
+    expect(orchestration.posts.map((post) => post.id)).toEqual([FIRST]);
+    expect(calls()).toEqual(['waiting', 'cancelled']);
   });
 
   it('sends a request again when its finished workflow holds nothing a step can be rebuilt from', async () => {
@@ -301,7 +321,7 @@ describe('model calls kept across a crash', () => {
 });
 
 describe('model calls cut off by the run', () => {
-  it('Stop cancels the workflow of the request in flight and forgets it', async () => {
+  it('Stop cancels the workflow of the request in flight', async () => {
     const orchestration = new FakeChatOrchestration();
     const ledger = new MemoryModelCalls();
     const { log, calls } = logger();
@@ -317,7 +337,8 @@ describe('model calls cut off by the run', () => {
     await until('the workflow to be cancelled', () => orchestration.puts.length > 0);
     expect(orchestration.puts).toEqual([{ id: FIRST, body: { status: 'canceled' } }]);
     expect(orchestration.workflows.get(FIRST)!.status).toBe('canceled');
-    expect(ledger.rows).toEqual([]);
+    // Kept: read again later it answers `canceled`, and the request is sent again.
+    expect(ledger.rows.map((row) => row.workflowId)).toEqual([FIRST]);
     expect(calls()).toEqual(['cancelled']);
   });
 

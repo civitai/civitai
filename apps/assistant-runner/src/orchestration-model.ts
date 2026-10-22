@@ -19,8 +19,6 @@ export interface OrchestrationModelOptions {
    */
   calls?: ModelCallLedger;
   log?: Logger;
-  /** How long a request asked again waits for its workflow still running (`REUSE_WAIT_MS`). */
-  reuseWaitMs?: number;
   /** The least time between two status reads of a workflow still running (1 s). */
   pollIntervalMs?: number;
 }
@@ -48,7 +46,6 @@ export class OrchestrationModels implements ModelProvider {
           ledger: options.calls,
           orchestration: options.orchestration,
           ...(options.log ? { log: options.log } : {}),
-          ...(options.reuseWaitMs !== undefined ? { reuseWaitMs: options.reuseWaitMs } : {}),
           ...(options.pollIntervalMs !== undefined
             ? { pollIntervalMs: options.pollIntervalMs }
             : {}),

@@ -168,9 +168,9 @@ See [Not built yet](#not-built-yet).
   one step. A request asked again with the same key (the step recovered after a crash, or a retry
   after a dropped connection) first reads that workflow (`GET /v2/consumer/workflows/{id}`):
   succeeded, its stored answer is the request's, with no new request; still running, it is waited
-  for (up to 10 minutes, and never past the run's own wall clock); failed, expired, cancelled or
-  holding nothing a step can be rebuilt from, the request is sent again, after cancelling the
-  workflow when it may still run. A retry that carries on from an earlier run's saved steps
+  for until it ends or the run stops waiting (its wall clock, a Stop), which cancels it; failed,
+  expired, cancelled or holding nothing a step can be rebuilt from, the request is sent again
+  (after cancelling the workflow when its state cannot be read). A retry that carries on from an earlier run's saved steps
   (Continue) may take that run's answer too; a new reply to a turn never does. A model call cut off
   by the run (Stop, the wall clock, a pause, a cancel outright) has its workflow cancelled
   (`PUT /v2/consumer/workflows/{id}`, `{"status":"canceled"}`), which stops the model and its

@@ -46,9 +46,4 @@ export class MemoryModelCalls implements ModelCallLedger {
     });
     this.order.push(`saved ${workflowId}`);
   }
-
-  async forget(_scope: ModelCallScope, key: string, workflowId: string): Promise<void> {
-    const at = this.rows.findIndex((row) => row.key === key && row.workflowId === workflowId);
-    if (at >= 0) this.rows.splice(at, 1);
-  }
 }

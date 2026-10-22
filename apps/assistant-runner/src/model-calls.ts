@@ -18,13 +18,6 @@ import {
  */
 export const WORKFLOW_ID_HEADER = 'X-Civitai-Workflow-Id';
 
-/**
- * How long a request asked again waits for the workflow it was first sent as while that still runs:
- * orchestration's own longest wait for a stream's first chunk (`StreamFirstChunkTimeout`). Past it
- * the workflow is cancelled and the request sent again. The run's wall clock bounds it too: its
- * abort ends the wait.
- */
-export const REUSE_WAIT_MS = 10 * 60 * 1000;
 /** How long one status read asks orchestration to hold its answer until the workflow ends. */
 const POLL_SECONDS = 20;
 /** The least time between two status reads of a workflow still running. */
@@ -222,8 +215,6 @@ export interface ModelCallsOptions {
   ledger: ModelCallLedger;
   orchestration: OrchestrationClient;
   log?: Logger;
-  /** How long a request asked again waits for its workflow still running; `REUSE_WAIT_MS` unless set. */
-  reuseWaitMs?: number;
   /** The least time between two status reads of a workflow still running; 1 s unless set. */
   pollIntervalMs?: number;
 }
@@ -245,15 +236,15 @@ interface RunCalls {
  * orchestration workflow is kept in the ledger as soon as orchestration names it, before its answer
  * is read. A request asked again later (the reply's step recovered after a crash, or a network retry)
  * with the same key first reads that workflow: succeeded, its answer is the request's, with no new
- * request (and no new charge); still running, it is waited for; ended without an answer it can
- * use, it is asked again (cancelling it first when it is still live). A request cut off by its own
+ * request (and no new charge); still running, it is waited for, as long as the request's own signal
+ * lets it (the run's wall clock or a Stop ends the wait, and cancels it); ended without an answer
+ * it can use, it is asked again (cancelling it first when its state cannot be read). A request cut off by its own
  * signal (Stop, the wall clock, a hard cancel) cancels its workflow, so the model stops billing.
  */
 export class ModelCalls {
   readonly #ledger: ModelCallLedger;
   readonly #orchestration: OrchestrationClient;
   readonly #log: Logger | undefined;
-  readonly #waitMs: number;
   readonly #pollIntervalMs: number;
   readonly #runs = new Map<string, RunCalls>();
 
@@ -261,7 +252,6 @@ export class ModelCalls {
     this.#ledger = options.ledger;
     this.#orchestration = options.orchestration;
     this.#log = options.log;
-    this.#waitMs = options.reuseWaitMs ?? REUSE_WAIT_MS;
     this.#pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
   }
 
@@ -335,7 +325,6 @@ export class ModelCalls {
     signal: AbortSignal | undefined
   ): Promise<Response | undefined> {
     const { runId } = call.scope;
-    const deadline = Date.now() + this.#waitMs;
     const askAgain = (reason: string, extra: object = {}) => {
       this.#log?.info(
         { modelCall: 'asked-again', reason, runId, workflowId, ...extra },
@@ -374,10 +363,6 @@ export class ModelCalls {
         return completionResponse(completion, stream, workflowId);
       }
       if (FINAL_STATUSES.includes(status)) return askAgain(status);
-      if (Date.now() >= deadline) {
-        await this.#cancel(call, workflowId, 'ran too long');
-        return askAgain('ran-too-long', { status });
-      }
       if (!waiting)
         this.#log?.info(
           { modelCall: 'waiting', runId, workflowId, status },
@@ -386,7 +371,7 @@ export class ModelCalls {
       waiting = true;
       const wait = this.#pollIntervalMs - (Date.now() - asked);
       if (wait > 0)
-        await pause(Math.min(wait, deadline - Date.now()), signal).catch((error: unknown) => {
+        await pause(wait, signal).catch((error: unknown) => {
           // Stopped while waiting: the workflow is not wanted any more.
           void this.#cancel(call, workflowId, 'stopped while waiting');
           throw error;
@@ -444,9 +429,13 @@ export class ModelCalls {
     });
   }
 
-  /** Cancels a workflow (once per run here) and forgets it in the ledger; failures are logged. */
+  /**
+   * Cancels a workflow, once per run here; a failure is logged. Its ledger row stays: read again
+   * later it answers `canceled` (the request is sent again), or, when the cancel did not land, it is
+   * read as it stands.
+   */
   #cancel(call: Call, workflowId: string, why: string): Promise<void> {
-    const { scope, key, tokens, run } = call;
+    const { scope, tokens, run } = call;
     run.used.add(workflowId);
     const cancelling = run.cancels.get(workflowId);
     if (cancelling) return cancelling;
@@ -463,14 +452,6 @@ export class ModelCalls {
           'cancelling the orchestration workflow of a model request failed'
         );
       }
-      await this.#ledger
-        .forget(scope, key, workflowId)
-        .catch((error) =>
-          this.#log?.warn(
-            { err: error, runId: scope.runId, workflowId },
-            'forgetting a model call in the ledger failed'
-          )
-        );
     })();
     run.cancels.set(workflowId, task);
     return task;
@@ -539,14 +520,6 @@ export class PgModelCalls implements ModelCallLedger {
        on conflict (run_id, call_key) do update set workflow_id = excluded.workflow_id, created_at = now()`,
       [scope.runId, key, scope.userId, scope.conversationId, scope.seq, workflowId]
     );
-  }
-
-  async forget(_scope: ModelCallScope, key: string, workflowId: string): Promise<void> {
-    // Workflow ids are unique: the row is the one that names it, whichever run of the turn kept it.
-    await this.#pool.query(`delete from ${TABLE} where call_key = $1 and workflow_id = $2`, [
-      key,
-      workflowId,
-    ]);
   }
 
   /** Deletes rows older than `olderThanMs`. Returns how many. */

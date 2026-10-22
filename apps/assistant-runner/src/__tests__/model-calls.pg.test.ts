@@ -63,14 +63,6 @@ describePg('PgModelCalls', () => {
     );
   });
 
-  it('forgets only the workflow it is told to', async () => {
-    await calls.save(scope({ runId: 'run-f' }), 'key-f', 'wf-f1');
-    await calls.forget(scope({ runId: 'run-f' }), 'key-f', 'wf-other');
-    expect(await calls.find(scope({ runId: 'run-f' }), 'key-f')).toBe('wf-f1');
-    await calls.forget(scope({ runId: 'run-f' }), 'key-f', 'wf-f1');
-    expect(await calls.find(scope({ runId: 'run-f' }), 'key-f')).toBeNull();
-  });
-
   it('sweeps rows older than the retention, and only those', async () => {
     await calls.save(scope({ runId: 'run-old' }), 'key-old', 'wf-old');
     await calls.save(scope({ runId: 'run-new' }), 'key-new', 'wf-new');

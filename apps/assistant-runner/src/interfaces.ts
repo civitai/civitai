@@ -76,8 +76,6 @@ export interface ModelCallLedger {
   /** The workflow the latest request with this key in `scope` was sent as, else `null`. */
   find(scope: ModelCallScope, key: string): Promise<string | null>;
   save(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
-  /** Forgets that the request was sent as `workflowId` (it was cancelled); a newer one is kept. */
-  forget(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
 }
 
 export interface ToolContext {
