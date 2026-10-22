@@ -55,6 +55,11 @@ const NEWCOMER = 40;
 const NEWCOMER_FEW_READERS = 41;
 const DORMANT_GUIDE = 50;
 const READERS = Array.from({ length: 40 }, (_, i) => 1000 + i);
+const HOST = 60;
+const ANSWERERS = [61, 62, 63, 64, 65];
+const EARLY = 66;
+const COMMENTERS = [70, 71, 72];
+const EXCLUDED_COMMENTER = 73;
 
 type Row = { userId: number; position: number; score: number; metrics: Record<string, number> };
 
@@ -110,7 +115,12 @@ beforeAll(async () => {
     CREATE TABLE "Article" (
       id INT PRIMARY KEY, "userId" INT NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL,
       unlisted BOOLEAN NOT NULL DEFAULT false, "tosViolation" BOOLEAN NOT NULL DEFAULT false,
-      "publishedAt" TIMESTAMP
+      "publishedAt" TIMESTAMP, content TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE "Thread" (id INT PRIMARY KEY, "articleId" INT, "rootThreadId" INT);
+    CREATE TABLE "CommentV2" (
+      id SERIAL, "threadId" INT, "userId" INT, "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+      hidden BOOLEAN DEFAULT false, "createdAt" TIMESTAMP NOT NULL DEFAULT now()
     );
     CREATE TABLE "TagsOnArticle" ("articleId" INT, "tagId" INT);
     CREATE TABLE "ArticleMetric" (
@@ -148,6 +158,32 @@ beforeAll(async () => {
       (500, ${DORMANT_GUIDE}, 'Published', 'Public', false, false, now() - interval '500 days');
     INSERT INTO "TagsOnArticle" VALUES (400, 1), (410, 1), (500, 3);
 
+    -- A challenge 30 days old. Five people answer it later, one of them with their first article; the
+    -- host's own follow-up and an answer published before the challenge do not count.
+    INSERT INTO "User" (id) SELECT unnest(ARRAY[${HOST}, ${ANSWERERS.join(
+    ','
+  )}, ${EARLY}, ${COMMENTERS.join(',')}, ${EXCLUDED_COMMENTER}]);
+    INSERT INTO "Article" VALUES (600, ${HOST}, 'Published', 'Public', false, false, now() - interval '30 days', ''),
+      (615, ${HOST}, 'Published', 'Public', false, false, now() - interval '10 days', '<a href="/articles/600">mine</a>'),
+      (616, ${EARLY}, 'Published', 'Public', false, false, now() - interval '40 days', '<a href="/articles/600">early</a>');
+    INSERT INTO "Article" SELECT 640 + i, u, 'Published', 'Public', false, false, now() - interval '20 days',
+      '<a href="https://civitai.red/articles/600">my answer</a>'
+    FROM unnest(ARRAY[${ANSWERERS.join(',')}]) WITH ORDINALITY AS x(u, i);
+    INSERT INTO "Article" VALUES (630, ${
+      ANSWERERS[1]
+    }, 'Published', 'Public', false, false, now() - interval '18 days',
+      '<a href="/articles/600">a second answer</a>');
+    INSERT INTO "Article" SELECT 620 + i, u, 'Published', 'Public', false, false, now() - interval '200 days', ''
+    FROM unnest(ARRAY[${ANSWERERS.slice(1).join(',')}]) WITH ORDINALITY AS x(u, i);
+    INSERT INTO "TagsOnArticle" SELECT id, 4 FROM "Article" WHERE id >= 600;
+
+    -- Three people comment (one twice), the host replies in a reply thread, and one commenter is metric-excluded.
+    -- One answer also draws a comment, but nobody answers it.
+    INSERT INTO "Thread" VALUES (1, 600, NULL), (2, NULL, 1), (3, 641, NULL);
+    INSERT INTO "CommentV2" ("threadId", "userId") VALUES
+      (1, ${COMMENTERS[0]}), (1, ${COMMENTERS[0]}), (1, ${COMMENTERS[1]}), (2, ${COMMENTERS[2]}),
+      (2, ${HOST}), (2, ${HOST}), (1, ${EXCLUDED_COMMENTER}), (3, ${COMMENTERS[0]});
+
     INSERT INTO "ArticleMetric"
     SELECT id, tf, 10, 5, 1, 0, 3, 400, 4 FROM "Article", unnest(ARRAY['AllTime', 'Year']) tf;
     UPDATE "ArticleMetric" SET "viewCount" = 30000, "collectedCount" = 500, "likeCount" = 300
@@ -173,7 +209,7 @@ beforeEach(async () => {
 });
 
 describe('writer leaderboards migration', () => {
-  it('stages the four boards hidden and unpopulated, after the existing boards', async () => {
+  it('stages the five boards hidden and unpopulated, after the existing boards', async () => {
     const { rows } = await q(
       `SELECT id, index, active, public FROM "Leaderboard" WHERE id LIKE 'writer-%' ORDER BY index`
     );
@@ -182,7 +218,32 @@ describe('writer leaderboards migration', () => {
       { id: 'writer-story', index: 9, active: false, public: false },
       { id: 'writer-guide', index: 10, active: false, public: false },
       { id: 'writer-rising', index: 11, active: false, public: false },
+      { id: 'writer-community', index: 12, active: false, public: false },
     ]);
+  });
+});
+
+describe('participants', () => {
+  it("counts each commenter once and never the author's own comments or replies", async () => {
+    const rows = await run('writer-active', [EXCLUDED_COMMENTER]);
+    expect(byUser(rows, HOST)!.metrics.participants).toBe(COMMENTERS.length);
+  });
+});
+
+describe('Community Builders', () => {
+  it('counts each later article by someone else once, and first-time writers among them', async () => {
+    const rows = await run('writer-community', [EXCLUDED_COMMENTER]);
+    expect(rows[0].userId).toBe(HOST);
+    expect(rows[0].metrics).toMatchObject({
+      answers: ANSWERERS.length,
+      firstTimers: 1,
+      participants: COMMENTERS.length,
+    });
+  });
+
+  it('leaves out a writer whose articles drew comments but no answers', async () => {
+    const rows = await run('writer-community', [EXCLUDED_COMMENTER]);
+    expect(byUser(rows, ANSWERERS[0])).toBeUndefined();
   });
 });
 
@@ -265,7 +326,7 @@ describe('the rollback in the migration header', () => {
       'writer board badges exist: roll back their migration first'
     );
     await q('ROLLBACK');
-    expect(await writerBoards()).toHaveLength(4);
+    expect(await writerBoards()).toHaveLength(5);
     await q(`DELETE FROM "Cosmetic"`);
   });
 

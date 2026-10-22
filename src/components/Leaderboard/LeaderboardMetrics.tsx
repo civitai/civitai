@@ -27,10 +27,12 @@ import {
   IconHeartHandshake,
   IconHexagonFilled,
   IconMedal,
+  IconMessages,
   IconMoodSmile,
   IconPhoto,
   IconReport,
   IconScoreboard,
+  IconSeedling,
   IconShieldChevron,
   IconStar,
   IconSwords,
@@ -41,6 +43,7 @@ import {
   IconTrophy,
   IconUsers,
   IconVideo,
+  IconWritingSign,
   IconX,
 } from '@tabler/icons-react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -249,6 +252,18 @@ const metricTypes: Record<
   activeWeeks: () => ({
     tooltip: 'Weeks with a new chapter, of the last 12',
     icon: <IconCalendarWeek {...iconProps} />,
+  }),
+  participants: () => ({
+    tooltip: 'People who joined the discussion',
+    icon: <IconMessages {...iconProps} />,
+  }),
+  answers: () => ({
+    tooltip: 'Writers who answered with an article',
+    icon: <IconWritingSign {...iconProps} />,
+  }),
+  firstTimers: () => ({
+    tooltip: 'Of them, writing their first article',
+    icon: <IconSeedling {...iconProps} />,
   }),
 };
 

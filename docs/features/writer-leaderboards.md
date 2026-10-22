@@ -1,8 +1,8 @@
 # Writer leaderboards
 
-Four article leaderboards next to the existing Writers board: Active Writers, Storytellers, Guide
-Writers and Rising Writers. Each scores an author's articles one at a time and lets newer articles
-count for more.
+Five article leaderboards next to the existing Writers board: Active Writers, Storytellers, Guide
+Writers, Rising Writers and Community Builders. Each scores an author's articles one at a time and
+lets newer articles count for more.
 
 ## Why
 
@@ -34,32 +34,40 @@ least half of their articles:
 
 Every board counts only articles that are published, public, listed and not removed for a terms
 violation. An article whose only categories are announcement, news or event earns a quarter of the
-points on Active Writers and Rising Writers. "Half-life" is how many days after publishing an article
+points on Active Writers, Rising Writers and Community Builders. "Half-life" is how many days after publishing an article
 keeps half its points.
 
-| Board          | Id              | Per-article value                                                   | Half-life | Articles counted                              |
-| -------------- | --------------- | ------------------------------------------------------------------- | --------- | --------------------------------------------- |
-| Active Writers | `writer-active` | `√views/2 + √reactions×7 + √bookmarks×10 + √comments×5`             | 90 days   | Best 30 from the last 365 days                |
-| Storytellers   | `writer-story`  | `√readers×7 + √comments×10 + √bookmarks×5 + √views/4`               | 90 days   | Best 20 story articles from the last 365 days |
-| Guide Writers  | `writer-guide`  | `√views/2 + √bookmarks×12 + √comments×4`, past-year engagement only | 365 days  | Best 20 guides of any age                     |
-| Rising Writers | `writer-rising` | `√readers×10 + √views/2`                                            | none      | Best 10                                       |
+| Board              | Id                 | Per-article value                                                  | Half-life | Articles counted                              |
+| ------------------ | ------------------ | ------------------------------------------------------------------ | --------- | --------------------------------------------- |
+| Active Writers     | `writer-active`    | `√views/2 + √readers×7 + √bookmarks×10 + √participants×5`          | 90 days   | Best 30 from the last 365 days                |
+| Storytellers       | `writer-story`     | `√readers×7 + √participants×10 + √bookmarks×5 + √views/4`          | 90 days   | Best 20 story articles from the last 365 days |
+| Guide Writers      | `writer-guide`     | `√views/2 + √bookmarks×12 + √participants×4`, past-year engagement | 365 days  | Best 20 guides of any age                     |
+| Rising Writers     | `writer-rising`    | `√readers×10 + √views/2`                                           | none      | Best 10                                       |
+| Community Builders | `writer-community` | `√participants×6 + √answers×20 + √first-time answers×10`           | 180 days  | Best 10 from the last 365 days                |
 
 The same formulas ship as each board's `scoringDescription` in the migration; change both together.
 
+- **Readers** and **participants** are distinct people who reacted (`ArticleReaction`) or commented
+  (`CommentV2`, across the article's thread and its reply threads), each counted once per article.
+  The author is never one of them, and nor are the metric-excluded accounts; the queries use the
+  `{{metricExcludedUserIds}}` token (see `METRIC_EXCLUDED_USERS_TOKEN` in `prepare-leaderboard.ts`).
+  `ArticleMetric`'s reaction and comment counts include the author's own, so no board reads them.
+  Views and bookmarks still come from `ArticleMetric`.
+- **Answers** are later articles by other people that link to the article (`/articles/<id>` in the
+  body), each author counted once. A **first-time** answer is the answering author's first published
+  article. Community Builders lists only authors with at least one answer; comments alone are
+  rewarded on the other boards.
 - **Storytellers** adds `√(loyal readers) × 15`, where a loyal reader reacted to three or more of the
-  author's chapters in the last 90 days, and multiplies the total by `0.5 + 0.5 × weeks / 12`, where
+  author's chapters in the last 90 days, and multiplies the total by `0.75 + 0.25 × weeks / 12`, where
   `weeks` is the number of the last 12 weeks with a new chapter.
-- **Guide Writers** reads the `Year` row of `ArticleMetric`, which counts only engagement from the past
-  365 days, and needs a guide published in that time.
+- **Guide Writers** reads views and bookmarks from the `Year` row of `ArticleMetric` and participants
+  from comments in the past 365 days, and needs a guide published in that time.
 - **Rising Writers** takes only authors whose first published article is under 90 days old, with 25
   distinct readers across their articles.
-- **Readers** are distinct people who reacted, counted from `ArticleReaction`, minus the author and the
-  metric-excluded accounts. The queries use the `{{metricExcludedUserIds}}` token; see
-  `METRIC_EXCLUDED_USERS_TOKEN` in `prepare-leaderboard.ts`.
 
 ## Rollout
 
-The migration inserts the four boards inactive and non-public, as the crucible boards were. Each
+The migration inserts the five boards inactive and non-public, as the crucible boards were. Each
 query is run read-only first, then `active` and `public` are set together. Badges come in a separate
 migration once a board is public.
 
@@ -71,9 +79,9 @@ boards that remain.
 
 ## Key Files
 
-| File                                                                                            | What it holds                                                                 |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `packages/civitai-db-schema/prisma/migrations/20261022170000_writer_leaderboards/migration.sql` | The four `Leaderboard` rows and their queries                                 |
-| `src/server/jobs/prepare-leaderboard.ts`                                                        | Runs the queries; replaces `{{metricExcludedUserIds}}`                        |
-| `src/components/Leaderboard/LeaderboardMetrics.tsx`                                             | Icons for the `articles`, `readers`, `loyalReaders` and `activeWeeks` metrics |
-| `src/server/jobs/__tests__/writer-leaderboards.behavior.test.ts`                                | Runs each query from the migration through the job on PGlite                  |
+| File                                                                                            | What it holds                                                 |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `packages/civitai-db-schema/prisma/migrations/20261022170000_writer_leaderboards/migration.sql` | The five `Leaderboard` rows, their queries and the rollback   |
+| `src/server/jobs/prepare-leaderboard.ts`                                                        | Runs the queries; replaces `{{metricExcludedUserIds}}`        |
+| `src/components/Leaderboard/LeaderboardMetrics.tsx`                                             | Icons for the metrics the new boards report                   |
+| `src/server/jobs/__tests__/writer-leaderboards.behavior.test.ts`                                | Runs each query and the rollback from the migration on PGlite |
