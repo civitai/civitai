@@ -82,8 +82,6 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
    * centered "This image is rated X" overlay rendered by ImageGuard2.
    */
   alwaysVisibleBadge?: boolean;
-  /** Extra class for the corner browsing-level badge, so one card can restyle it without touching every other BlurToggle. */
-  badgeClassName?: string;
   /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
   alt?: string;
   /**
@@ -118,7 +116,6 @@ export function AspectRatioImageCard<T extends DialogKey>({
   isRemix,
   explain,
   alwaysVisibleBadge,
-  badgeClassName,
   alt,
   impression,
 }: AspectRatioImageCardProps<T>) {
@@ -264,7 +261,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 {overlay && (typeof overlay === 'function' ? overlay({ safe }) : overlay)}
                 <div className={cardStyles.header}>
                   <ImageGuard2.BlurToggle
-                    className={clsx(cardStyles.chip, badgeClassName)}
+                    className={cardStyles.chip}
                     alwaysVisible={alwaysVisibleBadge}
                   />
                   {typeof header === 'function' ? header({ safe }) : header}
