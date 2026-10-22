@@ -23,6 +23,8 @@ const wordsIn = (term: string) => term.split(' ').length;
 
 type CompiledRules = {
   rules: { id: number; terms: string[] }[];
+  /** Normalized term -> the rules and authored spellings that produce it. */
+  byTerm: Map<string, { ruleId: number; term: string }[]>;
   maxWords: number;
 };
 
@@ -38,20 +40,24 @@ function compileRules(rules: LiteralModelRule[]): CompiledRules {
     .join('\u0003');
   if (memo?.key === key) return memo.compiled;
   let maxWords = 1;
+  const byTerm = new Map<string, { ruleId: number; term: string }[]>();
   const compiled = rules.map((rule) => {
-    const terms = [
-      ...new Set(
-        [rule.subject, ...rule.aliases]
-          .map(normalizeForLiteralMatch)
-          .filter(
-            (term) => term.length >= MIN_TERM_LENGTH && wordsIn(term) <= MODEL_RULE_LIMITS.termWords
-          )
-      ),
-    ];
-    for (const term of terms) maxWords = Math.max(maxWords, wordsIn(term));
-    return { id: rule.id, terms };
+    const authored = new Map<string, string>();
+    for (const term of [rule.subject, ...rule.aliases]) {
+      const normalized = normalizeForLiteralMatch(term);
+      if (normalized.length < MIN_TERM_LENGTH || wordsIn(normalized) > MODEL_RULE_LIMITS.termWords)
+        continue;
+      if (!authored.has(normalized)) authored.set(normalized, term);
+    }
+    for (const [normalized, term] of authored) {
+      maxWords = Math.max(maxWords, wordsIn(normalized));
+      const entries = byTerm.get(normalized) ?? [];
+      entries.push({ ruleId: rule.id, term });
+      byTerm.set(normalized, entries);
+    }
+    return { id: rule.id, terms: [...authored.keys()] };
   });
-  const result = { rules: compiled, maxWords };
+  const result = { rules: compiled, byTerm, maxWords };
   memo = { key, compiled: result };
   return result;
 }
@@ -97,4 +103,94 @@ export function findLiteralHitsInSubject(subject: TextScanSubject, rules: Litera
     rules
   );
   return rules.filter((rule) => hit.has(rule.id)).map((rule) => rule.id);
+}
+
+export type LiteralModelRuleMatch = {
+  ruleId: number;
+  /** The subject or alias as authored, not normalized. */
+  term: string;
+  /** The field's heading and its index in `subject.fields` (headings can repeat). */
+  field: string;
+  fieldIndex: number;
+  /** `text.slice(start, end)` of the field's original text is the span as the user wrote it. */
+  start: number;
+  end: number;
+};
+
+type SourceWord = { word: string; start: number; end: number };
+
+// Folding is done per base character plus its combining marks, so every folded letter keeps the
+// original range it came from. Whole-string NFKC can compose across clusters (e.g. Hangul jamo);
+// when the two disagree, the caller falls back to the whole field rather than a wrong offset.
+function sourceWords(text: string): SourceWord[] | null {
+  const words: SourceWord[] = [];
+  let current: SourceWord | undefined;
+  let folded = '';
+  for (const cluster of text.matchAll(/[^\p{M}]\p{M}*|\p{M}+/gu)) {
+    const start = cluster.index;
+    const end = start + cluster[0].length;
+    const piece = foldDiacritics(foldConfusables(cluster[0]));
+    folded += piece;
+    for (const char of piece) {
+      if (/[\p{L}\p{N}]/u.test(char)) {
+        if (current) {
+          current.word += char;
+          current.end = end;
+        } else {
+          current = { word: char, start, end };
+          words.push(current);
+        }
+      } else {
+        current = undefined;
+      }
+    }
+  }
+  return folded === foldDiacritics(foldConfusables(text)) ? words : null;
+}
+
+/** Every occurrence of a rule subject or alias in a field, with where it sits in the original text. */
+export function findLiteralMatchesInSubject(
+  subject: TextScanSubject,
+  rules: LiteralModelRule[]
+): LiteralModelRuleMatch[] {
+  if (!rules.length) return [];
+  const { byTerm, maxWords } = compileRules(rules);
+  const matches: LiteralModelRuleMatch[] = [];
+  subject.fields.forEach((field, fieldIndex) => {
+    const text = field.text;
+    if (!text) return;
+    const words = sourceWords(text);
+    if (!words) {
+      const runs = wordRuns(text, maxWords);
+      for (const [normalized, entries] of byTerm) {
+        if (!runs.has(normalized)) continue;
+        for (const entry of entries) {
+          matches.push({
+            ...entry,
+            field: field.heading,
+            fieldIndex,
+            start: 0,
+            end: text.length,
+          });
+        }
+      }
+      return;
+    }
+    for (let i = 0; i < words.length; i++) {
+      let run = '';
+      for (let n = 0; n < maxWords && i + n < words.length; n++) {
+        run = n === 0 ? words[i].word : `${run} ${words[i + n].word}`;
+        for (const entry of byTerm.get(run) ?? []) {
+          matches.push({
+            ...entry,
+            field: field.heading,
+            fieldIndex,
+            start: words[i].start,
+            end: words[i + n].end,
+          });
+        }
+      }
+    }
+  });
+  return matches;
 }
