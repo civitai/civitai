@@ -410,6 +410,63 @@ describe('ratingDisputeTriageLoad scanned text', () => {
     expect(text?.fields[3].text.length).toBeLessThanOrEqual(6000);
     expect(await textOf('?tab=other', empty)).toBeNull();
   });
+
+  it('reads an article’s title then its HTML content as plain text', async () => {
+    const articleId = await seedEntity(db, 'Article', {
+      userId: alice,
+      title: 'Guide',
+      content: '<h2>Intro</h2><p>Body <em>text</em></p><script>alert(1)</script>',
+    });
+    const id = await fileReview({ entityType: 'Article', entityId: articleId });
+
+    const text = await textOf('?tab=articles', id);
+
+    expect(text?.fields.map((f) => f.heading)).toEqual(['Title', 'Content']);
+    expect(text?.fields[0].text).toBe('Guide');
+    expect(text?.fields[1].text).toContain('Intro');
+    expect(text?.fields[1].text).toContain('Body text');
+    expect(text?.fields[1].text).not.toMatch(/<|alert/);
+  });
+
+  it('reads a bounty entry’s description alone', async () => {
+    const entryId = await seedEntity(db, 'BountyEntry', {
+      userId: alice,
+      description: '<p>My <b>entry</b></p>',
+    });
+    const id = await fileReview({ entityType: 'BountyEntry', entityId: entryId });
+
+    expect((await textOf('?tab=other', id))?.fields).toEqual([
+      { heading: 'Description', text: 'My entry' },
+    ]);
+  });
+
+  it.each(['Crucible', 'Collection'])('reads a %s’s name and description', async (entityType) => {
+    const entityId = await seedEntity(db, entityType, {
+      userId: alice,
+      name: `${entityType} name`,
+      description: '<p>About it</p>',
+    });
+    const id = await fileReview({ entityType, entityId });
+
+    expect((await textOf('?tab=other', id))?.fields).toEqual([
+      { heading: 'Name', text: `${entityType} name` },
+      { heading: 'Description', text: 'About it' },
+    ]);
+  });
+
+  it('still loads the queue, with no scanned text, when the text read fails', async () => {
+    const articleId = await seedEntity(db, 'Article', { userId: alice, content: '<p>x</p>' });
+    const id = await fileReview({ entityType: 'Article', entityId: articleId });
+    await db.exec('ALTER TABLE "Article" DROP COLUMN "content"');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const data = await load('?tab=articles');
+
+    expect(ids(data)).toEqual([id]);
+    expect(data.items[0].scannedText).toBeNull();
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
 });
 
 describe('ratingDisputeTriageLoad rows', () => {

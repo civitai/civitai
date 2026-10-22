@@ -15,11 +15,11 @@
   }: {
     tabs: { value: string; label: string }[];
     current: string;
-    /** The URL param holding the tab; the default tab leaves it off. */
+    /** The URL param holding the tab. */
     param: string;
     defaultValue: string;
     label: string;
-    /** The open item and the page index the result set being replaced. */
+    /** Dropped on a tab switch: the open item and page index belong to the old result set. */
     selectionParam: string;
     /** Absent while the counts are unavailable: a placeholder 0 reads as "nothing to review". */
     counts?: Partial<Record<string, number>> | undefined;

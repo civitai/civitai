@@ -144,8 +144,7 @@
         {#if caption.hint}<span class="text-xs text-dark-2">{caption.hint}</span>{/if}
       </div>
       {#if row.preview.images.length}
-        <!-- The same tile the sibling queues use for evidence images (4:5, EdgeMedia at 450px), in one
-             scrolling strip so a dispute with many images never wraps. -->
+        <!-- Same tile as the sibling queues' evidence images; one scrolling strip so many images never wrap. -->
         <ul class="m-0 flex list-none gap-2.5 overflow-x-auto p-0 pb-2">
           {#each row.preview.images as img (img.id)}
             {@const nsfw = isNsfwRating(img.nsfwLevel)}

@@ -6,7 +6,6 @@
     tone = 'neutral',
   }: {
     label: string;
-    /** `ask` is what the owner wants; `scan` is what the text scan raised. */
     tone?: 'neutral' | 'ask' | 'scan';
   } = $props();
 </script>

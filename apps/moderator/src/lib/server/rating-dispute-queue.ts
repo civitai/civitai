@@ -77,8 +77,7 @@ const querySchema = z.object({
   owner: int4Id.optional().catch(undefined),
 });
 
-// Both sides of the join the filters read; the select list is the caller's.
-type FilterBase = SelectQueryBuilder<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+type FilteredReviewQuery = SelectQueryBuilder<any, any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // Types whose text-scan verdict only raises at R; the threshold itself stays in `isTextScanRaised`'s
 // module so this SQL cannot drift from the predicate the row's `scan` badge uses.
@@ -86,7 +85,6 @@ const RAISED_AT_R = RATING_REVIEW_ENTITY_TYPES.filter(
   (t) => textScanRaisedMinLevel(t) === NsfwLevel.R
 );
 
-/** `isTextScanRaised`, as SQL over `rr`: a scan with a `version` whose level reaches the type's floor. */
 const scanRaisedSql = sql<boolean>`EXISTS (
   SELECT 1 FROM "EntityModeration" em
   WHERE em."entityType" = rr."entityType" AND em."entityId" = rr."entityId"
@@ -101,12 +99,11 @@ function searchPredicate(q: string) {
   if (!q) return null;
   const asId = /^\d+$/.test(q) ? int4Id.safeParse(q) : null;
   if (asId?.success) return sql<boolean>`(rr."id" = ${asId.data} OR rr."entityId" = ${asId.data})`;
-  // A number too large for an id is not a username either; it lands here and the prefix simply
-  // matches nobody.
+  // An id too large for int4 falls through to the username prefix search and matches nobody.
   return sql<boolean>`owner."username" ILIKE ${escapeLike(q) + '%'}`;
 }
 
-function withScope<QB extends FilterBase>(
+function withScope<QB extends FilteredReviewQuery>(
   qb: QB,
   scope: {
     status: RatingReviewStatusFilter;
@@ -125,7 +122,10 @@ function withScope<QB extends FilterBase>(
   return out;
 }
 
-function withFilters<QB extends FilterBase>(qb: QB, f: Pick<DisputeFilters, 'ask' | 'scan'>): QB {
+function withFilters<QB extends FilteredReviewQuery>(
+  qb: QB,
+  f: Pick<DisputeFilters, 'ask' | 'scan'>
+): QB {
   let out = qb;
   if (f.ask === 'lower') out = out.where(askLowerSql) as QB;
   if (f.ask === 'higher') out = out.where(askHigherSql) as QB;
@@ -188,12 +188,14 @@ async function ownerDisputeOrdinals(reviewIds: number[]): Promise<Map<number, nu
   return new Map(rows.map((r) => [r.id, r.n]));
 }
 
-/** The queue rows plus what only the triage view shows: each dispute's number among its owner's and the preview strip. */
 async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
   const [owners, previews, texts] = await Promise.all([
     ownerDisputeOrdinals(rows.map((r) => r.id)),
     getRatingReviewImagesBatch(rows),
-    getRatingReviewScannedTextBatch(rows),
+    getRatingReviewScannedTextBatch(rows).catch((err) => {
+      console.error('Rating dispute scanned text failed', err);
+      return new Map<string, never>();
+    }),
   ]);
   return rows.map((r) => ({
     ...r,
@@ -206,10 +208,7 @@ async function decorate(rows: RatingReviewRow[]): Promise<RatingDisputeRow[]> {
   }));
 }
 
-/**
- * The two-pane triage read for the rating-dispute queue. The whole page ships at once: selection is
- * client state, so every row carries its own preview images and its number among the owner's disputes.
- */
+/** The whole page ships at once because selection is client state, so each row carries its own preview and owner-dispute number. */
 export async function ratingDisputeTriageLoad(url: URL) {
   const parsed = parseQueryKeys(url, querySchema);
   const { tab, status, ask, scan, q, page, selected, owner } = parsed;
@@ -242,8 +241,7 @@ export async function ratingDisputeTriageLoad(url: URL) {
   const hasMore = records.length > PAGE_SIZE;
   const pageRows = await hydrateRatingReviews(records.slice(0, PAGE_SIZE));
 
-  // A deep link may name a review the filters or paging leave off this page; it opens regardless
-  // rather than the pane silently showing another row. Any status, any tab.
+  // A deep link opens its review even when filters or paging leave it off this page (any status, any tab).
   let pinnedRows: RatingReviewRow[] = [];
   let selectedMissing: number | null = null;
   if (selected && !pageRows.some((r) => r.id === selected)) {
@@ -284,11 +282,7 @@ const resolveSchema = z.object({
     .transform((v) => v || undefined),
 });
 
-/**
- * The `resolve` form action. Access is gated centrally (hooks.server.ts) on the page's path; the
- * per-entity level rule lives in the service. A refusal is returned as `fail`, never thrown, so the
- * triage shell can show it against the review it belongs to.
- */
+/** A refusal is returned as `fail`, not thrown, so the shell shows it against its row. */
 export const resolveRatingDisputeAction: Action = async ({ request, locals }) => {
   const parsed = resolveSchema.safeParse(Object.fromEntries(await request.formData()));
   if (!parsed.success) return fail(400, { error: 'Invalid resolution' });

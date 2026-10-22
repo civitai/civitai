@@ -9,7 +9,7 @@
   let open = $state(false);
   let overflows = $state(false);
 
-  // Collapsed, the card clips to a fixed height; the toggle only appears when something is clipped.
+  // The toggle only shows when the collapsed card clips something.
   $effect(() => {
     if (box && !open) overflows = box.scrollHeight > box.clientHeight + 1;
   });

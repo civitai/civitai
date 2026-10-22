@@ -21,7 +21,6 @@
     row: RatingDisputeRow;
     submit: (outcome: Outcome) => SubmitFunction;
     actionHref: (action: string) => string;
-    /** The level picked and awaiting confirmation. */
     chosen: number | null;
   } = $props();
 

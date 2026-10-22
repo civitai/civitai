@@ -43,7 +43,7 @@
     ratingReviewStatusFilters.map((s) => [s.value, s.label])
   ) as Record<RatingReviewStatusFilter, string>;
 
-  // The open dispute, reported by the shell; a level picked for confirmation belongs to it alone.
+  // A picked level is only valid for the dispute it was picked on.
   let current = $state<number | null>(null);
   let pick = $state<{ id: number; level: number } | null>(null);
   const chosen = $derived(pick !== null && pick.id === current ? pick.level : null);
@@ -65,8 +65,7 @@
       page: data.page > 1 ? data.page : undefined,
     });
 
-  // The shell shows a refusal on its row; a deep link to a missing dispute is announced here until
-  // the moderator picks a row.
+  // Server-rendered, the shell has no selection yet; hold the missing-dispute notice until it does.
   let hydrated = $state(false);
   onMount(() => (hydrated = true));
 
@@ -177,8 +176,7 @@
   </div>
 {/snippet}
 
-<!-- The shell renders this in the list and again in the detail pane when nothing matches; the
-     `in-[...]` variants pick the half that belongs to the pane it landed in. -->
+<!-- Rendered in both the list and the detail pane when nothing matches; the in-[...] variants pick each pane's half. -->
 {#snippet empty()}
   <div
     class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"

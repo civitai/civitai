@@ -131,8 +131,7 @@ const MODEL_COUNT_CAP = 5000;
 
 type ModelCoverRow = RatingReviewImage & { modelId: number; total: number };
 
-// A model's first `limit` images and the count behind them, in the order the CSAM queue shows them
-// (`model-covers.ts`): one lateral query for every model id passed.
+// Same order as the CSAM queue's covers (model-covers.ts); one lateral query for all ids.
 async function modelCoverRows(ids: number[], limit: number): Promise<ModelCoverRow[]> {
   if (!ids.length) return [];
   const { rows } = await sql<ModelCoverRow>`
@@ -339,12 +338,11 @@ const imageKey = (entityType: RatingReviewEntityType, entityId: number) =>
 
 const CONNECTION_CAP = 5000;
 
-/** How many preview images a dispute carries; `total` still counts them all. */
 export const PREVIEW_LIMIT = 12;
 
 /**
  * The images a moderator rates each entity from; `total` is the full count, `images` at most
- * `limit`. One query per entity type present, never one per entity. Keyed by `imageKey`.
+ * `limit`. One query per entity type present, never one per entity. Keyed by `ratingReviewImagesKey`.
  */
 async function loadImagesForType(
   entityType: RatingReviewEntityType,
@@ -410,7 +408,7 @@ async function loadImagesForType(
         for (const a of found)
           if (a.coverId && existing.has(a.coverId)) covers.set(a.id, a.coverId);
       }
-      // The cover leads, then the connections by image id; both are already known to exist.
+      // The cover leads, then connections by image id.
       const idsByEntity = new Map<number, number[]>();
       for (const id of ids) {
         const cover = covers.get(id);
@@ -459,7 +457,7 @@ async function loadImagesForType(
   }
 }
 
-/** Preview images for many entities at once. A missing key means the entity has none. */
+/** A missing key means the entity has none. */
 export async function getRatingReviewImagesBatch(
   entities: { entityType: RatingReviewEntityType; entityId: number }[],
   limit = PREVIEW_LIMIT
@@ -477,7 +475,6 @@ export async function getRatingReviewImagesBatch(
   return out;
 }
 
-/** The images a moderator rates one entity from. The batch with one entry, so they cannot drift. */
 export async function getRatingReviewImages(
   entityType: RatingReviewEntityType,
   entityId: number,
@@ -487,7 +484,6 @@ export async function getRatingReviewImages(
   return found.get(imageKey(entityType, entityId)) ?? { total: 0, images: [] };
 }
 
-/** The key `getRatingReviewImagesBatch` files an entity's images under. */
 export const ratingReviewImagesKey = imageKey;
 
 export type ScannedTextField = { heading: string; text: string };
@@ -498,7 +494,7 @@ const SCANNED_TEXT_CAP = 12000;
 
 type RawField = { heading: string; text: string | null | undefined; html?: boolean };
 
-/** Plain text, or stored HTML as text; each field and the whole are capped so a page of long articles stays small. */
+/** Plain text, with stored HTML stripped; fields and the whole are capped so long articles stay small. */
 function composeScannedText(raw: RawField[]): ScannedText {
   const fields: ScannedTextField[] = [];
   let used = 0;
@@ -531,11 +527,7 @@ const joinedThemeElements = (metadata: unknown) => {
   return Array.isArray(list) ? list.filter((e) => typeof e === 'string').join(', ') : null;
 };
 
-/**
- * The text the main app's text scan reads for each entity (`src/server/services/text-scan/profiles/*`),
- * same fields in the same order, HTML as plain text. A Model's version text covers its public versions
- * only, as the scan does. One query per entity type (two for Model); the key is `ratingReviewImagesKey`.
- */
+/** Mirrors what the main app's text scan reads (src/server/services/text-scan/profiles/*); a Model's version text covers public versions only, as the scan does. */
 async function loadScannedTextForType(
   entityType: RatingReviewEntityType,
   ids: number[]
@@ -656,7 +648,6 @@ async function loadScannedTextForType(
   }
 }
 
-/** The scanned text for many entities at once; an entity with none is absent. */
 export async function getRatingReviewScannedTextBatch(
   entities: { entityType: RatingReviewEntityType; entityId: number }[]
 ): Promise<Map<string, ScannedText>> {

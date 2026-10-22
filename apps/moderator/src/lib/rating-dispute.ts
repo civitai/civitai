@@ -11,7 +11,6 @@ export type DisputeTab = (typeof DISPUTE_TABS)[number];
 
 export const DEFAULT_DISPUTE_TAB: DisputeTab = 'posts';
 
-/** The entity types the Other tab holds, and can be narrowed to. */
 export const OTHER_KINDS = [
   'Bounty',
   'BountyEntry',
@@ -45,7 +44,7 @@ export const KIND_LABELS: Record<(typeof KIND_FILTERS)[number], string> = {
   Collection: ratingReviewEntityLabels.Collection,
 };
 
-/** Only R and above is NSFW; PG and PG-13 are safe to show plain. */
+// PG-13 is intentionally shown unblurred; only R and above is NSFW.
 export const isNsfwRating = (level: number) => level >= NsfwLevel.R;
 
 export const DISPUTE_SORTS = ['oldest', 'newest'] as const;
@@ -55,7 +54,6 @@ export const DISPUTE_SORT_LABELS: Record<DisputeSort, string> = {
   newest: 'Newest first',
 };
 
-/** A pending queue is worked from the longest wait; decided rows read newest first. */
 export const defaultDisputeSort = (status: RatingReviewStatusFilter): DisputeSort =>
   status === 'Pending' ? 'oldest' : 'newest';
 
@@ -69,7 +67,6 @@ export const disputeTitle = (
   entity: { title: string } | null
 ) => entity?.title ?? `${ratingReviewEntityLabels[entityType]} #${entityId}`;
 
-/** The caption over a detail pane's images: what they are, and how many there are in all. */
 export function imageCaption(
   entityType: RatingReviewEntityType,
   total: number
@@ -91,11 +88,7 @@ export function imageCaption(
 export const isLowerOnly = (entityType: RatingReviewEntityType) =>
   entityType === 'Challenge' || entityType === 'Crucible';
 
-/**
- * What applying `chosen` does. A dispute is approved exactly when the owner's ask is applied to an
- * entity that still exists; any other level overrides it, and a deleted entity records a rejection
- * and applies nothing (the same rule the resolve action applies).
- */
+/** Must match the resolve action: approved exactly when the ask is applied to a live entity; a deleted entity rejects and applies nothing. */
 export function disputeOutcome(
   entityType: RatingReviewEntityType,
   levels: { current: number; suggested: number; chosen: number },
