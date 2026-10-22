@@ -325,7 +325,7 @@ type LeaderboardResult = {
   metrics: Record<string, number>;
   position: number;
 };
-/** Board SQL writes this where it needs the metric-excluded user ids; that list is in ClickHouse, not Postgres. */
+/** Board SQL placeholder for the metric-excluded user ids, which live in ClickHouse and so cannot be joined in Postgres. */
 export const METRIC_EXCLUDED_USERS_TOKEN = '{{metricExcludedUserIds}}';
 
 async function defaultLeadboardPopulation(ctx: LeaderboardContext) {

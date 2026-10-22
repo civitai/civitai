@@ -158,8 +158,8 @@ beforeAll(async () => {
       (500, ${DORMANT_GUIDE}, 'Published', 'Public', false, false, now() - interval '500 days');
     INSERT INTO "TagsOnArticle" VALUES (400, 1), (410, 1), (500, 3);
 
-    -- A challenge 30 days old. Five people answer it later, one of them with their first article; the
-    -- host's own follow-up and an answer published before the challenge do not count.
+    -- A challenge 30 days old. Five people answer it later (one with their first article, one answering twice);
+    -- the host's own follow-up and an answer published before the challenge do not count.
     INSERT INTO "User" (id) SELECT unnest(ARRAY[${HOST}, ${ANSWERERS.join(
     ','
   )}, ${EARLY}, ${COMMENTERS.join(',')}, ${EXCLUDED_COMMENTER}]);

@@ -1,17 +1,18 @@
 -- Writer leaderboards: Active Writers, Storytellers, Guide Writers, Rising Writers, Community Builders. Data rows, not schema. Apply by hand.
--- Inserted inactive and non-public: updateLegendsBoardResults scores every populated board whatever its
--- public flag, so a board populated before review would hand out Legendary Nameplates. To go live, run each
+-- Inserted inactive and non-public: updateLegendsBoardResults scores every populated board regardless of the
+-- public flag, so populating before review hands out Legendary Nameplates. To go live, run each
 -- query read-only, then set active = true and public = true together, not between 23:00 and 00:05 UTC
 -- (prepare-leaderboard reads active boards at 23:00; update-user-leaderboard-rank checks at 00:01).
 -- Activate only once the build that replaces {{metricExcludedUserIds}} is deployed: before it the token is a
 -- syntax error, and one failing board stops the whole nightly run, Legends and the cache purge included.
 -- Queries end in a `scores` CTE with no final SELECT (the job appends one) and may use {{metricExcludedUserIds}}.
--- Readers and participants are distinct people other than the author who reacted or commented (across the
--- article's thread and its reply threads); ArticleMetric's reaction and comment counts include the author.
+-- Readers and participants are computed from ArticleReaction/CommentV2 rather than read from ArticleMetric,
+-- whose reaction and comment counts include the author.
 --
 -- ROLLBACK (deletes the five boards and what they produced: results, Legends rows, populated markers, and
 -- ranks taken from them, which are rebuilt from the remaining public boards as leaderboardRankInsert in
--- user.service.ts does). Run it BEFORE reverting the job change, for the same reason as above. To keep the
+-- user.service.ts does). Run it BEFORE reverting the job change: the reverted job would send the token to
+-- Postgres unreplaced. To keep the
 -- history instead, set active = false, public = false; Legends still counts a hidden board's past results.
 -- Afterwards purge the `leaderboard` cache tag, or wait for clear-leaderboard-cache at midnight.
 --   BEGIN;

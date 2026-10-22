@@ -47,21 +47,26 @@ keeps half its points.
 
 The same formulas ship as each board's `scoringDescription` in the migration; change both together.
 
-- **Readers** and **participants** are distinct people who reacted (`ArticleReaction`) or commented
-  (`CommentV2`, across the article's thread and its reply threads), each counted once per article.
-  The author is never one of them, and nor are the metric-excluded accounts; the queries use the
-  `{{metricExcludedUserIds}}` token (see `METRIC_EXCLUDED_USERS_TOKEN` in `prepare-leaderboard.ts`).
-  `ArticleMetric`'s reaction and comment counts include the author's own, so no board reads them.
-  Views and bookmarks still come from `ArticleMetric`.
-- **Answers** are later articles by other people that link to the article (`/articles/<id>` in the
-  body), each author counted once. A **first-time** answer is the answering author's first published
-  article. Community Builders lists only authors with at least one answer; comments alone are
-  rewarded on the other boards.
-- **Storytellers** adds `√(loyal readers) × 15`, where a loyal reader reacted to three or more of the
-  author's chapters in the last 90 days, and multiplies the total by `0.75 + 0.25 × weeks / 12`, where
-  `weeks` is the number of the last 12 weeks with a new chapter.
+- **Readers** are distinct people other than the author who reacted to the article
+  (`ArticleReaction`). **Participants** are distinct people other than the author who commented
+  (`CommentV2`, across the article's thread and its reply threads), ignoring hidden and
+  terms-violating comments. Each is counted once per article, and metric-excluded accounts are left
+  out of both through the `{{metricExcludedUserIds}}` token (see `METRIC_EXCLUDED_USERS_TOKEN` in
+  `prepare-leaderboard.ts`). If that list cannot be fetched, the run proceeds with it empty.
+  `ArticleMetric`'s reaction and comment counts include the author's own, so no board reads them;
+  views and bookmarks still come from `ArticleMetric`.
+- **Answers** are later articles by other people, published in the last 365 days, that link to the
+  article (`/articles/<id>` in the body), each author counted once. A **first-time** answer is one
+  that is the answering author's first published article ever. Community Builders lists only authors
+  with at least one answer on their counted articles, so comments alone are rewarded on the other
+  boards.
+- **Storytellers** adds `√(loyal readers) × 15`, where a loyal reader made reactions in the last 90
+  days to three or more of the author's story articles (any of them, not only the best 20), and
+  multiplies the total by `0.75 + 0.25 × weeks / 12`, where `weeks` counts the calendar weeks in the
+  last 12 that contain a new chapter, capped at 12.
 - **Guide Writers** reads views and bookmarks from the `Year` row of `ArticleMetric` and participants
-  from comments in the past 365 days, and needs a guide published in that time.
+  from comments in the past 365 days, and needs a guide published in that time. A guide with no
+  `Year` metric row is not counted.
 - **Rising Writers** takes only authors whose first published article is under 90 days old, with 25
   distinct readers across their articles.
 
@@ -73,9 +78,15 @@ migration once a board is public.
 
 Order matters both ways, because one board whose query fails stops the whole nightly run: activate
 the boards only after the build that replaces `{{metricExcludedUserIds}}` is deployed, and roll them
-back before reverting that build. The rollback is the `ROLLBACK` block in the migration header. It
-removes the boards and everything they produced, and rebuilds the affected users' ranks from the
-boards that remain.
+back before reverting that build. Do not activate between 23:00 and 00:05 UTC: `prepare-leaderboard`
+reads active boards at 23:00 and `update-user-leaderboard-rank` checks at 00:01.
+
+The rollback is the `ROLLBACK` block in the migration header. It refuses to run while a badge for one
+of the boards exists, then removes the boards with their results, Legends rows and populated
+markers, and rebuilds the affected users' ranks from the remaining public boards. Afterwards purge
+the `leaderboard` cache tag, or wait for `clear-leaderboard-cache` at midnight. To keep the history
+instead, set `active = false` and `public = false`; Legends still counts a hidden board's past
+results.
 
 ## Key Files
 
