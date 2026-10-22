@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aliasPendingKey,
+  isStalePending,
+  prunePending,
+  readPending,
+  setPending,
   aliasSuggestionsKey,
   isStaleSuggestion,
   pruneSuggestions,
@@ -21,7 +26,9 @@ const KEY = aliasSuggestionsKey(7);
 const entry = (over: Partial<StoredSuggestions> = {}): StoredSuggestions => ({
   updatedAt: '2026-01-01T00:00:00.000Z',
   costTotal: 3,
-  suggestions: [{ alias: 'One Name', kind: 'stage_name', note: 'n', source: 'https://example.com' }],
+  suggestions: [
+    { alias: 'One Name', kind: 'stage_name', note: 'n', source: 'https://example.com' },
+  ],
   ...over,
 });
 
@@ -47,7 +54,9 @@ describe('suggestion persistence', () => {
     const raw = JSON.stringify({
       3: entry(),
       4: { updatedAt: 5, suggestions: [] },
-      5: entry({ suggestions: [{ alias: 'X Y', kind: 'bogus' as never, source: 'javascript:alert(1)' }] }),
+      5: entry({
+        suggestions: [{ alias: 'X Y', kind: 'bogus' as never, source: 'javascript:alert(1)' }],
+      }),
       nope: entry(),
     });
     const read = readSuggestions(memory({ [KEY]: raw }), KEY);
@@ -92,5 +101,63 @@ describe('isStaleSuggestion', () => {
 describe('pruneSuggestions', () => {
   it('forgets rules that no longer exist', () => {
     expect(Object.keys(pruneSuggestions({ 3: entry(), 4: entry() }, [{ id: 3 }]))).toEqual(['3']);
+  });
+});
+
+describe('pending searches', () => {
+  const PKEY = aliasPendingKey(7);
+  const pending = { updatedAt: '2026-01-01T00:00:00.000Z', workflowId: 'wf_0123456789' };
+
+  it('is keyed per moderator and apart from the held suggestions', () => {
+    expect(aliasPendingKey(1)).not.toBe(aliasPendingKey(2));
+    expect(aliasPendingKey(7)).not.toBe(aliasSuggestionsKey(7));
+  });
+
+  it('round-trips a stored workflow id', () => {
+    const store = memory();
+    expect(setPending(store, PKEY, 3, pending)).toBe(true);
+    expect(readPending(store, PKEY)).toEqual({ 3: pending });
+  });
+
+  it('keeps other rules’ entries when one is set or cleared', () => {
+    const store = memory();
+    setPending(store, PKEY, 3, pending);
+    setPending(store, PKEY, 4, { ...pending, workflowId: 'wf_other_0001' });
+    setPending(store, PKEY, 3, null);
+    expect(Object.keys(readPending(store, PKEY))).toEqual(['4']);
+    setPending(store, PKEY, 4, null);
+    expect(store.data[PKEY]).toBeUndefined();
+  });
+
+  it('reads nothing from broken storage and drops malformed entries', () => {
+    expect(readPending(null, PKEY)).toEqual({});
+    expect(readPending(memory({ [PKEY]: '{nope' }), PKEY)).toEqual({});
+    const raw = JSON.stringify({
+      3: pending,
+      4: { updatedAt: 5, workflowId: 'wf_0123456789' },
+      5: { updatedAt: pending.updatedAt, workflowId: '../x' },
+      nope: pending,
+    });
+    expect(Object.keys(readPending(memory({ [PKEY]: raw }), PKEY))).toEqual(['3']);
+  });
+
+  it('survives a store that throws', () => {
+    const broken = {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('quota');
+      },
+      removeItem: () => {},
+    };
+    expect(readPending(broken, PKEY)).toEqual({});
+    expect(setPending(broken, PKEY, 3, pending)).toBe(false);
+  });
+
+  it('is stale once the rule was saved again, and pruned when the rule is gone', () => {
+    expect(isStalePending(pending, new Date('2026-01-01T00:00:00.000Z'))).toBe(false);
+    expect(isStalePending(pending, new Date('2026-01-02T00:00:00.000Z'))).toBe(true);
+    expect(Object.keys(prunePending({ 3: pending, 4: pending }, [{ id: 3 }]))).toEqual(['3']);
   });
 });

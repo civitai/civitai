@@ -17,7 +17,10 @@ const service = vi.hoisted(() => ({
   listModelRules: vi.fn(),
   countNotSubjectDismissalsByRule: vi.fn(),
 }));
-const suggest = vi.hoisted(() => ({ runSuggestAliases: vi.fn() }));
+const suggest = vi.hoisted(() => ({
+  runSuggestAliases: vi.fn(),
+  runAliasSuggestionResult: vi.fn(),
+}));
 vi.mock('../suggest-aliases.server', () => suggest);
 vi.mock('$lib/server/model-rules.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RulesService>()),
@@ -53,13 +56,20 @@ beforeEach(() => {
 });
 
 describe('permissions', () => {
-  it.each(['save', 'saveAll', 'toggle', 'restoreRule', 'suggestAliases'] as const)(
+  it.each([
+    'save',
+    'saveAll',
+    'toggle',
+    'restoreRule',
+    'suggestAliases',
+    'aliasSuggestionResult',
+  ] as const)(
     '%s returns 403 without textScan.modelRules.edit, even with the prompt publish permission',
     async (action) => {
       expect(await post(action, {}, { 'textScan.prompt.publish': true })).toMatchObject({
         status: 403,
       });
-      for (const fn of [...Object.values(service), suggest.runSuggestAliases])
+      for (const fn of [...Object.values(service), ...Object.values(suggest)])
         expect(fn).not.toHaveBeenCalled();
     }
   );
@@ -247,12 +257,28 @@ describe('toggle', () => {
 
 describe('suggestAliases', () => {
   it('hands the form to the suggester for a moderator who can edit rules', async () => {
-    suggest.runSuggestAliases.mockResolvedValue({ suggested: true, suggestions: [] });
+    suggest.runSuggestAliases.mockResolvedValue({
+      suggested: true,
+      status: 'done',
+      suggestions: [],
+    });
     expect(await post('suggestAliases', { subject: 'Example' })).toEqual({
       suggested: true,
+      status: 'done',
       suggestions: [],
     });
     expect(suggest.runSuggestAliases).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a poll to the result reader', async () => {
+    suggest.runAliasSuggestionResult.mockResolvedValue({ suggested: true, status: 'pending' });
+    expect(
+      await post('aliasSuggestionResult', { workflowId: 'wf_0123456789', subject: 'Example' })
+    ).toEqual({
+      suggested: true,
+      status: 'pending',
+    });
+    expect(suggest.runAliasSuggestionResult).toHaveBeenCalledTimes(1);
   });
 });
 

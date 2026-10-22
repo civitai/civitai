@@ -21,7 +21,7 @@ import {
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { runLiteralTry } from './literal-try.server';
-import { runSuggestAliases } from './suggest-aliases.server';
+import { runAliasSuggestionResult, runSuggestAliases } from './suggest-aliases.server';
 
 const querySchema = z.object({
   q: z.string().trim().max(200).catch(''),
@@ -100,6 +100,11 @@ export const actions: Actions = {
   // Billed on every run, so it takes the same grant as saving the rule it feeds.
   suggestAliases: requiresGrant('textScan.modelRules.edit', async ({ request }) =>
     runSuggestAliases(await request.formData())
+  ),
+
+  // Free to repeat, but it reads the billed search, so it takes the same grant.
+  aliasSuggestionResult: requiresGrant('textScan.modelRules.edit', async ({ request }) =>
+    runAliasSuggestionResult(await request.formData())
   ),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {

@@ -233,6 +233,7 @@
                   subject={fields.subject}
                   description={fields.description}
                   aliases={fields.aliases}
+                  {rule}
                   onadd={(added) => update({ aliases: appendAliases(fields.aliases, added) })}
                 />
               {/if}

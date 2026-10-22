@@ -3,6 +3,7 @@ import {
   ALIAS_KINDS,
   MODEL_RULE_LIMITS,
   aliasKindField,
+  aliasWorkflowIdField,
   isSemanticDefinition,
   parseModelRulesHoldMeta,
   semanticModelRuleSchema,
@@ -117,4 +118,17 @@ describe('aliasKindField', () => {
   it.each(['nickname', '', 5, null, undefined])('files %j under other', (value) => {
     expect(aliasKindField.parse(value)).toBe('other');
   });
+});
+
+describe('aliasWorkflowIdField', () => {
+  it('accepts an opaque token', () => {
+    expect(aliasWorkflowIdField.parse('wf_0123456789-AB')).toBe('wf_0123456789-AB');
+  });
+
+  it.each(['', 'short', '../etc/passwd', 'has space 1234', 'a'.repeat(129), 5, null])(
+    'rejects %j',
+    (value) => {
+      expect(aliasWorkflowIdField.safeParse(value).success).toBe(false);
+    }
+  );
 });

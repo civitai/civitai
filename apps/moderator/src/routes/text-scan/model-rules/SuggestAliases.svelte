@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, plural } from '$lib/format';
+  import { runRuleSearch, storedWorkflowId, type PendingSlot } from './alias-client';
+  import { aliasPendingKey } from './alias-suggestions-store';
+  import { parseAliases } from '$lib/model-rules';
   import { ALIAS_KIND_LABELS, type AliasSuggestion } from './suggest-aliases';
 
   let {
@@ -13,29 +16,65 @@
     subject,
     description,
     aliases,
+    rule = null,
     onadd,
   }: {
     id: string | number;
     subject: string;
     description: string;
     aliases: string;
+    /** The saved rule these fields belong to; a new rule has none, so its search cannot resume. */
+    rule?: { id: number; updatedAt: Date | string } | null;
     /** Appends to the rule's alias field; nothing is saved until the rule is. */
     onadd: (aliases: string[]) => void;
   } = $props();
 
   let suggestions = $state<AliasSuggestion[] | null>(null);
+  let searching = $state(false);
+  let error = $state<string | null>(null);
   const selected = new SvelteSet<string>();
+  const controller = new AbortController();
 
-  const form = new FormState({
-    reset: false,
-    onSubmit: () => {
-      suggestions = null;
-      selected.clear();
-    },
-    onSuccess: (data) => {
-      suggestions = (data?.suggestions as AliasSuggestion[] | undefined) ?? [];
-    },
+  const slot = $derived<PendingSlot | null>(
+    rule
+      ? {
+          key: aliasPendingKey(page.data.user?.id ?? 0),
+          ruleId: rule.id,
+          updatedAt: new Date(rule.updatedAt).toISOString(),
+        }
+      : null
+  );
+
+  async function search() {
+    if (searching) return;
+    searching = true;
+    error = null;
+    suggestions = null;
+    selected.clear();
+    try {
+      const outcome = await runRuleSearch({
+        pathname: page.url.pathname,
+        rule: { subject, description, aliases: parseAliases(aliases) },
+        slot,
+        signal: controller.signal,
+      });
+      if (outcome.status === 'done') suggestions = outcome.suggestions;
+      else if (outcome.status === 'failed') error = outcome.error;
+      else if (outcome.status === 'unresolved')
+        error = `${outcome.reason} The search is kept: click again to check it without paying twice.`;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'The call failed.';
+    } finally {
+      searching = false;
+    }
+  }
+
+  // A search submitted before a reload is still running and billed: poll it, never submit again.
+  onMount(() => {
+    if (untrack(() => storedWorkflowId(slot))) void search();
   });
+  // Leaving the page keeps the stored workflow id; the next visit resumes it.
+  onDestroy(() => controller.abort());
 
   function toggle(alias: string, on: boolean) {
     if (on) selected.add(alias);
@@ -51,18 +90,21 @@
 </script>
 
 <div class="mt-2 space-y-2">
-  <form method="POST" action="?/suggestAliases" use:enhance={form.enhance} class="flex items-center gap-2">
-    <input type="hidden" name="subject" value={subject} />
-    <input type="hidden" name="description" value={description} />
-    <input type="hidden" name="aliases" value={aliases} />
-    <Button type="submit" size="xs" variant="outline" disabled={!subject.trim() || form.submitting}>
-      {form.submitting ? 'Searching the web…' : 'Suggest aliases'}
+  <div class="flex items-center gap-2">
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      disabled={!subject.trim() || searching}
+      onclick={search}
+    >
+      {searching ? 'Searching the web…' : 'Suggest aliases'}
     </Button>
     <span class="text-xs text-dark-2">One web-search call per click; it costs credits.</span>
-  </form>
+  </div>
 
-  {#if form.error}
-    <p class="text-sm text-red-300">{form.error}</p>
+  {#if error}
+    <p class="text-sm text-red-300">{error}</p>
   {/if}
 
   {#if suggestions}

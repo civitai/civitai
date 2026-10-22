@@ -58,6 +58,11 @@ export type AliasKind = (typeof ALIAS_KINDS)[number];
 /** An unknown kind is a label this build lacks, not a reason to discard a billed suggestion. */
 export const aliasKindField = z.enum(ALIAS_KINDS).catch('other');
 
+/** Orchestrator workflow ids are opaque tokens; this only rules out anything that is not one. */
+export const aliasWorkflowIdField = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{8,128}$/, 'invalid workflow id');
+
 // `ModerationRule.definition` of a Model rule. The moderator app writes it and the main app reads
 // it; a row failing this schema is skipped by the matcher, so the two sides must share it rather
 // than each keep a copy.
@@ -186,7 +191,10 @@ const holdMetaSchema = z.object({
   versionIds: z.array(z.number()).optional().catch(undefined),
   kind: z.literal('redetected').optional().catch(undefined),
   priorHoldId: z.number().optional().catch(undefined),
-  decision: z.enum([...MODEL_RULES_HOLD_DECISIONS, 'superseded']).optional().catch(undefined),
+  decision: z
+    .enum([...MODEL_RULES_HOLD_DECISIONS, 'superseded'])
+    .optional()
+    .catch(undefined),
 });
 
 /** Keeps whatever entries parse: a hold written by an older build, or one with its meta nulled, still lists. */

@@ -1,5 +1,10 @@
-import { submitWorkflow, type ChatCompletionStepTemplate } from '@civitai/orchestration-client';
 import {
+  getWorkflow,
+  submitWorkflow,
+  type ChatCompletionStepTemplate,
+} from '@civitai/orchestration-client';
+import {
+  aliasWorkflowIdField,
   MODEL_RULE_LIMITS,
   modelRuleAliasesField,
   modelRuleDescriptionField,
@@ -34,6 +39,7 @@ import {
   filterAliasSuggestions,
   parseAliasSuggestions,
   suggestAliasesInput,
+  ALIAS_WORKFLOW_TAG,
 } from '~/server/services/text-scan/model-rule-aliases';
 import { findLiteralMatchesInSubject } from '~/server/services/text-scan/model-rules-literal';
 import {
@@ -87,6 +93,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'quoteTexts',
   'literalModelRules',
   'suggestModelRuleAliases',
+  'aliasSuggestionResult',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -345,6 +352,12 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     ...suggestAliasesInput,
   }),
   z.object({
+    action: z.literal('aliasSuggestionResult'),
+    workflowId: aliasWorkflowIdField,
+    subject: suggestAliasesInput.subject,
+    existingAliases: suggestAliasesInput.existingAliases,
+  }),
+  z.object({
     action: z.literal('quoteTexts'),
     entityType,
     texts,
@@ -513,10 +526,44 @@ function unfinishedWorkflowError(
   return `workflow ${workflow.id} still ${status} after ${wait}s`;
 }
 
-const SUGGEST_ALIASES_WAIT_SECONDS = 90;
+// Short on purpose: a web search routinely outlasts any request window, so the caller polls
+// `aliasSuggestionResult` instead of holding a connection open.
+const SUGGEST_ALIASES_WAIT_SECONDS = 8;
 const SUGGEST_ALIASES_MAX_TOKENS = 2048;
 
-/** One billed web-search completion per call: no retry, and a workflow still running after the wait is reported, not awaited. */
+type AliasWorkflow = {
+  id: string;
+  status?: string;
+  tags?: string[];
+  steps?: unknown;
+  cost?: { total?: number };
+};
+
+/** Pending while the orchestrator still works, otherwise the filtered suggestions or a readable failure. */
+function aliasWorkflowOutcome(
+  workflow: AliasWorkflow,
+  rule: { subject: string; existingAliases: string[] }
+) {
+  const step = (Array.isArray(workflow.steps) ? workflow.steps[0] : undefined) as
+    | ChatCompletionStepLike
+    | undefined;
+  const status = workflow.status;
+  if (status && status !== 'succeeded' && !FAILED_WORKFLOW_STATUSES.includes(status))
+    return { ok: true as const, status: 'pending' as const, workflowId: workflow.id };
+
+  const unfinished = unfinishedWorkflowError(workflow, step, 0);
+  if (unfinished) return { ok: false as const, error: unfinished, workflowId: workflow.id };
+  const parsed = parseAliasSuggestions(step);
+  if (!parsed.ok) return { ok: false as const, error: parsed.error, workflowId: workflow.id };
+  return {
+    ok: true as const,
+    status: 'done' as const,
+    suggestions: filterAliasSuggestions(parsed.suggestions, rule),
+    costTotal: workflow.cost?.total,
+  };
+}
+
+/** One billed web-search completion per call, never retried; a search still running is returned as pending, not awaited. */
 async function suggestAliases(input: {
   subject: string;
   description: string;
@@ -528,6 +575,7 @@ async function suggestAliases(input: {
     query: { wait: SUGGEST_ALIASES_WAIT_SECONDS },
     body: {
       currencies: [],
+      tags: [ALIAS_WORKFLOW_TAG],
       steps: [
         {
           $type: 'chatCompletion',
@@ -545,26 +593,29 @@ async function suggestAliases(input: {
     },
   });
   if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
+  return aliasWorkflowOutcome(data as AliasWorkflow, input);
+}
 
-  const workflow = data as {
-    id: string;
-    status?: string;
-    steps?: unknown;
-    cost?: { total?: number };
-  };
-  const step = (Array.isArray(workflow.steps) ? workflow.steps[0] : undefined) as
-    | ChatCompletionStepLike
-    | undefined;
-  const unfinished = unfinishedWorkflowError(workflow, step, SUGGEST_ALIASES_WAIT_SECONDS);
-  if (unfinished) return { ok: false as const, error: unfinished, workflowId: workflow.id };
-
-  const parsed = parseAliasSuggestions(step);
-  if (!parsed.ok) return { ok: false as const, error: parsed.error, workflowId: workflow.id };
-  return {
-    ok: true as const,
-    suggestions: filterAliasSuggestions(parsed.suggestions, input),
-    costTotal: workflow.cost?.total,
-  };
+/**
+ * Reads back a search `suggestAliases` started. Only workflows carrying this feature's tag are
+ * readable, so the action cannot be used to fetch arbitrary workflows.
+ */
+async function aliasSuggestionResult(input: {
+  workflowId: string;
+  subject: string;
+  existingAliases: string[];
+}) {
+  const { data, error } = await getWorkflow({
+    client: internalOrchestratorClient,
+    path: { workflowId: input.workflowId },
+  });
+  if (!data) return { ok: false as const, error: workflowErrorText(error, 'workflow not found') };
+  const workflow = data as AliasWorkflow;
+  if (!(workflow.tags ?? []).includes(ALIAS_WORKFLOW_TAG))
+    return { ok: false as const, error: 'workflow is not an alias suggestion' };
+  const outcome = aliasWorkflowOutcome(workflow, input);
+  // A finished workflow that failed is an answer, not a transport error: the caller stops polling.
+  return outcome.ok ? outcome : { ...outcome, ok: true as const, status: 'failed' as const };
 }
 
 async function scanComposed(input: ComposeInput & { wait: number }) {
@@ -1078,6 +1129,11 @@ export async function runTextScanHarnessAction(
     case 'suggestModelRuleAliases': {
       const { action: _action, ...rule } = input;
       return { kind: 'json', body: await suggestAliases(rule) };
+    }
+
+    case 'aliasSuggestionResult': {
+      const { action: _action, ...lookup } = input;
+      return { kind: 'json', body: await aliasSuggestionResult(lookup) };
     }
 
     case 'quoteTexts': {

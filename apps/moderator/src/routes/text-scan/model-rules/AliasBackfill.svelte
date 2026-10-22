@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deserialize, enhance } from '$app/forms';
+  import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -14,23 +14,33 @@
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { browserStorage } from '$lib/text-scan-lab/changes.svelte';
   import { buildApprovalPayload, newAliases, readApprovalResult } from './alias-approval';
+  import { runRuleSearch, type PendingSlot } from './alias-client';
   import { createRunner, progressOf, type RuleRunStatus } from './alias-queue';
+  import type { SearchOutcome } from './alias-search';
   import {
+    aliasPendingKey,
     aliasSuggestionsKey,
+    isStalePending,
     isStaleSuggestion,
+    prunePending,
     pruneSuggestions,
+    readPending,
     readSuggestions,
+    setPending,
     writeSuggestions,
     type StoredSuggestions,
   } from './alias-suggestions-store';
   import { notifySaved } from './notify-saved';
-  import { ALIAS_KIND_LABELS, type SuggestAliasesResult } from './suggest-aliases';
+  import { ALIAS_KIND_LABELS } from './suggest-aliases';
 
   let { rules, userId }: { rules: ModelRuleView[]; userId: number } = $props();
 
   // Each call is a billed web search; more than this at once only risks the main app's rate limit.
   const CONCURRENCY = 3;
   const storageKey = untrack(() => aliasSuggestionsKey(userId));
+  const pendingKey = untrack(() => aliasPendingKey(userId));
+  // Stop aborts this; polling items hand their workflow id back to storage and wait for a later visit.
+  let controller = new AbortController();
 
   let showAll = $state(false);
   let q = $state('');
@@ -61,50 +71,71 @@
     fresh.reduce((n, rule) => n + newAliases(rule.aliases, picks[rule.id] ?? []).length, 0)
   );
 
+  const slotOf = (rule: ModelRuleView): PendingSlot => ({
+    key: pendingKey,
+    ruleId: rule.id,
+    updatedAt: new Date(rule.updatedAt).toISOString(),
+  });
+
   onMount(() => {
-    held = pruneSuggestions(readSuggestions(browserStorage(), storageKey), untrack(() => rules));
+    const current = untrack(() => rules);
+    held = pruneSuggestions(readSuggestions(browserStorage(), storageKey), current);
+    // A search submitted before a reload is still running (and billed): poll it, never submit again.
+    const store = browserStorage();
+    const pending = prunePending(readPending(store, pendingKey), current);
+    const resume: number[] = [];
+    for (const rule of current) {
+      const entry = pending[rule.id];
+      if (!entry) continue;
+      if (isStalePending(entry, rule.updatedAt)) setPending(store, pendingKey, rule.id, null);
+      else if (rule.enabled && !rule.legacy && !held[rule.id]) resume.push(rule.id);
+    }
+    start(resume);
   });
 
   function persist() {
     kept = writeSuggestions(browserStorage(), storageKey, $state.snapshot(held));
   }
 
-  async function requestSuggestions(rule: ModelRuleView) {
-    const body = new FormData();
-    body.set('subject', rule.subject);
-    body.set('description', rule.description);
-    body.set('aliases', rule.aliases.join('\n'));
-    const response = await fetch(`${page.url.pathname}?/suggestAliases`, {
-      method: 'POST',
-      body,
-      headers: { 'x-sveltekit-action': 'true' },
-    });
-    const result = deserialize(await response.text());
-    if (result.type === 'success') return result.data as unknown as SuggestAliasesResult;
-    if (result.type === 'failure')
-      throw new Error(String(result.data?.error ?? 'The suggester refused this rule.'));
-    throw new Error(result.type === 'error' ? result.error.message : 'The suggester did not answer.');
-  }
-
-  const runner = createRunner<number, { updatedAt: string; result: SuggestAliasesResult }>({
+  const runner = createRunner<number, { updatedAt: string; outcome: SearchOutcome }>({
     concurrency: CONCURRENCY,
     worker: async (id) => {
       const rule = untrack(() => rules).find((r) => r.id === id);
       if (!rule) throw new Error('This rule no longer exists.');
       statuses[id] = 'running';
-      const updatedAt = new Date(rule.updatedAt).toISOString();
-      return { updatedAt, result: await requestSuggestions(rule) };
+      const slot = slotOf(rule);
+      const outcome = await runRuleSearch({
+        pathname: page.url.pathname,
+        rule: { subject: rule.subject, description: rule.description, aliases: rule.aliases },
+        slot,
+        signal: controller.signal,
+      });
+      return { updatedAt: slot.updatedAt, outcome };
     },
     // A finished call is billed, so its answer is stored before anything else can go wrong.
-    onSettled: (id, outcome) => {
-      if (!outcome.ok) {
+    onSettled: (id, settled) => {
+      if (!settled.ok) {
         statuses[id] = 'failed';
-        errors[id] = outcome.error instanceof Error ? outcome.error.message : 'The call failed.';
+        errors[id] = settled.error instanceof Error ? settled.error.message : 'The call failed.';
         return;
       }
-      const { updatedAt, result } = outcome.value;
-      spent += result.costTotal ?? 0;
-      held[id] = { updatedAt, costTotal: result.costTotal, suggestions: result.suggestions };
+      const { updatedAt, outcome } = settled.value;
+      if (outcome.status === 'stopped') {
+        statuses[id] = 'idle';
+        return;
+      }
+      if (outcome.status === 'failed') {
+        statuses[id] = 'failed';
+        errors[id] = outcome.error;
+        return;
+      }
+      if (outcome.status === 'unresolved') {
+        statuses[id] = 'failed';
+        errors[id] = `${outcome.reason} The search is kept: Retry checks it again without paying twice.`;
+        return;
+      }
+      spent += outcome.costTotal ?? 0;
+      held[id] = { updatedAt, costTotal: outcome.costTotal, suggestions: outcome.suggestions };
       delete picks[id];
       delete errors[id];
       statuses[id] = 'done';
@@ -123,6 +154,8 @@
 
   function stop() {
     for (const id of runner.stop()) statuses[id] = 'idle';
+    controller.abort();
+    controller = new AbortController();
   }
 
   function discard(id: number) {
@@ -219,7 +252,10 @@
     {/if}
   </div>
   {#if working}
-    <p class="text-xs text-dark-2">Stop skips rules not yet started; calls already running finish and are kept.</p>
+    <p class="text-xs text-dark-2">
+      Stop skips rules not yet started and stops checking the ones running. Their searches are kept
+      and resume the next time you open this page.
+    </p>
   {/if}
   {#if !kept}
     <p class="text-sm text-yellow-300">

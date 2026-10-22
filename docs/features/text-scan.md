@@ -77,7 +77,11 @@ gets its earlier state recorded on its next save. The `ModerationRuleVersion` ta
 hand-applied migration; apply it before deploying the moderator app, since a rule save writes its
 version row in the same transaction. Alias suggestions come from an orchestrator call with web search
 and are applied only when a moderator approves them; an Alias backfill tab does this across existing
-rules. The page's Try panel runs the matcher on pasted text, a link or an id (no LLM, no prompt).
+rules. A search outlasts any request, so it is asynchronous: `suggestModelRuleAliases` submits the
+billed workflow (tagged `model-rule-aliases`) and returns its id, and `aliasSuggestionResult` reads it
+back (only workflows with that tag). The moderator app stores the id per rule in the browser as soon
+as it exists and polls; a reload resumes polling and never submits again, and only a search that
+really failed is re-submitted, by an explicit retry. The page's Try panel runs the matcher on pasted text, a link or an id (no LLM, no prompt).
 
 Rules written before this check are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules`
 (`count`, then `apply`), converts them in place once per environment. A rule that cannot be converted

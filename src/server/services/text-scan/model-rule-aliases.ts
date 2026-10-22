@@ -1,6 +1,7 @@
 import {
   ALIAS_KINDS,
   aliasKindField,
+  aliasWorkflowIdField,
   type AliasKind,
   modelRuleAliasField,
   modelRuleAliasesField,
@@ -18,6 +19,8 @@ export const suggestAliasesInput = {
   description: modelRuleDescriptionField.default(''),
   existingAliases: modelRuleAliasesField.default([]),
 };
+
+export const ALIAS_WORKFLOW_TAG = 'model-rule-aliases';
 
 // The prompt is deliberately generic: rule subjects are private, and the rule arrives as data in the
 // user message, never as instructions.

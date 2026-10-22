@@ -12,9 +12,18 @@ export type { AliasKind };
 
 export type AliasSuggestion = { alias: string; kind: AliasKind; note?: string; source?: string };
 
-export type SuggestAliasesResult = {
-  suggested: true;
-  suggestions: AliasSuggestion[];
-  /** What the call cost, when the main app reported it. */
-  costTotal?: number;
-};
+/** What a submit or a poll returned: the search is still running, or finished with these. */
+export type SuggestAliasesResult =
+  | { suggested: true; status: 'pending'; workflowId: string }
+  | {
+      suggested: true;
+      status: 'done';
+      suggestions: AliasSuggestion[];
+      /** What the call cost, when the main app reported it. */
+      costTotal?: number;
+    };
+
+export type AliasResultAnswer =
+  | { suggested: true; status: 'pending' }
+  | Extract<SuggestAliasesResult, { status: 'done' }>
+  | { suggested: true; status: 'failed'; error: string };
