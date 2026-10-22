@@ -98,6 +98,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
 
 import { takedownCosmeticShopItem, unarchiveCreatorShopItem } from '../creator-shop.service';
 import { refundShopPurchases } from '../creator-shop-withdrawn-refund.service';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
@@ -390,6 +391,30 @@ describe('takedownCosmeticShopItem', () => {
     expect(labelledAt).toBeLessThan(
       mocks.refundMultiAccountTransaction.mock.invocationCallOrder[0]
     );
+  });
+
+  // The backfill labels each takedown history entry by its `at`; a retry's label must match its own entry.
+  it('labels a retried takedown with the history entry the retry wrote', async () => {
+    const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
+    vi.mocked(recordShopVerdict).mockClear();
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      status: 'Archived',
+      meta: { takedown: { reason: 'IP infringement', moderatorId: 999, at: '2026-08-03' } },
+    });
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    const { meta } = mocks.shopItemUpdate.mock.calls[0][0].data as {
+      meta: CosmeticShopItemMeta;
+    };
+    const entry = meta.history!.at(-1)!;
+    expect(recordShopVerdict).toHaveBeenCalledWith(
+      dbMock.dbWrite,
+      42,
+      expect.objectContaining({ action: 'takedown', at: entry.at, note: entry.note })
+    );
+    expect(entry.note).toBe('Retried: IP infringement');
   });
 
   it('never refunds the creator submission fee', async () => {
