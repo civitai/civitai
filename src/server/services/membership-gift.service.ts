@@ -32,6 +32,9 @@ const TERMINAL_STATUSES = ['canceled', 'incomplete_expired'];
 // Statuses a gift coupon can safely be applied to.
 const EXTENDABLE_STATUSES = ['active', 'trialing'];
 const tierRank = (tier: string) => constants.memberships.tierOrder.indexOf(tier as never);
+// Tags the cancellation of a residual subscription we end ourselves, so its deletion webhook
+// does not hand the months back.
+const GIFT_REVOKED_CANCELLATION = 'membership-gift-revoked';
 
 // A gift fulfilled before gifts had to be accepted was applied in full when it was paid. It is
 // still 'Fulfilled' until the migration's second part runs, and it has no months left to give.
@@ -771,8 +774,8 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
  * The holder has no live subscription, so the months they are still owed become a free one
  * at the gift's tier that ends when they run out.
  *
- * This delivers the gift in full and completes it. There is nothing left to meter: the
- * subscription is free for exactly the months owed and then cancels itself.
+ * The gift is completed here, but the months stay recoverable: if the subscription ends before
+ * they run out, `restoreUndeliveredResidualMonths` puts the rest back on the gift.
  */
 async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; giftId: string }) {
   const gift = await dbWrite.membershipGift.findUnique({
@@ -789,7 +792,9 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
 
   const { priceId, currency } = await getTierMonthlyPrice(gift.tier);
   const customerId = await createCustomer({ id: gift.holderId, email: gift.holder.email });
-  const couponId = `gift_${gift.id}_residual`;
+  // Keyed on the first month it covers: a retry re-uses it, and a gift restored after an early
+  // cancel needs a fresh one, because the first is single-use and sized for the old remainder.
+  const couponId = `gift_${gift.id}_residual_m${gift.monthsConsumed + 1}`;
   const coupon =
     (await stripe.coupons.retrieve(couponId).catch(() => null)) ??
     (await stripe.coupons.create({
@@ -802,16 +807,25 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       metadata: { giftId: gift.id },
     }));
 
-  const subscription = await stripe.subscriptions.create({
-    customer: customerId,
-    items: [{ price: priceId }],
-    coupon: coupon.id,
-    cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
-    // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
-    // computed a non-zero amount the sub parks as `incomplete` instead of charging.
-    payment_behavior: 'default_incomplete',
-    metadata: { membershipGiftId: gift.id, membershipGift: 'true' },
-  });
+  const subscription = await stripe.subscriptions.create(
+    {
+      customer: customerId,
+      items: [{ price: priceId }],
+      coupon: coupon.id,
+      cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
+      // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
+      // computed a non-zero amount the sub parks as `incomplete` instead of charging.
+      payment_behavior: 'default_incomplete',
+      metadata: {
+        membershipGiftId: gift.id,
+        membershipGift: 'true',
+        residualMonths: String(gift.monthsRemaining),
+      },
+    },
+    // A mint that failed after this call is retried with the same coupon id; without the key
+    // the retry would open a second free subscription.
+    { idempotencyKey: couponId }
+  );
 
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
@@ -843,12 +857,108 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
 }
 
 /**
+ * A residual subscription ended before the months it was minted for ran out — the holder
+ * cancelled it, and Stripe moved its end to the current period end. Put the months it never
+ * delivered back on the gift, which the residual mint had already completed.
+ *
+ * Every billing period that started counts as delivered — its invoice already granted the
+ * month's Buzz — so each early end uses up at least one month and repeated cancels run the
+ * gift down instead of renewing it forever.
+ */
+export async function restoreUndeliveredResidualMonths({
+  subscription,
+}: {
+  subscription: Stripe.Subscription;
+}) {
+  const giftId = subscription.metadata?.membershipGiftId;
+  if (!giftId) return { restored: 0 };
+  if (subscription.cancellation_details?.comment === GIFT_REVOKED_CANCELLATION)
+    return { restored: 0 };
+
+  // Residual subscriptions minted before `residualMonths` was recorded carry it on the coupon.
+  const mintedMonths =
+    Number(subscription.metadata.residualMonths) ||
+    subscription.discount?.coupon?.duration_in_months ||
+    0;
+  const endedAt = subscription.ended_at ?? subscription.canceled_at;
+  if (!mintedMonths || !endedAt) return { restored: 0 };
+
+  // A day of slack keeps a period that ended on its boundary from counting the next one as
+  // started.
+  const monthsElapsed = dayjs
+    .unix(endedAt)
+    .subtract(1, 'day')
+    .diff(dayjs.unix(subscription.start_date), 'month', true);
+  const delivered = Math.max(1, Math.ceil(monthsElapsed));
+  const owed = mintedMonths - delivered;
+  if (owed <= 0) return { restored: 0 };
+
+  const gift = await dbWrite.membershipGift.findUnique({
+    where: { id: giftId },
+    select: {
+      id: true,
+      holderId: true,
+      monthsConsumed: true,
+      stripeCouponId: true,
+      holder: { select: { bannedAt: true, deletedAt: true } },
+    },
+  });
+  if (!gift) return { restored: 0 };
+  // Banning or deleting an account cancels its subscription; that must not mint a new one.
+  if (gift.holder.bannedAt || gift.holder.deletedAt) return { restored: 0 };
+
+  // Guarded on the subscription it was completed by, so a redelivered deletion — or one for an
+  // older residual of a gift that has since been minted again — changes nothing.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: {
+      id: gift.id,
+      status: MembershipGiftStatus.Completed,
+      stripeSubscriptionId: subscription.id,
+    },
+    data: {
+      status: MembershipGiftStatus.Active,
+      monthsRemaining: owed,
+      monthsConsumed: Math.max(0, gift.monthsConsumed - owed),
+    },
+  });
+  if (!count) return { restored: 0 };
+
+  if (gift.stripeCouponId) {
+    const stripe = await getServerStripe();
+    await stripe?.coupons.del(gift.stripeCouponId).catch(() => null);
+  }
+
+  await log({
+    type: 'warning',
+    stage: 'residual-restore',
+    giftId: gift.id,
+    userId: gift.holderId,
+    stripeSubscriptionId: subscription.id,
+    mintedMonths,
+    delivered,
+    restored: owed,
+  });
+  return { restored: owed, giftId: gift.id };
+}
+
+/**
  * A holder's subscription ended with gifted months still owed. Called from the subscription
  * webhook — hands them the remainder as a free membership rather than letting it evaporate.
+ * When the subscription that ended was itself a residual one, its undelivered months are
+ * restored first, so they are owed again.
  */
-export async function honorGiftResidualsForUser({ userId }: { userId: number }) {
+export async function honorGiftResidualsForUser({
+  userId,
+  endedSubscription,
+}: {
+  userId: number;
+  endedSubscription?: Stripe.Subscription;
+}) {
   const stripe = await getServerStripe();
   if (!stripe) return { minted: 0 };
+
+  if (endedSubscription)
+    await restoreUndeliveredResidualMonths({ subscription: endedSubscription });
 
   const gifts = await dbWrite.membershipGift.findMany({
     where: { holderId: userId, status: MembershipGiftStatus.Active, monthsRemaining: { gt: 0 } },
@@ -933,7 +1043,9 @@ export async function revokeMembershipGift({
     if (subscription && !TERMINAL_STATUSES.includes(subscription.status)) {
       if (subscription.metadata?.membershipGiftId === gift.id) {
         // Residual subscription — it exists only because of this payment
-        await stripe.subscriptions.del(subscription.id);
+        await stripe.subscriptions.del(subscription.id, {
+          cancellation_details: { comment: GIFT_REVOKED_CANCELLATION },
+        });
       }
     }
 
