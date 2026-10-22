@@ -22,7 +22,7 @@ export const POST = defineEndpoint({
       .describe('Required for a real run: the `eligible` a dry run just returned.'),
   }),
   returns:
-    '{ dryRun, plan: { eligible, excluded, byReason } } or, for a real run, { reported, plan }. 409 when the count moved.',
+    '{ dryRun, plan: { eligible, excluded, byReason } } or, for a real run, { reported, plan }. 409 when the count moved; 500 with `reported` when a page failed partway.',
   notes: [
     'Changes nothing on any post or image; a report only puts the post in the post reports queue.',
     'A rerun skips every post this job already reported, whatever that report’s status.',
@@ -39,6 +39,14 @@ export const POST = defineEndpoint({
       expectedCount,
       moderatorId: user.id,
     });
+    if (!result.ok && result.reason === 'failed')
+      return json(
+        {
+          error: `A page failed after ${result.reported} posts were reported. Those stay filed and a rerun skips them. Dry-run again.`,
+          reported: result.reported,
+        },
+        { status: 500 }
+      );
     if (!result.ok)
       return json(
         {

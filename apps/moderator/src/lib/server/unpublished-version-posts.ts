@@ -145,13 +145,16 @@ export async function planEnqueue(
 
 export type EnqueueResult =
   | { ok: true; reported: number; plan: EnqueuePlan }
-  | { ok: false; reason: 'countChanged'; plan: EnqueuePlan };
+  | { ok: false; reason: 'countChanged'; plan: EnqueuePlan }
+  /** A page failed. The pages before it are filed and `reported` counts them; a rerun skips them. */
+  | { ok: false; reason: 'failed'; reported: number; plan: EnqueuePlan };
 
 /**
  * Files one report per eligible post. Refused unless `expectedCount` is what a plan read from the
- * primary says now, so nothing is filed that the operator did not see counted. Each page is one
- * transaction under one advisory lock, and re-checks its posts inside it, so two concurrent runs
- * cannot report a post twice and a page that fails reports nothing.
+ * primary says now, and never files more than that count, though a post that became eligible since
+ * the plan can take the place of one that stopped being. Each page is one transaction under one
+ * advisory lock, and re-checks its posts inside it, so two concurrent runs cannot report a post
+ * twice and a page that fails reports nothing.
  */
 export async function enqueueUnpublishedVersionPosts({
   reasons,
@@ -168,47 +171,55 @@ export async function enqueueUnpublishedVersionPosts({
   if (plan.eligible !== expectedCount) return { ok: false, reason: 'countChanged', plan };
 
   let reported = 0;
-  for (let cursor = 0; ; ) {
-    const { size, last, filed } = await dbWrite.transaction().execute(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${ENQUEUE_SOURCE}))`.execute(trx);
-      const page = await candidatePage(trx, reasons, cursor, pageSize);
-      const filedIds: number[] = [];
-      for (const row of page) {
-        if (exclusionOf(row)) continue;
-        const report = await trx
-          .insertInto('Report')
-          .values({
-            userId: SYSTEM_USER_ID,
-            reason: 'AdminAttention',
-            status: 'Pending',
-            details: JSON.stringify({
-              source: ENQUEUE_SOURCE,
-              reason: 'Made with an unpublished resource',
-              comment: `Made with model version ${row.modelVersionId} (model ${row.modelId}), which a moderator unpublished (${row.unpublishedReason}). Review the post against the ToS.`,
-              modelId: row.modelId,
-              modelVersionId: row.modelVersionId,
-              unpublishedReason: row.unpublishedReason,
-              unpublishedLevel: row.level,
-            }),
-          })
-          .returning('id')
-          .executeTakeFirstOrThrow();
-        await trx
-          .insertInto('PostReport')
-          .values({ reportId: report.id, postId: row.postId })
-          .execute();
-        filedIds.push(row.postId);
-      }
-      await insertModActivityBatch(trx, {
-        userId: moderatorId,
-        entityType: 'post',
-        entityIds: filedIds,
-        activity: ENQUEUE_ACTIVITY,
+  try {
+    for (let cursor = 0; reported < expectedCount; ) {
+      const remaining = expectedCount - reported;
+      const { size, last, filed } = await dbWrite.transaction().execute(async (trx) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${ENQUEUE_SOURCE}))`.execute(trx);
+        const page = await candidatePage(trx, reasons, cursor, pageSize);
+        const filedIds: number[] = [];
+        for (const row of page) {
+          if (filedIds.length >= remaining) break;
+          if (exclusionOf(row)) continue;
+          const report = await trx
+            .insertInto('Report')
+            .values({
+              userId: SYSTEM_USER_ID,
+              reason: 'AdminAttention',
+              status: 'Pending',
+              details: JSON.stringify({
+                source: ENQUEUE_SOURCE,
+                reason: 'Made with an unpublished resource',
+                comment: `Made with model version ${row.modelVersionId} (model ${row.modelId}), which a moderator unpublished (${row.unpublishedReason}). Review the post against the ToS.`,
+                modelId: row.modelId,
+                modelVersionId: row.modelVersionId,
+                unpublishedReason: row.unpublishedReason,
+                unpublishedLevel: row.level,
+              }),
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow();
+          await trx
+            .insertInto('PostReport')
+            .values({ reportId: report.id, postId: row.postId })
+            .execute();
+          filedIds.push(row.postId);
+        }
+        await insertModActivityBatch(trx, {
+          userId: moderatorId,
+          entityType: 'post',
+          entityIds: filedIds,
+          activity: ENQUEUE_ACTIVITY,
+        });
+        return { size: page.length, last: page[page.length - 1]?.postId, filed: filedIds.length };
       });
-      return { size: page.length, last: page[page.length - 1]?.postId, filed: filedIds.length };
-    });
-    reported += filed;
-    if (size < pageSize || last === undefined) return { ok: true, reported, plan };
-    cursor = last;
+      reported += filed;
+      if (size < pageSize || last === undefined) break;
+      cursor = last;
+    }
+  } catch (e) {
+    console.error('[unpublished-version-posts] a page failed', { reported, error: e });
+    return { ok: false, reason: 'failed', reported, plan };
   }
+  return { ok: true, reported, plan };
 }
