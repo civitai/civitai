@@ -11,6 +11,7 @@
   import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import { userUrl } from '$lib/entity-url';
+  import { getEdgeUrl } from '$lib/media/edge-url';
   import { LINK_BUTTON, dateTime, ordinal, shortAge } from '$lib/format';
   import { disputeTitle, imageCaption, isNsfwRating } from '$lib/rating-dispute';
   import { ratingReviewStatusBadge } from '$lib/rating-review';
@@ -146,24 +147,33 @@
       {#if row.preview.images.length}
         <!-- Same tile as the sibling queues' evidence images; one scrolling strip so many images never wrap. -->
         <ul class="m-0 flex list-none gap-2.5 overflow-x-auto p-0 pb-2">
-          {#each row.preview.images as img (img.id)}
+          {#each row.preview.images as img, i (img.id)}
             {@const nsfw = isNsfwRating(img.nsfwLevel)}
+            {@const media = img.type === 'video' ? 'video' : 'image'}
             <li
               class={cn(
                 'relative aspect-[4/5] w-40 shrink-0 overflow-hidden rounded-lg border bg-dark-6',
                 nsfw ? 'border-amber-500' : 'border-dark-4'
               )}
             >
-              <EdgeMedia
-                src={img.url}
-                type={img.type}
-                anim={img.type === 'video' ? false : undefined}
-                width={450}
-                class="size-full object-cover object-top"
-              />
+              <a
+                href={getEdgeUrl(img.url, { type: media, original: true })}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open {media} {i + 1} of {row.preview.images.length} full size"
+                class="block size-full"
+              >
+                <EdgeMedia
+                  src={img.url}
+                  type={img.type}
+                  anim={img.type === 'video' ? false : undefined}
+                  width={450}
+                  class="size-full object-cover object-top"
+                />
+              </a>
               <span
                 class={cn(
-                  'absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',
+                  'pointer-events-none absolute bottom-2 left-2 rounded px-1.5 py-px text-[10px] font-semibold',
                   nsfw ? 'bg-amber-500 text-black' : 'bg-black/60 text-white'
                 )}
               >
@@ -193,18 +203,18 @@
       </TriageCard>
     {/if}
 
-    {#if row.scannedText}
-      {#key row.id}
-        <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
-      {/key}
-    {/if}
-
     {#if row.userComment}
       <TriageCard title="Owner comment" dense>
         <p class="m-0 wrap-anywhere whitespace-pre-wrap text-dark-0">{row.userComment}</p>
       </TriageCard>
     {:else}
       <p class="m-0 text-sm text-dark-2">No comment from owner</p>
+    {/if}
+
+    {#if row.scannedText}
+      {#key row.id}
+        <ScannedTextCard text={row.scannedText} entityLabel={typeLabel.toLowerCase()} />
+      {/key}
     {/if}
 
     {#if !pending}
