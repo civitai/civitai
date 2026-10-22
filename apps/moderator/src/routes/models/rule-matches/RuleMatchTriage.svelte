@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
   import { IconFileText } from '@tabler/icons-svelte';
@@ -27,6 +28,15 @@
     form,
     canStrike,
   }: { data: PageData; form: ActionData; canStrike: boolean } = $props();
+
+  // SvelteKit keeps the page's `form` until the next submit, so a reload alone leaves its refusal on
+  // screen. Remember which one the moderator reloaded away; a newer refusal is a different object.
+  let reloadedForm = $state<ActionData>(null);
+  const shownForm = $derived(form === reloadedForm ? null : form);
+  const reloadQueue = () => {
+    reloadedForm = form;
+    void invalidateAll();
+  };
 
   const parseKey = (raw: string) => (/^\d+$/.test(raw) ? Number(raw) : null);
 
@@ -157,7 +167,7 @@
   hasMore={data.hasMore}
   offset={data.offset}
   total={undefined}
-  {form}
+  form={shownForm}
   {listHeader}
   {empty}
   {notice}
@@ -205,6 +215,7 @@
       submit={state.submit}
       {actionHref}
       {onothers}
+      onreload={reloadQueue}
     />
   {/snippet}
 </TriageShell>

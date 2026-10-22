@@ -1,7 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
   import { IconLock } from '@tabler/icons-svelte';
@@ -59,6 +58,7 @@
     submit,
     actionHref,
     onothers,
+    onreload,
   }: {
     row: Row;
     civitaiUrl: string;
@@ -70,6 +70,8 @@
     actionHref: (action: string) => string;
     /** What the decision did to the owner's other holds, when it was applied to them as well. */
     onothers: (decision: string, results: OwnerResult[]) => void;
+    /** Reloads the queue after a refusal that asks for it. */
+    onreload: () => void;
   } = $props();
 
   const decidedRow = $derived(row.status !== 'Pending');
@@ -264,7 +266,7 @@
     {:else}
       {#if error && /reload/i.test(error)}
         <!-- Stale and superseded refusals both tell the moderator to reload; the current hold arrives with it. -->
-        <button type="button" class="text-[13px] {LINK_CLASS}" onclick={() => invalidateAll()}>
+        <button type="button" class="text-[13px] {LINK_CLASS}" onclick={onreload}>
           Reload the queue
         </button>
       {/if}
