@@ -20,6 +20,10 @@ export type SocialBlockSchema = z.infer<typeof socialBlockSchema>;
 const cosmeticShopSectionSchema = z.object({
   id: z.number(),
   maxItems: z.number().optional(),
+  // Shows a different `maxItems` of the section every `rotateHours`, the same set for every
+  // visitor in that window. Off by default: a block without it keeps the section's own order.
+  random: z.boolean().optional(),
+  rotateHours: z.number().min(1).max(168).optional(),
 });
 
 export type AutoFeatureSchema = z.infer<typeof autoFeatureSchema>;

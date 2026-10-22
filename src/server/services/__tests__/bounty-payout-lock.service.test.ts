@@ -2,13 +2,14 @@ import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 // Every Buzz-moving bounty path against one in-memory bounty whose `FOR UPDATE` read is a real
 // mutex held until the transaction callback settles, so two paths run concurrently serialize
 // exactly as they do on Postgres. A path that skips the lock is not serialized, and the race
 // tests below then see both paths move Buzz.
 
-const { buzz, events } = vi.hoisted(() => ({
+const { buzz, events, fileCheck } = vi.hoisted(() => ({
   buzz: {
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
@@ -18,6 +19,7 @@ const { buzz, events } = vi.hoisted(() => ({
     getTransactionByExternalId: vi.fn(),
   },
   events: [] as string[],
+  fileCheck: { on: false },
 }));
 
 // Hand-listed: the real buzz.service builds HTTP clients at load; these are the calls under test.
@@ -47,6 +49,17 @@ vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
 vi.mock('~/server/email/templates', () => ({
   bountyRefundedEmail: { send: vi.fn() },
 }));
+// The entry file check flag is set here for every case, never read from a live Flipt.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFlipt: vi.fn(
+      async (flag: string) =>
+        flag === actual.FLIPT_FEATURE_FLAGS.BOUNTY_ENTRY_FILE_CHECK && fileCheck.on
+    ),
+  };
+});
 
 const { awardBountyEntry, deleteBountyEntry } = await import(
   '~/server/services/bountyEntry.service'
@@ -83,6 +96,7 @@ type BountyRow = {
 
 let bounty: BountyRow | null;
 let benefactors: Benefactor[];
+let entryFiles: { metadata: Record<string, unknown> }[];
 const entry = { id: 10, bountyId: 4, userId: 8 };
 
 function mutex() {
@@ -166,6 +180,7 @@ function transactionClient(held: (() => void)[]) {
       },
     },
     bounty: {
+      findUnique: async () => (bounty ? { type: 'ModelCreation' } : null),
       update: async ({ data }: { data: Partial<BountyRow> }) => {
         await tick();
         Object.assign(bounty!, data);
@@ -180,7 +195,10 @@ function transactionClient(held: (() => void)[]) {
         return deleted;
       },
     },
-    file: { deleteMany: async () => ({ count: 0 }) },
+    file: {
+      findMany: async () => entryFiles.map((f) => ({ ...f })),
+      deleteMany: async () => ({ count: 0 }),
+    },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     image: { deleteMany: async () => ({ count: 0 }) },
   };
@@ -190,6 +208,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   events.length = 0;
   rowLock = mutex();
+  fileCheck.on = false;
+  entryFiles = [];
   bounty = {
     id: 4,
     userId: 5,
@@ -439,6 +459,33 @@ describe('awardBountyEntry', () => {
     await awardBountyEntry({ id: 10, userId: 5 });
     expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
     expect(bounty?.payoutSettledAt).toBeUndefined();
+  });
+});
+
+describe('awardBountyEntry and the entry file check', () => {
+  const checkedAt = '2026-01-01T00:00:00.000Z';
+  const blocked = { hashCheckedAt: checkedAt, blockedReason: 'owned by another user' };
+
+  it('with the check off, pays an entry whatever its files hold', async () => {
+    entryFiles = [{ metadata: blocked }];
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+  });
+
+  it('with the check on, pays an entry whose files all checked clean', async () => {
+    fileCheck.on = true;
+    entryFiles = [{ metadata: { hashCheckedAt: checkedAt } }];
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+    expect(find(5)?.awardedToId).toBe(10);
+  });
+
+  it('with the check on, refuses an entry with a blocked file and moves no Buzz', async () => {
+    fileCheck.on = true;
+    entryFiles = [{ metadata: blocked }];
+    await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow("can't be awarded");
+    expect(moved('award')).toBe(0);
+    expect(find(5)?.awardedToId).toBeNull();
   });
 });
 

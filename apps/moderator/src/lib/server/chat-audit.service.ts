@@ -363,6 +363,25 @@ async function chatExcerpts(
   );
 }
 
+// The read every message list starts from: one chat's messages with their sender, system rows left out
+// and deleted ones kept (see `getTranscript`). Callers add their own ordering, range and limit.
+const chatMessageRead = (chatId: number) =>
+  dbRead
+    .selectFrom('ChatMessage as cm')
+    .leftJoin('User as u', 'u.id', 'cm.userId')
+    .select([
+      'cm.id',
+      'cm.createdAt',
+      'cm.userId',
+      'cm.content',
+      'cm.editedAt',
+      'cm.deletedAt',
+      'u.username',
+      'u.bannedAt',
+    ])
+    .where('cm.chatId', '=', chatId)
+    .where('cm.userId', '!=', SYSTEM_USER_ID);
+
 // The transcript. Chat-scoped, so it rides the (chatId, id) index.
 //
 // System rows are excluded: 274,106 of them are `contentType = 'Embed'` whose content is a raw JSON
@@ -383,21 +402,7 @@ export async function getTranscript(
 }> {
   if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {} };
 
-  const rows = await dbRead
-    .selectFrom('ChatMessage as cm')
-    .leftJoin('User as u', 'u.id', 'cm.userId')
-    .select([
-      'cm.id',
-      'cm.createdAt',
-      'cm.userId',
-      'cm.content',
-      'cm.editedAt',
-      'cm.deletedAt',
-      'u.username',
-      'u.bannedAt',
-    ])
-    .where('cm.chatId', '=', chatId)
-    .where('cm.userId', '!=', SYSTEM_USER_ID)
+  const rows = await chatMessageRead(chatId)
     // Newest first so the cap drops the OLDEST; reversed here for reading order.
     .orderBy('cm.createdAt', 'desc')
     .limit(limit + 1)
@@ -408,6 +413,91 @@ export async function getTranscript(
   const edited = page.filter((r) => r.editedAt).map((r) => r.id);
 
   return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
+}
+
+/** Messages shown above the oldest held one and below the newest held one. */
+export const CHAT_WINDOW_BEFORE = 10;
+export const CHAT_WINDOW_AFTER = 5;
+/** Bounds the span between the first and last held message, which is one sender's 24-hour window. */
+const CHAT_WINDOW_SPAN_CAP = 200;
+
+export type ChatWindow = {
+  rows: ChatMessageRow[];
+  /** Messages from the first judged one up to the first row shown, left out of a span over the cap. */
+  omitted: number;
+};
+
+/**
+ * The conversation around a set of held messages, oldest first: every message from the first to the
+ * last held id, plus `before` earlier and `after` later ones. Keyset reads on `(chatId, id)`, so the
+ * cost follows the window, not the chat. System rows are excluded and deleted rows kept, as in
+ * `getTranscript`. Ids that are not in the chat anchor nothing. A span over the cap keeps its newest
+ * rows and the earlier context is read from where the kept ones start, so what is left out is counted
+ * in `omitted` and never hidden as a gap.
+ */
+export async function getChatWindow(
+  chatId: number,
+  ids: number[],
+  before = CHAT_WINDOW_BEFORE,
+  after = CHAT_WINDOW_AFTER
+): Promise<ChatWindow> {
+  const none = { rows: [], omitted: 0 };
+  const requested = ids.filter(isInt4Id);
+  if (!isInt4Id(chatId) || !requested.length) return none;
+
+  const read = () => chatMessageRead(chatId);
+
+  const anchors = (await read().where('cm.id', 'in', requested).execute()).map((row) => row.id);
+  if (!anchors.length) return none;
+  const first = Math.min(...anchors);
+  const last = Math.max(...anchors);
+
+  const newestSpan = await read()
+    .where('cm.id', '>=', first)
+    .where('cm.id', '<=', last)
+    .orderBy('cm.id', 'desc')
+    .limit(CHAT_WINDOW_SPAN_CAP + 1)
+    .execute();
+  const span = newestSpan.slice(0, CHAT_WINDOW_SPAN_CAP);
+  const spanStart = span[span.length - 1].id;
+
+  const [earlier, later] = await Promise.all([
+    read().where('cm.id', '<', spanStart).orderBy('cm.id', 'desc').limit(before).execute(),
+    read().where('cm.id', '>', last).orderBy('cm.id', 'asc').limit(after).execute(),
+  ]);
+
+  const shownFrom = earlier.length ? earlier[earlier.length - 1].id : spanStart;
+  const omitted =
+    newestSpan.length > CHAT_WINDOW_SPAN_CAP && shownFrom > first
+      ? Number(
+          (
+            await read()
+              .where('cm.id', '>=', first)
+              .where('cm.id', '<', shownFrom)
+              .clearSelect()
+              .select((eb) => eb.fn.countAll().as('n'))
+              .executeTakeFirstOrThrow()
+          ).n
+        )
+      : 0;
+
+  return { rows: [...earlier.reverse(), ...span.reverse(), ...later], omitted };
+}
+
+/** The held sender's judged messages alone, for a moderator who may not read the rest of the chat. */
+export async function getJudgedMessages(
+  chatId: number,
+  ids: number[],
+  senderId: number | null
+): Promise<ChatMessageRow[]> {
+  const requested = ids.filter(isInt4Id);
+  if (!isInt4Id(chatId) || senderId === null || !isInt4Id(senderId) || !requested.length) return [];
+
+  return chatMessageRead(chatId)
+    .where('cm.userId', '=', senderId)
+    .where('cm.id', 'in', requested)
+    .orderBy('cm.id', 'asc')
+    .execute();
 }
 
 /**

@@ -95,6 +95,7 @@ import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersio
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import {
+  toModelVersionPermissionData,
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
@@ -215,6 +216,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const adContainerRef = useRef<HTMLDivElement | null>(null);
   const [feeInfoOpened, feeInfoHandlers] = useDisclosure(false);
 
+  // The version is already on hand from model.getById: the permission hook and the children that call
+  // it read this instead of refetching modelVersion.getById.
+  const permissionData = toModelVersionPermissionData(model, version);
+
   const {
     isLoadingAccess,
     isDownloadable,
@@ -224,6 +229,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     generationRequiresPurchase,
   } = useModelVersionPermission({
     modelVersionId: version.id,
+    modelVersion: permissionData,
   });
   const mobile = useIsMobile();
 
@@ -394,7 +400,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
 
     dialogStore.trigger({
       component: ModelVersionEarlyAccessPurchase,
-      props: { modelVersionId: version.id, reason },
+      props: { modelVersionId: version.id, reason, modelVersion: permissionData },
     });
   };
   const { currentUserReview } = useQueryUserResourceReview({
@@ -1845,7 +1851,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </UserResourceReviewComposite>
           )}
 
-          <ModelVersionDonationGoal modelVersionId={version.id} />
+          <ModelVersionDonationGoal modelVersionId={version.id} modelVersion={permissionData} />
 
           {deferBelowFold ? (
             <div data-deferred-section="creator-card" className={classes.deferredCreatorCard} />

@@ -3,6 +3,7 @@ import type { SessionUser } from '~/types/session';
 import { CacheTTL } from '~/server/common/constants';
 import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -60,6 +61,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
+import { rotateShopSectionItems, shopBlockMaxItems } from '~/shared/utils/cosmetic-shop-rotation';
 import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
@@ -243,7 +245,24 @@ export const getHomeBlockById = async ({
   const metadata = await resolveHomeBlockMetadata(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
 
-  return getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata);
+  const rotation = metadata.cosmeticShopSection;
+  if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+  const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
+    sectionId: rotation.id,
+    rotateHours: rotation.rotateHours,
+    now: Date.now(),
+  });
+  return {
+    ...block,
+    cosmeticShopSection: {
+      ...block.cosmeticShopSection,
+      // A rotating block shows a handful of a section that can hold over a hundred. Three times
+      // that is room for the client to drop blocked sellers and still fill the row.
+      items: rotated.slice(0, 3 * (shopBlockMaxItems(rotation) ?? rotated.length)),
+    },
+  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -642,10 +661,13 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // No feature flags in this context — creator-listed items stay excluded
-      // from homepage shop blocks until the creatorShop flag goes GA.
+      // This body is shared by every viewer, so the creatorShop flag is resolved as it is for a
+      // signed-out one: on while the flag is public, off when it is pulled or Flipt can't answer.
+      // The per-viewer block filter the shop page applies can't live in a shared body either; the
+      // block applies it on the client.
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
+        creatorShopEnabled: await isFliptPublic('creator-shop'),
       });
 
       const [cosmeticShopSection] = data;

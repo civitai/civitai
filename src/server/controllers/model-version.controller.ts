@@ -69,6 +69,7 @@ import {
   unpublishModelVersionById,
   updateModelVersionById,
   upsertModelVersion,
+  withPairedStrength,
 } from '~/server/services/model-version.service';
 import { getVersionByIdWithGenerationChildren } from '~/server/services/model-version-generation-children.service';
 import {
@@ -97,7 +98,6 @@ import {
   ModelUsageControl,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import { removeNulls } from '~/utils/object-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
@@ -278,9 +278,10 @@ const loadModelVersion = async ({
       user: ctx?.user,
     }).then((data) =>
       data.map((item) => {
-        const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
-          {}) as RecommendedSettingsSchema;
-        return { ...item, ...removeNulls(settings) };
+        return withPairedStrength(
+          item,
+          regularResources.find((x) => x.resource.id === item.id)?.settings
+        );
       })
     );
 

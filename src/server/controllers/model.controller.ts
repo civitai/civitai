@@ -109,7 +109,11 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import {
+  bustMvCache,
+  getLinkedVaeIds,
+  withPairedStrength,
+} from '~/server/services/model-version.service';
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -205,7 +209,6 @@ import {
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
-import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
@@ -512,7 +515,7 @@ export const getModelHandler = async ({
           .map((item) => {
             const match = generationResources.find((x) => x.id === item.resource.id);
             if (!match) return null;
-            return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            return withPairedStrength(match, item.settings);
           })
           .filter(isDefined),
         linkedComponents: selectLiveLinkedComponents(

@@ -20,6 +20,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useMutateDonationGoal } from '~/components/DonationGoal/donation-goal.util';
 import {
+  type ModelVersionPermissionData,
   useModelVersionPermission,
   useQueryModelVersionDonationGoal,
 } from '~/components/Model/ModelVersions/model-version.utils';
@@ -34,9 +35,11 @@ import { getDisplayName } from '~/utils/string-helpers';
 const DonationGoalItem = ({
   donationGoal,
   modelVersionId,
+  modelVersion: modelVersionData,
 }: {
   donationGoal: ModelVersionDonationGoalData;
   modelVersionId: number;
+  modelVersion?: ModelVersionPermissionData;
 }) => {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -47,6 +50,7 @@ const DonationGoalItem = ({
 
   const { modelVersion } = useModelVersionPermission({
     modelVersionId,
+    modelVersion: modelVersionData,
   });
 
   const earlyAccessEndsAt = modelVersion?.paidAccess?.endsAt;
@@ -173,7 +177,7 @@ const DonationGoalItem = ({
   );
 };
 
-const ModelVersionDonationGoal = ({ modelVersionId }: Props) => {
+const ModelVersionDonationGoal = ({ modelVersionId, modelVersion }: Props) => {
   const { donationGoal, isLoading } = useQueryModelVersionDonationGoal({
     modelVersionId: modelVersionId,
   });
@@ -194,13 +198,19 @@ const ModelVersionDonationGoal = ({ modelVersionId }: Props) => {
       <Title order={4} mb={0}>
         Support this model
       </Title>
-      <DonationGoalItem donationGoal={donationGoal} modelVersionId={modelVersionId} />
+      <DonationGoalItem
+        donationGoal={donationGoal}
+        modelVersionId={modelVersionId}
+        modelVersion={modelVersion}
+      />
     </Stack>
   );
 };
 
 type Props = {
   modelVersionId: number;
+  /** The version as the model page already holds it; absent, the permission hook fetches it. */
+  modelVersion?: ModelVersionPermissionData;
 };
 
 export default ModelVersionDonationGoal;

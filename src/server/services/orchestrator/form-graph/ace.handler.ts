@@ -12,6 +12,7 @@ import type {
   ImageGenStepTemplate,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import {
   ACE_AUDIO_MAX_BPM,
   ACE_AUDIO_MIN_BPM,
@@ -20,7 +21,6 @@ import { defineHandler } from '../handlers/handler-factory';
 import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
-const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';
 const SIMPLE_CHAT_TEMPERATURE = 0.9;
 const SIMPLE_SYSTEM_PROMPT =
   'You write short song concepts. Always respond with the requested JSON shape.';
@@ -78,7 +78,7 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
     const chatStep: ChatCompletionStepTemplate & { metadata: { suppressOutput: true } } = {
       $type: 'chatCompletion',
       input: {
-        model: SIMPLE_CHAT_MODEL,
+        model: DEFAULT_CHAT_COMPLETION_MODEL,
         messages: [
           { role: 'system', content: SIMPLE_SYSTEM_PROMPT },
           {

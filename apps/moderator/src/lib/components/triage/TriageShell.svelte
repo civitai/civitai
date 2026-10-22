@@ -45,6 +45,7 @@
     queueLabel,
     itemLabel,
     decisionEnabled,
+    settled,
     decisionActions = ['uphold', 'overturn'],
     ondecision,
     pinned = null,
@@ -72,6 +73,8 @@
     itemLabel: string;
     /** One entry per decision, in key order: digit `n + 1` picks index `n`. False makes that key a no-op. */
     decisionEnabled: (row: R) => readonly boolean[];
+    /** A row that needs no decision although this shell did not act on it, so moving on skips it. */
+    settled?: (row: R) => boolean;
     /** The `data-triage-action` of the form each decision key submits, in key order. */
     decisionActions?: readonly string[];
     /** Handles a decision key itself instead of submitting that decision's form. */
@@ -164,7 +167,11 @@
 
   const advance = async (decidedKey: K) => {
     if (selectedRowKey !== decidedKey) return;
-    const next = nextUndecided(keys, decidedKey, (key) => acted.has(key));
+    const next = nextUndecided(
+      keys,
+      decidedKey,
+      (key) => acted.has(key) || (settled?.(rows[keys.indexOf(key)]) ?? false)
+    );
     if (next === null) return;
     select(next);
     await tick();

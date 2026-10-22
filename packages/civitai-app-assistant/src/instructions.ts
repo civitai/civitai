@@ -99,7 +99,33 @@ export function assistantSystemPrompt(
   const rules = `${assistantRules(runner)}${
     subagents ? `\n${assistantSubagentRules(runner)}` : ''
   }`;
-  return (defaults) => `${defaults}\n\n${rules}`;
+  return (defaults) =>
+    `${
+      runner === 'remote' ? withoutSentencesNaming(defaults, PAGE_ONLY_CHAT_TOOLS) : defaults
+    }\n\n${rules}`;
+}
+
+/**
+ * Tools the chat's own rules name whatever tools a reply has, which only the page can offer:
+ * `ask_choice` waits for the viewer to tap a choice, and on the runner nobody may be watching, so
+ * the runner does not offer it and its rules do not name it.
+ */
+export const PAGE_ONLY_CHAT_TOOLS = ['ask_choice'] as const;
+
+/** `text` with every sentence that names one of `tools` taken out, line by line. */
+export function withoutSentencesNaming(text: string, tools: readonly string[]): string {
+  const names = new RegExp(`\\b(?:${tools.join('|')})\\b`);
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!names.test(line)) return line;
+      // A sentence ends at ". " (the chat's rules use no other end inside a line).
+      return line
+        .split(/(?<=\.) +/)
+        .filter((sentence) => !names.test(sentence))
+        .join(' ');
+    })
+    .join('\n');
 }
 
 /** What a reply on the server runner is told about the preview, which only the page can show. */

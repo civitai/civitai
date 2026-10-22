@@ -62,6 +62,7 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -481,6 +482,7 @@ function CreatorShopReviewPage() {
     hasEdit: !!boxRevision,
     hasLive: !!mysteryReview.data?.live,
     loaded: !!mysteryReview.data,
+    takenDown: !!(selected?.meta as CosmeticShopItemMeta | null)?.takedown,
   });
 
   const queryUtils = trpc.useUtils();
@@ -623,6 +625,27 @@ function CreatorShopReviewPage() {
       confirmProps: { color: 'red' },
       centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
+    });
+  };
+
+  // Runs the same takedown again: it pays only refunds still owed, and strips the cosmetic from
+  // anyone who got it since.
+  const confirmRetryTakedown = () => {
+    if (!selected) return;
+    const takedown = (selected.meta as CosmeticShopItemMeta | null)?.takedown;
+    if (!takedown) return;
+    openConfirmModal({
+      title: 'Retry takedown',
+      children: (
+        <Text size="sm">
+          Finish the takedown of <strong>{selected.title}</strong>: refund any buyer or box opener
+          it still owes, then remove the cosmetic again. Nobody already refunded is paid twice.
+        </Text>
+      ),
+      labels: { confirm: 'Retry takedown', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => takedownItem.mutate({ id: selected.id, reason: takedown.reason }),
     });
   };
 
@@ -1231,6 +1254,19 @@ function CreatorShopReviewPage() {
                       </Paper>
                     </Stack>
 
+                    {selected.status === CosmeticShopItemStatus.Published && (
+                      <ShopSectionsPanel
+                        shopItemId={selected.id}
+                        placeable={
+                          isMysteryPack
+                            ? 'Mystery packs are sold only through their own page.'
+                            : selected.cosmetic && !selectedMeta.sellableByOthers
+                            ? "The creator hasn't allowed resale, so it can't be placed in an official section."
+                            : true
+                        }
+                      />
+                    )}
+
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Flag concerns
@@ -1263,10 +1299,28 @@ function CreatorShopReviewPage() {
                     only way back from a rejection, and it is moderator-only. */}
                 {selected.status === CosmeticShopItemStatus.Archived ? (
                   <Group pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
-                    <Text size="sm" c="dimmed">
-                      This item is archived and can&apos;t be reviewed. The creator can restore it
-                      from their shop&apos;s manage view.
-                    </Text>
+                    {actions.retryTakedown ? (
+                      <>
+                        <Text size="sm" c="dimmed" style={{ flex: 1 }}>
+                          This item was taken down. If refunds failed, retrying pays what is still
+                          owed.
+                        </Text>
+                        <Button
+                          color="red"
+                          variant="light"
+                          leftSection={<IconBan size={16} />}
+                          loading={takedownItem.isPending}
+                          onClick={confirmRetryTakedown}
+                        >
+                          Retry takedown
+                        </Button>
+                      </>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        This item is archived and can&apos;t be reviewed. The creator can restore it
+                        from their shop&apos;s manage view.
+                      </Text>
+                    )}
                   </Group>
                 ) : (
                   <Stack gap={8} pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>

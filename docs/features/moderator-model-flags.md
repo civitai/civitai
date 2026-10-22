@@ -53,6 +53,10 @@ Notes on the tabs:
   `dismiss`, `resolve-appeal`, `resolve-redetection`, `rule`); the spoke reads the queues itself. The set-minor,
   dismiss, confirm and revert endpoints take a model id only.
 
+The model preview tiles (also used by the CSAM text holds queue) show a video as a still poster
+frame with a play icon, and carry a "minor" or "acceptable minor" badge when the image scan tagged
+the image.
+
 ## Keyboard
 
 | Key | Action |

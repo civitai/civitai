@@ -112,6 +112,7 @@ import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import {
   modelVersionAccessInput,
+  toModelVersionPermissionData,
   useModelVersionPermission,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -487,7 +488,12 @@ export default function ModelDetailsV2({
     ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id,
+      // The version is already on hand from model.getById — don't refetch it via modelVersion.getById.
+      modelVersion:
+        model && selectedVersion ? toModelVersionPermissionData(model, selectedVersion) : undefined,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 

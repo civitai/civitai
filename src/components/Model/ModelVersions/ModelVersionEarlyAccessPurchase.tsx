@@ -13,6 +13,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
+  type ModelVersionPermissionData,
   useModelVersionPermission,
   useMutateModelVersion,
 } from '~/components/Model/ModelVersions/model-version.utils';
@@ -73,9 +74,12 @@ const PurchaseTierButtons = ({
 export const ModelVersionEarlyAccessPurchase = ({
   modelVersionId,
   reason,
+  modelVersion: modelVersionData,
 }: {
   modelVersionId: number;
   reason?: 'download' | 'generation';
+  /** The version as the model page already holds it; absent (the generator), the hook fetches it. */
+  modelVersion?: ModelVersionPermissionData;
 }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -83,6 +87,7 @@ export const ModelVersionEarlyAccessPurchase = ({
   const { isLoadingAccess, canDownload, generationRequiresPurchase, paidAccess, modelVersion } =
     useModelVersionPermission({
       modelVersionId,
+      modelVersion: modelVersionData,
     });
   const { modelVersionEarlyAccessPurchase, purchasingModelVersionEarlyAccess } =
     useMutateModelVersion();

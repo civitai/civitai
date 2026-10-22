@@ -20,11 +20,14 @@ const CONTROLNET_STEP_MIN = 0;
 
 const CONTROLNET_STEP_MAX = 1;
 
-const controlNetImageObjectSchema = z.object({
+/** An image a field carries: the orchestrator blob url, with dimensions once they are known. */
+export const imageObjectSchema = z.object({
   url: z.string(),
   width: z.number().optional(),
   height: z.number().optional(),
 });
+
+export type ImageObjectValue = z.infer<typeof imageObjectSchema>;
 
 /**
  * Mode for an individual ControlNet entry:
@@ -44,7 +47,7 @@ export type ControlNetMode = (typeof controlNetModes)[number];
 const controlNetEntryOutputSchema = z.object({
   preprocessor: z.string(),
   mode: z.enum(controlNetModes),
-  image: controlNetImageObjectSchema,
+  image: imageObjectSchema,
   weight: z.number().min(CONTROLNET_WEIGHT_MIN).max(CONTROLNET_WEIGHT_MAX),
   startStep: z.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX),
   endStep: z.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX),
