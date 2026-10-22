@@ -230,6 +230,29 @@ describe('validateInput records a refusal', () => {
     });
   });
 
+  /**
+   * `generateFromGraph` is `.input(z.any())` and hands `input.input` to the service, so a caller
+   * that sends the form values flat (the shape `whatIfFromGraph` takes) arrives here with
+   * `undefined`. The back-compat `sourceImage` fold dereferenced it first, and the request
+   * failed as a 500 `TypeError: Cannot read properties of undefined (reading 'sourceImage')`
+   * instead of a 400.
+   */
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'txt2img'],
+    ['an array', [{ workflow: 'txt2img' }]],
+  ])('refuses %s as a 400, not a TypeError', async (_label, input) => {
+    const { externalCtx } = await buildGenerationContext('free', {}, USER, 'api');
+
+    await expect(
+      (async () => validateInput(input as unknown as Record<string, unknown>, externalCtx))()
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Validation failed: input: expected an object of generation form values',
+    });
+  });
+
   it('clamps an unknown workflow instead of labelling it', async () => {
     const bogus = 'not-a-real-workflow-' + Date.now();
     const { externalCtx } = await buildGenerationContext('free', {}, USER, 'api');

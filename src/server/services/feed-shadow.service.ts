@@ -132,7 +132,7 @@ export type FeedQueryMode = 'shadow' | 'primary';
 export type FeedQueryCaller = 'website' | 'rest';
 const MAX_POST_IDS = 50;
 // The feed answers at most this many rows a page.
-const FEED_MAX_LIMIT = 200;
+export const FEED_MAX_LIMIT = 200;
 
 export { encodeFeedCursor, parseFeedCursor };
 

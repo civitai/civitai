@@ -399,8 +399,8 @@ describe('takedownCosmeticShopItem', () => {
       order.push('archive');
       return update?.(...args);
     });
-    const refund = mocks.refundMultiAccountTransaction.getMockImplementation();
-    mocks.refundMultiAccountTransaction.mockImplementation(async (...args: unknown[]) => {
+    const refund = mocks.refundTransaction.getMockImplementation();
+    mocks.refundTransaction.mockImplementation(async (...args: unknown[]) => {
       order.push('refund');
       return refund?.(...args);
     });
@@ -447,7 +447,7 @@ describe('takedownCosmeticShopItem', () => {
     });
 
     expect(mocks.shopItemUpdate.mock.calls[0][0].data.status).toBe('Archived');
-    expect(mocks.refundMultiAccountTransaction).toHaveBeenCalled();
+    expect(mocks.refundTransaction).toHaveBeenCalled();
     expect(result.failures).toEqual([]);
     expect(mocks.logToAxiom).toHaveBeenCalledWith({
       type: 'error',
