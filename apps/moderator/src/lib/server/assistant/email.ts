@@ -36,7 +36,9 @@ export async function getRegistrationEmails(
   return new Map(rows.map((r) => [r.id, r.email]));
 }
 
-const EMAIL = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
+// Unicode letters, since a registration email can carry them. The local part is capped at its RFC
+// length so a long unbroken run (a base64 blob in reasoning) costs linear time, not quadratic.
+const EMAIL = /[\p{L}\p{N}.!#$%&'*+/=?^_`{|}~-]{1,64}@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
 
 /** Free text with every email replaced by `[email]`, for a viewer without `assistant.emails`. */
 export const redactEmails = (text: string): string => text.replace(EMAIL, '[email]');

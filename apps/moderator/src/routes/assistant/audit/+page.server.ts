@@ -59,7 +59,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
           answer: r.answer && redact(r.answer),
           reasoning: r.reasoning && redact(r.reasoning),
           error: r.error && redact(r.error),
-          toolCalls: r.toolCalls.map((c) => ({ ...c, args: redactValues(c.args) })),
+          // The name too: an unknown one is the model's own text, echoed into the call's error.
+          toolCalls: r.toolCalls.map((c) => ({
+            ...c,
+            name: redact(c.name),
+            error: c.error && redact(c.error),
+            args: redactValues(c.args),
+          })),
         }));
   return {
     storeError,

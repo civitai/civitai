@@ -37,7 +37,15 @@ describe('redactEmails', () => {
     ['upper case', 'Mail JDOE@GMAIL.COM now', 'Mail [email] now'],
     ['end of a sentence', 'It was o_brien%1@tempmail.xyz.', 'It was [email].'],
     ['an apostrophe in the name', "o'neil&co@example.org", '[email]'],
+    ['accented letters', 'from josé@exämple.de today', 'from [email] today'],
   ])('catches %s', (_, text, out) => {
     expect(redactEmails(text)).toBe(out);
+  });
+
+  it('stays fast on a long unbroken run, such as a blob in the reasoning', () => {
+    const blob = 'a'.repeat(100_000);
+    const started = performance.now();
+    expect(redactEmails(blob)).toBe(blob);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });

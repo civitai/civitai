@@ -95,6 +95,7 @@ describe('/assistant/audit', () => {
           error: `provider echoed ${EMAIL}`,
           toolCalls: [
             { name: 'request_tool', args: { need: `line one\n${EMAIL}`, list: [`\t${EMAIL}`] } },
+            { name: EMAIL, args: {}, error: `No tool named "${EMAIL}"` },
           ],
         },
       ]);
