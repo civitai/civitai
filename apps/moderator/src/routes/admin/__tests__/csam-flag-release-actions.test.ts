@@ -46,8 +46,13 @@ beforeEach(() => {
 });
 
 describe('the release page', () => {
-  it.each(['count', 'release'] as const)('refuses a non-admin moderator (%s)', async (action) => {
-    expect(await run(action, MOD)).toMatchObject({ status: 403 });
+  it.each([
+    ['count', MOD],
+    ['release', MOD],
+    ['count', null],
+    ['release', null],
+  ] as const)('refuses a non-admin (%s, %o)', async (action, user) => {
+    expect(await run(action, user)).toMatchObject({ status: 403 });
     expect(releaseHeldUserCsamFlags).not.toHaveBeenCalled();
   });
 
@@ -66,11 +71,39 @@ describe('the release page', () => {
     });
   });
 
-  it('counts as a dry run', async () => {
-    await run('count');
+  it('counts as a dry run, and shows the count with the holds', async () => {
+    releaseHeldUserCsamFlags.mockResolvedValue({
+      ok: true,
+      dryRun: true,
+      count: 2,
+      remaining: 1,
+      legs: ['ban'],
+    });
+    expect(await run('count')).toEqual({
+      counted: {
+        userId: 40,
+        approvalRef: '2026-01-31-120000-0123abcd',
+        reason: 'cleared on review',
+        count: 2,
+        legs: ['ban'],
+      },
+    });
     expect(releaseHeldUserCsamFlags).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 40, dryRun: true, moderatorId: 42 })
     );
+  });
+
+  it('says how many still need a verdict, in the singular for one', async () => {
+    releaseHeldUserCsamFlags.mockResolvedValue({
+      ok: true,
+      dryRun: false,
+      count: 1,
+      remaining: 3,
+      legs: ['ban'],
+    });
+    expect(await run('release')).toEqual({
+      released: 'Released 1 flag for user #40. 3 still need a verdict.',
+    });
   });
 
   it.each([
@@ -81,6 +114,18 @@ describe('the release page', () => {
   ])('refuses a release with %s', async (_, patch) => {
     expect(await run('release', ADMIN, { ...FIELDS, ...patch })).toMatchObject({ status: 400 });
     expect(releaseHeldUserCsamFlags).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not-held', /not held.*CSAM queue/],
+    ['changed', /not the number you entered.*Nothing was released/],
+    ['unavailable', /no release table.*Nothing was released/],
+  ] as const)('explains a %s refusal', async (reason, message) => {
+    releaseHeldUserCsamFlags.mockResolvedValue({ ok: false, reason, legs: [] });
+    expect(await run('release')).toMatchObject({
+      status: 409,
+      data: { error: expect.stringMatching(message) },
+    });
   });
 
   it('says which holds refused, and that nothing changed', async () => {

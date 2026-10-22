@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
@@ -48,18 +49,14 @@ CREATE TABLE "${HOLD_MARKER_TABLE}" ("id" SERIAL PRIMARY KEY, "userId" INTEGER N
 CREATE VIEW "${HOLD_MARKER_VIEW}" AS SELECT "userId" FROM "${HOLD_MARKER_TABLE}" GROUP BY "userId";
 `;
 
-// As the migration writes it.
-const RELEASE_TABLE_SQL = `
-CREATE TABLE "${RELEASE_TABLE}" (
-  "id" SERIAL PRIMARY KEY,
-  "userId" INTEGER NOT NULL,
-  "moderatorId" INTEGER NOT NULL,
-  "approvalRef" TEXT NOT NULL,
-  "reason" TEXT NOT NULL,
-  "overriddenLegs" JSONB NOT NULL,
-  "imageCount" INTEGER NOT NULL,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
-);`;
+// The migration itself, so a column it adds that the release does not write fails here.
+const RELEASE_TABLE_SQL = readFileSync(
+  new URL(
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261125120000_csam_flag_release/migration.sql',
+    import.meta.url
+  ),
+  'utf8'
+);
 
 const ADMIN = 9;
 const REF = '2026-01-31-120000-0123abcd';
@@ -69,9 +66,13 @@ const minorBan = JSON.stringify({ banDetails: { reasonCode: 'SexualMinor' } });
 // banned for a reason that holds; the rest of each name is the hold it carries besides.
 const USERS = {
   banOnly: 200,
-  banOnlyAgain: 201,
+  badInput: 201,
   dryRun: 202,
   mismatch: 203,
+  raceMarker: 204,
+  auditFails: 205,
+  tableBack: 206,
+  drift: 207,
   report: 210,
   secondaryReport: 211,
   reportedImage: 212,
@@ -199,9 +200,8 @@ describe('releasing a user held only by a ban', () => {
         imageCount: 2,
       },
     ]);
-  });
 
-  it('leaves live images, other queues’ flags and other users untouched', async () => {
+    // Live images, other queues' flags and other users are untouched, and the images stay removed.
     const { rows } = await db.query<{ needsReview: string; ingestion: string }>(
       `SELECT "needsReview", ingestion FROM "Image" WHERE id IN (2003, 2009) ORDER BY id`
     );
@@ -210,7 +210,6 @@ describe('releasing a user held only by a ban', () => {
       { needsReview: 'minor', ingestion: 'Blocked' },
     ]);
     expect(await flagged(USERS.bystander)).toHaveLength(3);
-    // The images stay removed.
     expect((await db.query(`SELECT ingestion FROM "Image" WHERE id IN (2001, 2002)`)).rows).toEqual(
       [{ ingestion: 'Blocked' }, { ingestion: 'Blocked' }]
     );
@@ -242,17 +241,37 @@ describe('releasing a user held only by a ban', () => {
     expect(await releasesFor(id)).toEqual([]);
   });
 
-  it('refuses a malformed approval reference before touching anything', async () => {
+  it.each([
+    [
+      'a malformed approval reference',
+      { approvalRef: 'hub:request:x' },
+      'Not an approval reference.',
+    ],
+    ['a blank reason', { reason: '   ' }, 'A release needs a reason.'],
+  ])('refuses %s before touching anything', async (_, patch, message) => {
     await expect(
       releaseHeldUserCsamFlags({
-        userId: USERS.banOnlyAgain,
+        userId: USERS.badInput,
         expectedCount: 2,
-        approvalRef: 'hub:request:x',
+        approvalRef: REF,
         reason: 'r',
         moderatorId: ADMIN,
+        ...patch,
       })
-    ).rejects.toThrow('Not an approval reference.');
-    expect(await flagged(USERS.banOnlyAgain)).toHaveLength(3);
+    ).rejects.toThrow(message);
+    expect(await flagged(USERS.badInput)).toHaveLength(3);
+  });
+
+  it('releases nothing, and records nothing, when the audit write fails', async () => {
+    const id = USERS.auditFails;
+    await db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivityAway"`);
+    try {
+      await expect(release(id)).rejects.toThrow();
+    } finally {
+      await db.exec(`ALTER TABLE "ModActivityAway" RENAME TO "ModActivity"`);
+    }
+    expect(await flagged(id)).toHaveLength(3);
+    expect(await releasesFor(id)).toEqual([]);
   });
 });
 
@@ -304,7 +323,7 @@ describe('refusals that are not holds', () => {
   });
 
   it('refuses while the release table is missing', async () => {
-    const id = USERS.banOnlyAgain;
+    const id = USERS.tableBack;
     await db.exec(`ALTER TABLE "${RELEASE_TABLE}" RENAME TO "${RELEASE_TABLE}Away"`);
     try {
       expect(await release(id)).toEqual({ ok: false, reason: 'unavailable', legs: [] });
@@ -315,6 +334,37 @@ describe('refusals that are not holds', () => {
       await db.exec(`ALTER TABLE "${RELEASE_TABLE}Away" RENAME TO "${RELEASE_TABLE}"`);
     }
     // Control: the same user releases once the table is back.
+    expect(await release(id)).toMatchObject({ ok: true, count: 2 });
+  });
+});
+
+describe('the evidence-hold marker under a release', () => {
+  // Built when no marker existed, the update must still see one that appeared since.
+  it('is skipped by an update built before the marker objects appeared', async () => {
+    const kysely = dbHandle.current as Kysely<never>;
+    const id = USERS.raceMarker;
+    expect(await clearRemovedFlagsUnlessHeld(kysely as never, id, 'none', RELEASABLE_LEGS)).toEqual(
+      []
+    );
+    expect(await flagged(id)).toHaveLength(3);
+  });
+
+  it('refuses everyone while the table exists without its view', async () => {
+    const id = USERS.drift;
+    await db.exec(`DROP VIEW "${HOLD_MARKER_VIEW}"`);
+    try {
+      expect(await release(id)).toEqual({
+        ok: false,
+        reason: 'held',
+        legs: ['ban', 'evidenceHold'],
+      });
+      expect(await flagged(id)).toHaveLength(3);
+    } finally {
+      await db.exec(
+        `CREATE VIEW "${HOLD_MARKER_VIEW}" AS SELECT "userId" FROM "${HOLD_MARKER_TABLE}" GROUP BY "userId"`
+      );
+    }
+    // Control: the same user releases once the view is back.
     expect(await release(id)).toMatchObject({ ok: true, count: 2 });
   });
 });
