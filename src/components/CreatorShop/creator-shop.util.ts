@@ -334,16 +334,6 @@ export const useMutateCreatorShop = () => {
           failed
             ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
-        }${
-          // A pack's split can't be re-derived without a payout record, so the
-          // amount is only knowable here. Telling the moderator to finish by
-          // hand without telling them how much leaves them the one person who
-          // can act and can't see the number.
-          result.unrecoveredPackPool
-            ? ` ${numberWithCommas(
-                result.unrecoveredPackPool
-              )} Buzz of pack payouts could not be reversed.`
-            : ''
         }`,
       });
     },
