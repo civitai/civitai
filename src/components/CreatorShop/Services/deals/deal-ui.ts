@@ -383,3 +383,20 @@ export const exitInputs = {
 /** Which side's cancellation reasons a viewer is offered. */
 export const cancellationSide = (viewerRole: 'buyer' | 'seller' | 'moderator') =>
   viewerRole === 'seller' ? ('seller' as const) : ('buyer' as const);
+
+/**
+ * A seller's open deals on one offering, for their own storefront card. One deal opens straight
+ * to it; several open the list. `complete` is false when more deals exist than were loaded, so
+ * the count is a floor and there may be other deals on this offering.
+ */
+export function openDealsOnOffering(
+  deals: { id: number; offering: { id: number } }[],
+  offeringId: number,
+  complete: boolean
+) {
+  const onOffering = deals.filter((deal) => deal.offering.id === offeringId);
+  return {
+    count: onOffering.length,
+    dealId: complete && onOffering.length === 1 ? onOffering[0].id : undefined,
+  };
+}

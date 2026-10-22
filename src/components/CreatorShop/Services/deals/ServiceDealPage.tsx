@@ -130,6 +130,24 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
             <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
               {deal.seller.username}&apos;s shop
             </Anchor>
+            {deal.viewerRole !== 'moderator' && (
+              <>
+                {' · '}
+                <Anchor
+                  component={NextLink}
+                  href={
+                    deal.viewerRole === 'buyer'
+                      ? '/services/deals'
+                      : `/user/${deal.seller.username}/shop/manage?tab=services`
+                  }
+                  inherit
+                >
+                  {deal.viewerRole === 'buyer'
+                    ? 'See all your requests'
+                    : 'See all requests to you'}
+                </Anchor>
+              </>
+            )}
           </Text>
           <Group gap="sm" wrap="wrap">
             <Title order={1} size="h2">

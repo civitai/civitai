@@ -7,6 +7,7 @@ import {
   IconBook,
   IconBookmark,
   IconBookmarkEdit,
+  IconBriefcase,
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
@@ -150,6 +151,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Shop',
+        },
+        {
+          id: 'service-requests',
+          // The buyer's list of what they've requested; a seller's incoming ones are on the shop's
+          // manage page.
+          href: '/services/deals',
+          visible: !!currentUser && features.creatorServices,
+          icon: IconBriefcase,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My service requests',
         },
         {
           id: 'placements',

@@ -43,3 +43,15 @@ export function withMissingSections(saved?: SectionSetting[] | null): SectionSet
     if (!ordered.some((s) => s.key === key)) ordered.push({ key, visible: true });
   return ordered;
 }
+
+/** The sections a storefront renders, in order: visible in the saved settings and switched on. */
+export const storefrontSectionKeys = (
+  saved: SectionSetting[] | null | undefined,
+  features: FeatureAccess
+): CreatorShopSectionKey[] =>
+  withMissingSections(saved)
+    .filter((s) => s.visible && isSectionAvailable(s.key, features))
+    .map((s) => s.key);
+
+/** The storefront section's element id, so a link can jump to it. */
+export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`;
