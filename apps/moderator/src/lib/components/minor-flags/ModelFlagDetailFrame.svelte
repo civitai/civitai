@@ -1,11 +1,10 @@
 <script lang="ts">
   import type { ComponentProps, Snippet } from 'svelte';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import ModelPreview from '$lib/components/ModelPreview.svelte';
   import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
   import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
   import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
+  import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import type { ModelFlagDetail } from '$lib/minor-flags/model-detail';
 
   /**
@@ -41,40 +40,28 @@
   } = $props();
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col overflow-y-auto xl:overflow-hidden">
-  <ReportDetailColumns>
-    {#snippet header()}
-      <ModelDetailHeader
-        modelId={row.modelId}
-        modelName={row.modelName}
-        userId={row.userId}
-        {civitaiUrl}
-        {detail}
-        {chips}
-      />
-    {/snippet}
+{#snippet header()}
+  <ModelDetailHeader
+    modelId={row.modelId}
+    modelName={row.modelName}
+    userId={row.userId}
+    {civitaiUrl}
+    {detail}
+    {chips}
+  />
+{/snippet}
 
-    {#snippet evidence()}
-      <!-- Keyed so an open lightbox or training-data sheet cannot carry over to the next model. -->
-      {#key row.modelId}
-        <ModelPreview modelId={row.modelId} reportId={null} {civitaiUrl} {canViewTrainingData} />
-      {/key}
-    {/snippet}
+{#snippet evidence()}
+  <!-- Keyed so an open lightbox or training-data sheet cannot carry over to the next model. -->
+  {#key row.modelId}
+    <ModelPreview modelId={row.modelId} reportId={null} {civitaiUrl} {canViewTrainingData} />
+  {/key}
+{/snippet}
 
-    {#snippet actions()}
-      {@render info()}
-      <UploaderCard {row} {detail} />
-      <ModelFactsCard {row} {detail} />
-    {/snippet}
+{#snippet sidebar()}
+  {@render info()}
+  <UploaderCard {row} {detail} />
+  <ModelFactsCard {row} {detail} />
+{/snippet}
 
-    <!-- `data-triage-actions` is where `TriageShell` puts focus after a refusal. -->
-    {#snippet footer()}
-      {#if error}<ErrorAlert class="mb-3" message={error} />{/if}
-      <div data-triage-actions class="flex flex-col gap-2">
-        <!-- No whitespace inside: `empty:` must match while there is no verdict. -->
-        <div role="status" class="text-base font-medium text-white empty:sr-only">{#if verdict}{verdict}{/if}</div>
-        {#if !verdict}{@render decision()}{/if}
-      </div>
-    {/snippet}
-  </ReportDetailColumns>
-</div>
+<TriageColumns {verdict} {error} {header} {evidence} info={sidebar} {decision} />
