@@ -277,7 +277,10 @@ describe('stripe webhook: membership gift payments', () => {
 
       await deliver('checkout.session.async_payment_failed', giftSession('unpaid'));
 
-      expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+      expect(mockStripe.subscriptions.del).toHaveBeenCalledWith(
+        'sub_residual',
+        expect.objectContaining({ cancellation_details: { comment: 'membership-gift-revoked' } })
+      );
       expect(mockStripe.coupons.del).toHaveBeenCalledWith('gift_gift_1_residual');
       expect(statusesWritten).toEqual(['Failed']);
       expect(row.monthsRemaining).toBe(0);

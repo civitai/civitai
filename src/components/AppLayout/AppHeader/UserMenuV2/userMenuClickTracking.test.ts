@@ -142,7 +142,7 @@ describe('UserMenu_Click', () => {
     expect(mocks.actions).toEqual([
       {
         type: 'UserMenu_Click',
-        details: { item: 'inventory', group: 'rewards', pinned: false, surface: 'mobile' },
+        details: { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'mobile' },
       },
     ]);
     // A row's own handler is replaced, so it must still close the menu.
@@ -155,7 +155,7 @@ describe('UserMenu_Click', () => {
     await mount(createElement(MobileItem, { item: inventory, pinned: true, fromPins: true }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
@@ -180,7 +180,7 @@ describe('UserMenu_Click', () => {
     await mount(desktop({ item: inventory, onToggle: vi.fn() }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: false, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'desktop' },
     ]);
   });
 
@@ -206,7 +206,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'desktop' },
     ]);
   });
 
@@ -221,7 +221,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
@@ -267,6 +267,38 @@ describe('UserMenu_Click', () => {
         { item: 'buzz-dashboard', group: 'header', pinned: false, surface },
       ]);
       expect(trackActionInputSchema.safeParse(mocks.actions[1]).success).toBe(true);
+    }
+  );
+
+  // The profile row is in no group, so its own pin toggle is the only way to pin it again.
+  it.each([
+    [
+      'desktop',
+      (onTogglePin: () => void) => inMenu(createElement(DesktopHeaderRows, { onTogglePin })),
+      '[title="Pin"]',
+      true,
+    ],
+    [
+      'mobile',
+      (onTogglePin: () => void) => createElement(MobileHeaderRows, { onTogglePin }),
+      '[aria-label="Pin Your Profile"]',
+      false,
+    ],
+  ] as const)(
+    'toggles the %s profile pin without opening or recording the profile',
+    async (_surface, node, toggleSelector, insideLink) => {
+      const onTogglePin = vi.fn();
+      const preventDefault = vi.spyOn(Event.prototype, 'preventDefault');
+      await mount(node(onTogglePin));
+      await click(document.querySelector(toggleSelector));
+
+      expect(onTogglePin).toHaveBeenCalledTimes(1);
+      expect(mocks.actions).toEqual([]);
+      expect(handleClose).not.toHaveBeenCalled();
+      // Desktop only: the toggle sits inside the profile link, and `stopPropagation` keeps the click from
+      // reaching `noNavigate`, so this call is the toggle's own.
+      if (insideLink) expect(preventDefault).toHaveBeenCalled();
+      preventDefault.mockRestore();
     }
   );
 

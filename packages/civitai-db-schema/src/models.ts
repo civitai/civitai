@@ -4050,6 +4050,17 @@ export interface CsamReportAudit {
   changedBy: string;
 }
 
+export interface CsamFlagRelease {
+  id: number;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  overriddenLegs: JsonValue;
+  imageCount: number;
+  createdAt: Date;
+}
+
 export interface CsamReportArchiveObject {
   id: number;
   csamReportId: number;
