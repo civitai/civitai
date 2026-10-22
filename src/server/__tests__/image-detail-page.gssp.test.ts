@@ -61,7 +61,11 @@ function renderPage({ user, imageId, host }: Fixture) {
   } as unknown as GetServerSidePropsContext);
 }
 
-/** The prefetched queries as the client hydrates them: key and data, in prefetch order. */
+/**
+ * The prefetched queries as the client hydrates them: key and data, in prefetch order. The key's
+ * `browsingLevel` is not the page's: `publicProcedure`'s `applyDomainFeature` clamps the input in
+ * place to the domain's cap for the viewer, and the cache key is built from that same object.
+ */
 function queriesOf(trpcState: unknown) {
   const state = unionDeserialize(trpcState) as {
     queries: { queryKey: unknown; state: { data: unknown } }[];
@@ -98,7 +102,7 @@ describe('/images/[imageId] getServerSideProps', () => {
     });
     expect(queriesOf(result.props?.trpcState)).toEqual([
       {
-        queryKey: [['image', 'get'], { input: { id: 101 }, type: 'query' }],
+        queryKey: [['image', 'get'], { input: { id: 101, browsingLevel: 3 }, type: 'query' }],
         data: {
           id: 101,
           nsfwLevel: 4,
@@ -109,11 +113,17 @@ describe('/images/[imageId] getServerSideProps', () => {
         },
       },
       {
-        queryKey: [['image', 'getGenerationData'], { input: { id: 101 }, type: 'query' }],
+        queryKey: [
+          ['image', 'getGenerationData'],
+          { input: { id: 101, browsingLevel: 3 }, type: 'query' },
+        ],
         data: { id: 101, meta: { prompt: 'prompt-101' }, viewer: viewer(7) },
       },
       {
-        queryKey: [['image', 'getContestCollectionDetails'], { input: { id: 101 }, type: 'query' }],
+        queryKey: [
+          ['image', 'getContestCollectionDetails'],
+          { input: { id: 101, browsingLevel: 3 }, type: 'query' },
+        ],
         data: { id: 101, viewer: viewer(7) },
       },
       {
@@ -131,7 +141,7 @@ describe('/images/[imageId] getServerSideProps', () => {
     expect(procedureCalls).not.toContain('image.getContestCollectionDetails');
     expect(queriesOf(result.props?.trpcState)).toEqual([
       {
-        queryKey: [['image', 'get'], { input: { id: 101 }, type: 'query' }],
+        queryKey: [['image', 'get'], { input: { id: 101, browsingLevel: 1 }, type: 'query' }],
         data: {
           id: 101,
           nsfwLevel: 4,
@@ -142,7 +152,10 @@ describe('/images/[imageId] getServerSideProps', () => {
         },
       },
       {
-        queryKey: [['image', 'getGenerationData'], { input: { id: 101 }, type: 'query' }],
+        queryKey: [
+          ['image', 'getGenerationData'],
+          { input: { id: 101, browsingLevel: 1 }, type: 'query' },
+        ],
         data: { id: 101, meta: { prompt: 'prompt-101' }, viewer: viewer(null) },
       },
       {
