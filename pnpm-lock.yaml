@@ -53,8 +53,8 @@ importers:
         specifier: 0.2.0-beta.98
         version: 0.2.0-beta.98
       '@civitai/components-chat':
-        specifier: ^0.22.1
-        version: 0.22.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.25.0
+        version: 0.25.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -933,8 +933,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-assistant
       '@civitai/components-chat':
-        specifier: 0.22.1
-        version: 0.22.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.4.3)
+        specifier: 0.25.0
+        version: 0.25.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.4.3)
       '@dbos-inc/dbos-sdk':
         specifier: 5.3.0
         version: 5.3.0
@@ -2389,8 +2389,8 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.22.1':
-    resolution: {integrity: sha512-LcIGuMc7dwtuXDMXF645zAju7Xkr/gygvr/8xk9k7icu9ijKqPZ8Z2KsZcmEWWGvSI0XAGyFWjS9naPYqNIX7Q==}
+  '@civitai/components-chat@0.25.0':
+    resolution: {integrity: sha512-3+74g4R6mA2sADvPyiht/vplgGwI5TkG4WdyfrQ8fRDwseAfPTylr9TkYaj6JgHQ3oLLuLB+3YnkuSAWq0dbLQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
@@ -14078,7 +14078,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/components-chat@0.22.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.25.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
       '@civitai/components': 0.13.0(@civitai/sdk@0.11.0)
@@ -14094,7 +14094,7 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components-chat@0.22.1(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.4.3)':
+  '@civitai/components-chat@0.25.0(@civitai/sdk@0.11.0)(lit@3.3.3)(zod@4.4.3)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.4.3)
       '@civitai/components': 0.13.0(@civitai/sdk@0.11.0)
