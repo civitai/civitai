@@ -82,14 +82,17 @@ describe('parseAliasSuggestions', () => {
     expect(parseAliasSuggestions(step('', 'stop', good))).toMatchObject({ ok: true });
   });
 
+  it('keeps the suggestion and files an unknown kind under other', () => {
+    const result = parseAliasSuggestions(
+      step(JSON.stringify({ suggestions: [suggestion('Name Here', { kind: 'nickname' })] }))
+    );
+    expect(result).toMatchObject({ ok: true, suggestions: [{ alias: 'Name Here', kind: 'other' }] });
+  });
+
   it.each([
     ['empty reply', step('')],
     ['not JSON', step('Here are some names')],
     ['wrong shape', step(JSON.stringify({ names: ['x'] }))],
-    [
-      'unknown kind',
-      step(JSON.stringify({ suggestions: [suggestion('Name Here', { kind: 'nickname' })] })),
-    ],
     ['non-string alias', step(JSON.stringify({ suggestions: [suggestion(5 as never)] }))],
     ['cut off', step(JSON.stringify(good), 'length')],
     ['filtered', step('', 'content_filter')],

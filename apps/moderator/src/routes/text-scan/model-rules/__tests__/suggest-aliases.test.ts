@@ -48,7 +48,24 @@ describe('runSuggestAliases', () => {
       expect.any(String),
       expect.any(Number)
     );
-    expect(result).toEqual({ suggested: true, suggestions: [suggestion] });
+    expect(result).toEqual({ suggested: true, suggestions: [suggestion], costTotal: 4 });
+  });
+
+  it('keeps a suggestion whose kind this app does not know, filed under other', async () => {
+    endpoint.callModEndpoint.mockResolvedValue(
+      answered({ ok: true, suggestions: [{ ...suggestion, kind: 'nickname' }] })
+    );
+    expect(await runSuggestAliases(form({ subject: 'Alpha' }))).toMatchObject({
+      suggestions: [{ alias: 'Some Name', kind: 'other' }],
+    });
+  });
+
+  it('leaves the cost out when the main app reports none', async () => {
+    endpoint.callModEndpoint.mockResolvedValue(answered({ ok: true, suggestions: [] }));
+    expect(await runSuggestAliases(form({ subject: 'Alpha' }))).toEqual({
+      suggested: true,
+      suggestions: [],
+    });
   });
 
   it('allows more time than the default for the web search', async () => {

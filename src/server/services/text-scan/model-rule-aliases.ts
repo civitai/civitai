@@ -1,4 +1,7 @@
 import {
+  ALIAS_KINDS,
+  aliasKindField,
+  type AliasKind,
   modelRuleAliasField,
   modelRuleAliasesField,
   modelRuleDescriptionField,
@@ -7,14 +10,6 @@ import {
 import * as z from 'zod';
 import { literalTermKey } from '~/server/services/text-scan/model-rules-literal';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
-
-export const ALIAS_KINDS = [
-  'stage_name',
-  'other_script',
-  'romanization',
-  'trigger_word',
-  'other',
-] as const;
 
 export const MAX_ALIAS_SUGGESTIONS = 30;
 
@@ -96,7 +91,7 @@ export const ALIAS_SUGGEST_RESPONSE_FORMAT = {
 
 export type AliasSuggestion = {
   alias: string;
-  kind: (typeof ALIAS_KINDS)[number];
+  kind: AliasKind;
   note?: string;
   source?: string;
 };
@@ -105,7 +100,7 @@ const rawSuggestions = z.object({
   suggestions: z.array(
     z.object({
       alias: z.string(),
-      kind: z.enum(ALIAS_KINDS),
+      kind: aliasKindField,
       note: z.string().nullish(),
       source: z.string().nullish(),
     })

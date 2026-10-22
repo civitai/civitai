@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ALIAS_KINDS,
   MODEL_RULE_LIMITS,
+  aliasKindField,
   isSemanticDefinition,
   parseModelRulesHoldMeta,
   semanticModelRuleSchema,
@@ -104,5 +106,15 @@ describe('parseModelRulesHoldMeta', () => {
     });
     for (const meta of [null, undefined, 'x', []])
       expect(parseModelRulesHoldMeta(meta)).toMatchObject({ fields: [], matches: [], rules: [] });
+  });
+});
+
+describe('aliasKindField', () => {
+  it('accepts every known kind', () => {
+    for (const kind of ALIAS_KINDS) expect(aliasKindField.parse(kind)).toBe(kind);
+  });
+
+  it.each(['nickname', '', 5, null, undefined])('files %j under other', (value) => {
+    expect(aliasKindField.parse(value)).toBe('other');
   });
 });

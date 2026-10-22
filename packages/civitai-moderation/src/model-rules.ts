@@ -46,6 +46,18 @@ export const modelRuleAliasesField = z
     `At most ${MODEL_RULE_LIMITS.aliasesPerRule} aliases per rule.`
   );
 
+export const ALIAS_KINDS = [
+  'stage_name',
+  'other_script',
+  'romanization',
+  'trigger_word',
+  'other',
+] as const;
+export type AliasKind = (typeof ALIAS_KINDS)[number];
+
+/** An unknown kind is a label this build lacks, not a reason to discard a billed suggestion. */
+export const aliasKindField = z.enum(ALIAS_KINDS).catch('other');
+
 // `ModerationRule.definition` of a Model rule. The moderator app writes it and the main app reads
 // it; a row failing this schema is skipped by the matcher, so the two sides must share it rather
 // than each keep a copy.

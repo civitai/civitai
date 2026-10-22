@@ -1,10 +1,14 @@
 import { fail, type ActionFailure } from '@sveltejs/kit';
 import { z } from 'zod';
-import { modelRuleDescriptionField, modelRuleSubjectField } from '@civitai/moderation/model-rules';
+import {
+  aliasKindField,
+  modelRuleDescriptionField,
+  modelRuleSubjectField,
+} from '@civitai/moderation/model-rules';
 import { MODEL_RULE_LIMITS, parseAliases } from '$lib/model-rules';
 import { parseForm } from '$lib/server/query';
 import { callModEndpoint } from '$lib/server/user-actions.service';
-import { ALIAS_KINDS, type SuggestAliasesResult } from './suggest-aliases';
+import type { SuggestAliasesResult } from './suggest-aliases';
 
 // The main app waits up to 90s for the web search; this must outlast it, or a slow answer reads as
 // a failure although the call was billed.
@@ -26,7 +30,7 @@ const answerSchema = z.discriminatedUnion('ok', [
     suggestions: z.array(
       z.object({
         alias: z.string().min(1),
-        kind: z.enum(ALIAS_KINDS),
+        kind: aliasKindField,
         note: z.string().optional(),
         // Web text decides this link: only http(s) ever reaches an href.
         source: z
@@ -36,6 +40,7 @@ const answerSchema = z.discriminatedUnion('ok', [
           .catch(undefined),
       })
     ),
+    costTotal: z.number().finite().nonnegative().optional().catch(undefined),
   }),
   z.object({ ok: z.literal(false), error: z.string() }),
 ]);
@@ -66,5 +71,6 @@ export async function runSuggestAliases(
       error: 'The main app gave an unreadable answer; no aliases were suggested.',
     });
   if (!answer.data.ok) return fail(502, { error: answer.data.error });
-  return { suggested: true, suggestions: answer.data.suggestions };
+  const { suggestions, costTotal } = answer.data;
+  return { suggested: true, suggestions, ...(costTotal === undefined ? {} : { costTotal }) };
 }
