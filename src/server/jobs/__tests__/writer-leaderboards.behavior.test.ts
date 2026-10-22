@@ -89,15 +89,23 @@ beforeAll(async () => {
     CREATE TABLE "User" (
       id INT PRIMARY KEY, "isModerator" BOOLEAN DEFAULT false,
       "excludeFromLeaderboards" BOOLEAN NOT NULL DEFAULT false,
-      "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, "mutedAt" TIMESTAMP
+      "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, "mutedAt" TIMESTAMP, "leaderboardShowcase" TEXT
     );
     CREATE TABLE "Leaderboard" (
       id TEXT PRIMARY KEY, index INT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
       "scoringDescription" TEXT NOT NULL, query TEXT NOT NULL, active BOOLEAN NOT NULL, public BOOLEAN NOT NULL
     );
     CREATE TABLE "LeaderboardResult" (
-      "leaderboardId" TEXT, date DATE, "userId" INT, score INT, metrics JSONB, position INT
+      "leaderboardId" TEXT REFERENCES "Leaderboard" (id) ON DELETE CASCADE, date DATE, "userId" INT,
+      score INT, metrics JSONB, position INT
     );
+    CREATE TABLE "UserRank" (
+      "userId" INT PRIMARY KEY, "leaderboardRank" INT, "leaderboardId" TEXT, "leaderboardTitle" TEXT,
+      "leaderboardCosmetic" TEXT
+    );
+    CREATE TABLE "LegendsBoardResult" ("userId" INT, "leaderboardId" TEXT, score INT, metrics JSONB, position INT);
+    CREATE TABLE "KeyValue" (key TEXT PRIMARY KEY, value JSONB);
+    CREATE TABLE "Cosmetic" (id SERIAL PRIMARY KEY, "leaderboardId" TEXT, "leaderboardPosition" INT, data JSONB);
     CREATE TABLE "Tag" (id INT PRIMARY KEY, name TEXT NOT NULL, "isCategory" BOOLEAN NOT NULL);
     CREATE TABLE "Article" (
       id INT PRIMARY KEY, "userId" INT NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL,
@@ -232,5 +240,73 @@ describe('Rising Writers', () => {
     expect(byUser(rows, NEWCOMER)!.metrics).toEqual({ articles: 1, readers: 30 });
     expect(byUser(rows, NEWCOMER_FEW_READERS)).toBeUndefined();
     expect(byUser(rows, OLD_HIT)).toBeUndefined();
+  });
+});
+
+// Runs last: it deletes the boards the suites above read.
+describe('the rollback in the migration header', () => {
+  const rollbackSql = () => {
+    const lines = readFileSync(MIGRATION, 'utf-8').split('\n');
+    const start = lines.indexOf('--   BEGIN;');
+    const end = lines.indexOf('--   COMMIT;');
+    return lines
+      .slice(start, end + 1)
+      .map((line) => line.replace(/^-- {3}/, ''))
+      .join('\n');
+  };
+  const writerBoards = async () =>
+    (await q(`SELECT id FROM "Leaderboard" WHERE id LIKE 'writer-%' ORDER BY id`)).rows;
+
+  it('refuses while a badge for one of the boards exists, and changes nothing', async () => {
+    await q(
+      `INSERT INTO "Cosmetic" ("leaderboardId", "leaderboardPosition", data) VALUES ('writer-active', 10, '{}')`
+    );
+    await expect(holder.db.exec(rollbackSql())).rejects.toThrow(
+      'writer board badges exist: roll back their migration first'
+    );
+    await q('ROLLBACK');
+    expect(await writerBoards()).toHaveLength(4);
+    await q(`DELETE FROM "Cosmetic"`);
+  });
+
+  it('removes what the boards produced and rebuilds their ranks from the boards that remain', async () => {
+    await run('writer-active');
+    await holder.db.exec(`
+      INSERT INTO "LeaderboardResult" VALUES ('writer', current_date, ${STORYTELLER}, 500, '{}', 5);
+      INSERT INTO "Cosmetic" ("leaderboardId", "leaderboardPosition", data) VALUES ('writer', 10, '{"url": "bronze"}');
+      INSERT INTO "UserRank" VALUES (${STORYTELLER}, 1, 'writer-active', 'Active Writers', NULL),
+        (${OLD_HIT}, 3, 'writer', 'Writers', NULL);
+      INSERT INTO "LegendsBoardResult" VALUES (${STORYTELLER}, 'writer-story', 10, '{}', 1),
+        (${OLD_HIT}, 'writer', 10, '{}', 3);
+      INSERT INTO "KeyValue" VALUES ('leaderboard:populated:writer-active', '"2026-10-22"'),
+        ('leaderboard:populated:writer', '"2026-10-22"');
+    `);
+
+    await holder.db.exec(rollbackSql());
+
+    expect(await writerBoards()).toEqual([]);
+    const results = await q(`SELECT DISTINCT "leaderboardId" FROM "LeaderboardResult"`);
+    expect(results.rows).toEqual([{ leaderboardId: 'writer' }]);
+    const ranks = await q(`SELECT * FROM "UserRank" ORDER BY "userId"`);
+    expect(ranks.rows).toEqual([
+      {
+        userId: STORYTELLER,
+        leaderboardRank: 5,
+        leaderboardId: 'writer',
+        leaderboardTitle: 'Writers',
+        leaderboardCosmetic: 'bronze',
+      },
+      {
+        userId: OLD_HIT,
+        leaderboardRank: 3,
+        leaderboardId: 'writer',
+        leaderboardTitle: 'Writers',
+        leaderboardCosmetic: null,
+      },
+    ]);
+    const legends = await q(`SELECT DISTINCT "leaderboardId" FROM "LegendsBoardResult"`);
+    expect(legends.rows).toEqual([{ leaderboardId: 'writer' }]);
+    const keys = await q(`SELECT key FROM "KeyValue"`);
+    expect(keys.rows).toEqual([{ key: 'leaderboard:populated:writer' }]);
   });
 });

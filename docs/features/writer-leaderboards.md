@@ -40,7 +40,7 @@ keeps half its points.
 | Board          | Id              | Per-article value                                                   | Half-life | Articles counted                              |
 | -------------- | --------------- | ------------------------------------------------------------------- | --------- | --------------------------------------------- |
 | Active Writers | `writer-active` | `√views/2 + √reactions×7 + √bookmarks×10 + √comments×5`             | 90 days   | Best 30 from the last 365 days                |
-| Storytellers   | `writer-story`  | `√readers×7 + √comments×10 + √bookmarks×5 + √views/4`               | 60 days   | Best 40 story articles from the last 365 days |
+| Storytellers   | `writer-story`  | `√readers×7 + √comments×10 + √bookmarks×5 + √views/4`               | 90 days   | Best 20 story articles from the last 365 days |
 | Guide Writers  | `writer-guide`  | `√views/2 + √bookmarks×12 + √comments×4`, past-year engagement only | 365 days  | Best 20 guides of any age                     |
 | Rising Writers | `writer-rising` | `√readers×10 + √views/2`                                            | none      | Best 10                                       |
 
@@ -62,6 +62,12 @@ The same formulas ship as each board's `scoringDescription` in the migration; ch
 The migration inserts the four boards inactive and non-public, as the crucible boards were. Each
 query is run read-only first, then `active` and `public` are set together. Badges come in a separate
 migration once a board is public.
+
+Order matters both ways, because one board whose query fails stops the whole nightly run: activate
+the boards only after the build that replaces `{{metricExcludedUserIds}}` is deployed, and roll them
+back before reverting that build. The rollback is the `ROLLBACK` block in the migration header. It
+removes the boards and everything they produced, and rebuilds the affected users' ranks from the
+boards that remain.
 
 ## Key Files
 

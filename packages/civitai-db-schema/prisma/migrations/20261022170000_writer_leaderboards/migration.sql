@@ -3,7 +3,42 @@
 -- public flag, so a board populated before review would hand out Legendary Nameplates. To go live, run each
 -- query read-only, then set active = true and public = true together, not between 23:00 and 00:05 UTC
 -- (prepare-leaderboard reads active boards at 23:00; update-user-leaderboard-rank checks at 00:01).
+-- Activate only once the build that replaces {{metricExcludedUserIds}} is deployed: before it the token is a
+-- syntax error, and one failing board stops the whole nightly run, Legends and the cache purge included.
 -- Queries end in a `scores` CTE with no final SELECT (the job appends one) and may use {{metricExcludedUserIds}}.
+--
+-- ROLLBACK (deletes the four boards and what they produced: results, Legends rows, populated markers, and
+-- ranks taken from them, which are rebuilt from the remaining public boards as leaderboardRankInsert in
+-- user.service.ts does). Run it BEFORE reverting the job change, for the same reason as above. To keep the
+-- history instead, set active = false, public = false; Legends still counts a hidden board's past results.
+-- Afterwards purge the `leaderboard` cache tag, or wait for clear-leaderboard-cache at midnight.
+--   BEGIN;
+--   SET LOCAL lock_timeout = '3s';
+--   DO $$ BEGIN
+--     IF EXISTS (SELECT 1 FROM "Cosmetic" WHERE "leaderboardId" IN ('writer-active', 'writer-story', 'writer-guide', 'writer-rising')) THEN
+--       RAISE EXCEPTION 'writer board badges exist: roll back their migration first';
+--     END IF;
+--   END $$;
+--   CREATE TEMP TABLE writer_rank_users ON COMMIT DROP AS
+--     SELECT "userId" FROM "UserRank" WHERE "leaderboardId" IN ('writer-active', 'writer-story', 'writer-guide', 'writer-rising');
+--   DELETE FROM "UserRank" WHERE "userId" IN (SELECT "userId" FROM writer_rank_users);
+--   DELETE FROM "LegendsBoardResult" WHERE "leaderboardId" IN ('writer-active', 'writer-story', 'writer-guide', 'writer-rising');
+--   DELETE FROM "KeyValue" WHERE key IN ('leaderboard:populated:writer-active', 'leaderboard:populated:writer-story',
+--     'leaderboard:populated:writer-guide', 'leaderboard:populated:writer-rising');
+--   DELETE FROM "Leaderboard" WHERE id IN ('writer-active', 'writer-story', 'writer-guide', 'writer-rising');
+--   INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+--   SELECT DISTINCT ON (lr."userId")
+--     lr."userId", lr.position, lr."leaderboardId", l.title,
+--     (SELECT data ->> 'url' FROM "Cosmetic" c
+--      WHERE c."leaderboardId" = lr."leaderboardId" AND lr.position <= c."leaderboardPosition"
+--      ORDER BY c."leaderboardPosition" LIMIT 1)
+--   FROM "LeaderboardResult" lr
+--   JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+--   JOIN "User" u ON u.id = lr."userId"
+--   WHERE lr.date = current_date AND lr.position <= 100
+--     AND lr."userId" IN (SELECT "userId" FROM writer_rank_users)
+--   ORDER BY lr."userId", (lr."leaderboardId" IS NOT DISTINCT FROM u."leaderboardShowcase") DESC, lr.position;
+--   COMMIT;
 
 INSERT INTO "Leaderboard" (id, index, title, description, "scoringDescription", query, active, public)
 SELECT v.id, (SELECT max(index) FROM "Leaderboard") + v.ord, v.title, v.description, v.scoring, v.query, false, false
@@ -58,13 +93,13 @@ $q$WITH article_value AS (
 )$q$),
   ('writer-story', 2, 'Storytellers',
    'Serial fiction that readers come back for',
-   E'Per chapter: √(readers) × 7 + √(comments) × 10 + √(bookmarks) × 5 + √(views) / 4\n+ √(loyal readers) × 15, then × (0.5 + 0.5 × weeks with a new chapter in the last 12 / 12)\n---\nStory articles from the last 365 days; each loses half its points every 60 days\nYour best 40 chapters count\nLoyal readers reacted to 3 or more of your chapters in the last 90 days; your own reactions do not count',
+   E'Per chapter: √(readers) × 7 + √(comments) × 10 + √(bookmarks) × 5 + √(views) / 4\n+ √(loyal readers) × 15, then × (0.5 + 0.5 × weeks with a new chapter in the last 12 / 12)\n---\nStory articles from the last 365 days; each loses half its points every 90 days\nYour best 20 chapters count\nLoyal readers reacted to 3 or more of your chapters in the last 90 days; your own reactions do not count',
 $q$WITH story AS (
   SELECT
     a.id,
     a."userId",
     a."publishedAt",
-    POWER(0.5, EXTRACT(EPOCH FROM (now() - a."publishedAt")) / 86400.0 / 60) AS w
+    POWER(0.5, EXTRACT(EPOCH FROM (now() - a."publishedAt")) / 86400.0 / 90) AS w
   FROM "Article" a
   WHERE a.status = 'Published'
     AND a.availability = 'Public'
@@ -128,7 +163,7 @@ $q$WITH story AS (
   FROM ranked k
   LEFT JOIN loyal l ON l."userId" = k."userId"
   LEFT JOIN cadence c ON c."userId" = k."userId"
-  WHERE k.rn <= 40
+  WHERE k.rn <= 20
   GROUP BY k."userId"
 )$q$),
   ('writer-guide', 3, 'Guide Writers',
