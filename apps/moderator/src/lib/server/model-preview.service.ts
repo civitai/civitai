@@ -27,6 +27,10 @@ export type ModelPreviewImage = {
   nsfwLevel: number;
   /** Already removed by moderation. Shown, and said, so a moderator does not act twice on one image. */
   blocked: boolean;
+  /** Tagged as depicting a minor, or as a minor in an acceptable context: the evidence a minor flag
+   *  is judged on. */
+  minor: boolean;
+  acceptableMinor: boolean;
 };
 
 export type ModelPreviewFile = {
@@ -92,7 +96,15 @@ export async function getModelPreview(
       .selectFrom('Image as i')
       .innerJoin('Post as p', 'p.id', 'i.postId')
       .innerJoin('ModelVersion as mv', 'mv.id', 'p.modelVersionId')
-      .select(['i.id', 'i.url', 'i.type', 'i.nsfwLevel', 'i.ingestion'])
+      .select([
+        'i.id',
+        'i.url',
+        'i.type',
+        'i.nsfwLevel',
+        'i.ingestion',
+        'i.minor',
+        'i.acceptableMinor',
+      ])
       .where('mv.modelId', '=', modelId)
       .where('p.userId', '=', model.userId)
       .where('i.type', 'in', ['image', 'video'])
@@ -167,6 +179,8 @@ export async function getModelPreview(
       type: i.type as 'image' | 'video',
       nsfwLevel: i.nsfwLevel,
       blocked: i.ingestion === 'Blocked',
+      minor: i.minor,
+      acceptableMinor: i.acceptableMinor,
     })),
     moreImages: imageRows.length > IMAGE_LIMIT,
     // `getReports` caps its rows, so the total comes from its count, less this report.

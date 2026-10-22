@@ -35,7 +35,8 @@
   /**
    * The master-detail triage every queue shares: a list on the left, the open item on the right,
    * J/K to move, digits to rule (a decision with reasons opens its reason list for a second press), and the list dimming decided items in place (offsets shift under
-   * paging, so the page is only re-cut on request). The queues supply the rows and what they show.
+   * paging, so the page is only re-cut on request). The queues supply the rows and what they show;
+   * the detail goes on `TriageColumns`. The layout: docs/moderator-app/triage-layout.md.
    */
   let {
     rows,

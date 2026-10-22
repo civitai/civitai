@@ -441,6 +441,11 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
 export const canInvestigate = (locals: App.Locals) =>
   canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
 
+/** The training-data viewer: whoever `/api/training-data` would serve, so a page never shows a
+ *  button that only answers 403. */
+export const canViewTrainingData = (user: RoleUser) =>
+  canAccess(user, '/audit/training-data') || canAccess(user, '/audit/training-models');
+
 /** Same grant as User Lookup. */
 export const canSeeAddresses = (locals: App.Locals) =>
   canAccess(locals.user, '/retool/user-lookup');
