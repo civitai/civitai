@@ -2338,7 +2338,7 @@ export const reviewCreatorShopItem = async ({
 type TakedownFailure = {
   /** `box`: a box still holds the cosmetic, or an opening that drew it was left unrefunded. */
   stage: 'refund' | 'clawback' | 'box';
-  /** 0 for a box that could not be pulled: it is no one's to refund. */
+  /** 0 for a box that could not be pulled, or a payout whose key names no recipient. */
   userId: number;
   amount?: number;
   boxId?: number;

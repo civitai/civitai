@@ -574,6 +574,22 @@ describe('takedownCosmeticShopItem', () => {
     expect(result).toMatchObject({ refunded: 1, owedBack: 0, clawedBack: 0, failures: [] });
   });
 
+  // Deliberate: the ledger, not `meta.payouts`, is what was paid. A recorded payout without an id
+  // used to become a fresh charge from the creator; reading the record again would bring that back.
+  it('ignores the payout record and reverses the payout from the ledger, with no fresh charge', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      {
+        ...purchases[0],
+        meta: { payouts: [{ userId: 11, amount: 700, color: 'yellow' }], platformCut: 300 },
+      },
+    ]);
+
+    await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(refundedIds()).toEqual(['purchase-1-debit', 'purchase-1-payout']);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   it('leaves a purchase a withdrawn-item refund has begun to that refund', async () => {
     mocks.purchaseFindMany.mockResolvedValue([
       {
@@ -837,6 +853,32 @@ describe('takedownCosmeticShopItem', () => {
     ledger = {
       [charge]: [
         { transactionId: 'odd', externalTransactionId: `${charge}:55`, accountId: 55, amount: 200 },
+      ],
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(mocks.refundTransaction).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([
+      {
+        stage: 'refund',
+        userId: 101,
+        amount: 1000,
+        error: 'unexpected transactions under the purchase: 1',
+      },
+    ]);
+  });
+
+  // Only `<P>` and `<P>:<id>` are legacy payout shapes. Another bank row starting with the charge id
+  // is unknown and stops the purchase, like any unknown row.
+  it('refuses a bank row that only starts with a legacy charge id', async () => {
+    const charge = 'a1b2c3d4-0000-4000-8000-000000000006';
+    mocks.purchaseFindMany.mockResolvedValue([
+      { userId: 101, buzzTransactionId: charge, unitAmount: 1000, meta: null },
+    ]);
+    ledger = {
+      [charge]: [
+        { transactionId: 'fee', externalTransactionId: `${charge}-fee`, accountId: 0, amount: 50 },
       ],
     };
 
