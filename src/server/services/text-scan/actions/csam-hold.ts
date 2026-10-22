@@ -140,7 +140,9 @@ async function writePendingHold(hold: {
         PREVIOUS_TEXTS_KEPT
       ),
     });
-    await tx.$executeRaw`
+    // A decision's claim does not take the entity lock, so one can land after the read above; the
+    // update matches only the row as read and unclaimed, rather than overwrite the claim.
+    const updated = await tx.$executeRaw`
       UPDATE "TextScanHold" SET
         "textHash" = ${hold.textHash},
         "text" = ${hold.text},
@@ -150,8 +152,11 @@ async function writePendingHold(hold: {
         "contentAt" = (${hold.contentAt?.toISOString() ?? null}::timestamptz AT TIME ZONE 'UTC'),
         "meta" = ${meta}::jsonb,
         "updatedAt" = now()
-      WHERE "id" = ${pending.id}
+      WHERE "id" = ${pending.id} AND "status" = 'Pending' AND "textHash" = ${pending.textHash}
+        AND ("meta"->'decisionClaim' IS NULL
+          OR coalesce(("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '30 minutes', false))
     `;
+    if (!updated) throw new CsamHoldBusyError();
     return { holdId: pending.id, write: 'updated', priorHoldId };
   });
 }

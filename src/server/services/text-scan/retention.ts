@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { textScanEmEntityType } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
@@ -85,17 +85,21 @@ export async function cleanupTextScanRows({
       )
     : { deleted: 0, exhausted: false };
 
-  const { count: holdTextCleared } = await dbWrite.textScanHold.updateMany({
-    where: {
-      // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet.
-      // A migration-superseded duplicate has no decider and was never ruled on.
-      status: 'Dismissed',
-      decidedById: { not: null },
-      decidedAt: { lt: decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days') },
-      text: { not: '' },
-    },
-    data: { text: '', meta: Prisma.DbNull },
-  });
+  // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet. A
+  // migration-superseded duplicate keeps its marker, which the hold writer and the queue read to tell it
+  // from a ruling.
+  const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days');
+  const holdTextCleared = await dbWrite.$executeRaw`
+    UPDATE "TextScanHold" SET
+      "text" = '',
+      "meta" = CASE WHEN "meta"->>'decision' = 'superseded'
+        THEN jsonb_build_object('decision', 'superseded', 'superseded', true,
+          'supersededBy', "meta"->'supersededBy')
+        END,
+      "updatedAt" = now()
+    WHERE "status" = 'Dismissed' AND "text" <> ''
+      AND "decidedAt" < (${holdCutoff.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+  `;
 
   return {
     shadowDeleted: shadow.deleted,

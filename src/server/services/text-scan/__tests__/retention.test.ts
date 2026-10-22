@@ -1,5 +1,7 @@
-import { Prisma } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { cleanupTextScanRows, TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES } = await import(
@@ -7,7 +9,6 @@ const { cleanupTextScanRows, TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES } = await import(
 );
 
 const em = dbMock.dbWrite.entityModeration;
-const holds = dbMock.dbWrite.textScanHold;
 const ids = (n: number, from = 1) => Array.from({ length: n }, (_, i) => ({ id: from + i }));
 
 beforeEach(() => {
@@ -19,7 +20,6 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
   em.findMany.mockResolvedValue([]);
   em.deleteMany.mockImplementation(async ({ where }: any) => ({ count: where.id.in.length }));
-  holds.updateMany.mockResolvedValue({ count: 0 });
 });
 afterEach(() => vi.useRealTimers());
 
@@ -103,26 +103,6 @@ describe('cleanupTextScanRows', () => {
     expect(result).toMatchObject({ shadowDeleted: 2, cleanDeleted: 0, exhausted: false });
   });
 
-  it('clears the text and meta of holds decided over 30 days ago, keeping the row', async () => {
-    holds.updateMany.mockResolvedValue({ count: 4 });
-    const result = await cleanupTextScanRows({
-      graduatedEntityTypes: [],
-      cleanRowEntityTypes: [],
-      olderThanDays: 1,
-    });
-    expect(holds.updateMany).toHaveBeenCalledWith({
-      where: {
-        status: 'Dismissed',
-        // A migration-superseded duplicate has no decider and was never ruled on.
-        decidedById: { not: null },
-        decidedAt: { lt: new Date('2026-09-01T00:00:00Z') },
-        text: { not: '' },
-      },
-      data: { text: '', meta: Prisma.DbNull },
-    });
-    expect(result.holdTextCleared).toBe(4);
-  });
-
   it('does nothing when no entity types are named', async () => {
     await cleanupTextScanRows({
       graduatedEntityTypes: [],
@@ -130,5 +110,81 @@ describe('cleanupTextScanRows', () => {
       olderThanDays: 1,
     });
     expect(em.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('cleanupTextScanRows on csam holds', () => {
+  const db = { pg: null as unknown as PGlite };
+  const asRawSql = (strings: TemplateStringsArray, values: unknown[]) =>
+    strings.reduce((acc, part, i) => acc + part + (i < values.length ? `$${i + 1}` : ''), '');
+  const SUPERSEDED = { decision: 'superseded', superseded: true, supersededBy: 1 };
+
+  beforeAll(async () => {
+    db.pg = await PGlite.create();
+    await db.pg.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../../packages/civitai-db-schema/prisma/migrations/20261016150000_text_scan_hold/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+  });
+  afterAll(async () => {
+    await db.pg.close();
+  });
+  beforeEach(async () => {
+    await db.pg.exec('TRUNCATE "TextScanHold" RESTART IDENTITY');
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values) =>
+        (await db.pg.query(asRawSql(strings, values), values)).affectedRows ?? 0
+    );
+  });
+
+  const hold = (
+    entityId: number,
+    status: string,
+    decidedAt: string | null,
+    decidedById: number | null,
+    meta: object
+  ) =>
+    db.pg.query(
+      `INSERT INTO "TextScanHold" ("entityType","entityId","label","textHash","text","reason","status",
+         "decidedAt","decidedById","meta","updatedAt")
+       VALUES ('Comment',$1,'csam','h','held text','r',$2,$3,$4,$5::jsonb,now())`,
+      [entityId, status, decidedAt, decidedById, JSON.stringify(meta)]
+    );
+  const held = async () =>
+    (
+      await db.pg.query<{ entityId: number; text: string; meta: unknown }>(
+        'SELECT "entityId","text","meta" FROM "TextScanHold" ORDER BY "entityId"'
+      )
+    ).rows;
+
+  it('clears dismissed and superseded holds 30 days after the decision, keeping the superseded marker', async () => {
+    // System time is 2026-10-01; the cutoff is 2026-09-01.
+    await hold(1, 'Dismissed', '2026-08-31T00:00:00', 9, { decision: 'dismiss', note: 'x' });
+    await hold(2, 'Dismissed', '2026-08-31T00:00:00', null, SUPERSEDED);
+    await hold(3, 'Dismissed', '2026-09-02T00:00:00', null, SUPERSEDED);
+    await hold(4, 'Dismissed', '2026-09-02T00:00:00', 9, { decision: 'dismiss' });
+    await hold(5, 'Pending', null, null, { decisionClaim: { by: 9 } });
+    await hold(6, 'Confirmed', '2026-08-31T00:00:00', 9, { decision: 'remove' });
+
+    const result = await cleanupTextScanRows({
+      graduatedEntityTypes: [],
+      cleanRowEntityTypes: [],
+      olderThanDays: 1,
+    });
+
+    expect(result.holdTextCleared).toBe(2);
+    expect(await held()).toEqual([
+      { entityId: 1, text: '', meta: null },
+      { entityId: 2, text: '', meta: SUPERSEDED },
+      { entityId: 3, text: 'held text', meta: SUPERSEDED },
+      { entityId: 4, text: 'held text', meta: { decision: 'dismiss' } },
+      { entityId: 5, text: 'held text', meta: { decisionClaim: { by: 9 } } },
+      { entityId: 6, text: 'held text', meta: { decision: 'remove' } },
+    ]);
   });
 });
