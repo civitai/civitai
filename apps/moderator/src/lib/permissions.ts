@@ -60,6 +60,12 @@ export const PERMISSIONS = [
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
   { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
+  // Money: cancels a gifter's payment or refunds it, and ends the recipient's gifted membership.
+  // Checked by this literal in the main app's `/api/mod/membership-gift/*` (`ModeratorGrantId`).
+  {
+    id: 'user.membership.gift',
+    label: 'Revoke or refund a membership gift whose payment did not clear',
+  },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.
