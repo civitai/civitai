@@ -2,12 +2,16 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
-  '/api/admin/temp/creator-shop-label-backfill': () => import('~/pages/api/admin/temp/creator-shop-label-backfill'),
-  '/api/admin/temp/text-scan-clavata-cutover': () => import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
+  '/api/admin/temp/creator-shop-label-backfill': () =>
+    import('~/pages/api/admin/temp/creator-shop-label-backfill'),
+  '/api/admin/temp/text-scan-clavata-cutover': () =>
+    import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
-  '/api/mod/bounty-entry-file/clear-check': () => import('~/pages/api/mod/bounty-entry-file/clear-check'),
-  '/api/mod/bounty-entry-file/reblock-check': () => import('~/pages/api/mod/bounty-entry-file/reblock-check'),
+  '/api/mod/bounty-entry-file/clear-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/clear-check'),
+  '/api/mod/bounty-entry-file/reblock-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
@@ -18,10 +22,13 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/holdings-removed': () => import('~/pages/api/mod/cosmetic/holdings-removed'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
-  '/api/mod/creator-services/deal-file-url': () => import('~/pages/api/mod/creator-services/deal-file-url'),
-  '/api/mod/creator-services/deal-files': () => import('~/pages/api/mod/creator-services/deal-files'),
+  '/api/mod/creator-services/deal-file-url': () =>
+    import('~/pages/api/mod/creator-services/deal-file-url'),
+  '/api/mod/creator-services/deal-files': () =>
+    import('~/pages/api/mod/creator-services/deal-files'),
   '/api/mod/creator-services/disputes': () => import('~/pages/api/mod/creator-services/disputes'),
-  '/api/mod/creator-services/resolve-dispute': () => import('~/pages/api/mod/creator-services/resolve-dispute'),
+  '/api/mod/creator-services/resolve-dispute': () =>
+    import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
@@ -33,7 +40,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),
-  '/api/mod/minor-flag/resolve-redetection': () => import('~/pages/api/mod/minor-flag/resolve-redetection'),
+  '/api/mod/minor-flag/resolve-redetection': () =>
+    import('~/pages/api/mod/minor-flag/resolve-redetection'),
   '/api/mod/minor-flag/revert': () => import('~/pages/api/mod/minor-flag/revert'),
   '/api/mod/minor-flag/rule': () => import('~/pages/api/mod/minor-flag/rule'),
   '/api/mod/minor-flag/set-minor': () => import('~/pages/api/mod/minor-flag/set-minor'),
@@ -47,23 +55,28 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
-  '/api/mod/storyline/lift-title-takedown': () => import('~/pages/api/mod/storyline/lift-title-takedown'),
-  '/api/mod/storyline/resolve-title-appeal': () => import('~/pages/api/mod/storyline/resolve-title-appeal'),
+  '/api/mod/storyline/lift-title-takedown': () =>
+    import('~/pages/api/mod/storyline/lift-title-takedown'),
+  '/api/mod/storyline/resolve-title-appeal': () =>
+    import('~/pages/api/mod/storyline/resolve-title-appeal'),
   '/api/mod/strike/create': () => import('~/pages/api/mod/strike/create'),
   '/api/mod/strike/get-user-strikes': () => import('~/pages/api/mod/strike/get-user-strikes'),
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
-  '/api/mod/text-scan/csam-hold/resolve': () => import('~/pages/api/mod/text-scan/csam-hold/resolve'),
+  '/api/mod/text-scan/csam-hold/resolve': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/resolve'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
   '/api/mod/user/creator-program-ban': () => import('~/pages/api/mod/user/creator-program-ban'),
   '/api/mod/user/creator-score-grant': () => import('~/pages/api/mod/user/creator-score-grant'),
-  '/api/mod/user/creator-score-grant-revoke': () => import('~/pages/api/mod/user/creator-score-grant-revoke'),
+  '/api/mod/user/creator-score-grant-revoke': () =>
+    import('~/pages/api/mod/user/creator-score-grant-revoke'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/legal-hold': () => import('~/pages/api/mod/user/legal-hold'),
   '/api/mod/user/membership-code': () => import('~/pages/api/mod/user/membership-code'),
-  '/api/mod/user/membership-code-revoke': () => import('~/pages/api/mod/user/membership-code-revoke'),
+  '/api/mod/user/membership-code-revoke': () =>
+    import('~/pages/api/mod/user/membership-code-revoke'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
   '/api/mod/user/reactions': () => import('~/pages/api/mod/user/reactions'),
   '/api/mod/user/remove-reactions': () => import('~/pages/api/mod/user/remove-reactions'),
