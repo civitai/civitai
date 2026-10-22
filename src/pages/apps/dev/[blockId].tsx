@@ -127,6 +127,12 @@ function documentFrameHost(propsHost: string | null): string | null {
   return typeof host === 'string' ? host : null;
 }
 
+/**
+ * The scaffold's `dev:tunnel` script serves on the port `civitai app dev-tunnel` tunnels by default,
+ * and is the only dev script that sends the headers this page needs to frame the app.
+ */
+const DEV_TUNNEL_COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
+
 export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
   const router = useRouter();
@@ -157,10 +163,14 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
-              Start your local dev server and open a tunnel for <Code>{blockId}</Code>, then reload
-              this page:
+              In your app&apos;s folder, start the dev server in one terminal and open a tunnel for{' '}
+              <Code>{blockId}</Code> in another, then reload this page:
             </Text>
-            <Code block>civitai app dev:tunnel</Code>
+            <Code block>{DEV_TUNNEL_COMMANDS}</Code>
+            <Text size="sm">
+              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: only it sends the
+              headers this page needs to show your app.
+            </Text>
             <Alert color="yellow" variant="light">
               This page renders your LOCAL app inside the real Civitai host. Only you can see it —
               the tunnel is bound to your account.
@@ -182,7 +192,7 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
                   account. If you just started the tunnel, reload the page.
                 </Alert>
                 <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
-                <Code block>civitai app dev:tunnel</Code>
+                <Code block>{DEV_TUNNEL_COMMANDS}</Code>
               </Stack>
             }
           />
