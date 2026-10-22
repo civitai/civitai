@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { movePin, resolveUserMenu, togglePin, type UserMenuRegistry } from './resolveUserMenu';
 import {
+  findUserMenuGroup,
   USER_MENU_LAYOUT,
   USER_MENU_MAX_DEPTH,
   USER_MENU_SIGNED_OUT_LAYOUT,
@@ -134,5 +135,14 @@ describe('layouts', () => {
     const ids: string[] = [];
     expect(walk(nodes, 0, ids)).toBeLessThanOrEqual(USER_MENU_MAX_DEPTH);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('moving items between groups', () => {
+  it('puts each moved item in its new group', () => {
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'inventory')).toBe('your-stuff');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'auctions')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'crucibles')).toBe('rewards');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'browse-challenges')).toBe('rewards');
   });
 });
