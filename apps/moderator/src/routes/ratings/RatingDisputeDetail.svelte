@@ -190,7 +190,7 @@
 
     {#if row.scan?.reason}
       <TriageCard title="Why the scan raised it" dense accent="amber">
-        <p class="m-0 break-words whitespace-pre-wrap text-dark-0">{row.scan.reason}</p>
+        <p class="m-0 wrap-anywhere whitespace-pre-wrap text-dark-0">{row.scan.reason}</p>
       </TriageCard>
     {/if}
 
@@ -202,7 +202,7 @@
 
     {#if row.userComment}
       <TriageCard title="Owner comment" dense>
-        <p class="m-0 break-words whitespace-pre-wrap text-dark-0">{row.userComment}</p>
+        <p class="m-0 wrap-anywhere whitespace-pre-wrap text-dark-0">{row.userComment}</p>
       </TriageCard>
     {:else}
       <p class="m-0 text-sm text-dark-2">No comment from owner</p>
@@ -222,7 +222,7 @@
             {#if row.resolvedAt}· {dateTime(row.resolvedAt)}{/if}
           </p>
           {#if row.modComment}
-            <p class="m-0 break-words whitespace-pre-wrap">Note to owner: {row.modComment}</p>
+            <p class="m-0 wrap-anywhere whitespace-pre-wrap">Note to owner: {row.modComment}</p>
           {/if}
         </div>
       </TriageCard>
