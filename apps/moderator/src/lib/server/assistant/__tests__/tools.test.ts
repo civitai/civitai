@@ -68,6 +68,13 @@ const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], tru
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
+const getRegistrationEmails = vi.fn(
+  async (ids: number[]) => new Map(ids.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+);
+vi.mock('../email', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../email')>()),
+  getRegistrationEmails,
+}));
 
 vi.mock('../store', () => ({
   getPlaybook: vi.fn(async (slug: string) => ({
@@ -181,6 +188,51 @@ describe('reads User Lookup gates beyond the page', () => {
     expect(out.data).toMatchObject({ found: false });
     await run('find_user', { query: 'someone@example.com' }, ['/retool/user-lookup']);
     expect(resolveUserId).toHaveBeenCalledWith('someone@example.com');
+  });
+});
+
+describe('registration emails', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  beforeEach(() => {
+    getRegistrationEmails.mockClear();
+  });
+
+  it('are never read for a User Lookup holder without assistant.emails', async () => {
+    const out = JSON.stringify(await run('find_linked_accounts', { userId: 5 }, [LOOKUP_PAGE]));
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('are never read with assistant.emails but without User Lookup', async () => {
+    const out = JSON.stringify(
+      await run('get_user_dossier', { userId: 5 }, ['/reports/user'], ['assistant.emails'])
+    );
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('reach the model with their inbox for a User Lookup holder with assistant.emails', async () => {
+    const linkedOut = await run(
+      'find_linked_accounts',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect((linkedOut.data as { accounts: unknown[] }).accounts[0]).toMatchObject({
+      userId: 7,
+      email: 'Sock.7+x@GoogleMail.com',
+      normalizedEmail: 'sock7@gmail.com',
+    });
+    const dossier = await run(
+      'get_user_dossier',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect(dossier.data).toMatchObject({
+      normalizedEmail: 'sock5@gmail.com',
+      linked: { accounts: [{ userId: 7, normalizedEmail: 'sock7@gmail.com' }] },
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import { listAuditTurns, type AuditRow } from '$lib/server/assistant/store';
 import { usersByIds } from '$lib/server/users.service';
 import { canSeeAddresses } from '$lib/server/access';
 import { redactAddresses } from '$lib/server/redact-addresses';
+import { redactEmails } from '$lib/server/assistant/email';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
 import { assistantStoreMessage } from '../store-status';
 
@@ -30,20 +31,28 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   }
   const page = rows.slice(0, PAGE);
   const names = await usersByIds(page.map((r) => r.moderatorId));
-  // The audit is its own grant; holding it is not holding User Lookup's addresses.
-  const shown = canSeeAddresses(locals)
-    ? page
-    : page.map((r) => ({
-        ...r,
-        chatTitle: redactAddresses(r.chatTitle),
-        prompt: redactAddresses(r.prompt),
-        answer: r.answer && redactAddresses(r.answer),
-        reasoning: r.reasoning && redactAddresses(r.reasoning),
-        toolCalls: r.toolCalls.map((c) => ({
-          ...c,
-          args: JSON.parse(redactAddresses(JSON.stringify(c.args))) as unknown,
-        })),
-      }));
+  // The audit is its own grant; holding it is not holding User Lookup's addresses, nor the emails a
+  // pilot's assistant may have quoted.
+  const addresses = canSeeAddresses(locals);
+  const emails = addresses && !!locals.grants['assistant.emails'];
+  const redact = (text: string) => {
+    const t = addresses ? text : redactAddresses(text);
+    return emails ? t : redactEmails(t);
+  };
+  const shown =
+    addresses && emails
+      ? page
+      : page.map((r) => ({
+          ...r,
+          chatTitle: redact(r.chatTitle),
+          prompt: redact(r.prompt),
+          answer: r.answer && redact(r.answer),
+          reasoning: r.reasoning && redact(r.reasoning),
+          toolCalls: r.toolCalls.map((c) => ({
+            ...c,
+            args: JSON.parse(redact(JSON.stringify(c.args))) as unknown,
+          })),
+        }));
   return {
     storeError,
     moderator: moderator ?? null,

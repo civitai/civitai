@@ -145,6 +145,9 @@ export const PERMISSIONS = [
   // Page access is `/assistant`; this is the right to run turns (model spend), so a role can see the
   // page and audit without running them.
   { id: 'assistant.use', label: 'Ask the mod assistant and edit its playbooks' },
+  // Sends account registration emails to the model provider, a separate call from running turns. Also
+  // needs User Lookup, where a moderator reads emails today.
+  { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];
