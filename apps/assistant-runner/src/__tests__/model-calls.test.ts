@@ -6,6 +6,7 @@ import type { Logger, ModelContext, ModelProvider } from '../interfaces';
 import type { TokenSource } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
+import { carriesOnSteps } from '../runner';
 import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { MemoryModelCalls } from '../test-support/memory-model-calls';
 
@@ -226,6 +227,23 @@ describe('model calls kept across a crash', () => {
     expect(calls()).toEqual(['cancelled', 'asked-again']);
   });
 
+  it('reads a workflow again through a few failed reads, and neither cancels nor pays again', async () => {
+    const orchestration = new FakeChatOrchestration();
+    const ledger = new MemoryModelCalls();
+    await crashMidStream(orchestration, ledger, FIRST, { text: 'Read on the fourth try.' });
+    orchestration.succeed(FIRST);
+    // Orchestration restarting: three reads in a row answer 500, then it answers again.
+    orchestration.failReads(FIRST, 3);
+
+    const { log, calls } = logger();
+    const recovered = ask(runnerProcess(orchestration, ledger, { log }));
+    expect(await recovered.text).toBe('Read on the fourth try.');
+    expect(orchestration.gets).toEqual([FIRST, FIRST, FIRST, FIRST]);
+    expect(orchestration.puts).toEqual([]);
+    expect(orchestration.posts.map((post) => post.id)).toEqual([FIRST]);
+    expect(calls()).toEqual(['reused']);
+  });
+
   it('waits for a workflow still running until the run stops, then cancels it', async () => {
     const orchestration = new FakeChatOrchestration();
     const ledger = new MemoryModelCalls();
@@ -353,5 +371,17 @@ describe('model calls cut off by the run', () => {
     await (models as ModelProvider).settle?.('run-a');
     expect(orchestration.puts).toEqual([]);
     expect(ledger.rows.map((row) => row.workflowId)).toEqual([FIRST]);
+  });
+});
+
+describe('which retries may take an earlier run’s answer', () => {
+  const step = { role: 'assistant', content: 'Recording.' } as const;
+  it('only a retry carrying on from at least one saved step', () => {
+    expect(carriesOnSteps(true, { messages: [step], steps: 1 } as never)).toBe(true);
+    // A retry carrying no saved step asks what a fresh reply asks: a regenerate, or a retry of a
+    // reply that failed before its first step. It must never get an earlier run's reply.
+    expect(carriesOnSteps(true, { messages: [], steps: 0 } as never)).toBe(false);
+    expect(carriesOnSteps(true, undefined)).toBe(false);
+    expect(carriesOnSteps(false, { messages: [step], steps: 1 } as never)).toBe(false);
   });
 });

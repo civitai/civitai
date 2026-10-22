@@ -29,7 +29,7 @@ export class FakeChatOrchestration {
   readonly puts: { id: string; body: unknown }[] = [];
   readonly #queued: { id: string; answer: FakeAnswer; hold: boolean }[] = [];
   readonly #gates = new Map<string, () => void>();
-  readonly #unreadable = new Set<string>();
+  readonly #unreadable = new Map<string, number>();
 
   constructor(readonly order: string[] = []) {}
 
@@ -64,9 +64,9 @@ export class FakeChatOrchestration {
     this.workflows.set(id, workflow);
   }
 
-  /** Every later status read of `id` fails (500), as when its state cannot be read. */
-  failReads(id: string): void {
-    this.#unreadable.add(id);
+  /** The next `times` status reads of `id` fail (500); every one, unless `times` is given. */
+  failReads(id: string, times = Infinity): void {
+    this.#unreadable.set(id, times);
   }
 
   /** Replaces what a succeeded workflow's status read shows as its step output. */
@@ -99,7 +99,11 @@ export class FakeChatOrchestration {
     this.gets.push(id);
     this.order.push(`get ${id}`);
     if (!workflow) return new Response('', { status: 404 });
-    if (this.#unreadable.has(id)) return new Response('', { status: 500 });
+    const failing = this.#unreadable.get(id) ?? 0;
+    if (failing > 0) {
+      this.#unreadable.set(id, failing - 1);
+      return new Response('', { status: 500 });
+    }
     if (workflow.script.length) {
       workflow.status = workflow.script.length > 1 ? workflow.script.shift()! : workflow.script[0]!;
       if (workflow.status === 'succeeded') workflow.output ??= outputOf(workflow);

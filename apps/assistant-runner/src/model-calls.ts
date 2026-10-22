@@ -23,6 +23,12 @@ const POLL_SECONDS = 20;
 /** The least time between two status reads of a workflow still running. */
 const POLL_INTERVAL_MS = 1000;
 /**
+ * How many status reads in a row may fail (a 5xx while orchestration restarts, a read that timed
+ * out) before the workflow counts as unreadable and is cancelled: a passing error must not cancel a
+ * live, already-paid workflow and pay for it again.
+ */
+const UNREADABLE_AFTER = 4;
+/**
  * The longest a pass's end waits for its cancels: well inside `RUN_STOP_GRACE_MS` (5 s by default),
  * so a Stop that cancels a model call still ends the run itself rather than being forced. A cancel
  * not done by then goes on by itself (its mint, if any, has started).
@@ -224,7 +230,9 @@ interface RunCalls {
   /**
    * Workflows a request of this run was sent as or answered from here, or cancelled: never answer
    * another request here (two subagents asking the same, or a request whose answer was rejected).
-   * One whose answer broke off on its own (a network drop) is taken out, so its retry waits for it.
+   * One whose answer broke off on its own (not aborted) is taken out, so a request asked again here
+   * waits for it. (`AgentCore` retries only a browser's dropped connection, so in this process
+   * that is rare.)
    */
   used: Set<string>;
   /** Each workflow cancelled here, once, and the cancel's own promise, which `settle` waits for. */
@@ -234,7 +242,7 @@ interface RunCalls {
 /**
  * Makes a model request survive the process that sent it. Each chat completion request's
  * orchestration workflow is kept in the ledger as soon as orchestration names it, before its answer
- * is read. A request asked again later (the reply's step recovered after a crash, or a network retry)
+ * is read. A request asked again later (the reply's step recovered after a crash, or a Continue)
  * with the same key first reads that workflow: succeeded, its answer is the request's, with no new
  * request (and no new charge); still running, it is waited for, as long as the request's own signal
  * lets it (the run's wall clock or a Stop ends the wait, and cancels it); ended without an answer
@@ -333,6 +341,7 @@ export class ModelCalls {
       return undefined;
     };
     let waiting = false;
+    let failedReads = 0;
     for (;;) {
       const asked = Date.now();
       let workflow: WorkflowState;
@@ -348,10 +357,22 @@ export class ModelCalls {
         }
         if (error instanceof OrchestrationError && error.status === 404)
           return askAgain('not-found');
+        if (++failedReads < UNREADABLE_AFTER) {
+          this.#log?.warn(
+            { err: error, runId, workflowId, failedReads },
+            'reading the orchestration workflow of a model request failed; reading it again'
+          );
+          await pause(this.#pollIntervalMs, signal).catch((stopped: unknown) => {
+            void this.#cancel(call, workflowId, 'stopped while waiting');
+            throw stopped;
+          });
+          continue;
+        }
         // Its state could not be read, so it may still run: cancelled before the request goes again.
         await this.#cancel(call, workflowId, 'unreadable');
         return askAgain('unreadable', { err: error });
       }
+      failedReads = 0;
       const status = String(workflow.status ?? '');
       if (status === 'succeeded') {
         const completion = completionOf(workflow);
@@ -382,8 +403,8 @@ export class ModelCalls {
   /**
    * The response, its body passed through as read: the request's signal aborting, or its reader
    * cancelling the body (the free-tier fetch giving up on a slow free answer cancels it before it
-   * aborts), before the body ends cancels the workflow; the body breaking off by itself (a dropped
-   * connection) leaves the workflow for a retry of the request to wait for.
+   * aborts), before the body ends cancels the workflow; the body breaking off by itself leaves the
+   * workflow for a request asked again to wait for.
    */
   #watched(
     call: Call,

@@ -761,9 +761,7 @@ export class Runner implements RunService {
     // Only the run that owns the turn carries on from (and shows) its saved steps: a run a retry
     // took the turn over from shows none of the retry's.
     const from = turn && ownedBy(turn, runId) ? resumeOf(turn) : undefined;
-    // A retry carrying on from an earlier run's saved steps: a model request that run had in flight
-    // may be answered by the workflow it sent.
-    const carriesOn = input.retry && from !== undefined;
+    const carriesOn = carriesOnSteps(input.retry, from);
     const startParts = from ? partsFromMessages(from.messages) : [];
 
     const core = new AgentCore({ change: () => emitter.partsChanged() });
@@ -1219,6 +1217,16 @@ export function endedElsewhere(error: unknown): boolean {
 export function writesFailedEnd(error: unknown, { drained }: { drained: boolean }): boolean {
   if (drained || endedElsewhere(error)) return false;
   return !(error instanceof DBOSErrors.DBOSExecutorNotInitializedError);
+}
+
+/**
+ * Whether a reply carries on from steps an earlier run of its turn saved, so a model request that
+ * run had in flight may be answered by the workflow it sent: a retry with at least one saved step.
+ * A retry carrying none (a regenerate, or a retry of a reply that failed before its first step) asks
+ * exactly what a fresh reply asks, and must not be answered with an earlier run's reply.
+ */
+export function carriesOnSteps(retry: boolean, from: ResumePoint | undefined): boolean {
+  return retry && (from?.messages.length ?? 0) > 0;
 }
 
 function runActive(runId: string | undefined): StartOutcome {

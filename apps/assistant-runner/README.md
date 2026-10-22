@@ -165,14 +165,15 @@ See [Not built yet](#not-built-yet).
   keeps it at once, before reading the answer, in its own table (`assistant_runner.model_calls`:
   run id, user, conversation, turn, a hash of what the request asks, the workflow id; no
   credential), since a DBOS step's output is saved only when the step ends and the whole reply is
-  one step. A request asked again with the same key (the step recovered after a crash, or a retry
-  after a dropped connection) first reads that workflow (`GET /v2/consumer/workflows/{id}`):
-  succeeded, its stored answer is the request's, with no new request; still running, it is waited
-  for until it ends or the run stops waiting (its wall clock, a Stop), which cancels it; failed,
-  expired, cancelled or holding nothing a step can be rebuilt from, the request is sent again
-  (after cancelling the workflow when its state cannot be read). A retry that carries on from an earlier run's saved steps
-  (Continue) may take that run's answer too; a new reply to a turn never does. A model call cut off
-  by the run (Stop, the wall clock, a pause, a cancel outright) has its workflow cancelled
+  one step. A request asked again with the same key (the step recovered after a crash, or a
+  Continue) first reads that workflow (`GET /v2/consumer/workflows/{id}`), reading it again through
+  up to three failed reads in a row: succeeded, its stored answer is the request's, with no new
+  request; still running, it is waited for until it ends or the run stops waiting (its wall clock,
+  a Stop), which cancels it; failed, expired, cancelled or holding nothing a step can be rebuilt
+  from, the request is sent again (after cancelling the workflow when its state cannot be read). A
+  retry that carries on from at least one step an earlier run saved (Continue) may take that run's
+  answer too; a retry carrying no saved step (a regenerate) never does. A model call cut off by the
+  run (Stop, the wall clock, a pause, a cancel outright) has its workflow cancelled
   (`PUT /v2/consumer/workflows/{id}`, `{"status":"canceled"}`), which stops the model and its
   billing; the pass's end waits up to 2 s for that. Each branch is logged with the workflow id
   under `modelCall` (`reused`, `waiting`, `asked-again` with its `reason`, `cancelled`). The key
