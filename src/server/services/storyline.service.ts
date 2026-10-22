@@ -22,6 +22,7 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
 import {
   DIRECT_LIFT_APPEAL_NOTE,
@@ -1935,12 +1936,22 @@ export async function getStorylinePath({
     };
   });
 
-  return {
-    storyline,
-    chapters: await withFirstImages(
+  const [routeChapters, captions] = await Promise.all([
+    withFirstImages(
       getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
       onRoute(rows, chapters)
     ),
+    getStorylineImageCaptions({
+      postIds: chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : [])),
+      browsingLevel,
+      maxNsfwLevel: storyline.maxNsfwLevel,
+    }),
+  ]);
+  return {
+    storyline,
+    chapters: routeChapters,
+    /** The author's caption on an image of a chapter shown here, by image id. */
+    captions: Object.fromEntries(captions) as Record<number, string>,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
 }

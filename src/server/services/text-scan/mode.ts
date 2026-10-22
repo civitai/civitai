@@ -29,6 +29,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'Crucible',
   'Collection',
   'Storyline',
+  'ImageCaption',
   'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];
 

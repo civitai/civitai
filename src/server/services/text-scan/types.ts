@@ -31,6 +31,7 @@ export type TextScanEntityType =
   | 'Crucible'
   | 'Collection'
   | 'Storyline'
+  | 'ImageCaption'
   | 'ModelRules';
 
 export type TextScanField = { heading: string; text: string | null | undefined };

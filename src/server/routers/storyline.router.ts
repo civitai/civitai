@@ -7,6 +7,7 @@ import {
   linkStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
+  setStorylineImageCaptionSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
@@ -44,6 +45,7 @@ import {
   setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
+import { setStorylineImageCaption } from '~/server/services/storyline-caption.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -188,6 +190,12 @@ export const storylineRouter = router({
     .input(updateStorylineSchema)
     .mutation(({ input, ctx }) =>
       updateStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  setImageCaption: storylineWriteProcedure
+    .input(setStorylineImageCaptionSchema)
+    .mutation(({ input, ctx }) =>
+      setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   addChapter: storylineWriteProcedure
