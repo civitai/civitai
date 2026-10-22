@@ -280,6 +280,57 @@ describe('useUserMenuPins', () => {
       expect(latest.pins).toEqual(DB_DEFAULTS);
     });
 
+    it('saves a pin edit and a mute made inside the same quiet second together, in either order', () => {
+      settings.value = { settings: { userMenu: { pinned: ['vault'] } }, isResolved: true };
+      mount();
+      act(() => latest.toggle('downloads'));
+      act(() => latest.toggleBadgeMute('prizes'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenLastCalledWith({
+        userMenu: { pinned: ['vault', 'downloads'], mutedBadges: ['prizes'] },
+      });
+
+      mutate.mockClear();
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => latest.toggle('liked-models'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenLastCalledWith({
+        userMenu: {
+          pinned: ['vault', 'downloads', 'liked-models'],
+          mutedBadges: ['prizes', 'collections'],
+        },
+      });
+    });
+
+    it('falls back to the saved mutes when a save fails', () => {
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: ['prizes'] } },
+        isResolved: true,
+      };
+      mount();
+      act(() => latest.toggleBadgeMute('collections'));
+      expect(latest.mutedBadges).toEqual(['prizes', 'collections']);
+
+      act(() => mutateOptions.value?.onError?.(new Error('offline')));
+      expect(latest.mutedBadges).toEqual(['prizes']);
+    });
+
+    it('leaves out a saved mute the menu no longer knows, so the write is not rejected', () => {
+      const gone = 'retired-item' as UserMenuBadgeItemId;
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: [gone, 'prizes'] } },
+        isResolved: true,
+      };
+      mount();
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: ['vault'], mutedBadges: ['prizes', 'collections'] },
+      });
+    });
+
     it('refuses a mute until settings resolve', () => {
       settings.value = { settings: undefined, isResolved: false };
       mount();

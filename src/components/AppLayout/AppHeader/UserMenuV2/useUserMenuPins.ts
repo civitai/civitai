@@ -20,7 +20,8 @@ const NO_MUTED_BADGES: UserMenuBadgeItemId[] = [];
 
 /**
  * The muted counts ride with the pins: `userMenu` is written whole, so one writer sends both and
- * neither edit can drop the other.
+ * neither edit can drop the other within a tab. Another tab or device saving in between is
+ * overwritten by the next save, as pins always were.
  *
  * Edits show at once and save after `PIN_SAVE_DELAY_MS` of quiet; `flush` saves now (menu close).
  * Edits are refused until settings resolve: an earlier one would start from the defaults and

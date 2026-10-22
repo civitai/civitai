@@ -10,3 +10,18 @@ export function attentionCount(counts: AttentionCounts, muted: readonly UserMenu
     0
   );
 }
+
+/** The counts query's fields, as the count each mutable item shows. */
+export function toAttentionCounts(counts: {
+  pendingPlacements?: number;
+  pendingCollectionReviews?: number;
+  unopenedBoxes?: number;
+  unclaimedPrizes?: number;
+}): AttentionCounts {
+  return {
+    placements: counts.pendingPlacements,
+    collections: counts.pendingCollectionReviews,
+    inventory: counts.unopenedBoxes,
+    prizes: counts.unclaimedPrizes,
+  };
+}

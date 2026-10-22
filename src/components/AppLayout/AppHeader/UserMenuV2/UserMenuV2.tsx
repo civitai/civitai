@@ -6,7 +6,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import type { UserMenuBadgeItemId } from '~/shared/constants/user-menu.constants';
 import { UserMenuDesktop } from './UserMenuDesktop';
 import { UserMenuMobile } from './UserMenuMobile';
-import { attentionCount } from './attentionCount';
+import { attentionCount, toAttentionCounts } from './attentionCount';
 import { useUserMenuPins } from './useUserMenuPins';
 
 export type UserMenuShellProps = {
@@ -58,15 +58,5 @@ export default function UserMenuV2() {
  * header already runs.
  */
 function useAttentionCount(muted: UserMenuBadgeItemId[]) {
-  const { pendingPlacements, pendingCollectionReviews, unopenedBoxes, unclaimedPrizes } =
-    useQueryNotificationsCount();
-  return attentionCount(
-    {
-      placements: pendingPlacements,
-      collections: pendingCollectionReviews,
-      inventory: unopenedBoxes,
-      prizes: unclaimedPrizes,
-    },
-    muted
-  );
+  return attentionCount(toAttentionCounts(useQueryNotificationsCount()), muted);
 }

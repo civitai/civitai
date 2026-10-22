@@ -52,6 +52,12 @@ function expectRowFits(row: Element, parts: Element[], maxHeight: number) {
     expect(b.left, 'part starts inside the row').toBeGreaterThanOrEqual(outer.left);
     expect(b.right, 'part ends inside the row').toBeLessThanOrEqual(outer.right);
   }
+  const byLeft = [...parts].sort((a, b) => box(a).left - box(b).left);
+  byLeft
+    .slice(1)
+    .forEach((part, i) =>
+      expect(box(byLeft[i]).right, 'parts do not overlap').toBeLessThanOrEqual(box(part).left + 1)
+    );
   const centres = parts.map((p) => box(p).top + box(p).height / 2);
   expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(2);
   expect(outer.height, 'the row stays one line tall').toBeLessThanOrEqual(maxHeight);
@@ -76,7 +82,11 @@ describe('a row with a count, the bell and the pin', () => {
     expectRowFits(row, parts, 50);
     // The label keeps its count: "99+", not clipped away by the two buttons.
     expect(row.querySelector('a')!.textContent).toContain('99+');
-    expect(box(row.querySelector('a')!).width).toBeGreaterThan(200);
+    // The link takes the room the buttons leave: no dead space before the bell.
+    expect(
+      box(row.querySelector('[aria-label^="Mute the count"]')!).left -
+        box(row.querySelector('a')!).right
+    ).toBeLessThanOrEqual(4);
   });
 
   test('fits the 260px desktop dropdown on one line', async () => {

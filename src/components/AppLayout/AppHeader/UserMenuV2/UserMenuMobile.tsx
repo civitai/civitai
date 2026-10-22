@@ -498,7 +498,7 @@ export function MobileItem({
           size="lg"
           variant="subtle"
           color="gray"
-          aria-label={`${item.badgeMuted ? 'Unmute' : 'Mute'} the count on ${item.label}`}
+          aria-label={`Mute the count on ${item.label}`}
           aria-pressed={!!item.badgeMuted}
           onClick={() => id && toggleMute?.({ ...item, id })}
         >

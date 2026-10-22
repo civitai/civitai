@@ -221,12 +221,14 @@ describe('UserMenu_Click', () => {
       expect(handleClose).not.toHaveBeenCalled();
     });
 
-    it('offers to unmute a muted count', async () => {
+    it('shows a muted count as a pressed mute button that can be pressed again', async () => {
       const toggleMute = vi.fn();
       await mount(
         withMute(toggleMute, createElement(MobileItem, { item: { ...waiting, badgeMuted: true } }))
       );
-      await click(document.querySelector('[aria-label="Unmute the count on Inventory"]'));
+      const button = document.querySelector('[aria-label="Mute the count on Inventory"]');
+      expect(button?.getAttribute('aria-pressed')).toBe('true');
+      await click(button);
       expect(toggleMute).toHaveBeenCalledTimes(1);
     });
 
@@ -245,10 +247,38 @@ describe('UserMenu_Click', () => {
       ['has no count waiting', { provided: true, item: inventory }],
       ['is not a count that can be muted', { provided: true, item: { ...civitaiLink, badge: 2 } }],
       ['is shown where counts cannot be muted', { provided: false, item: waiting }],
-    ])('offers no mute on a row that %s', async (_why, { provided, item }) => {
-      const node = createElement(MobileItem, { item: item as never, onToggle: vi.fn() });
-      await mount(provided ? withMute(vi.fn(), node) : node);
+    ])('offers no mute on a %s row (phone and desktop)', async (_why, { provided, item }) => {
+      const toggleMute = vi.fn();
+      const phone = createElement(MobileItem, { item: item as never, onToggle: vi.fn() });
+      await mount(provided ? withMute(toggleMute, phone) : phone);
       expect(document.querySelector('[aria-label*="the count on"]')).toBeNull();
+      document.body.innerHTML = '';
+
+      await mount(
+        provided
+          ? withMute(toggleMute, desktop({ item, onToggle: vi.fn() }))
+          : desktop({ item, onToggle: vi.fn() })
+      );
+      expect(document.querySelector('[title$="count"]')).toBeNull();
+      await act(async () => {
+        row(item.label)!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true })
+        );
+      });
+      expect(toggleMute).not.toHaveBeenCalled();
+    });
+
+    it('does not mute on Ctrl+M or Cmd+M', async () => {
+      const toggleMute = vi.fn();
+      await mount(withMute(toggleMute, desktop({ item: waiting, onToggle: vi.fn() })));
+      for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+        await act(async () => {
+          row('Inventory')!.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true, ...modifier })
+          );
+        });
+      }
+      expect(toggleMute).not.toHaveBeenCalled();
     });
   });
 
