@@ -11,6 +11,7 @@ import {
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -57,6 +58,10 @@ const notifications = vi.hoisted(() => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => notifications);
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: (_options: unknown, operation: () => Promise<unknown>) => operation(),
+}));
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopTakedownLabel: vi.fn(async () => undefined),
 }));
 // No wall-clock backoff on a retry.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {

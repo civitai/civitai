@@ -153,6 +153,8 @@ Steps 1 and 2 run under the per-item refund lock the withdrawn-item and manual r
 
 Money moves are best-effort per buyer: each is retried 3× (1s apart) before it's written off, and failures are collected in `failures` (stage + user + amount) instead of aborting the run. Everything lands in Axiom under `name: 'cosmetic-takedown'` — a start record, one `error` per written-off refund/clawback carrying the ids needed to finish it by hand, and a finish record with the run totals (`error` level if anything failed).
 
+Every approve, request-changes, reject or revert in the review queue is also recorded in the label store (`docs/features/label-store.md`) inside the verdict's transaction; a store failure never blocks the verdict. A takedown is recorded last, in its own transaction once the archive, box pull and refunds are done, so labelling never delays or fails any of them; any failure to record it (the store refusing it, or the transaction not running) logs `shop-label-record-failed` with the item id.
+
 ## Withdrawn-item refunds
 
 Rejecting a creator cosmetic that has sold, or archiving one while it is withheld (see "Wearing a creator cosmetic"), refunds its buyers automatically. `creator-shop-withdrawn-refund.service.ts`:

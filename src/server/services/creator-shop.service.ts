@@ -8,6 +8,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import {
+  excludeDeletedShopListing,
+  recordShopTakedownLabel,
+  recordShopVerdict,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
+import {
   revokeCosmeticsFromUsers,
   unequipWithheldCosmetic,
   validateStickerCosmetic,
@@ -1361,7 +1367,10 @@ export const deleteCreatorShopItem = async ({
   // official-shop section links, and other creators' resale listings. Buyers
   // keep what they bought: UserCosmetic is keyed by cosmeticId and the Cosmetic
   // row is intentionally left in place.
-  await dbWrite.cosmeticShopItem.delete({ where: { id } });
+  await dbWrite.$transaction(async (tx) => {
+    await tx.cosmeticShopItem.delete({ where: { id } });
+    await excludeDeletedShopListing(tx, id);
+  }, SHOP_VERDICT_TRANSACTION);
   if (keepWithheld) await unequipWithheldCosmetic(existing.cosmeticId);
 
   // Free its featured slot.
@@ -2247,33 +2256,45 @@ export const reviewCreatorShopItem = async ({
       }
     ) as Prisma.InputJsonValue;
 
-  const updated =
-    action === 'approve'
-      ? // Publish + record the approved price. Payout is wired at purchase time
-        // from cosmetic.createdById — no paidToUserIds needed.
-        await dbWrite.cosmeticShopItem.update({
-          where: { id },
-          data: {
-            ...reviewFields,
-            status: nextStatus,
-            rejectionReason: null,
-            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
-          },
-          select: creatorShopItemSelect,
-        })
-      : // reject = terminal; request-changes = creator can edit & resubmit;
-        // revert = unpublish back into the review queue. The note is kept on
-        // rejectionReason so both the queue and the creator see why.
-        await dbWrite.cosmeticShopItem.update({
-          where: { id },
-          data: {
-            ...reviewFields,
-            status: nextStatus,
-            rejectionReason: rejectionReason ?? null,
-            meta: reviewedMeta({ displayApproved: false }),
-          },
-          select: creatorShopItemSelect,
-        });
+  // The unequip sweep reads the verdict from the database, so it must run after this commits.
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const written =
+      action === 'approve'
+        ? // Publish + record the approved price. Payout is wired at purchase time
+          // from cosmetic.createdById — no paidToUserIds needed.
+          await tx.cosmeticShopItem.update({
+            where: { id },
+            data: {
+              ...reviewFields,
+              status: nextStatus,
+              rejectionReason: null,
+              meta: reviewedMeta({ lastApprovedAmount: item.unitAmount, displayApproved: true }),
+            },
+            select: creatorShopItemSelect,
+          })
+        : // reject = terminal; request-changes = creator can edit & resubmit;
+          // revert = unpublish back into the review queue. The note is kept on
+          // rejectionReason so both the queue and the creator see why.
+          await tx.cosmeticShopItem.update({
+            where: { id },
+            data: {
+              ...reviewFields,
+              status: nextStatus,
+              rejectionReason: rejectionReason ?? null,
+              meta: reviewedMeta({ displayApproved: false }),
+            },
+            select: creatorShopItemSelect,
+          });
+    await recordShopVerdict(tx, id, {
+      action,
+      moderatorId: reviewerId,
+      at: now.toISOString(),
+      note: rejectionReason,
+      statusBefore: item.status,
+      statusAfter: nextStatus,
+    });
+    return written;
+  }, SHOP_VERDICT_TRANSACTION);
 
   // On approval, grant the creator their own cosmetic (idempotent). A pack has
   // none of its own, and its members were granted when they were approved.
@@ -2427,6 +2448,7 @@ export const takedownCosmeticShopItem = async ({
       id: true,
       cosmeticId: true,
       title: true,
+      status: true,
       meta: true,
       addedById: true,
       itemDefinitionId: true,
@@ -2443,6 +2465,7 @@ export const takedownCosmeticShopItem = async ({
   const now = new Date();
 
   let retried = false;
+  let note = reason;
   // Stop sales first so nothing can be bought while the refunds run.
   const archive = async () => {
     // Read again from the primary: the refund this waited on appends its own history entry, and
@@ -2454,6 +2477,7 @@ export const takedownCosmeticShopItem = async ({
     const currentMeta = (current?.meta ?? meta) as CosmeticShopItemMeta;
     // A retry finishes the first takedown: its record and archive date stand.
     retried = !!currentMeta.takedown;
+    note = retried ? `Retried: ${reason}` : reason;
     const updated = await dbWrite.cosmeticShopItem.update({
       where: { id },
       data: {
@@ -2470,7 +2494,7 @@ export const takedownCosmeticShopItem = async ({
             userId: moderatorId,
             kind: 'takedown',
             status: CosmeticShopItemStatus.Archived,
-            note: retried ? `Retried: ${reason}` : reason,
+            note,
           }
         ) as Prisma.InputJsonValue,
       },
@@ -3080,6 +3104,14 @@ export const takedownCosmeticShopItem = async ({
     boxRefundedValue,
     failures,
     leftToWithdrawnRefund,
+  });
+
+  await recordShopTakedownLabel(id, {
+    moderatorId,
+    at: now.toISOString(),
+    note,
+    statusBefore: item.status,
+    statusAfter: CosmeticShopItemStatus.Archived,
   });
 
   return {
