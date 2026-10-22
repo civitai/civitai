@@ -129,7 +129,7 @@ function documentFrameHost(propsHost: string | null): string | null {
 
 /**
  * The scaffold's `dev:tunnel` script serves on the port `civitai app dev-tunnel` tunnels by default,
- * and is the only dev script that sends the headers this page needs to frame the app.
+ * and sends the headers this page needs to frame the app.
  */
 const DEV_TUNNEL_COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
 
@@ -168,8 +168,8 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
             </Text>
             <Code block>{DEV_TUNNEL_COMMANDS}</Code>
             <Text size="sm">
-              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: only it sends the
-              headers this page needs to show your app.
+              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: it serves on the
+              port the tunnel uses and sends the headers this page needs to show your app.
             </Text>
             <Alert color="yellow" variant="light">
               This page renders your LOCAL app inside the real Civitai host. Only you can see it —
@@ -191,8 +191,11 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
                   in the dev tunnel — it may be suspended, pending review, or not owned by your
                   account. If you just started the tunnel, reload the page.
                 </Alert>
-                <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
-                <Code block>{DEV_TUNNEL_COMMANDS}</Code>
+                <Text size="sm">
+                  Restart your tunnel (Ctrl-C, then run it again) and reload if the problem
+                  persists:
+                </Text>
+                <Code block>civitai app dev-tunnel</Code>
               </Stack>
             }
           />
