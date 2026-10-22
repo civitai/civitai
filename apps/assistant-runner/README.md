@@ -7,7 +7,7 @@ any tab or device, and stops it.
 
 **Status:** sign-in (civitai viewer tokens), run grants, the orchestration model, the
 orchestration-backed conversation store, and App Assistant's tools and gate (the sandbox MCP tools,
-`create_app`, `set_checklist`, `report_ready`, read-only subagents) are real. App Assistant's page uses
+`create_app`, `set_checklist`, `report_ready`, read-only subagents, the live preview) are real. App Assistant's page uses
 it behind `appAssistantRemoteRunner` (dark until its Flipt flag turns it on). Without civitai's public
 key configured the service refuses every run-API request (401); with it but without `SANDBOX_URL` it
 refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
@@ -15,7 +15,7 @@ See [Not built yet](#not-built-yet).
 
 ## How it works
 
-- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.22.1`, entry
+- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.25.0`, entry
   `@civitai/components-chat/runner-protocol`, protocol version `v: 1`:
 
   | Call                             | Answer                                                                                                                                                        |
@@ -75,7 +75,7 @@ See [Not built yet](#not-built-yet).
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
     call may go 610 s without progress: the chat's own MCP connection and added-server tool adapter
-    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.22.1), so a lost
+    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.25.0), so a lost
     reply stream is answered at once, as in the browser.
   - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
     (the connection cannot be opened, or the MCP address answers with an error status), the runner
@@ -90,7 +90,9 @@ See [Not built yet](#not-built-yet).
     A reply ended this way keeps its saved steps, every call in them answered. Waking at the start makes
     no new app: if the service's open made a new, empty one (deleted meanwhile), the reply ends with an
     error. A call whose reply was lost (no progress for 610 s) is not made again either.
-  - **The tunnel tools** (`tunnel_*`) are not offered: they serve only the page's live preview.
+  - **The tunnel tools** (`tunnel_*`) are not offered to the assistant: the runner drives them itself,
+    inside `start_preview` and `stop_preview`, so the assistant cannot point the sandbox at a host
+    civitai did not open.
   - **Stop and the end of a reply close the MCP transport**, which aborts every request in flight:
     the only way to reach a `sandbox__run_command` still running in the sandbox.
   - **Save before run.** Every call, sandbox ones included, waits until the head save that records its
@@ -109,13 +111,43 @@ See [Not built yet](#not-built-yet).
     (a command, a result's first 200 characters, a page tool's result), never a file's contents.
   - **The prompt is App Assistant's**, the runner's variant from the same builders
     (`assistantSystemPrompt('remote', …)`, `buildAssistantInstructions({ runner: 'remote' })`): it names
-    only tools the runner has (the setup guide read with `sandbox__run_command`, no tunnel, no guide tool
+    only tools the runner has (the setup guide read with `sandbox__run_command`, no raw tunnel tools, no guide tool
     for subagents, and none of the chat's own rules' sentences naming `ask_choice`, which waits for a
     viewer who may not be there), built from the sandbox it found, in place of the page's
     `hostInstructions`. A test checks every tool the whole system prompt names is offered.
-  - **Page-only:** the live preview (`start_preview`, `stop_preview`) needs the page's iframe, which may
-    be closed. The runner does not offer them, and the instructions tell the assistant the preview is not
-    available in this mode. The `page` state is not used to relay them.
+  - **The live preview** (`src/app-assistant/preview.ts`, `dev-tunnel.ts`): `start_preview` and
+    `stop_preview`, the page's names (so one prompt fits both), through the App Blocks dev tunnel, so
+    the user's page and the assistant see the same running dev server (port 5173):
+    1. `start_preview { block_id?, declared_scopes?, declared_auth? }` asks the sandbox for a fresh
+       single-use key (`tunnel_key`, which returns only its public half), then civitai's
+       `POST /api/internal/app-assistant/dev-tunnel/start` with the runner's secret and the run's
+       grant (read from the grants table inside that request, as a mint is) opens the tunnel for the
+       grant's user: civitai re-judges every gate there (App Assistant's, `appAssistantRemoteRunner`,
+       `appBlocksAuthor`, the dev-tunnel flag, ownership of the block, the hourly start limit). The
+       sandbox then dials the host civitai named, pinning the sish host key civitai gave
+       (`tunnel_connect`). A refusal (403, 404, 429) or a failed connect is a tool error the
+       assistant reads, and a tunnel civitai opened but the sandbox could not reach is closed again.
+       No civitai credential reaches the sandbox, only its own key's host and host key, as in the
+       browser.
+    2. The result is `{ shown, blockId, host, next_step }`, journaled like every call as
+       `tool-reported`. The page reads `blockId` and `host` from it and (re)fetches
+       `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
+       tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
+    3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
+       window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
+       a `NOT_FOUND`, refusal or dead grant stops it. When the run ends it stops keeping the tunnel
+       alive and civitai's normal idle expiry applies, so the user keeps the preview for a while.
+       The 8-hour cap never moves.
+    4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
+       (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
+       and idles out at civitai.
+    A later reply (or Continue after the app was paused) starts the dev server and calls
+    `start_preview` again; civitai replaces the user's tunnel for that block. The instructions tell
+    the assistant to start the dev server first and to use `sandbox__preview_check` (with
+    `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
+    model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
+    keeps only the text (`mcpResultToText`), so the instructions tell the assistant to go by the
+    text when no image comes back and never to describe a picture it did not receive.
   - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
     run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
     page's word is not taken). Their progress is journaled as `subagent-progress`.
@@ -160,6 +192,24 @@ See [Not built yet](#not-built-yet).
   fails without running if that save does not land. A pass that already saved the reply's end
   (or journaled `run-ended`) before it died does not run again: it journals that end and returns.
   DBOS recovers one run at most 5 times.
+- **A model call cut by a crash is not paid twice.** Orchestration names each chat completion's
+  workflow in its `X-Civitai-Workflow-Id` response header, before the answer streams. The runner
+  keeps it at once, before reading the answer, in its own table (`assistant_runner.model_calls`:
+  run id, user, conversation, turn, a hash of what the request asks, the workflow id; no
+  credential), since a DBOS step's output is saved only when the step ends and the whole reply is
+  one step. A request asked again with the same key (the step recovered after a crash, or a
+  Continue) first reads that workflow (`GET /v2/consumer/workflows/{id}`), reading it again through
+  up to three failed reads in a row: succeeded, its stored answer is the request's, with no new
+  request; still running, it is waited for until it ends or the run stops waiting (its wall clock,
+  a Stop), which cancels it; failed, expired, cancelled or holding nothing a step can be rebuilt
+  from, the request is sent again (after cancelling the workflow when its state cannot be read). A
+  retry that carries on from at least one step an earlier run saved (Continue) may take that run's
+  answer too; a retry carrying no saved step (a regenerate) never does. A model call cut off by the
+  run (Stop, the wall clock, a pause, a cancel outright) has its workflow cancelled
+  (`PUT /v2/consumer/workflows/{id}`, `{"status":"canceled"}`), which stops the model and its
+  billing; the pass's end waits up to 2 s for that. Each branch is logged with the workflow id
+  under `modelCall` (`reused`, `waiting`, `asked-again` with its `reason`, `cancelled`). The key
+  leaves out the system prompt (it names the date). Rows are deleted with the runs' retention.
 - **Runs left on an old version.** DBOS recovers a run only in a process of the same
   `WORKFLOW_VERSION` (`src/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
   own executor id holds under another version and saves each reply as interrupted, keeping its
@@ -195,8 +245,9 @@ See [Not built yet](#not-built-yet).
   `ThreadStore` rebuilds turns through `turnFrom` and drops the owner (switching modes fails open).
 - **Credentials.** DBOS persists every workflow input, step output and stream value. The runner
   hands its workflows and providers a user id and a run id only: no request header, grant, token or
-  cookie goes into a workflow argument, a step output, the journal or the head, and tests scan the
-  DBOS tables for the credentials sent with a start and for a token minted during the run. Request
+  cookie goes into a workflow argument, a step output, the journal, the head or the model calls'
+  table (workflow ids only), and tests scan the DBOS tables for the credentials sent with a start
+  and for a token minted during the run. Request
   headers are never logged.
 
 ## Threat model
@@ -267,13 +318,23 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 
 - The route from the page's origin (`/api/assistant-runner`) to the runner: the deployment's job.
 - The orchestration and site MCP tools the browser's chat adds (`fetch_page`, `get_guide`, …).
-- The live preview on the runner.
 
 Known gaps:
 
+- The page learns of a runner's preview only from the live `tool-reported` event, which a reload
+  or another device does not replay: the pane then shows nothing until the assistant calls
+  `start_preview` again (the instructions say to when the preview is gone). Asking civitai's
+  preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
+  window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
+  preview), so it would show a dead preview.
+- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
+  keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
 
-- A model step cut by a crash is asked for again (and paid again) until orchestration can reattach
-  to a step in flight.
+- A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
+  arrives at once (orchestration has no reattach to a stream in flight). One cut before
+  orchestration answered with its workflow id (while it set the workflow up) is still sent, and
+  paid, again. A request whose saved steps rebuild into a different request body (a different key)
+  is sent again too.
 - The stop fallback's timer lives in the process that took the Stop; if that process dies first, the
   run is not cancelled outright (it still ends on its own Stop or its wall clock).
 - Journal reads poll Postgres; their load per viewer has not been measured.

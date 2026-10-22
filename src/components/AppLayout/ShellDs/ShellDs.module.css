@@ -1,0 +1,171 @@
+/* The page shell on `@civitai/components` markup (flag `shellDesignSystemMarkup`).
+
+   WHAT EACH STYLESHEET CONTRIBUTES. `@civitai/components`' sheet (imported in `_app.tsx`) styles
+   `[data-civitai-ui='button']` — inline-flex centring, 8px gap, 600 weight, `line-height: 1`,
+   pointer, `user-select: none`, no text decoration, a 1px border. Everything that has to match
+   the Mantine shell this replaces is set HERE, from Mantine's own CSS variables, because the
+   design system has no gray colour, no `xs` size, no icon-button and no `default` variant, and
+   its `sm`/`md` sizes are px where Mantine's are `rem * --mantine-scale`.
+
+   🔴 WHY MANTINE'S VARIABLES AND NOT `@civitai/theme`'S STYLESHEET. That sheet is unlayered and
+   declares `:root { color-scheme: dark }`, so loading it would force dark native scrollbars and
+   form controls onto light-mode users site-wide — it beats Mantine's layered
+   `color-scheme: light`. The tokens it would provide are generated FROM this app's Mantine theme,
+   so reading Mantine's variables gives the same values and follows the user's colour scheme for
+   free: Mantine re-declares every variable under `[data-mantine-color-scheme='light'|'dark']`.
+   Same precedent as `src/components/Apps/AppAssistant/AppAssistant.module.scss`.
+
+   🔴 THE LAYER ORDER IS WHAT MAKES THIS WORK. `_document.tsx` declares
+   `tailwind-preflight, theme, mantine, civitai.components, modules`, so:
+     · the design-system rules beat Tailwind Preflight and the `theme` layer's
+       `button { background: transparent; border: none }` (otherwise the shell renders borderless);
+     · this file (wrapped in `@layer modules` by `postcss-assign-layer`) beats the design system;
+     · unlayered Tailwind utilities on the call sites (`px-2.5`, `h-8`, `rounded-full`, …) beat
+       both, exactly as they beat Mantine's layered rules before.
+
+   🔴 AND WHY EVERYTHING BELOW IS IN A NESTED `@layer shell`. `postcss-assign-layer` wraps this
+   file in `@layer modules`, so this block becomes `modules.shell` — and a sub-layer LOSES to the
+   rules written directly in its parent layer. That is the position Mantine's rules held: every
+   other CSS module still overrides the shell, regardless of specificity or chunk order. Without
+   it, the Shop pill's `.tabHighlight` (HomeContentToggle.module.css) would tie with `.root` at
+   0-1-0 and lose to `.root:hover` outright, so its highlight would vanish on hover. */
+
+@layer shell {
+  .root {
+    /* Token bridge, scoped to the element (never `:root`) so it cannot leak or tie with anything. */
+    --civitai-radius: var(--mantine-radius-default);
+    --civitai-color-primary: var(--shell-bg);
+    --civitai-color-primary-hover: var(--shell-hover);
+    --civitai-color-primary-fg: var(--shell-color);
+
+    position: relative;
+    overflow: hidden;
+    vertical-align: middle;
+    /* Mantine puts `nowrap` on the label span inside the button; here the text is a direct child. */
+    white-space: nowrap;
+    text-align: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    /* Mantine paints hover instantly; the design system fades it over 120ms. */
+    transition: none;
+
+    height: var(--shell-height);
+    padding-inline: var(--shell-px);
+    font-size: var(--shell-fz);
+    border-radius: var(--shell-radius, var(--mantine-radius-default));
+    border: calc(0.0625rem * var(--mantine-scale)) solid var(--shell-bd);
+    background-color: var(--shell-bg);
+    color: var(--shell-color);
+  }
+
+  /* The design system repaints on `:hover` unconditionally; Mantine does so only on a device that can
+   hover, and uses `:active` on touch. Neutralise the sheet's hover first, then restore Mantine's. */
+  .root:hover {
+    background-color: var(--shell-bg);
+    border-color: var(--shell-bd);
+  }
+
+  @media (hover: hover) {
+    .root:hover {
+      background-color: var(--shell-hover);
+    }
+  }
+
+  @media (hover: none) {
+    .root:active {
+      background-color: var(--shell-hover);
+    }
+  }
+
+  /* Mantine's `mantine-focus-auto` and `mantine-active` classes, which every Mantine button carries. */
+  .root:focus-visible {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: calc(0.125rem * var(--mantine-scale));
+  }
+
+  .root:active {
+    transform: translateY(calc(0.0625rem * var(--mantine-scale)));
+  }
+
+  /* ---- Variants: Mantine's `defaultVariantColorsResolver` output for each one the shell uses ---- */
+
+  .subtleGray {
+    --shell-bg: transparent;
+    --shell-hover: var(--mantine-color-gray-light-hover);
+    --shell-color: var(--mantine-color-gray-light-color);
+    --shell-bd: transparent;
+  }
+
+  .filledPrimary {
+    --shell-bg: var(--mantine-primary-color-filled);
+    --shell-hover: var(--mantine-primary-color-filled-hover);
+    --shell-color: var(--mantine-color-white);
+    --shell-bd: transparent;
+  }
+
+  .filledRed {
+    --shell-bg: var(--mantine-color-red-filled);
+    --shell-hover: var(--mantine-color-red-filled-hover);
+    --shell-color: var(--mantine-color-white);
+    --shell-bd: transparent;
+  }
+
+  .default {
+    --shell-bg: var(--mantine-color-default);
+    --shell-hover: var(--mantine-color-default-hover);
+    --shell-color: var(--mantine-color-default-color);
+    --shell-bd: var(--mantine-color-default-border);
+  }
+
+  /* ---- Sizes: Mantine `Button` `xs`/`sm` and `ActionIcon` `md`/`lg` ---- */
+
+  .sizeXs {
+    --shell-height: calc(1.875rem * var(--mantine-scale));
+    --shell-px: calc(0.875rem * var(--mantine-scale));
+    --shell-fz: var(--mantine-font-size-xs);
+  }
+
+  .sizeSm {
+    --shell-height: calc(2.25rem * var(--mantine-scale));
+    --shell-px: calc(1.125rem * var(--mantine-scale));
+    --shell-fz: var(--mantine-font-size-sm);
+  }
+
+  .iconMd,
+  .iconLg {
+    --shell-px: 0;
+    /* What `ActionIcon` inherits from `UnstyledButton` (its glyph is an SVG sized by attribute, so
+     none of this is visible — it is here so the computed style matches as well as the pixels). */
+    --shell-fz: var(--mantine-font-size-md);
+    text-align: left;
+    font-weight: inherit;
+    white-space: inherit;
+    width: var(--shell-height);
+    min-width: var(--shell-height);
+    min-height: var(--shell-height);
+    gap: 0;
+  }
+
+  .iconMd {
+    --shell-height: calc(1.75rem * var(--mantine-scale));
+  }
+
+  .iconLg {
+    --shell-height: calc(2.125rem * var(--mantine-scale));
+  }
+
+  .radiusXl {
+    --shell-radius: var(--mantine-radius-xl);
+  }
+
+  /* Mantine `Divider orientation="vertical"`. */
+  .divider {
+    align-self: stretch;
+    height: auto;
+    border-inline-start: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-gray-3);
+  }
+
+  :global([data-mantine-color-scheme='dark']) .divider {
+    border-inline-start-color: var(--mantine-color-dark-4);
+  }
+}

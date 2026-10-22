@@ -92,6 +92,12 @@ export const CRUCIBLE_MAX_ALLOWED_RESOURCES = 10;
 
 export const CRUCIBLE_MAX_ALLOWED_BASE_MODELS = 10;
 
+/** Moderator-set labels a homepage Feed block selects crucibles by, e.g. `halloween`. */
+export const CRUCIBLE_MAX_EVENT_TAGS = 10;
+export const CRUCIBLE_EVENT_TAG_MAX_LENGTH = 32;
+export const CRUCIBLE_EVENT_TAG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+export const normalizeCrucibleEventTag = (tag: string) => tag.trim().toLowerCase();
+
 /** How far ahead a crucible's start may be scheduled. */
 export const CRUCIBLE_MAX_START_LEAD_DAYS = 30;
 

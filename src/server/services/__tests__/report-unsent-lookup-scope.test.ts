@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createCsamReport } from '~/server/services/csam.service';
+import { CSAM_SEND_CLAIM_EXPIRY_SECONDS } from '~/server/services/csam.service-new';
+import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
+import { logToAxiom } from '~/server/logging/client';
 
 type Row = {
   id: number;
@@ -11,6 +14,8 @@ type Row = {
   details: unknown;
   images: unknown;
   type: string;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
 };
 
 const INTERNAL = -1;
@@ -26,9 +31,15 @@ const isJsonPathFilter = (value: unknown): value is JsonPathFilter =>
 
 // Prisma drops a `where` key whose value is `undefined` rather than matching it, and that is the
 // semantics a lookup with a missing user id is judged by — so the fake applies the same rule.
-function matches(row: Row, where: Record<string, unknown>) {
+function matches(row: Row, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
+    if (key === 'OR')
+      return (value as Record<string, unknown>[]).some((branch) => matches(row, branch));
+    if (value instanceof Object && 'lt' in value) {
+      const stored = row[key as keyof Row];
+      return stored instanceof Date && stored < (value.lt as Date);
+    }
     // As Prisma does, an undefined `equals` constrains nothing.
     if (isJsonPathFilter(value) && value.equals === undefined) return true;
     if (isJsonPathFilter(value)) {
@@ -51,6 +62,8 @@ function seed(partial: Partial<Row> & Pick<Row, 'userId'>) {
     details: {},
     images: [],
     type: 'Image',
+    sendClaimId: null,
+    sendClaimedAt: null,
     ...partial,
   };
   rows.push(row);
@@ -78,7 +91,9 @@ const tx = {
   $queryRaw: vi.fn(async (_: TemplateStringsArray, id: number) =>
     rows
       .filter((row) => row.id === id && row.reportSentAt === null)
-      .map(({ images, details }) => structuredClone({ images, details }))
+      .map(({ images, details, sendClaimId, sendClaimedAt }) =>
+        structuredClone({ images, details, sendClaimId, sendClaimedAt })
+      )
   ),
 };
 
@@ -168,7 +183,7 @@ describe('unsent-report lookup', () => {
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(tx.$queryRaw.mock.calls[0][1]).toBe(unsent.id);
     expect(lockSql()).toMatch(
-      /^\s*SELECT images, details FROM "CsamReport"\s+WHERE id = \? AND "reportSentAt" IS NULL\s+FOR UPDATE\s*$/
+      /^\s*SELECT images, details, "sendClaimId", "sendClaimedAt" FROM "CsamReport"\s+WHERE id = \? AND "reportSentAt" IS NULL\s+FOR UPDATE\s*$/
     );
   });
 
@@ -413,5 +428,84 @@ describe('a second report folded into an unsent one', () => {
         { blobs: [{ url: 'y' }] },
       ],
     });
+  });
+});
+
+describe('a report a send run has claimed', () => {
+  const claimedAgo = (seconds: number) => ({
+    sendClaimId: 'run-1',
+    sendClaimedAt: new Date(Date.now() - seconds * 1000),
+  });
+  const skipLines = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .filter((line) => line.subType === 'fold-skip-claimed');
+  beforeEach(() => vi.mocked(logToAxiom).mockClear());
+
+  it.each([
+    ['just claimed', 60],
+    ['claimed as long as the job lock', CSAM_SEND_JOB_LOCK_SECONDS + 60],
+  ])(
+    'takes no filing while the run holds it (%s): the filing is a report of its own, and the held id is logged',
+    async (_, age) => {
+      // Another account's held report, filed first, must not be the one named.
+      seed({ userId: 202, images: [{ id: 9 }], ...claimedAgo(60) });
+      const held = seed({ userId: 101, images: [{ id: 1 }], ...claimedAgo(age) });
+
+      await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+      expect(rows.find((r) => r.id === held.id)).toEqual(held);
+      expect(rows).toHaveLength(3);
+      expect(rows[2]).toMatchObject({ userId: 101, images: [{ id: 4 }], sendClaimId: null });
+      expect(skipLines()).toEqual([
+        expect.objectContaining({ reportId: held.id, newReportId: rows[2].id }),
+      ]);
+    }
+  );
+
+  it('takes no filing when the claim lands between the lookup and the lock', async () => {
+    const raced = seed({ userId: 101, images: [{ id: 1 }] });
+    tx.csamReport.findFirst.mockImplementationOnce(async () => {
+      Object.assign(rows.find((r) => r.id === raced.id)!, claimedAgo(0));
+      return { id: raced.id };
+    });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows.find((r) => r.id === raced.id)).toMatchObject({ images: [{ id: 1 }] });
+    expect(rows).toHaveLength(2);
+    expect(tx.csamReport.update).not.toHaveBeenCalled();
+    expect(skipLines()).toEqual([expect.objectContaining({ reportId: raced.id })]);
+  });
+
+  it('folds the next filing into the unsent report filed meanwhile, not a third', async () => {
+    seed({ userId: 101, images: [{ id: 1 }], ...claimedAgo(60) });
+    const meanwhile = seed({ userId: 101, images: [{ id: 2 }] });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id === meanwhile.id)).toMatchObject({
+      images: [{ id: 2 }, { id: 4 }],
+    });
+  });
+
+  it('takes a filing once the claim has expired, and clears the claim so its run cannot mark it sent', async () => {
+    const stale = seed({
+      userId: 101,
+      images: [{ id: 1 }],
+      ...claimedAgo(CSAM_SEND_CLAIM_EXPIRY_SECONDS + 60),
+    });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows.find((r) => r.id === stale.id)).toMatchObject({
+      images: [{ id: 1 }, { id: 4 }],
+      sendClaimId: null,
+      sendClaimedAt: null,
+    });
+    expect(skipLines()).toEqual([]);
   });
 });

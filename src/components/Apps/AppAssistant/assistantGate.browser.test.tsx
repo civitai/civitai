@@ -129,7 +129,7 @@ describe('Build it under the checklist', () => {
 });
 
 describe('the report_ready card', () => {
-  test('says the checks passed when report_ready did', () => {
+  test('says what the checks were when report_ready passed: a test browser, not the live preview', () => {
     const card = renderReady({
       name: 'report_ready',
       input: {},
@@ -138,7 +138,7 @@ describe('the report_ready card', () => {
     });
     expect(card?.getAttribute('role')).toBe('status');
     expect(card?.textContent).toBe(
-      '✓ Checked: the preview renders, the tests and the typecheck pass, and every checklist item is done.'
+      '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.'
     );
   });
 

@@ -25,8 +25,8 @@ import type {
   PreprocessImageStepTemplate,
   WorkflowCost,
   WorkflowStepTemplate,
-} from '@civitai/client';
-// The pinned @civitai/client predates preprocessVideo; this comes from
+} from '@civitai/orchestration-client';
+// The pinned @civitai/orchestration-client predates preprocessVideo; this comes from
 // orchestration-client.
 import type {
   Priority as DownloadPriority,
@@ -113,6 +113,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -802,6 +803,14 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * (computed values like `triggerWords` are derived, not user input).
  */
 export function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
+  // The tRPC entries are `.input(z.any())`, and `generateFromGraph` reads its form values off
+  // `input.input`, so a payload sent flat arrives as `undefined` — refuse it as a 400 here
+  // rather than let `normalizeInput` throw a TypeError (a 500) dereferencing it.
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw throwBadRequestError(
+      'Validation failed: input: expected an object of generation form values'
+    );
+  }
   const normalized = normalizeInput(input);
   // `reconcileSelectors` first: it settles the model/workflow/ecosystem trio before the
   // hub dispatches on them.
@@ -2205,7 +2214,7 @@ import type {
   WorkflowStatus,
   WorkflowStep,
   WorkflowStepQueuePosition,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -2679,17 +2688,19 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'yuE2':
     case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
-    case 'polyGen':
+    case 'polyGen': {
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
       // (regardless of how many rigged/animated/motion-template variants
       // the workflow emitted).
-      if (!output.model) return [];
+      const primary = getPolyGenPrimaryModel(output);
+      if (!primary) return [];
+      const fbxIsPrimary = primary === output.fbxModel;
       return [
         {
-          ...(output.model as Model3dBlob),
+          ...primary,
           type: 'model3d' as const,
-          fbxModel: output.fbxModel ?? null,
+          fbxModel: fbxIsPrimary ? null : output.fbxModel ?? null,
           thumbnail: output.thumbnail ?? null,
           riggedModel: output.riggedModel ?? null,
           riggedFbxModel: output.riggedFbxModel ?? null,
@@ -2698,6 +2709,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
           basicAnimations: output.basicAnimations ?? null,
         },
       ];
+    }
     default:
       return [];
   }

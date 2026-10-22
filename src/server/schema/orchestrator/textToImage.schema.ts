@@ -1,4 +1,4 @@
-import { Priority } from '@civitai/client';
+import { Priority } from '@civitai/orchestration-client';
 import * as z from 'zod';
 
 import type { Sampler } from '~/server/common/constants';

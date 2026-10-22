@@ -16,7 +16,7 @@
   }: {
     key: number;
     primary?: boolean;
-    tone?: 'red' | 'dark-red' | 'darker-red' | 'red-outline';
+    tone?: 'red' | 'blue' | 'dark-red' | 'darker-red' | 'red-outline';
     /** The decision offers reasons, so its key opens the reason list instead of submitting. */
     reasons?: boolean;
     /** Opt-in: the page keeps a selected decision, so mark it (aria-pressed and a blue border). */
@@ -26,6 +26,7 @@
 
   const TONE = {
     red: 'bg-red-600 hover:bg-red-700',
+    blue: 'bg-blue-600 hover:bg-blue-700',
     'dark-red': 'bg-red-800 hover:bg-red-900',
     'darker-red': 'bg-red-950 hover:bg-red-900',
     'red-outline': 'border-red-500 bg-transparent text-red-300 hover:bg-red-950 dark:bg-transparent',

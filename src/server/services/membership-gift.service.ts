@@ -32,6 +32,9 @@ const TERMINAL_STATUSES = ['canceled', 'incomplete_expired'];
 // Statuses a gift coupon can safely be applied to.
 const EXTENDABLE_STATUSES = ['active', 'trialing'];
 const tierRank = (tier: string) => constants.memberships.tierOrder.indexOf(tier as never);
+// Tags the cancellation of a residual subscription we end ourselves, so its deletion webhook
+// does not hand the months back.
+const GIFT_REVOKED_CANCELLATION = 'membership-gift-revoked';
 
 // A gift fulfilled before gifts had to be accepted was applied in full when it was paid. It is
 // still 'Fulfilled' until the migration's second part runs, and it has no months left to give.
@@ -188,6 +191,9 @@ export async function createMembershipGiftCheckout({
     session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'payment',
+      // A bank debit can be reversed as unauthorized weeks after it succeeds, long after the
+      // recipient has the membership.
+      payment_method_types: ['card'],
       line_items: [
         {
           price_data: { currency, unit_amount: unitAmount, product: productId },
@@ -213,10 +219,59 @@ export async function createMembershipGiftCheckout({
   return { giftId: gift.id, sessionId: session.id, url: session.url };
 }
 
+type GiftCheckoutEventType =
+  | 'checkout.session.completed'
+  | 'checkout.session.async_payment_succeeded'
+  | 'checkout.session.async_payment_failed';
+
 /**
- * Records the gifter's payment and puts the gift in the recipient's queue. Called from the
- * Stripe webhook on checkout.session.completed — must be safe to re-run (Stripe retries on
- * non-2xx), so anything past Pending/Failed bails early.
+ * A gift checkout's payment moved. Checkout completes 'unpaid' for a delayed payment method
+ * (a bank debit), whose money arrives days later or never, so the gift is only fulfilled once
+ * the payment has actually succeeded.
+ */
+export async function handleMembershipGiftCheckoutEvent({
+  type,
+  session,
+}: {
+  type: GiftCheckoutEventType;
+  session: Stripe.Checkout.Session;
+}) {
+  const giftId = session.metadata?.giftId;
+  if (!giftId) throw new Error('membershipGift checkout session missing giftId');
+
+  if (type === 'checkout.session.async_payment_failed') {
+    const revoked = await revokeMembershipGift({ giftId, reason: 'payment_failed' });
+    if (!revoked) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
+    return revoked;
+  }
+
+  const paid =
+    type === 'checkout.session.async_payment_succeeded' || session.payment_status === 'paid';
+  if (!paid) {
+    // Gift checkout offers no promotion codes, so a gift that needed no payment is unexpected.
+    if (session.payment_status === 'no_payment_required')
+      await log({
+        type: 'warning',
+        stage: 'checkout',
+        giftId,
+        message: 'gift checkout completed without a payment; not fulfilled',
+      });
+    return { fulfilled: false as const, paymentStatus: session.payment_status };
+  }
+
+  return fulfillMembershipGift({
+    giftId,
+    paymentIntentId:
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id,
+  });
+}
+
+/**
+ * Records the gifter's payment and puts the gift in the recipient's queue. Must be safe to
+ * re-run (Stripe retries on non-2xx), so anything past Pending bails early. A Failed gift's
+ * payment can never clear, so it is never fulfilled.
  *
  * Deliberately applies NOTHING. Acceptance is the recipient's action.
  */
@@ -236,13 +291,11 @@ export async function fulfillMembershipGift({
   });
   if (!gift) throw throwNotFoundError(`MembershipGift not found: ${giftId}`);
 
-  // Failed rows stay retryable: a webhook redelivery is a legitimate recovery path
-  if (gift.status !== MembershipGiftStatus.Pending && gift.status !== MembershipGiftStatus.Failed) {
-    return { alreadyProcessed: true as const };
-  }
+  if (gift.status !== MembershipGiftStatus.Pending) return { alreadyProcessed: true as const };
 
-  await dbWrite.membershipGift.update({
-    where: { id: gift.id },
+  // Stripe can deliver the same success concurrently, and both deliveries read Pending above.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: { id: gift.id, status: MembershipGiftStatus.Pending },
     data: {
       status: MembershipGiftStatus.Fulfilled,
       fulfilledAt: new Date(),
@@ -253,6 +306,7 @@ export async function fulfillMembershipGift({
         : {}),
     },
   });
+  if (count === 0) return { alreadyProcessed: true as const };
 
   await createNotification({
     type: 'membership-gift-received',
@@ -720,8 +774,8 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
  * The holder has no live subscription, so the months they are still owed become a free one
  * at the gift's tier that ends when they run out.
  *
- * This delivers the gift in full and completes it. There is nothing left to meter: the
- * subscription is free for exactly the months owed and then cancels itself.
+ * The gift is completed here, but the months stay recoverable: if the subscription ends before
+ * they run out, `restoreUndeliveredResidualMonths` puts the rest back on the gift.
  */
 async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; giftId: string }) {
   const gift = await dbWrite.membershipGift.findUnique({
@@ -738,7 +792,9 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
 
   const { priceId, currency } = await getTierMonthlyPrice(gift.tier);
   const customerId = await createCustomer({ id: gift.holderId, email: gift.holder.email });
-  const couponId = `gift_${gift.id}_residual`;
+  // Keyed on the first month it covers: a retry re-uses it, and a gift restored after an early
+  // cancel needs a fresh one, because the first is single-use and sized for the old remainder.
+  const couponId = `gift_${gift.id}_residual_m${gift.monthsConsumed + 1}`;
   const coupon =
     (await stripe.coupons.retrieve(couponId).catch(() => null)) ??
     (await stripe.coupons.create({
@@ -751,16 +807,25 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
       metadata: { giftId: gift.id },
     }));
 
-  const subscription = await stripe.subscriptions.create({
-    customer: customerId,
-    items: [{ price: priceId }],
-    coupon: coupon.id,
-    cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
-    // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
-    // computed a non-zero amount the sub parks as `incomplete` instead of charging.
-    payment_behavior: 'default_incomplete',
-    metadata: { membershipGiftId: gift.id, membershipGift: 'true' },
-  });
+  const subscription = await stripe.subscriptions.create(
+    {
+      customer: customerId,
+      items: [{ price: priceId }],
+      coupon: coupon.id,
+      cancel_at: dayjs().add(gift.monthsRemaining, 'month').unix(),
+      // Every invoice inside the window is $0, so no payment method is needed; if Stripe ever
+      // computed a non-zero amount the sub parks as `incomplete` instead of charging.
+      payment_behavior: 'default_incomplete',
+      metadata: {
+        membershipGiftId: gift.id,
+        membershipGift: 'true',
+        residualMonths: String(gift.monthsRemaining),
+      },
+    },
+    // A mint that failed after this call is retried with the same coupon id; without the key
+    // the retry would open a second free subscription.
+    { idempotencyKey: couponId }
+  );
 
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
@@ -792,12 +857,108 @@ async function mintResidualSubscription({ stripe, giftId }: { stripe: Stripe; gi
 }
 
 /**
+ * A residual subscription ended before the months it was minted for ran out — the holder
+ * cancelled it, and Stripe moved its end to the current period end. Put the months it never
+ * delivered back on the gift, which the residual mint had already completed.
+ *
+ * Every billing period that started counts as delivered — its invoice already granted the
+ * month's Buzz — so each early end uses up at least one month and repeated cancels run the
+ * gift down instead of renewing it forever.
+ */
+export async function restoreUndeliveredResidualMonths({
+  subscription,
+}: {
+  subscription: Stripe.Subscription;
+}) {
+  const giftId = subscription.metadata?.membershipGiftId;
+  if (!giftId) return { restored: 0 };
+  if (subscription.cancellation_details?.comment === GIFT_REVOKED_CANCELLATION)
+    return { restored: 0 };
+
+  // Residual subscriptions minted before `residualMonths` was recorded carry it on the coupon.
+  const mintedMonths =
+    Number(subscription.metadata.residualMonths) ||
+    subscription.discount?.coupon?.duration_in_months ||
+    0;
+  const endedAt = subscription.ended_at ?? subscription.canceled_at;
+  if (!mintedMonths || !endedAt) return { restored: 0 };
+
+  // A day of slack keeps a period that ended on its boundary from counting the next one as
+  // started.
+  const monthsElapsed = dayjs
+    .unix(endedAt)
+    .subtract(1, 'day')
+    .diff(dayjs.unix(subscription.start_date), 'month', true);
+  const delivered = Math.max(1, Math.ceil(monthsElapsed));
+  const owed = mintedMonths - delivered;
+  if (owed <= 0) return { restored: 0 };
+
+  const gift = await dbWrite.membershipGift.findUnique({
+    where: { id: giftId },
+    select: {
+      id: true,
+      holderId: true,
+      monthsConsumed: true,
+      stripeCouponId: true,
+      holder: { select: { bannedAt: true, deletedAt: true } },
+    },
+  });
+  if (!gift) return { restored: 0 };
+  // Banning or deleting an account cancels its subscription; that must not mint a new one.
+  if (gift.holder.bannedAt || gift.holder.deletedAt) return { restored: 0 };
+
+  // Guarded on the subscription it was completed by, so a redelivered deletion — or one for an
+  // older residual of a gift that has since been minted again — changes nothing.
+  const { count } = await dbWrite.membershipGift.updateMany({
+    where: {
+      id: gift.id,
+      status: MembershipGiftStatus.Completed,
+      stripeSubscriptionId: subscription.id,
+    },
+    data: {
+      status: MembershipGiftStatus.Active,
+      monthsRemaining: owed,
+      monthsConsumed: Math.max(0, gift.monthsConsumed - owed),
+    },
+  });
+  if (!count) return { restored: 0 };
+
+  if (gift.stripeCouponId) {
+    const stripe = await getServerStripe();
+    await stripe?.coupons.del(gift.stripeCouponId).catch(() => null);
+  }
+
+  await log({
+    type: 'warning',
+    stage: 'residual-restore',
+    giftId: gift.id,
+    userId: gift.holderId,
+    stripeSubscriptionId: subscription.id,
+    mintedMonths,
+    delivered,
+    restored: owed,
+  });
+  return { restored: owed, giftId: gift.id };
+}
+
+/**
  * A holder's subscription ended with gifted months still owed. Called from the subscription
  * webhook — hands them the remainder as a free membership rather than letting it evaporate.
+ * When the subscription that ended was itself a residual one, its undelivered months are
+ * restored first, so they are owed again.
  */
-export async function honorGiftResidualsForUser({ userId }: { userId: number }) {
+export async function honorGiftResidualsForUser({
+  userId,
+  endedSubscription,
+}: {
+  userId: number;
+  endedSubscription?: Stripe.Subscription;
+}) {
   const stripe = await getServerStripe();
   if (!stripe) return { minted: 0 };
+
+  if (endedSubscription)
+    await restoreUndeliveredResidualMonths({ subscription: endedSubscription });
 
   const gifts = await dbWrite.membershipGift.findMany({
     where: { holderId: userId, status: MembershipGiftStatus.Active, monthsRemaining: { gt: 0 } },
@@ -846,32 +1007,29 @@ export async function sweepGiftArming({ limit = 200 }: { limit?: number } = {}) 
   return { candidates: pending.length, armed };
 }
 
+const revokedStatus = {
+  refund: MembershipGiftStatus.Refunded,
+  chargeback: MembershipGiftStatus.Revoked,
+  payment_failed: MembershipGiftStatus.Failed,
+} as const;
+
 /**
- * Undo a gift after a refund or chargeback on the gifter's payment.
+ * Undo a gift after a refund, chargeback or failed payment on the gifter's payment.
  * Best-effort by design: Buzz already granted for elapsed months is not clawed back.
- * Returns false when the payment intent doesn't belong to a gift.
+ * Returns false when no gift matches.
  */
 export async function revokeMembershipGift({
-  paymentIntentId,
   reason,
-}: {
-  paymentIntentId: string;
-  reason: 'refund' | 'chargeback';
-}) {
+  ...by
+}: { reason: keyof typeof revokedStatus } & ({ paymentIntentId: string } | { giftId: string })) {
   const gift = await dbWrite.membershipGift.findUnique({
-    where: { stripePaymentIntentId: paymentIntentId },
+    where: 'giftId' in by ? { id: by.giftId } : { stripePaymentIntentId: by.paymentIntentId },
   });
   if (!gift) return false;
 
-  const newStatus =
-    reason === 'refund' ? MembershipGiftStatus.Refunded : MembershipGiftStatus.Revoked;
+  const newStatus = revokedStatus[reason];
 
-  if (
-    gift.status === MembershipGiftStatus.Refunded ||
-    gift.status === MembershipGiftStatus.Revoked
-  ) {
-    return true;
-  }
+  if (Object.values(revokedStatus).some((status) => status === gift.status)) return true;
 
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
@@ -885,7 +1043,9 @@ export async function revokeMembershipGift({
     if (subscription && !TERMINAL_STATUSES.includes(subscription.status)) {
       if (subscription.metadata?.membershipGiftId === gift.id) {
         // Residual subscription — it exists only because of this payment
-        await stripe.subscriptions.del(subscription.id);
+        await stripe.subscriptions.del(subscription.id, {
+          cancellation_details: { comment: GIFT_REVOKED_CANCELLATION },
+        });
       }
     }
 
@@ -916,7 +1076,13 @@ export async function revokeMembershipGift({
   await invalidateSubscriptionCaches(gift.holderId);
   await refreshSession(gift.holderId, { caller: 'membership' });
 
-  await log({ type: 'warning', stage: 'revoke', giftId: gift.id, reason, paymentIntentId });
+  await log({
+    type: 'warning',
+    stage: 'revoke',
+    giftId: gift.id,
+    reason,
+    paymentIntentId: gift.stripePaymentIntentId,
+  });
 
   return true;
 }

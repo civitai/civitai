@@ -1,4 +1,4 @@
-import { applyPatch, JsonPatchFactory } from '@civitai/client';
+import { applyPatch, JsonPatchFactory } from '@civitai/orchestration-client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';

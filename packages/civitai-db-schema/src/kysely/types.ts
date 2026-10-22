@@ -2828,6 +2828,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2888,6 +2889,19 @@ export type CryptoWallet = {
   smartAccount: string | null;
   payCurrency: Generated<string>;
 };
+export type CsamFlagRelease = {
+  id: Generated<number>;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  /**
+   * The hold legs the release overrode.
+   */
+  overriddenLegs: unknown;
+  imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
 export type CsamReport = {
   id: Generated<number>;
   userId: number | null;
@@ -2900,6 +2914,11 @@ export type CsamReport = {
   details: Generated<unknown>;
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
+  /**
+   * The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+   */
+  sendClaimId: string | null;
+  sendClaimedAt: Timestamp | null;
 };
 export type CsamReportArchiveObject = {
   id: Generated<number>;
@@ -3647,6 +3666,10 @@ export type Model = {
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
   isOfficial: Generated<boolean>;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -6135,6 +6158,7 @@ export type DB = {
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
+  CsamFlagRelease: CsamFlagRelease;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;

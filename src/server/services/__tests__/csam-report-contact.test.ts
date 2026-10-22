@@ -20,6 +20,11 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
+vi.mock('~/utils/file-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchBlobAsFile: async () => new File(['generated'], 'generated.png'),
+}));
+
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: undefined,
@@ -51,12 +56,20 @@ describe('CyberTipline report contact person', () => {
   });
 
   it.each([
-    ['in-app report', makeReport({ type: 'GeneratedImage', details: { generatedImages: [] } })],
+    [
+      'in-app report',
+      makeReport({
+        type: 'GeneratedImage',
+        details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: 'blob-1' }] }] },
+      }),
+    ],
     [
       'external-link report',
       makeReport({ type: 'ExternalLink', details: { email: 'x@example.invalid' } }),
     ],
   ])('names the compliance address on a submitted %s', async (_, report) => {
+    dbMock.dbWrite.csamReport.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(report);
     await processCsamReport(report);
 
     expect(submitReport).toHaveBeenCalledTimes(1);

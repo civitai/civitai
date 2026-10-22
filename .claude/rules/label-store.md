@@ -6,6 +6,7 @@ paths:
   - "**/*label_store*/**"
   - "**/*appeal*"
   - "**/*moderat*"
+  - "**/creator-shop-label*"
 ---
 
 # Label store

@@ -6,8 +6,8 @@ import type {
   WorkflowStepTemplate,
   WorkflowTemplate,
   XGuardModerationStepTemplate,
-} from '@civitai/client';
-import { submitWorkflow } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -197,7 +197,7 @@ export async function createImageIngestionRequest({
       mediaUrl: edgeUrl,
     },
     currencies: [],
-    // WorkflowTemplate is @civitai/client's, which predates the imageScanning step.
+    // WorkflowTemplate is @civitai/orchestration-client's, which predates the imageScanning step.
     steps: steps as unknown as WorkflowStepTemplate[],
     callbacks: callbackUrl
       ? [

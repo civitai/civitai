@@ -96,6 +96,9 @@ import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css'; //import MRT styles
+// `data-civitai-ui` component rules, all inside `@layer civitai.components` (ordered in
+// `_document.tsx`). Tokens deliberately NOT loaded — see `ShellDs.module.css`.
+import '@civitai/components/styles.css';
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';

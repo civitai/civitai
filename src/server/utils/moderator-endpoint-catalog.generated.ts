@@ -2,10 +2,16 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
+  '/api/admin/temp/creator-shop-label-backfill': () =>
+    import('~/pages/api/admin/temp/creator-shop-label-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
+  '/api/mod/bounty-entry-file/clear-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/clear-check'),
+  '/api/mod/bounty-entry-file/reblock-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),

@@ -171,7 +171,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
-import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
+import {
+  getRequestBrowsingLevel,
+  resolveRequestBrowsingLevels,
+} from '~/server/utils/browsing-level';
+import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -250,6 +254,9 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    // Owners and moderators get the stored pair instead: this payload seeds the model editor.
+    const withSfwFace =
+      !isOwner && model.sfwName != null && showsSfwFace(getRequestBrowsingLevel(ctx));
 
     // Prevent non-owners from viewing scheduled/draft/unpublished models
     if (!isOwner && model.status !== ModelStatus.Published) {
@@ -475,6 +482,8 @@ export const getModelHandler = async ({
 
       return {
         ...version,
+        // A .com face has no per-version description; the .red one is not shown in its place.
+        description: withSfwFace ? null : version.description,
         licensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
@@ -562,7 +571,10 @@ export const getModelHandler = async ({
     ]);
 
     return {
-      ...model,
+      ...resolveModelFace(model, withSfwFace),
+      hasSfwFace: hasCompleteSfwFace(model),
+      sfwName: isOwner ? model.sfwName : null,
+      sfwDescription: isOwner ? model.sfwDescription : null,
       user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,

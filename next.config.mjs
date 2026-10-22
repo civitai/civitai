@@ -354,7 +354,7 @@ export default defineNextConfig(
       // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
       // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
-        '@civitai/client',
+        '@civitai/orchestration-client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',

@@ -29,7 +29,9 @@ import type { ToolSet } from 'ai';
 
 import type { Logger, OpenTools, ToolContext, ToolProvider } from '../interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
+import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
+import { RunnerPreview } from './preview';
 import { AppSandbox } from './sandbox';
 
 /**
@@ -76,26 +78,51 @@ export function reportOf(result: ChatToolResult): ChatToolResult {
 /** Enough of a sandbox result for the page's gate: `exit_code:` and `render:` come first. */
 const REPORTED_OUTPUT_CHARS = 200;
 
-/** The tools the page offers the assistant that the runner offers too; the preview tools stay page-only. */
-const RUNNER_PAGE_TOOLS = ['create_app', 'set_checklist', 'report_ready'] as const;
+/**
+ * The tools the page offers the assistant that the runner offers too, under the same names; the
+ * preview's are the runner's own (`RunnerPreview`), which drive the tunnel themselves.
+ */
+const RUNNER_PAGE_TOOLS = [
+  'create_app',
+  'set_checklist',
+  'report_ready',
+  'start_preview',
+  'stop_preview',
+] as const;
 
 export interface AppAssistantToolsOptions {
   /** The hosted sandbox service's base URL (civitai's `APP_ASSISTANT_SANDBOX_URL`). */
   sandboxUrl: string;
   /** Tokens for one run, minted from its grant: `sandbox` for the sandbox service and its MCP server. */
   tokens(runId: string): TokenSource;
+  /**
+   * civitai's dev-tunnel endpoints with one run's grant (`CivitaiDevTunnels.forRun`): the live
+   * preview. Unset, `start_preview` says the preview is not set up here.
+   */
+  devTunnels?(runId: string): DevTunnels;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
   wakePollMs?: number;
+  /** How often a live run keeps its preview alive (`PREVIEW_KEEPALIVE_MS` unless set; tests). */
+  previewKeepaliveMs?: number;
 }
+
+/** No dev-tunnel endpoints configured: every start is refused as not set up. */
+const unconfiguredTunnels: DevTunnels = {
+  start: async () => {
+    throw new DevTunnelError('The live preview is not set up here.', 503, 'not_configured');
+  },
+  keepalive: async () => undefined,
+  stop: async () => undefined,
+};
 
 /**
  * App Assistant's tools on the server runner: the open app's sandbox MCP tools, `create_app`,
  * `set_checklist` and `report_ready`, behind App Assistant's own gate (the per-reply call cap and
  * `report_ready`'s checks, from `@civitai/app-assistant`, the same code the page runs), and read-only
- * subagents when civitai's grant says the viewer has them. The live preview (`start_preview`,
- * `stop_preview`) needs the page and is not offered: the reply's instructions say so.
+ * subagents when civitai's grant says the viewer has them, and the live preview (`start_preview`,
+ * `stop_preview`), which civitai opens for the run and the runner connects the sandbox to.
  */
 export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
@@ -129,6 +156,7 @@ export class AppAssistantTools implements ToolProvider {
       ...(this.#options.wakePollMs !== undefined ? { wakePollMs: this.#options.wakePollMs } : {}),
     });
 
+    let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
     try {
       apps = await client.list();
@@ -172,7 +200,20 @@ export class AppAssistantTools implements ToolProvider {
         app: sandbox.active?.app ?? null,
       });
 
-      const pageTools: Record<string, ChatTool> = { ...appTools.tools, ...core.tools };
+      preview = new RunnerPreview({
+        sandbox,
+        tunnels: this.#options.devTunnels?.(runId) ?? unconfiguredTunnels,
+        log,
+        runId,
+        ...(this.#options.previewKeepaliveMs !== undefined
+          ? { keepaliveMs: this.#options.previewKeepaliveMs }
+          : {}),
+      });
+      const pageTools: Record<string, ChatTool> = {
+        ...appTools.tools,
+        ...core.tools,
+        ...preview.tools(),
+      };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.
       const page = hostToolSet(
@@ -217,19 +258,25 @@ export class AppAssistantTools implements ToolProvider {
 
       return {
         tools: gateToolSet(tools, gate),
-        close: () => sandbox.close(),
+        // The run's end stops keeping its preview alive; the preview itself idles out later.
+        close: async () => {
+          preview?.close();
+          await sandbox.close();
+        },
         // The runner's variant names only tools it has (no web or guide tool, no tunnel).
         rules: assistantSystemPrompt('remote', subagents),
         instructions: buildAssistantInstructions({
           sandbox: sandbox.active,
           apps: (apps ?? []).map((s) => s.app),
-          canPreview: false,
+          // civitai judges the dev-tunnel gates at `start_preview`; a refusal says to go without it.
+          canPreview: true,
           previewHost: null,
           runner: 'remote',
         }),
         hostTools: Object.keys(page),
       };
     } catch (error) {
+      preview?.close();
       await sandbox.close();
       throw error;
     }

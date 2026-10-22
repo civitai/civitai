@@ -1,5 +1,5 @@
-import type { ChatCompletionStepTemplate } from '@civitai/client';
-import { submitWorkflow } from '@civitai/client';
+import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

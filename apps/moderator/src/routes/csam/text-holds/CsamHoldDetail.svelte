@@ -188,9 +188,9 @@
       ...base,
       description: `${base.description} The same is applied to ${
         capped ? `the first ${count} of ${covered.eligible} other pending holds` : plural(count, 'other pending hold')
-      } by this author, each against the text you saw${
-        alone ? ', but the strike or ban is applied once, with this hold' : ''
-      }.${capped ? ` The other ${capped} stay pending: decide again for the next batch.` : ''}${
+      } by this author, without you opening them${
+        alone ? ' (the strike or ban is applied once, with this hold)' : ''
+      }. They are recorded as batch decisions, not as reviewed.${capped ? ` The other ${capped} stay pending: decide again for the next batch.` : ''}${
         skipped ? ` ${plural(skipped, 'hold')} cannot be removed from here and stay pending.` : ''
       }`,
     };

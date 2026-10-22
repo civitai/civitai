@@ -993,6 +993,10 @@ export interface Model {
   scannedAt: Date | null;
   sfwOnly: boolean;
   isOfficial: boolean;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -4027,6 +4031,8 @@ export interface CsamReport {
   details: JsonValue;
   images: JsonValue;
   type: CsamReportType;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
 }
 
 export interface CsamReportAudit {
@@ -4042,6 +4048,17 @@ export interface CsamReportAudit {
   oldReportSentAt: Date | null;
   changedAt: Date;
   changedBy: string;
+}
+
+export interface CsamFlagRelease {
+  id: number;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  overriddenLegs: JsonValue;
+  imageCount: number;
+  createdAt: Date;
 }
 
 export interface CsamReportArchiveObject {
@@ -6750,6 +6767,7 @@ export interface Crucible {
   scannedAt: Date | null;
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
+  eventTags: string[];
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

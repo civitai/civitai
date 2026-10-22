@@ -1,4 +1,4 @@
-import type { XGuardModerationOutput } from '@civitai/client';
+import type { XGuardModerationOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';

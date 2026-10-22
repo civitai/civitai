@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 
 // `assertUnlockReleasesOutput` refuses unless the workflow it reads has `allowMatureContent: false`,
 // so a read that dropped the field would refuse every unlock. Only the HTTP client is faked here:
 // the site's own `getWorkflow` wrapper, which the guard reads through, runs for real.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('@civitai/client', () => ({
   }),
 }));
 
-import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { getWorkflow as clientGetWorkflow } from '@civitai/orchestration-client';
 import { getWorkflow } from '../workflows';
 
 /** A consumer-workflow response for a safe-Buzz, PG-13-capped generation with one mature output. */

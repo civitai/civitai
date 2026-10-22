@@ -407,6 +407,17 @@ export async function unmirroredReport(db: SqlRunner) {
         WHERE e."entityType" IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM "CommentTopic" ct WHERE ct."entityType" = e."entityType" AND ct."entityId" = e."entityId")`
     ),
+    /** Pending rows none of the classes above explain: what the monitor pages on, with its own sample. */
+    v2_pending_unexplained: await finding(
+      db,
+      `WITH pending AS MATERIALIZED (
+         SELECT c.id, t AS th FROM "CommentV2" c JOIN "Thread" t ON t.id = c."threadId"
+          WHERE ${v2Missing} AND NOT (t."parentThreadId" IS NOT NULL AND t."commentId" IS NULL)
+       )
+       SELECT p.id FROM pending p, LATERAL commentv3_thread_entity(p.th) e
+        WHERE e."entityType" IS NOT NULL
+          AND EXISTS (SELECT 1 FROM "CommentTopic" ct WHERE ct."entityType" = e."entityType" AND ct."entityId" = e."entityId")`
+    ),
     v1_pending: await finding(db, `SELECT c.id FROM "Comment" c WHERE ${v1Missing}`),
     v1_dead_parent: await finding(
       db,
@@ -418,6 +429,12 @@ export async function unmirroredReport(db: SqlRunner) {
       `SELECT c.id FROM "Comment" c WHERE ${v1Missing}
           AND (c."parentId" IS NULL OR EXISTS (SELECT 1 FROM "Comment" p WHERE p.id = c."parentId"))
           AND NOT EXISTS (SELECT 1 FROM "CommentTopic" ct WHERE ct."entityType" = 'model' AND ct."entityId" = c."modelId")`
+    ),
+    v1_pending_unexplained: await finding(
+      db,
+      `SELECT c.id FROM "Comment" c WHERE ${v1Missing}
+          AND (c."parentId" IS NULL OR EXISTS (SELECT 1 FROM "Comment" p WHERE p.id = c."parentId"))
+          AND EXISTS (SELECT 1 FROM "CommentTopic" ct WHERE ct."entityType" = 'model' AND ct."entityId" = c."modelId")`
     ),
     /** Links not yet copied. mutes_pending also counts mutes whose comment is not mirrored. */
     v2_reactions_pending: await finding(
@@ -472,11 +489,12 @@ export async function parityReport(db: SqlRunner) {
       `SELECT v.id FROM "CommentV3" v WHERE v.${live} AND v."legacyV1Id" IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM "Comment" c WHERE c.id = v."legacyV1Id")`
     ),
+    // reverseDeletes blanks (content = '') a v1 tombstone that still has replies; it counts as that tombstone's twin.
     resurrected: await finding(
       db,
       `SELECT v.id FROM "CommentV3" v WHERE v."deletedAt" IS NOT NULL
         AND (EXISTS (SELECT 1 FROM "CommentV2" c WHERE c.id = v.id AND v."legacyV1Id" IS NULL)
-          OR EXISTS (SELECT 1 FROM "Comment" c WHERE c.id = v."legacyV1Id"))`
+          OR EXISTS (SELECT 1 FROM "Comment" c WHERE c.id = v."legacyV1Id" AND c.content <> ''))`
     ),
     tombstones_childless: await finding(
       db,
@@ -511,7 +529,8 @@ export async function parityReport(db: SqlRunner) {
       db,
       // A reply whose parent is gone is skipped by design, so it is not counted.
       `SELECT m."modelId" AS id FROM (SELECT "modelId", count(*) AS n FROM "Comment" c
-                                        WHERE c."parentId" IS NULL OR EXISTS (SELECT 1 FROM "Comment" p WHERE p.id = c."parentId")
+                                        WHERE (c."parentId" IS NULL OR EXISTS (SELECT 1 FROM "Comment" p WHERE p.id = c."parentId"))
+                                          AND NOT (c.content = '' AND EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."legacyV1Id" = c.id AND v."deletedAt" IS NOT NULL))
                                         GROUP BY 1) m
         WHERE EXISTS (SELECT 1 FROM "CommentTopic" ct WHERE ct."entityType" = 'model' AND ct."entityId" = m."modelId")
           AND m.n <> (SELECT count(*) FROM "CommentV3" v WHERE v."entityType" = 'model' AND v."entityId" = m."modelId"
@@ -560,19 +579,20 @@ export async function parityReport(db: SqlRunner) {
          LEFT JOIN "Comment" c ON c.id = v."legacyV1Id"
         WHERE v.${live} AND v.locked <> COALESCE(t.locked, c.locked, false)`
     ),
+    // Old columns are naive UTC at millisecond precision; bring the v3 side to match.
     v2_column_drift: await finding(
       db,
       `SELECT v.id FROM "CommentV3" v JOIN "CommentV2" c ON c.id = v.id AND v."legacyV1Id" IS NULL
         WHERE v.${live} AND (v.content <> c.content OR v.hidden <> COALESCE(c.hidden, false) OR v."tosViolation" <> c."tosViolation"
-          OR v."userId" <> c."userId" OR v."createdAt" <> c."createdAt" AT TIME ZONE 'UTC' OR v."updatedAt" <> c."updatedAt" AT TIME ZONE 'UTC'
-          OR v."pinnedAt" IS DISTINCT FROM c."pinnedAt" AT TIME ZONE 'UTC')`
+          OR v."userId" <> c."userId" OR (v."createdAt" AT TIME ZONE 'UTC')::timestamp(3) <> c."createdAt" OR (v."updatedAt" AT TIME ZONE 'UTC')::timestamp(3) <> c."updatedAt"
+          OR (v."pinnedAt" AT TIME ZONE 'UTC')::timestamp(3) IS DISTINCT FROM c."pinnedAt")`
     ),
     v1_column_drift: await finding(
       db,
       `SELECT v.id FROM "CommentV3" v JOIN "Comment" c ON c.id = v."legacyV1Id"
         WHERE v.${live} AND (v.content <> c.content OR v.hidden <> COALESCE(c.hidden, false) OR v."tosViolation" <> c."tosViolation"
-          OR v."userId" <> c."userId" OR v."entityId" <> c."modelId" OR v."createdAt" <> c."createdAt" AT TIME ZONE 'UTC'
-          OR v."updatedAt" <> c."updatedAt" AT TIME ZONE 'UTC' OR v."pinnedAt" IS DISTINCT FROM c."pinnedAt" AT TIME ZONE 'UTC')`
+          OR v."userId" <> c."userId" OR v."entityId" <> c."modelId" OR (v."createdAt" AT TIME ZONE 'UTC')::timestamp(3) <> c."createdAt"
+          OR (v."updatedAt" AT TIME ZONE 'UTC')::timestamp(3) <> c."updatedAt" OR (v."pinnedAt" AT TIME ZONE 'UTC')::timestamp(3) IS DISTINCT FROM c."pinnedAt")`
     ),
     /** A clamped v1 reply answers through replyToId. */
     v1_parent_mismatch: await finding(
@@ -626,4 +646,50 @@ export async function sweep(db: SqlRunner) {
      ) SELECT count(*)::int AS n FROM del`
   );
   return { tombstones, topicMutes };
+}
+
+/** Current row totals of the old and new comment and reaction tables, for the parity record. */
+export async function rowTotals(db: SqlRunner): Promise<Record<string, number>> {
+  const { rows } = await db.query<{ table: string; n: number }>(
+    `SELECT 'CommentV2' AS "table", count(*)::int AS n FROM "CommentV2"
+     UNION ALL SELECT 'Comment', count(*)::int FROM "Comment"
+     UNION ALL SELECT 'CommentV3', count(*)::int FROM "CommentV3" WHERE "deletedAt" IS NULL
+     UNION ALL SELECT 'CommentV2Reaction', count(*)::int FROM "CommentV2Reaction"
+     UNION ALL SELECT 'CommentReaction', count(*)::int FROM "CommentReaction"
+     UNION ALL SELECT 'CommentV3Reaction', count(*)::int FROM "CommentV3Reaction"`
+  );
+  return Object.fromEntries(rows.map((r) => [r.table, r.n]));
+}
+
+export type ParityVerdict = {
+  /** Findings worth paging about: drift the backfill or the mirror should have settled. */
+  pages: string[];
+  /** Nonzero findings that are known residue: the orphan classes and what `sweep` clears. */
+  expected: string[];
+};
+
+export function parityVerdict(
+  unmirrored: Awaited<ReturnType<typeof unmirroredReport>>,
+  parity: Awaited<ReturnType<typeof parityReport>>
+): ParityVerdict {
+  const line = (name: string, f: Finding) => `${name}: ${f.count} (e.g. ${f.sample.join(', ')})`;
+  const pages: string[] = [];
+  const expected: string[] = [];
+  const residue = new Set([
+    'v2_pending',
+    'v1_pending',
+    'v2_no_thread',
+    'v2_dead_parent',
+    'v2_unresolved_entity',
+    'v2_no_topic',
+    'v1_dead_parent',
+    'v1_no_topic',
+    'tombstones_childless',
+    'topic_mutes_orphaned',
+  ]);
+  for (const [name, f] of Object.entries({ ...unmirrored, ...parity })) {
+    if (!f.count) continue;
+    (residue.has(name) ? expected : pages).push(line(name, f));
+  }
+  return { pages, expected };
 }

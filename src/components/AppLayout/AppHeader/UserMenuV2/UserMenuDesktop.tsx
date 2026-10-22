@@ -24,6 +24,7 @@ import {
   isPinKey,
   MenuItemLabel,
   PinGlyph,
+  PROFILE_PIN,
   pinMoveDirection,
   useDragClickGuard,
   usePinActions,
@@ -82,7 +83,12 @@ function DesktopBody({ pins }: { pins: Pins }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
       {region}
-      {currentUser && <DesktopHeaderRows />}
+      {currentUser && (
+        <DesktopHeaderRows
+          pinned={pins.pins.includes(PROFILE_PIN.id)}
+          onTogglePin={signedIn ? () => toggle(PROFILE_PIN) : undefined}
+        />
+      )}
       {events.map((item, i) => (
         <DesktopItem key={`event-${i}`} item={item} />
       ))}
@@ -432,7 +438,13 @@ export function DesktopItem({
   return <Menu.Item {...common} />;
 }
 
-export function DesktopHeaderRows() {
+export function DesktopHeaderRows({
+  pinned = false,
+  onTogglePin,
+}: {
+  pinned?: boolean;
+  onTogglePin?: () => void;
+}) {
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
   const trackHeader = useTrackHeaderOpen('desktop');
@@ -443,6 +455,29 @@ export function DesktopHeaderRows() {
       <Menu.Item
         component={NextLink}
         href={`/user/${currentUser.username}`}
+        className="group"
+        aria-keyshortcuts={onTogglePin ? 'P' : undefined}
+        rightSection={
+          onTogglePin ? (
+            <span
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onTogglePin();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={pinned ? 'Unpin' : 'Pin'}
+            >
+              <PinGlyph pinned={pinned} />
+            </span>
+          ) : undefined
+        }
+        onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+          if (onTogglePin && isPinKey(event)) {
+            event.preventDefault();
+            onTogglePin();
+          }
+        }}
         onClick={() => trackHeader('profile')}
       >
         <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />

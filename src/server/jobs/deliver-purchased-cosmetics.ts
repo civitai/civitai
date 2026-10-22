@@ -54,8 +54,9 @@ export async function deliverMembershipCosmetics({
       c."productId" = s."productId"
       AND (
         -- Undated (the Supporter Nameplate): held for as long as the membership is. Civitai
-        -- members get these from deliverMonthlyCosmetics, which leaves out Buzz-purchased
-        -- memberships; the level join here would map those onto civitai-bronze.
+        -- members get these from deliverMonthlyCosmetics, which gives Buzz-purchased
+        -- memberships dated badges only; the level join here would map those onto
+        -- civitai-bronze.
         (c."availableStart" IS NULL AND c.source = 'Membership' AND s.provider <> 'Civitai')
         OR (
           -- Compare the period start, not job time: a late-paid September period is still owed

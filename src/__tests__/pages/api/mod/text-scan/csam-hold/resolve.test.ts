@@ -496,6 +496,27 @@ describe('textScan.resolveCsamHold', () => {
       expect(mocks.toggleBan).not.toHaveBeenCalled();
     });
 
+    it('refuses a batch from a moderator without the csam permission, before reading or acting', async () => {
+      const batch = { holds: [{ holdId: 12, textHash: 'h-1' }], decision: 'remove' };
+      mocks.hasModeratorGrant.mockResolvedValue(false);
+      expect((await call(batch)).status).toBe(403);
+      expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 7 }),
+        'csam.report.file'
+      );
+      expect(findFirst).not.toHaveBeenCalled();
+      expect(mocks.bulkSetCommentV2TosViolation).not.toHaveBeenCalled();
+      expect(labelCalls()).toHaveLength(0);
+
+      // The same batch with the permission is decided, and recorded as a batch decision.
+      mocks.hasModeratorGrant.mockResolvedValue(true);
+      expect((await call(batch)).status).toBe(200);
+      expect(mocks.bulkSetCommentV2TosViolation).toHaveBeenCalledTimes(1);
+      expect(labelCalls()[0].slice(1)).toEqual(
+        expect.arrayContaining(['csam', 'batch_apply', 'TextScanHold:12'])
+      );
+    });
+
     it.each([
       ['missing', null],
       ['already dismissed', pendingHold({ status: 'Dismissed' })],

@@ -128,6 +128,16 @@ export function seededRng(seed: number): Rng {
   };
 }
 
+/** Fisher–Yates with the supplied rng, so a seeded caller gets a reproducible order. */
+export function shuffle<T>(items: T[], rng: Rng = Math.random): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 /** `date` moved 1..`POST_SCHEDULE_JITTER_MAX_MINUTES` minutes later, one more if that lands on :00,
  *  seconds cleared. Never returns an on-the-hour instant. */
 export function applyJitter(date: Date, rng: Rng): Date {

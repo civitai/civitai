@@ -17,7 +17,6 @@
     "BlockedImage",
     "CustomerSubscription_Paddle_Backup_Simple",
     "Leaderboard",
-    "ArticleRank",
     "CosmeticShopItemCosmetic",
     "UserCosmeticShopPurchaseCosmetic",
     "ImageMetaFlags",
@@ -34,16 +33,16 @@
     "Feedback",
     "StorylineReport",
     "ServiceDealTransaction",
-    "BountyRank",
     "ResourceIntentVocabulary",
     "StorylineBranchChoice",
     "StorylineCreateClick",
+    "BountyRank",
     "ChallengeJudge",
+    "TextScanHold",
     "Collection",
     "block_scope_invocations",
     "CollectionInvite",
     "AnnouncementReport",
-    "ModelFileScanKick_20261017",
     "ChatMember",
     "Placement",
     "Cosmetic",
@@ -243,10 +242,10 @@
     "app_listing_red_media",
     "ModelEngagement",
     "ModelFlag",
-    "UserRank",
     "ModelPermissionSnapshot",
     "ServiceDealFileEntry",
     "UserLink",
+    "UserRank",
     "TagsOnQuestions",
     "TagsOnTags",
     "VaultItem",
@@ -261,6 +260,7 @@
     "ImageRemovalConfirmation",
     "UserReferralCode",
     "kono_tmp",
+    "CreatorProgramPayoutReview",
     "research_ratings",
     "ServiceOffering",
     "research_ratings_resets",
@@ -275,6 +275,7 @@
     "temp_model_files",
     "TagsOnImageNew",
     "temp_paddle_import",
+    "CreatorProgramPayoutReviewRun",
     "temp_popular_models",
     "CollectionContributor",
     "ComicProjectReport",
@@ -283,6 +284,7 @@
     "Answer",
     "ImageEngagement",
     "Storyline",
+    "ArticleRank",
     "CollectionMetric",
     "_gdpr_reaction_snapshot_20261017",
     "ItemDefinition",
@@ -406,7 +408,6 @@
     "CryptoWallet",
     "CustomerSubscription",
     "ImageResource",
-    "Model",
     "Price",
     "Product",
     "UserStripeConnect",
@@ -415,6 +416,7 @@
     "ResourceReview",
     "BountyEntry",
     "Post",
+    "Model",
     "EntityModeration",
     "BidRecurring",
     "HiddenDownload",
@@ -1489,336 +1491,6 @@
       "notNull": true
     },
     {
-      "table": "ArticleRank",
-      "column": "articleId",
-      "notNull": true
-    },
-    {
-      "table": "ArticleRank",
-      "column": "heartCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "heartCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "heartCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "heartCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "heartCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "likeCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "likeCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "likeCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "likeCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "likeCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "dislikeCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "dislikeCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "dislikeCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "dislikeCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "dislikeCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "laughCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "laughCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "laughCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "laughCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "laughCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "cryCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "cryCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "cryCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "cryCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "cryCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "reactionCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "reactionCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "reactionCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "reactionCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "reactionCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "commentCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "commentCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "commentCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "commentCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "commentCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "viewCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "viewCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "viewCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "viewCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "viewCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "favoriteCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "favoriteCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "favoriteCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "favoriteCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "favoriteCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "hideCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "hideCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "hideCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "hideCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "hideCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "collectedCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "collectedCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "collectedCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "collectedCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "collectedCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedCountAllTimeRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedAmountCountDayRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedAmountCountWeekRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedAmountCountMonthRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedAmountCountYearRank",
-      "notNull": false
-    },
-    {
-      "table": "ArticleRank",
-      "column": "tippedAmountCountAllTimeRank",
-      "notNull": false
-    },
-    {
       "table": "CosmeticShopItemCosmetic",
       "column": "shopItemId",
       "notNull": true
@@ -2399,6 +2071,86 @@
       "notNull": true
     },
     {
+      "table": "ResourceIntentVocabulary",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "vocabVersion",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "payload",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "rulesSummary",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "frozenAt",
+      "notNull": false
+    },
+    {
+      "table": "ResourceIntentVocabulary",
+      "column": "frozenBy",
+      "notNull": false
+    },
+    {
+      "table": "StorylineBranchChoice",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "StorylineBranchChoice",
+      "column": "parentChapterId",
+      "notNull": true
+    },
+    {
+      "table": "StorylineBranchChoice",
+      "column": "chapterId",
+      "notNull": true
+    },
+    {
+      "table": "StorylineBranchChoice",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "StorylineBranchChoice",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "StorylineCreateClick",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "StorylineCreateClick",
+      "column": "parentChapterId",
+      "notNull": true
+    },
+    {
+      "table": "StorylineCreateClick",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
       "table": "BountyRank",
       "column": "bountyId",
       "notNull": true
@@ -2554,86 +2306,6 @@
       "notNull": false
     },
     {
-      "table": "ResourceIntentVocabulary",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "vocabVersion",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "status",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "payload",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "rulesSummary",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "frozenAt",
-      "notNull": false
-    },
-    {
-      "table": "ResourceIntentVocabulary",
-      "column": "frozenBy",
-      "notNull": false
-    },
-    {
-      "table": "StorylineBranchChoice",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "StorylineBranchChoice",
-      "column": "parentChapterId",
-      "notNull": true
-    },
-    {
-      "table": "StorylineBranchChoice",
-      "column": "chapterId",
-      "notNull": true
-    },
-    {
-      "table": "StorylineBranchChoice",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "StorylineBranchChoice",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "StorylineCreateClick",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "StorylineCreateClick",
-      "column": "parentChapterId",
-      "notNull": true
-    },
-    {
-      "table": "StorylineCreateClick",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
       "table": "ChallengeJudge",
       "column": "id",
       "notNull": true
@@ -2712,6 +2384,106 @@
       "table": "ChallengeJudge",
       "column": "judgingEngine",
       "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "entityType",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "entityId",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "label",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "textHash",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "userId",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "text",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "reason",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "workflowId",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "promptId",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "contentAt",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "TextScanHold",
+      "column": "decidedAt",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "decidedById",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "decisionNote",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "hiddenAt",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "restoredAt",
+      "notNull": false
+    },
+    {
+      "table": "TextScanHold",
+      "column": "meta",
+      "notNull": false
     },
     {
       "table": "Collection",
@@ -2912,16 +2684,6 @@
       "table": "AnnouncementReport",
       "column": "reportId",
       "notNull": true
-    },
-    {
-      "table": "ModelFileScanKick_20261017",
-      "column": "id",
-      "notNull": false
-    },
-    {
-      "table": "ModelFileScanKick_20261017",
-      "column": "scanRequestedAt",
-      "notNull": false
     },
     {
       "table": "ChatMember",
@@ -12159,31 +11921,6 @@
       "notNull": true
     },
     {
-      "table": "UserRank",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardRank",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardId",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardTitle",
-      "notNull": false
-    },
-    {
-      "table": "UserRank",
-      "column": "leaderboardCosmetic",
-      "notNull": false
-    },
-    {
       "table": "ModelPermissionSnapshot",
       "column": "id",
       "notNull": true
@@ -12312,6 +12049,31 @@
       "table": "UserLink",
       "column": "type",
       "notNull": true
+    },
+    {
+      "table": "UserRank",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardRank",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardId",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardTitle",
+      "notNull": false
+    },
+    {
+      "table": "UserRank",
+      "column": "leaderboardCosmetic",
+      "notNull": false
     },
     {
       "table": "TagsOnQuestions",
@@ -13164,6 +12926,91 @@
       "notNull": false
     },
     {
+      "table": "CreatorProgramPayoutReview",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "period",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "hold",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "signals",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "payoutCents",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "evidence",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "firstFlaggedAt",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "lastEvaluatedAt",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "evaluations",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "decidedAt",
+      "notNull": false
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "decidedBy",
+      "notNull": false
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "decisionNote",
+      "notNull": false
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "askRef",
+      "notNull": false
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "version",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "column": "decisions",
+      "notNull": true
+    },
+    {
       "table": "research_ratings",
       "column": "userId",
       "notNull": true
@@ -13504,6 +13351,46 @@
       "notNull": false
     },
     {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "period",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "startedAt",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "finishedAt",
+      "notNull": false
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "creditedCount",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "evaluatedCount",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "flaggedCount",
+      "notNull": true
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "column": "error",
+      "notNull": false
+    },
+    {
       "table": "temp_popular_models",
       "column": "date",
       "notNull": false
@@ -13832,6 +13719,336 @@
       "table": "Storyline",
       "column": "minorByScan",
       "notNull": true
+    },
+    {
+      "table": "ArticleRank",
+      "column": "articleId",
+      "notNull": true
+    },
+    {
+      "table": "ArticleRank",
+      "column": "heartCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "heartCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "heartCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "heartCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "heartCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "likeCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "likeCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "likeCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "likeCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "likeCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "dislikeCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "dislikeCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "dislikeCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "dislikeCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "dislikeCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "laughCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "laughCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "laughCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "laughCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "laughCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "cryCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "cryCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "cryCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "cryCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "cryCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "reactionCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "reactionCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "reactionCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "reactionCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "reactionCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "commentCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "commentCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "commentCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "commentCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "commentCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "viewCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "viewCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "viewCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "viewCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "viewCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "favoriteCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "favoriteCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "favoriteCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "favoriteCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "favoriteCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "hideCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "hideCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "hideCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "hideCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "hideCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "collectedCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "collectedCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "collectedCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "collectedCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "collectedCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedCountAllTimeRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedAmountCountDayRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedAmountCountWeekRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedAmountCountMonthRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedAmountCountYearRank",
+      "notNull": false
+    },
+    {
+      "table": "ArticleRank",
+      "column": "tippedAmountCountAllTimeRank",
+      "notNull": false
     },
     {
       "table": "CollectionMetric",
@@ -18754,186 +18971,6 @@
       "notNull": false
     },
     {
-      "table": "Model",
-      "column": "name",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "description",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "type",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "createdAt",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "updatedAt",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "nsfw",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "id",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "userId",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "tosViolation",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "status",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "fromImportId",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "poi",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "publishedAt",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "lastVersionAt",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "meta",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "allowDerivatives",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "allowDifferentLicense",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "allowNoCredit",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "deletedAt",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "checkpointType",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "locked",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "deletedBy",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "underAttack",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "mode",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "uploadType",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "unlisted",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "gallerySettings",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "availability",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "allowCommercialUse",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "nsfwLevel",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "lockedProperties",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "minor",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "scannedAt",
-      "notNull": false
-    },
-    {
-      "table": "Model",
-      "column": "sfwOnly",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "timeframe",
-      "notNull": true
-    },
-    {
-      "table": "Model",
-      "column": "isOfficial",
-      "notNull": true
-    },
-    {
       "table": "Price",
       "column": "id",
       "notNull": true
@@ -19641,6 +19678,206 @@
     {
       "table": "Post",
       "column": "moderatorNsfwLevelBasis",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "name",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "description",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "type",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "createdAt",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "updatedAt",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "nsfw",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "id",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "userId",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "tosViolation",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "status",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "fromImportId",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "poi",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "publishedAt",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "lastVersionAt",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "meta",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "allowDerivatives",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "allowDifferentLicense",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "allowNoCredit",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "deletedAt",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "checkpointType",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "locked",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "deletedBy",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "underAttack",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "mode",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "uploadType",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "unlisted",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "gallerySettings",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "availability",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "allowCommercialUse",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "nsfwLevel",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "lockedProperties",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "minor",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "scannedAt",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "sfwOnly",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "timeframe",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "isOfficial",
+      "notNull": true
+    },
+    {
+      "table": "Model",
+      "column": "sfwName",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "sfwDescription",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "coverImageId",
+      "notNull": false
+    },
+    {
+      "table": "Model",
+      "column": "sfwCoverImageId",
       "notNull": false
     },
     {
@@ -28290,48 +28527,6 @@
       "validated": true
     },
     {
-      "name": "Model_deletedBy_fkey",
-      "table": "Model",
-      "columns": [
-        "deletedBy"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "Model_fromImportId_fkey",
-      "table": "Model",
-      "columns": [
-        "fromImportId"
-      ],
-      "refTable": "Import",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "SetNull",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
-      "name": "Model_userId_fkey",
-      "table": "Model",
-      "columns": [
-        "userId"
-      ],
-      "refTable": "User",
-      "refColumns": [
-        "id"
-      ],
-      "onDelete": "Restrict",
-      "onUpdate": "Cascade",
-      "validated": true
-    },
-    {
       "name": "Price_productId_fkey",
       "table": "Price",
       "columns": [
@@ -28580,6 +28775,48 @@
         "id"
       ],
       "onDelete": "Cascade",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Model_deletedBy_fkey",
+      "table": "Model",
+      "columns": [
+        "deletedBy"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Model_fromImportId_fkey",
+      "table": "Model",
+      "columns": [
+        "fromImportId"
+      ],
+      "refTable": "Import",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "SetNull",
+      "onUpdate": "Cascade",
+      "validated": true
+    },
+    {
+      "name": "Model_userId_fkey",
+      "table": "Model",
+      "columns": [
+        "userId"
+      ],
+      "refTable": "User",
+      "refColumns": [
+        "id"
+      ],
+      "onDelete": "Restrict",
       "onUpdate": "Cascade",
       "validated": true
     },
@@ -29232,12 +29469,6 @@
       ]
     },
     {
-      "table": "ArticleRank",
-      "columns": [
-        "articleId"
-      ]
-    },
-    {
       "table": "CosmeticShopItemCosmetic",
       "columns": [
         "shopItemId",
@@ -29386,12 +29617,6 @@
       ]
     },
     {
-      "table": "BountyRank",
-      "columns": [
-        "bountyId"
-      ]
-    },
-    {
       "table": "ResourceIntentVocabulary",
       "columns": [
         "id"
@@ -29418,9 +29643,30 @@
       ]
     },
     {
+      "table": "BountyRank",
+      "columns": [
+        "bountyId"
+      ]
+    },
+    {
       "table": "ChallengeJudge",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "TextScanHold",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "TextScanHold",
+      "columns": [
+        "entityType",
+        "entityId",
+        "label",
+        "textHash"
       ]
     },
     {
@@ -31132,12 +31378,6 @@
       ]
     },
     {
-      "table": "UserRank",
-      "columns": [
-        "userId"
-      ]
-    },
-    {
       "table": "ModelPermissionSnapshot",
       "columns": [
         "id"
@@ -31160,6 +31400,12 @@
       "table": "UserLink",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "UserRank",
+      "columns": [
+        "userId"
       ]
     },
     {
@@ -31277,6 +31523,19 @@
       ]
     },
     {
+      "table": "CreatorProgramPayoutReview",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "CreatorProgramPayoutReview",
+      "columns": [
+        "period",
+        "userId"
+      ]
+    },
+    {
       "table": "research_ratings",
       "columns": [
         "userId",
@@ -31314,6 +31573,12 @@
       "columns": [
         "imageId",
         "tagId"
+      ]
+    },
+    {
+      "table": "CreatorProgramPayoutReviewRun",
+      "columns": [
+        "id"
       ]
     },
     {
@@ -31379,6 +31644,12 @@
       "table": "Storyline",
       "columns": [
         "id"
+      ]
+    },
+    {
+      "table": "ArticleRank",
+      "columns": [
+        "articleId"
       ]
     },
     {
@@ -32302,18 +32573,6 @@
       ]
     },
     {
-      "table": "Model",
-      "columns": [
-        "id"
-      ]
-    },
-    {
-      "table": "Model",
-      "columns": [
-        "fromImportId"
-      ]
-    },
-    {
       "table": "Price",
       "columns": [
         "id"
@@ -32378,6 +32637,18 @@
       "table": "Post",
       "columns": [
         "model3dReviewId"
+      ]
+    },
+    {
+      "table": "Model",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "table": "Model",
+      "columns": [
+        "fromImportId"
       ]
     },
     {
@@ -32622,5 +32893,5 @@
       ]
     }
   ],
-  "capturedAt": "2026-10-19T17:31:16.592Z"
+  "capturedAt": "2026-10-20T16:23:29.382Z"
 }

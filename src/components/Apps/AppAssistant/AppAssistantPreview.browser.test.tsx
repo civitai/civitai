@@ -93,3 +93,30 @@ describe('AppAssistantPreview — a preview whose host is not resolvable yet', (
     expect(m.gate).toBeNull();
   });
 });
+
+describe('AppAssistantPreview — a preview the server runner started', () => {
+  const RUNNER = { blockId: 'my-app', sessionId: null, host: HOST, view: 1 };
+
+  test('fetches the block’s frame with no tunnel id, and a fresh one for each new start', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    const screen = await renderWithProviders(<AppAssistantPreview canPreview session={RUNNER} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(m.fetchFrame).toHaveBeenLastCalledWith('my-app');
+
+    const fresh = { ...FRAME, iframeSrc: `https://${HOST}/?dev=entry-token-2` };
+    m.fetchFrame.mockResolvedValue(fresh);
+    screen.rerender(<AppAssistantPreview canPreview session={{ ...RUNNER, view: 2 }} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', fresh.iframeSrc);
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+  });
+
+  test('CONTROL: the same start rendered again fetches nothing new', async () => {
+    m.fetchFrame.mockResolvedValue(FRAME);
+    const screen = await renderWithProviders(<AppAssistantPreview canPreview session={RUNNER} />);
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    screen.rerender(<AppAssistantPreview canPreview session={{ ...RUNNER }} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+  });
+});

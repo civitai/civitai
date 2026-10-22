@@ -212,11 +212,28 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const checkSfwFaceSchema = z.object({
+  sfwName: z.string().max(255).optional(),
+  sfwDescription: z.string().max(50000).optional(),
+  modelId: z.number().optional(),
+});
+export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
+
+export const draftSfwFaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  description: z.string().max(50000).nullish(),
+  modelId: z.number().optional(),
+});
+
 export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
+  sfwName: z.string().trim().max(255).nullish(),
+  sfwDescription: getSanitizedStringSchema().nullish(),
+  coverImageId: z.number().int().positive().nullish(),
+  sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),

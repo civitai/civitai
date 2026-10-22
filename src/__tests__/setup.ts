@@ -50,10 +50,8 @@ vi.mock('~/server/redis/client', async () => ({
   withSysReadDeadline: redisMock.withSysReadDeadline,
 }));
 
-// Both orchestrator SDK packages (`@civitai/client` is the retired name of
-// `@civitai/orchestration-client`) are ESM-only with directory imports Node refuses, so the unit
-// suite stubs them; a test that drives the submit path mocks the package itself with
-// `civitai-client.stub`.
+// The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
+// it; a test that drives the submit path mocks the package itself with `civitai-client.stub`.
 function orchestratorClientMock() {
   return {
     // Enums
@@ -107,7 +105,7 @@ function orchestratorClientMock() {
     Air: class Air {
       static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
       static stringify = vi.fn(() => '');
-      // Copied VERBATIM from node_modules/@civitai/client/dist/utils/Air.js (ESM-only,
+      // Copied VERBATIM from node_modules/@civitai/orchestration-client/dist/utils/Air.js (ESM-only,
       // so not importable here). An approximation lets AIR tests pass against a parser
       // production does not run.
       static parseSafe = vi.fn(
@@ -119,7 +117,6 @@ function orchestratorClientMock() {
     },
   };
 }
-vi.mock('@civitai/client', orchestratorClientMock);
 vi.mock('@civitai/orchestration-client', orchestratorClientMock);
 
 // App Blocks: provision a real RSA keypair so BlockTokenService can sign and

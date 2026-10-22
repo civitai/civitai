@@ -293,7 +293,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       anima: {
         all: { default: 4, max: 4 },
       },
-      // Boogu batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      // Boogu batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       boogu: {
         all: { default: 1, min: 1, max: 1 },
       },
@@ -303,22 +303,22 @@ export const trainingSettings: TrainingSettingsType[] = [
       qwen21: {
         all: { default: 1, min: 1, max: 1 },
       },
-      // Krea 2 batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      // Krea 2 batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       krea2: {
         all: { default: 1, min: 1, max: 1 },
       },
-      // Mage-Flow batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      // Mage-Flow batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       mageflow: {
         all: { default: 1, min: 1, max: 1 },
       },
-      // Ideogram 4 batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      // Ideogram 4 batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       ideogram4: {
         all: { default: 1, min: 1, max: 1 },
       },
       ltx2: { all: { default: 2, min: 1, max: 4 } },
       ltx23: { all: { default: 2, min: 1, max: 4 } },
       ltx25: { all: { default: 2, min: 1, max: 4 } },
-      // MiniMax H3 batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      // MiniMax H3 batch size is fixed at 1 for this ecosystem (per @civitai/orchestration-client).
       minimaxh3: { all: { default: 1, min: 1, max: 1 } },
       // sd3_medium: { all: { default: 4, max: 4 } },
       // sd3_large: { all: { default: 4, max: 4 } },

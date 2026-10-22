@@ -28,7 +28,7 @@ export type StepInput =
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
   | PreprocessImageStepTemplate
-  // Sourced from @civitai/orchestration-client: the pinned @civitai/client
+  // Sourced from @civitai/orchestration-client: the pinned @civitai/orchestration-client
   // predates preprocessVideo and has no equivalent type.
   | PreprocessVideoStepTemplate
   // Ming and Qwen build theirs from orchestration-client, whose Priority adds 'idle'

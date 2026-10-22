@@ -1,4 +1,4 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 

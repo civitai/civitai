@@ -7,7 +7,7 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow/getWorkflow are vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (submitWorkflow/getWorkflow are vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -27,7 +27,7 @@ const { scanEntity, scanEntitiesInBackground, textScanExternalId, textScanConten
   await import('~/server/services/text-scan/submit');
 const { segmentUserText } = await import('~/server/services/text-scan/segment');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(

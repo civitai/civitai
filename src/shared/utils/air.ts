@@ -1,4 +1,4 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/generation.constants';
 import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';

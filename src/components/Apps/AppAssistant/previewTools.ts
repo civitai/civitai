@@ -1,10 +1,26 @@
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
+import {
+  PREVIEW_NOT_ENABLED,
+  START_PREVIEW,
+  STOP_PREVIEW,
+  previewRefusal,
+  runnerPreviewOf,
+  type ShownPreview,
+} from '@civitai/app-assistant';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+
+export { PREVIEW_NOT_ENABLED, START_PREVIEW, STOP_PREVIEW, runnerPreviewOf };
 
 export interface PreviewSession {
   blockId: string;
-  sessionId: string;
+  /**
+   * The tunnel's id when this page started it (`blocks.startDevTunnel`); `null` when the server
+   * runner did, which never tells the page its id: the page then shows it and never stops it.
+   */
+  sessionId: string | null;
   host: string;
+  /** Counts the runner's starts, so each one fetches a fresh frame even on the same host. */
+  view?: number;
 }
 
 /** The parts of `blocks.startDevTunnel`'s result the preview uses. */
@@ -32,19 +48,31 @@ export interface PreviewToolDeps {
   setSession: (session: PreviewSession | null) => void;
 }
 
-export const PREVIEW_NOT_ENABLED =
-  'Live preview is not enabled for this account. Tell the user, and keep building without it.';
+/**
+ * What the page does with a finished call the server runner reports (`tool-reported`): show the
+ * preview its `start_preview` started (the block and host only: the runner never sends the tunnel's
+ * id), hide it on its `stop_preview`, or nothing.
+ */
+export function runnerPreviewAction(result: {
+  name: string;
+  output: unknown;
+  isError: boolean;
+}): { show: ShownPreview } | { hide: true } | null {
+  if (result.isError) return null;
+  if (result.name === START_PREVIEW) {
+    const show = runnerPreviewOf(result.output);
+    return show ? { show } : null;
+  }
+  return result.name === STOP_PREVIEW ? { hide: true } : null;
+}
 
 /** What the assistant is told when `startDevTunnel` refuses, by tRPC error code. */
 export function previewErrorMessage(error: unknown): string {
   const code = (error as { data?: { code?: unknown } } | null)?.data?.code;
+  // The words the server runner's start_preview uses for the same refusals (one place for both).
+  const shared = previewRefusal(code);
+  if (shared) return shared;
   switch (code) {
-    case 'FORBIDDEN':
-      return PREVIEW_NOT_ENABLED;
-    case 'NOT_FOUND':
-      return 'That block_id belongs to another app. Choose a different blockId, update block.manifest.json, and try again.';
-    case 'TOO_MANY_REQUESTS':
-      return 'Too many previews were started in the last hour. Tell the user to wait a few minutes.';
     case 'BAD_REQUEST':
       return `The preview could not start: ${
         (error as Error).message
@@ -130,7 +158,7 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
       }
 
       const previous = deps.getSession();
-      if (previous && previous.blockId !== blockId)
+      if (previous?.sessionId && previous.blockId !== blockId)
         await deps.stopDevTunnel({ sessionId: previous.sessionId }).catch(() => undefined);
       deps.setSession({ blockId, sessionId: started.sessionId, host: started.host });
       return {
@@ -147,7 +175,7 @@ export function createPreviewTools(deps: PreviewToolDeps): Record<string, ChatTo
     inputSchema: { properties: {} },
     async execute() {
       const session = deps.getSession();
-      if (!session) return { stopped: false };
+      if (!session?.sessionId) return { stopped: false };
       await deps.stopDevTunnel({ sessionId: session.sessionId });
       deps.setSession(null);
       return { stopped: true, next_step: 'Call sandbox__tunnel_disconnect.' };

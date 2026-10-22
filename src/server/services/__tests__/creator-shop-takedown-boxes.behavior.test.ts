@@ -11,6 +11,7 @@ import {
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -57,6 +58,10 @@ const notifications = vi.hoisted(() => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => notifications);
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: (_options: unknown, operation: () => Promise<unknown>) => operation(),
+}));
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopTakedownLabel: vi.fn(async () => undefined),
 }));
 // No wall-clock backoff on a retry.
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => {
@@ -295,12 +300,29 @@ const refundedPrefixes = () =>
   buzz.refundMultiAccountTransaction.mock.calls.map(
     ([input]) => (input as { externalTransactionIdPrefix: string }).externalTransactionIdPrefix
   );
+// Shelf purchases are reversed leg by leg from their ledger, box purchases by prefix.
+const refundedLegs = () => buzz.refundTransaction.mock.calls.map(([id]) => id);
+
+/** Each shelf sale's ledger, by purchase id: the buyer's 500 debit, and no payout. */
+const shelfLedger = (buyers: Record<string, number>) =>
+  buzz.getMultiAccountTransactionsByPrefix.mockImplementation((async (prefix: string) =>
+    prefix in buyers
+      ? [
+          {
+            transactionId: `${prefix}-debit`,
+            externalTransactionId: `${prefix}-yellow`,
+            accountId: buyers[prefix],
+            amount: 500,
+          },
+        ]
+      : []) as never);
 
 beforeEach(async () => {
   holder.before = null;
   for (const fn of Object.values(buzz)) fn.mockReset();
   buzz.refundMultiAccountTransaction.mockResolvedValue(refunded800);
   buzz.refundTransaction.mockResolvedValue({ transactionId: 'refund-tx' });
+  buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   notifications.createNotification.mockReset().mockResolvedValue(undefined);
   await holder.db.exec(`
     TRUNCATE "BoxOddsSnapshot", "BoxOpening", "BoxContent", "BoxTier", "CosmeticShopItem", "UserCosmeticShopPurchases" RESTART IDENTITY CASCADE;
@@ -385,6 +407,7 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
+    shelfLedger({ 'shelf-1': 104 });
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
 
     const result = await takedown();
@@ -392,7 +415,7 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ stage: 'box', boxId: 0, error: expect.stringContaining('reset') }),
     ]);
-    expect([result.refunded, refundedPrefixes()]).toEqual([1, ['shelf-1']]);
+    expect([result.refunded, refundedLegs()]).toEqual([1, ['shelf-1-debit']]);
   });
 
   it('refunds a box buyer who drew it, once, and marks the opening refunded', async () => {
@@ -402,12 +425,13 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValueOnce([
       { userId: BUYER, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
+    shelfLedger({ 'shelf-1': BUYER });
 
     const first = await takedown();
     // A second run of the same takedown finds nothing left to pay.
     const second = await takedown();
 
-    expect(refundedPrefixes()).toEqual(['shelf-1', sourceKey]);
+    expect([refundedLegs(), refundedPrefixes()]).toEqual([['shelf-1-debit'], [sourceKey]]);
     expect(await rewardStatusOf(boxItemId)).toBe('refunded');
     expect(await purchaseRefunded(sourceKey)).toBe(true);
     expect([first.boxOpeningsRefunded, first.boxRefundedValue]).toEqual([1, 800]);
@@ -697,6 +721,7 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
+    shelfLedger({ 'shelf-1': 104 });
     const { result, hits } = await withFailing(
       '$queryRaw',
       'o."boxSourceKey" AND p."userId"',
@@ -707,7 +732,7 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ stage: 'box', error: expect.stringContaining('not read') }),
     ]);
-    expect(refundedPrefixes()).toEqual(['shelf-1']);
+    expect([refundedLegs(), refundedPrefixes()]).toEqual([['shelf-1-debit'], []]);
   });
 
   // The source key is a string; only the purchase of that box, by that opener, is the box's sale.
@@ -732,8 +757,9 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
     expect(await purchaseRefunded(sourceKey)).toBe(false);
   });
 
-  // A first attempt that landed with its response lost: the retry is refused as a conflict.
-  it('finishes a shelf refund an earlier attempt landed, and reverses its seller payout', async () => {
+  // An earlier attempt refunded the buyer and died: the retry pays the buyer nothing twice and still
+  // reverses the payout.
+  it('finishes a shelf refund an earlier attempt half made, and reverses its seller payout', async () => {
     await seedBox();
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       {
@@ -745,43 +771,38 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
         },
       },
     ]);
-    buzz.refundMultiAccountTransaction.mockRejectedValue(
-      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
-    );
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
       {
         transactionId: 'charge-9',
-        externalTransactionId: 'shelf-1:0',
-        accountType: 'yellow',
+        externalTransactionId: 'shelf-1-yellow',
         accountId: 104,
         amount: 500,
       },
+      {
+        transactionId: 'payout-9',
+        externalTransactionId: `shelf-1:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 350,
+      },
     ]);
-    buzz.getTransactionByExternalId.mockResolvedValue({ transactionId: 'refund-charge-9' });
+    buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
+      id === 'refund-charge-9' ? { transactionId: id } : null) as never);
 
     const result = await takedown();
 
-    expect([result.refunded, result.failures]).toEqual([1, []]);
-    expect(buzz.refundTransaction).toHaveBeenCalledWith('payout-9', expect.any(String));
+    expect([result.refunded, result.failures, result.clawedBack]).toEqual([1, [], 350]);
+    expect(refundedLegs()).toEqual(['payout-9']);
   });
 
-  // The 409 case the completion exists for: an earlier attempt reversed one leg and not the other.
   it('reverses the leg an earlier shelf refund attempt left, and flags the purchase refunded', async () => {
     await seedBox();
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
-    buzz.refundMultiAccountTransaction.mockRejectedValue(
-      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
-    );
-    const leg = (transactionId: string, amount: number) => ({
-      transactionId,
-      externalTransactionId: `shelf-1:${transactionId}`,
-      accountType: 'yellow',
-      accountId: 104,
-      amount,
-    });
-    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([leg('a', 300), leg('b', 200)]);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'a', externalTransactionId: 'shelf-1-yellow', accountId: 104, amount: 300 },
+      { transactionId: 'b', externalTransactionId: 'shelf-1-blue', accountId: 104, amount: 200 },
+    ]);
     const refunds = new Set(['refund-a']);
     buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
       refunds.has(id) ? { transactionId: id } : null) as never);
@@ -793,40 +814,25 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
 
     const result = await takedown();
 
-    expect(buzz.refundTransaction).toHaveBeenCalledWith('b', expect.any(String), undefined);
+    expect(refundedLegs()).toEqual(['b']);
     expect([result.refunded, result.failures]).toEqual([1, []]);
     expect(dbMock.dbWrite.userCosmeticShopPurchases.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' }, data: { refunded: true } })
     );
   });
 
-  it('leaves a shelf purchase owed when a leg is still unreversed after finishing it', async () => {
+  // A 409 counts as done only when the leg's refund is on the ledger.
+  it('leaves a shelf purchase owed when a leg is refused and its refund is not on the ledger', async () => {
     await seedBox();
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
-    buzz.refundMultiAccountTransaction.mockRejectedValue(
-      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
-    );
     buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-      {
-        transactionId: 'a',
-        externalTransactionId: 'shelf-1:a',
-        accountType: 'yellow',
-        accountId: 104,
-        amount: 300,
-      },
-      {
-        transactionId: 'b',
-        externalTransactionId: 'shelf-1:b',
-        accountType: 'yellow',
-        accountId: 104,
-        amount: 200,
-      },
+      { transactionId: 'a', externalTransactionId: 'shelf-1-yellow', accountId: 104, amount: 300 },
+      { transactionId: 'b', externalTransactionId: 'shelf-1-blue', accountId: 104, amount: 200 },
     ]);
     buzz.getTransactionByExternalId.mockImplementation((async (id: string) =>
       id === 'refund-a' ? { transactionId: id } : null) as never);
-    // Counted done by the helper on a 409, though no refund of `b` is on the ledger.
     buzz.refundTransaction.mockRejectedValue(
       new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
     );
@@ -836,32 +842,19 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
 
     expect([result.refunded, result.failures]).toEqual([
       0,
-      [expect.objectContaining({ stage: 'refund', userId: 104 })],
+      [expect.objectContaining({ stage: 'refund', userId: 104, error: 'conflict' })],
     ]);
     expect(dbMock.dbWrite.userCosmeticShopPurchases.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' } })
     );
   });
 
-  // Flagged refunded, a leg still charged would never be retried.
-  it('leaves a shelf purchase owed when its refund cannot be read back as complete', async () => {
+  // Flagged refunded, a charge Buzz cannot show would never be retried.
+  it('leaves a shelf purchase owed when Buzz lists no charge under it', async () => {
     await seedBox();
     dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockResolvedValue([
       { userId: 104, buzzTransactionId: 'shelf-1', unitAmount: 500, meta: { payouts: [] } },
     ]);
-    // A conflict, then Buzz no longer seeing the charge at all.
-    buzz.refundMultiAccountTransaction
-      .mockRejectedValueOnce(
-        new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'conflict',
-          cause: new BuzzApiError(409, 'x'),
-        })
-      )
-      .mockRejectedValue(
-        new TRPCError({ code: 'NOT_FOUND', message: 'none', cause: new BuzzApiError(404, 'x') })
-      );
-    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
     // Calls from earlier tests stay recorded on the shared db mock.
     dbMock.dbWrite.userCosmeticShopPurchases.update.mockClear();
 
@@ -869,8 +862,15 @@ describe('takedownCosmeticShopItem paying box refunds still owed', () => {
 
     expect([result.refunded, result.failures]).toEqual([
       0,
-      [expect.objectContaining({ stage: 'refund', userId: 104 })],
+      [
+        expect.objectContaining({
+          stage: 'refund',
+          userId: 104,
+          error: 'debits 0 do not match the price 500',
+        }),
+      ],
     ]);
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.userCosmeticShopPurchases.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { buzzTransactionId: 'shelf-1' } })
     );
@@ -994,17 +994,14 @@ describe('Retry takedown on an item already taken down', () => {
     const boxId = await seedBox();
     const { sourceKey } = await seedOpening(boxId);
     shelfTable([{ userId: 104, buzzTransactionId: 'shelf-1' }]);
+    shelfLedger({ 'shelf-1': 104 });
     // The box refund fails; the shelf refund goes through.
-    buzz.refundMultiAccountTransaction.mockImplementation((async ({
-      externalTransactionIdPrefix,
-    }: {
-      externalTransactionIdPrefix: string;
-    }) => {
-      if (externalTransactionIdPrefix === sourceKey) throw new Error('buzz is down');
-      return refunded800;
-    }) as never);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz is down'));
     await takedown();
-    expect(refundedPrefixes()[0]).toBe('shelf-1');
+    expect([refundedLegs(), new Set(refundedPrefixes())]).toEqual([
+      ['shelf-1-debit'],
+      new Set([sourceKey]),
+    ]);
 
     // The retry button, after the first run archived it.
     dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({ meta: { takedown: original } });
@@ -1012,7 +1009,7 @@ describe('Retry takedown on an item already taken down', () => {
     const retry = await takedown();
     const again = await takedown();
 
-    expect(refundedPrefixes()).toEqual([sourceKey]);
+    expect([refundedLegs(), refundedPrefixes()]).toEqual([['shelf-1-debit'], [sourceKey]]);
     expect([retry.boxOpeningsRefunded, retry.refunded, again.boxOpeningsRefunded]).toEqual([
       1, 0, 0,
     ]);

@@ -2,7 +2,7 @@
 
 ## Overview
 
-When users upload model files to a model version, the system scans them for viruses, dangerous pickle imports, and computes file hashes. Scans run as orchestrator workflows via `@civitai/client`.
+When users upload model files to a model version, the system scans them for viruses, dangerous pickle imports, and computes file hashes. Scans run as orchestrator workflows via `@civitai/orchestration-client`.
 
 ## How It Works
 
@@ -21,10 +21,10 @@ All steps take a `model` AIR string as input (e.g. `urn:air:sd1:checkpoint:civit
 
 ### Workflow Submission
 
-Submit a single workflow with all four steps using `submitWorkflow` from `@civitai/client` and the `internalOrchestratorClient`:
+Submit a single workflow with all four steps using `submitWorkflow` from `@civitai/orchestration-client` and the `internalOrchestratorClient`:
 
 ```typescript
-import { submitWorkflow } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 
 const { data, error } = await submitWorkflow({
@@ -234,7 +234,7 @@ createFileHandler() --> ModelFile record (status: Pending)
                    createModelFileScanRequest()
                                |
                                v
-                   submitWorkflow() via @civitai/client
+                   submitWorkflow() via @civitai/orchestration-client
                    (modelClamScan + modelPickleScan + modelHash + modelParseMetadata)
                                |
                                v

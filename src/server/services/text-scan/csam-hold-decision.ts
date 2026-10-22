@@ -87,7 +87,12 @@ type DecideArgs = {
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
+  /** Decided along with another hold of the author, without the moderator opening this one. */
+  batched?: boolean;
 };
+
+/** The label-store reason of a batched decision, so training can tell it from a reviewed one. */
+export const CSAM_HOLD_BATCH_REASON = 'batch_apply';
 
 export const STALE_HOLD_MESSAGE =
   'This hold changed after you opened it (the author edited the content). Reload to review the new text.';
@@ -239,7 +244,7 @@ const subjectTypeOf = (entityType: string) =>
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
-  const { holdId, textHash, decision, note, actor } = args;
+  const { holdId, textHash, decision, note, actor, batched } = args;
   const plan = PLAN[decision];
 
   const hold = await dbWrite.textScanHold.findFirst({
@@ -321,7 +326,7 @@ export async function decideCsamHold(args: DecideArgs) {
           p_source_ref => ${`TextScanHold:${holdId}`},
           p_labelled_at => ${decidedAt}::timestamptz,
           p_labeller_user_id => ${actor.id}::int,
-          p_reason => ${decision},
+          p_reason => ${batched ? CSAM_HOLD_BATCH_REASON : decision},
           p_reason_note => ${note || null},
           p_snapshot => ${JSON.stringify({ text: hold.text })}::jsonb,
           p_owner_user_id => ${hold.userId}::int
@@ -423,6 +428,7 @@ export async function decideCsamHoldBatch({
         note,
         actor,
         tracker,
+        batched: true,
       });
       results.push({ holdId: hold.holdId, ok: true, ...decided });
     } catch (error) {

@@ -1094,6 +1094,13 @@ model Model {
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
   isOfficial          Boolean         @default(false)
+  // The .com face, shown to viewers who see no mature content; unrelated to `sfwOnly`. Set
+  // `sfwName` means the face is on. The cover ids have no FK: Image is too hot to constrain,
+  // and a dangling id falls back to the derived cover.
+  sfwName             String?         @db.Citext
+  sfwDescription      String?
+  coverImageId        Int?
+  sfwCoverImageId     Int?
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -6528,6 +6535,9 @@ model CsamReport {
   details          Json           @default("{}")
   images           Json           @default("[]")
   type             CsamReportType @default(Image)
+  /// The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+  sendClaimId      String?        @db.Uuid
+  sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
 }
 
@@ -6548,6 +6558,22 @@ model CsamReportAudit {
   changedBy       String    @default(dbgenerated("SESSION_USER"))
 
   @@index([csamReportId])
+}
+
+/// One admin release of a held user's removed-image review flags. Its images are the ModActivity
+/// rows written in the same transaction.
+model CsamFlagRelease {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  moderatorId    Int
+  approvalRef    String
+  reason         String
+  /// The hold legs the release overrode.
+  overriddenLegs Json
+  imageCount     Int
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
 }
 
 /// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
@@ -10674,6 +10700,9 @@ model Crucible {
   // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
   // (the migration backfills false); new rows default to true.
   timeAdjustedPlacement Boolean    @default(true)
+  // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
+  // shown to non-moderators.
+  eventTags         String[]       @default([])
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
@@ -10684,6 +10713,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([eventTags], type: Gin)
   @@index([status, ingestion])
 }
 

@@ -4,7 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -23,7 +23,7 @@ const { getTextScanProfile, registerTextScanProfile } = await import(
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, setTextScanLabelMode, setTextScanCsamMode } =
   await import('~/server/services/text-scan/prompt');
 

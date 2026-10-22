@@ -1,6 +1,6 @@
 /**
- * Stub for `@civitai/client`, for tests that drive `generateFromGraph` / `whatIfFromGraph` to the
- * orchestrator submit. Use as `vi.mock('@civitai/client', async () => (await import('./civitai-client.stub')).civitaiClientStub())`.
+ * Stub for `@civitai/orchestration-client`, for tests that drive `generateFromGraph` / `whatIfFromGraph` to the
+ * orchestrator submit. Use as `vi.mock('@civitai/orchestration-client', async () => (await import('./civitai-client.stub')).civitaiClientStub())`.
  */
 export function civitaiClientStub() {
   // 🔴 EVERY name this repo imports from the package, stubbed.
@@ -15,7 +15,7 @@ export function civitaiClientStub() {
   // list rather than discovering them one error at a time.
   //
   // Regenerate with:
-  //   grep -rhoP "import\s+(type\s+)?\{\K[^}]*(?=\}\s+from\s+'@civitai/client')" src \
+  //   grep -rhoP "import\s+(type\s+)?\{\K[^}]*(?=\}\s+from\s+'@civitai/orchestration-client')" src \
   //     | tr ',' '\n' | sed 's/type //; s/ as .*//' | tr -d ' ' | sort -u
   //
   // 🔴 A PROXY WAS TRIED FIRST AND HUNG collection indefinitely (a

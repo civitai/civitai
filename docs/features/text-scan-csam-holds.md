@@ -98,8 +98,11 @@ Holds are their own table rather than a `CsamReport`, a `Report` or a key in `Mo
 must never reach the user-facing report queue or an entity's meta, and nothing automated acts on it.
 
 Thirty days after a hold is dismissed, the daily `text-scan-retention` job clears its text and meta
-(`meta.previous` included); the row, reason, ids and decision stay. Confirmed holds are kept whole,
-text and meta included, and so are holds the migration superseded, which no moderator ruled on.
+(`meta.previous` included); the row, status, reason and ids stay. Confirmed holds are kept whole, text
+and meta included. A hold the migration superseded was never reviewed, so it is cleared only once the
+hold that replaced it (`meta.supersededBy`) is dismissed too, 30 days after the later of the two
+decisions; while that hold is pending, confirmed or missing, the superseded text is kept. A cleared
+superseded hold keeps its `superseded` marker, so it is still not read as a ruling.
 
 ## Decisions
 
@@ -138,7 +141,8 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
 - The same endpoint takes `holds: [{ holdId, textHash }]` (at most 50, `remove` or `dismiss` only) to
   decide the author's other pending holds as one call and one rate-limit hit. Each hold is decided on its
   own against its `textHash`; the response lists a result per hold, so a stale or refused hold is
-  reported without stopping the rest. Each hold of a batch is logged to Axiom like a single decision (with `outcome` ok, stale or error); an
+  reported without stopping the rest. A batched hold's label-store record has the reason `batch_apply`
+  instead of the action, because nobody opened it. Each hold of a batch is logged to Axiom like a single decision (with `outcome` ok, stale or error); an
   unexpected error is logged by name and code only, never its message.
 - Decision keys 1-5 are Dismiss, Remove, Remove + strike, Remove + ban, Ban + file NCMEC report.
   A key is disabled when the content type cannot be removed or the moderator lacks the grant.
@@ -154,8 +158,8 @@ rules below live in `csam-hold-decision.ts` beside the text-scan actions.
   which matches only the holds the user wrote; the header search `q` stays as it was and also matches
   content ids, so an id typed there can list holds by someone else.
 - Also apply. Deciding the hold on screen with remove or dismiss can cover the author's other pending
-  holds that qualify, by checkbox. They go in one batch call (see above), each against the `textHash` the
-  moderator saw; strike and ban apply to the hold on screen only. A batch is at most 50 holds: when more
+  holds that qualify, by checkbox. They go in one batch call (see above), each against the `textHash` its
+  listing gave, and are decided without being opened; strike and ban apply to the hold on screen only. A batch is at most 50 holds: when more
   qualify, the confirmation says it covers the first 50 of N and the rest stay pending for the next decision.
 - Hiding content while a hold waits is not built: holds stay non-hiding.
 

@@ -86,7 +86,7 @@ describe('WorkflowData unrated outputs', () => {
   it('leaves outputs that are never rated alone', () => {
     const wf = build([
       blob({ id: 'a', type: 'audio' }),
-      blob({ id: 'm', type: 'model3d' }),
+      blob({ id: 'm', type: 'model3d', format: 'glb' } as never),
       blob({ id: 'u', available: false }),
     ]);
 

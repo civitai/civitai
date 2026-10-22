@@ -8,6 +8,7 @@ import {
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  shopItemSectionInput,
   toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticInput,
@@ -15,16 +16,19 @@ import {
   upsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
+  addShopItemToSection,
   deleteCosmeticShopItem,
   deleteCosmeticShopSection,
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getShopItemSections,
   getShopSections,
   getShopSectionsWithItems,
   getUserPreviewImagesForCosmetics,
   getWishlistedShopItemIds,
   purchaseCosmeticShopItem,
+  removeShopItemFromSection,
   reorderCosmeticShopSections,
   toggleWishlistShopItem,
   upsertCosmetic,
@@ -96,6 +100,15 @@ export const cosmeticShopRouter = router({
     .mutation(({ input }) => {
       return reorderCosmeticShopSections(input);
     }),
+  getShopItemSections: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemSections(input)),
+  addShopItemToSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input }) => addShopItemToSection(input)),
+  removeShopItemFromSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input }) => removeShopItemFromSection(input)),
   // #endregion
   // #region [Public facing routes]
   getShop: publicProcedure
