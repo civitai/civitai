@@ -1,6 +1,6 @@
 /**
  * Records Creator Shop review verdicts made before they were written to the label store, from each
- * listing's review history. Deleted once run.
+ * listing's review history. Delete this file once a production run's counts match the history.
  *
  * POST /api/admin/temp/creator-shop-label-backfill   (moderator session or `Authorization: Bearer <moderator API key>`)
  *   { "dryRun"?: true, "afterId"?: 0, "limit"?: 200 }

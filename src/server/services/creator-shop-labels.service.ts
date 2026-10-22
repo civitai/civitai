@@ -12,8 +12,9 @@ export const CREATOR_SHOP_LABEL_FAMILY = 'creator_shop';
 export const SHOP_REVIEW_QUESTION = 'creator_shop.listing.review';
 export const SHOP_TAKEDOWN_QUESTION = 'creator_shop.listing.takedown';
 
-// The verdict's write, the label's reads and two store calls, each under the label's 3s statement timeout.
-export const SHOP_VERDICT_TRANSACTION = { maxWait: 10_000, timeout: 15_000 };
+// The verdict's own work (an approved mystery pack's is the heaviest, and ran under Prisma's 5s
+// default), plus up to four label statements at the label's 3s statement timeout each.
+export const SHOP_VERDICT_TRANSACTION = { maxWait: 10_000, timeout: 25_000 };
 
 export type ShopVerdictAction = ReviewCreatorShopItemInput['action'] | 'takedown';
 

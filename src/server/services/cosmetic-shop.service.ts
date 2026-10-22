@@ -61,6 +61,10 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import {
+  excludeDeletedShopListing,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
@@ -724,9 +728,11 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
     throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');
   }
 
-  return dbWrite.cosmeticShopItem.delete({
-    where: { id },
-  });
+  return dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.cosmeticShopItem.delete({ where: { id } });
+    await excludeDeletedShopListing(tx, id);
+    return deleted;
+  }, SHOP_VERDICT_TRANSACTION);
 };
 
 export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {

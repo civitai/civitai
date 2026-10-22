@@ -593,7 +593,8 @@ export async function reviewMysteryPack({
           statusAfter: nextStatus,
           finalReject: action === 'reject' ? nextStatus === 'Rejected' : undefined,
         },
-        revision?.id
+        // A revert acts on the pack on sale and leaves a waiting edit unjudged.
+        action === 'revert' ? null : revision?.id
       );
       return {
         listingId: box.listingId,

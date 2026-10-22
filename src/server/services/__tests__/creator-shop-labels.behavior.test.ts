@@ -179,6 +179,7 @@ beforeAll(async () => {
   db.pg = await PGlite.create();
   await bootLabelStore(db.pg);
   await db.pg.exec(readFileSync(ATTACH_BYTES, 'utf8'));
+  // Only the columns the label code reads, typed as the listing schema types them (enums as text).
   await db.pg.exec(`
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY, type text NOT NULL, data jsonb, "createdById" int,
@@ -219,6 +220,7 @@ beforeEach(async () => {
   await db.pg.exec(`
     DO $$ BEGIN
       IF to_regprocedure('label_store.record_label_away(text,text,text,text,text,text,text,text,timestamptz,integer,text,integer,text,text,integer,jsonb,bigint,integer)') IS NOT NULL THEN
+        DROP FUNCTION IF EXISTS label_store.record_label(text,text,text,text,text,text,text,text,timestamptz,integer,text,integer,text,text,integer,jsonb,bigint,integer);
         ALTER FUNCTION label_store.record_label_away(text,text,text,text,text,text,text,text,timestamptz,integer,text,integer,text,text,integer,jsonb,bigint,integer) RENAME TO record_label;
       END IF;
     END $$;
@@ -259,6 +261,8 @@ describe('recordShopVerdict', () => {
       statusAfter: 'RequestedChanges',
       queuedAt: at(1),
     });
+    // PGlite cannot cancel a running statement (a pg_sleep past the timeout runs to the end), so the
+    // timeout itself is only seen being set here.
     expect(statementTimeouts).toEqual(['3s']);
   });
 
@@ -361,6 +365,21 @@ describe('the subject a verdict is about', () => {
     expect(hash({ title: 'Cap' })).not.toBe(hash());
     expect(hash({ description: null })).not.toBe(hash());
     expect(hash({ cosmetic: { ...state().cosmetic, artworkKey: 'art-3' } })).not.toBe(hash());
+  });
+
+  it("is a pack's cover and members, owned by its lister", () => {
+    const members = [
+      { cosmeticId: 1, artworkKey: 'a' },
+      { cosmeticId: 2, artworkKey: 'b' },
+    ];
+    const pack = (over: Record<string, unknown> = {}) =>
+      shopLabelSubject(state({ cosmetic: null, members, addedById: OTHER_MOD, ...over }));
+
+    expect(pack()).toMatchObject({ subjectType: 'shop_pack', ownerId: OTHER_MOD, bytesRef: null });
+    expect(pack({ unitAmount: 9000 }).contentHash).toBe(pack().contentHash);
+    expect(
+      pack({ members: [members[0], { cosmeticId: 2, artworkKey: 'c' }] }).contentHash
+    ).not.toBe(pack().contentHash);
   });
 
   it('is the sha256 the store computes for the same canonical text', async () => {
@@ -487,6 +506,51 @@ describe('the backfill', () => {
       sourceRef: `CreatorShopReviewInferred:${LISTING}:${at(6)}:reject`,
     });
     expect(label.snapshot).toMatchObject({ contentAt: 'backfill', inferred: true });
+  });
+
+  it('infers nothing for a verdict recorded live whose history entry has aged out', async () => {
+    await seed({ status: 'Rejected', history: [], reviewedById: MOD, reviewedAt: at(6) });
+    await inTransaction((client) =>
+      recordShopVerdict(client, LISTING, {
+        action: 'reject',
+        moderatorId: MOD,
+        at: at(6),
+        statusAfter: 'Rejected',
+      })
+    );
+
+    expect(await run()).toMatchObject({ alreadyRecorded: 1, recorded: 0 });
+    expect(await labels()).toHaveLength(1);
+  });
+
+  it('leaves mystery packs to the live path', async () => {
+    await db.pg.query(`INSERT INTO "ItemDefinition" (id, "sellerId") VALUES (5, $1)`, [CREATOR]);
+    await db.pg.query(
+      `INSERT INTO "CosmeticShopItem" (id, title, "unitAmount", "addedById", "itemDefinitionId", status, meta)
+       VALUES ($1, 'Pack', 500, $2, 5, 'RequestedChanges', $3)`,
+      [
+        LISTING,
+        CREATOR,
+        JSON.stringify({
+          purchases: 0,
+          history: [
+            {
+              at: at(2),
+              userId: MOD,
+              kind: 'reviewed',
+              action: 'request-changes',
+              status: 'RequestedChanges',
+            },
+          ],
+        }),
+      ]
+    );
+
+    expect(await run()).toMatchObject({
+      skippedMysteryPacks: 1,
+      fromHistory: { total: 0 },
+      recorded: 0,
+    });
   });
 
   it('infers nothing for a listing whose status no longer says what was decided', () => {

@@ -338,6 +338,7 @@ describe('withholding takes the cosmetic off everyone', () => {
   // The sweep reads the verdict from the database, so the verdict and its label commit before it runs.
   it('records the label inside the verdict, and sweeps after both commit', async () => {
     const order: string[] = [];
+    vi.mocked(recordShopVerdict).mockClear();
     vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
       order.push('label');
       return true;
@@ -360,6 +361,7 @@ describe('withholding takes the cosmetic off everyone', () => {
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
 
     expect(order).toEqual(['verdict', 'label', 'commit', 'sweep']);
+    expect(recordShopVerdict).toHaveBeenCalledTimes(1);
     expect(recordShopVerdict).toHaveBeenCalledWith(
       dbMock.dbWrite,
       42,

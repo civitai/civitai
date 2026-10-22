@@ -357,8 +357,21 @@ describe('takedownCosmeticShopItem', () => {
   it('records the takedown as a label in the archive write, before the refunds', async () => {
     const { recordShopVerdict } = await import('~/server/services/creator-shop-labels.service');
     vi.mocked(recordShopVerdict).mockClear();
+    const order: string[] = [];
+    vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
+      order.push('label');
+      return true;
+    });
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
+      order.push('begin');
+      const result = await fn(dbMock.dbWrite);
+      order.push('commit');
+      return result;
+    });
 
     await takedownCosmeticShopItem({ id: 42, reason: 'IP infringement', moderatorId: 999 });
+
+    expect(order).toEqual(['begin', 'label', 'commit']);
 
     const archivedAt = mocks.shopItemUpdate.mock.calls[0][0].data.archivedAt as Date;
     expect(recordShopVerdict).toHaveBeenCalledTimes(1);

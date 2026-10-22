@@ -189,9 +189,16 @@ export async function runShopLabelBackfill({
     ).map((state) => [state.listingId, state])
   );
 
+  let mysteryPacks = 0;
   const planned = rows.flatMap((row) => {
     const state = states.get(row.id);
     if (!state) return [];
+    // A pack's history doesn't say which edit a verdict judged, and holds automatic send-backs of
+    // stale edits as reviews; the live path records these.
+    if (state.box) {
+      mysteryPacks++;
+      return [];
+    }
     return planShopLabelBackfill({
       ...state,
       status: row.status,
@@ -202,15 +209,25 @@ export async function runShopLabelBackfill({
   });
 
   const refs = planned.map((label) => shopVerdictSourceRef(label.state.listingId, label.verdict));
+  // An inferred verdict may be one the live path recorded whose history entry has since aged out of
+  // the capped log: its live ref has the same listing, time and answer.
+  const liveRefs = planned.map((label) =>
+    label.verdict.inferred
+      ? shopVerdictSourceRef(label.state.listingId, { ...label.verdict, inferred: false })
+      : null
+  );
+  const lookup = [...refs, ...liveRefs.filter((ref): ref is string => ref !== null)];
   const existing = new Set(
-    refs.length
+    lookup.length
       ? (
           await dbWrite.$queryRaw<{ sourceRef: string }[]>`
-            SELECT "sourceRef" FROM label_store.label WHERE "sourceRef" = ANY(${refs}::text[])
+            SELECT "sourceRef" FROM label_store.label WHERE "sourceRef" = ANY(${lookup}::text[])
           `
         ).map((row) => row.sourceRef)
       : []
   );
+  const recordedAlready = (index: number) =>
+    existing.has(refs[index]) || (liveRefs[index] !== null && existing.has(liveRefs[index]!));
 
   const fromHistory: Record<string, number> = {};
   const inferred: Record<string, number> = {};
@@ -219,7 +236,7 @@ export async function runShopLabelBackfill({
   let notRecorded = 0;
   for (const [index, label] of planned.entries()) {
     tally(label.verdict.inferred ? inferred : fromHistory, answerKey(label));
-    if (existing.has(refs[index])) {
+    if (recordedAlready(index)) {
       alreadyRecorded++;
       continue;
     }
@@ -239,6 +256,7 @@ export async function runShopLabelBackfill({
   return {
     dryRun,
     listings: rows.length,
+    skippedMysteryPacks: mysteryPacks,
     fromHistory: { total: planned.length - sum(inferred), byAnswer: fromHistory },
     inferred: { total: sum(inferred), byAnswer: inferred },
     alreadyRecorded,
