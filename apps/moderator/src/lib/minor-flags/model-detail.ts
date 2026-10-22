@@ -1,5 +1,5 @@
 import { getBrowsingLevelLabel } from '@civitai/shared';
-import { bytes, plural } from '$lib/format';
+import { bytes, ordinal, plural } from '$lib/format';
 import { ago, yearMonth } from '$lib/minor-flags/appeal-row';
 
 /** The payload of `<tab>/detail/[modelId]`: what only the open detail pane shows. */
@@ -66,12 +66,6 @@ export const previewCountText = (total: number, shown: number) => {
       ? `${PREVIEW_COUNT_CAP}+ preview images`
       : plural(total, 'preview image');
   return `${count}${total > shown ? `, ${shown} shown` : ''}`;
-};
-
-const ordinal = (n: number) => {
-  const tens = n % 100;
-  const suffix = tens >= 11 && tens <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
-  return `${n}${suffix}`;
 };
 
 /** Null for a first appeal: "1st appeal this year" says nothing a moderator needs. */

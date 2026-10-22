@@ -8,13 +8,11 @@ A rated entity's `nsfwLevel` is derived: from its images and from a floor that t
 
 ## Entity types
 
-Six, spelled as `EntityModeration.entityType` spells them, from `@civitai/shared/rating-review` (`RATING_REVIEW_ENTITY_TYPES`): `Article`, `Model`, `Post`, `Bounty`, `BountyEntry`, `Challenge`. The same module holds the level options per entity, their labels, the entity page paths, the scan-reason reader and the notification builder, so both apps render the same thing.
-
-Collections have no rating dispute: the text scan does not cover them in v1.
+Eight, spelled as `EntityModeration.entityType` spells them, from `@civitai/shared/rating-review` (`RATING_REVIEW_ENTITY_TYPES`): `Article`, `Model`, `Post`, `Bounty`, `BountyEntry`, `Challenge`, `Crucible`, `Collection`. The same module holds the level options per entity, their labels, the entity page paths, the scan-reason reader and the notification builder, so both apps render the same thing.
 
 A Model's rating is its `nsfw` flag rather than a level. It is shown as SFW/NSFW and stored as PG (`nsfw = false`) or R (`nsfw = true`).
 
-Feature flags: `articleRatingDispute` (Flipt `article-rating-dispute`) for Article, `ratingDispute` (Flipt `rating-dispute`) for the other five.
+Feature flags: `articleRatingDispute` (Flipt `article-rating-dispute`) for Article, `ratingDispute` (Flipt `rating-dispute`) for the other seven.
 
 ## Data model
 
@@ -38,7 +36,7 @@ A partial unique index `RatingReview_pending_per_entity` on `(entityType, entity
 
 ## Filing (main app)
 
-`src/server/services/rating-review.service.ts` (`createRatingReview`, `getRatingReviewForOwner`), router `ratingReview.create` / `ratingReview.getMine`, and one `OwnerRatingControls` component on each of the six entity pages.
+`src/server/services/rating-review.service.ts` (`createRatingReview`, `getRatingReviewForOwner`), router `ratingReview.create` / `ratingReview.getMine`, and one `OwnerRatingControls` component on each of the eight entity pages.
 
 - **Owner only**, checked in the service.
 - **One Pending per entity** (the partial unique index).
@@ -54,13 +52,13 @@ When the content has since dropped below the basis, the owner sees a stale-overr
 
 - **Article** keeps its own gate (`article-rating-review.helpers.ts`): down-direction, an active non-Blocked override, a clean scan, published, the derived level at or below the suggestion, and the derived level below the basis.
 - **Post, Bounty, BountyEntry** use the generalized gate in `rating-review.derived.ts`: the same direction, override, no-scan-in-flight, settled-images and derived-below-basis conditions. Approval clears the pair, recomputes `nsfwLevel` in the same transaction, and queues the cascade. A Bounty approval also writes and locks `nsfw`.
-- **Challenge** never auto-approves: lowering one also narrows its allowed mask and collection gate, which only the moderator resolve writes.
+- **Challenge, Crucible and Collection** never auto-approve (`isModeratorOnlyEntityType`); a moderator always resolves them. Lowering a Challenge also narrows its allowed mask and collection gate, which only the moderator resolve writes.
 
 A Pending dispute blocked only by a scan in flight is re-evaluated when the scan completes (`maybeAutoResolveDisputeAfterScan` for Article, `maybeAutoResolveRatingDisputeAfterScan` for the others).
 
 ## Resolving (`apps/moderator`, `/ratings`)
 
-`apps/moderator/src/lib/server/rating-reviews.service.ts` reads the queue and resolves; `rating-review-actions.ts` runs the side effects after commit. The page filters by status and by entity type, and shows the owner's comment and the scan's reason. `/articles/ratings` redirects to `/ratings?type=Article`.
+`apps/moderator/src/lib/server/rating-dispute-queue.ts` loads the queue (`ratingDisputeTriageLoad`) and wires the resolve action; `rating-reviews.service.ts` resolves; `rating-review-actions.ts` runs the side effects after commit. The page uses the shared triage master-detail layout: type tabs (Posts, Models, Articles, Other; Other narrows by `kind`), status, ask lower/higher and scan-raised chips, sort, `q` owner/ID search, an `owner` filter and `selected`. The detail is image-first — a preview strip, the scanned text, the owner's comment and the scan's reason — and two-press keys rate. `/articles/ratings` redirects to `/ratings?tab=articles`.
 
 A moderator applies a level; the review reads `Actioned` when it matches the suggestion and `Unactioned` otherwise. One transaction, every read that feeds a write on its connection:
 
