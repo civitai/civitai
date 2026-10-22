@@ -9,6 +9,29 @@ export interface Workflow {
   metadata?: unknown;
 }
 
+/**
+ * What a workflow's status is (orchestration's `WorkflowStatus`, camelCase on the consumer API):
+ * `unassigned`, `preparing`, `scheduled` and `processing` are live; the rest are final.
+ */
+export type WorkflowStatus =
+  | 'unassigned'
+  | 'preparing'
+  | 'scheduled'
+  | 'processing'
+  | 'succeeded'
+  | 'failed'
+  | 'expired'
+  | 'canceled';
+
+export const FINAL_STATUSES: readonly string[] = ['succeeded', 'failed', 'expired', 'canceled'];
+
+/** `GET /v2/consumer/workflows/{id}`: only the fields the runner reads, all unchecked. */
+export interface WorkflowState {
+  id?: string | null;
+  status?: WorkflowStatus | string | null;
+  steps?: { $type?: string; status?: string | null; output?: unknown }[] | null;
+}
+
 export interface WorkflowTemplate {
   steps: { $type: string; name: string; input: Record<string, unknown> }[];
   tags: string[];
@@ -76,18 +99,51 @@ export class OrchestrationClient {
     return this.#json(tokens, 'GET', 'v2/consumer/free-tier');
   }
 
-  async #json<T>(tokens: TokenSource, method: string, path: string, body?: unknown): Promise<T> {
+  /**
+   * A workflow's status and steps. With `waitSeconds`, orchestration holds the answer until the
+   * workflow ends or that long passes (then answers 202 with it as it stands). `signal` stops waiting.
+   */
+  getWorkflow(
+    tokens: TokenSource,
+    workflowId: string,
+    options: { waitSeconds?: number; signal?: AbortSignal } = {}
+  ): Promise<WorkflowState> {
+    const wait = options.waitSeconds ? `?wait=${options.waitSeconds}` : '';
+    return this.#json(
+      tokens,
+      'GET',
+      `${WORKFLOWS}/${encodeURIComponent(workflowId)}${wait}`,
+      undefined,
+      options.signal
+    );
+  }
+
+  /** Cancels a workflow; a chat completion's job stops at once (orchestration's claim-cancellable jobs). */
+  async cancelWorkflow(tokens: TokenSource, workflowId: string): Promise<void> {
+    await this.#json(tokens, 'PUT', `${WORKFLOWS}/${encodeURIComponent(workflowId)}`, {
+      status: 'canceled',
+    });
+  }
+
+  async #json<T>(
+    tokens: TokenSource,
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal
+  ): Promise<T> {
     // The chat package's own signing fetch: a token per request, asked again fresh after a 401.
     const send = authedFetch(
       { getToken: ({ fresh } = {}) => tokens('chat', { fresh }) },
       this.#fetch
     );
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const response = await send(`${this.#baseUrl}/${path}`, {
       method,
       ...(body === undefined
         ? {}
         : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
     const text = await response.text();
     if (!response.ok)

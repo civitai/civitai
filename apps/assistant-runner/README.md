@@ -160,6 +160,24 @@ See [Not built yet](#not-built-yet).
   fails without running if that save does not land. A pass that already saved the reply's end
   (or journaled `run-ended`) before it died does not run again: it journals that end and returns.
   DBOS recovers one run at most 5 times.
+- **A model call cut by a crash is not paid twice.** Orchestration names each chat completion's
+  workflow in its `X-Civitai-Workflow-Id` response header, before the answer streams. The runner
+  keeps it at once, before reading the answer, in its own table (`assistant_runner.model_calls`:
+  run id, user, conversation, turn, a hash of what the request asks, the workflow id; no
+  credential), since a DBOS step's output is saved only when the step ends and the whole reply is
+  one step. A request asked again with the same key (the step recovered after a crash, or a
+  Continue) first reads that workflow (`GET /v2/consumer/workflows/{id}`), reading it again through
+  up to three failed reads in a row: succeeded, its stored answer is the request's, with no new
+  request; still running, it is waited for until it ends or the run stops waiting (its wall clock,
+  a Stop), which cancels it; failed, expired, cancelled or holding nothing a step can be rebuilt
+  from, the request is sent again (after cancelling the workflow when its state cannot be read). A
+  retry that carries on from at least one step an earlier run saved (Continue) may take that run's
+  answer too; a retry carrying no saved step (a regenerate) never does. A model call cut off by the
+  run (Stop, the wall clock, a pause, a cancel outright) has its workflow cancelled
+  (`PUT /v2/consumer/workflows/{id}`, `{"status":"canceled"}`), which stops the model and its
+  billing; the pass's end waits up to 2 s for that. Each branch is logged with the workflow id
+  under `modelCall` (`reused`, `waiting`, `asked-again` with its `reason`, `cancelled`). The key
+  leaves out the system prompt (it names the date). Rows are deleted with the runs' retention.
 - **Runs left on an old version.** DBOS recovers a run only in a process of the same
   `WORKFLOW_VERSION` (`src/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
   own executor id holds under another version and saves each reply as interrupted, keeping its
@@ -195,8 +213,9 @@ See [Not built yet](#not-built-yet).
   `ThreadStore` rebuilds turns through `turnFrom` and drops the owner (switching modes fails open).
 - **Credentials.** DBOS persists every workflow input, step output and stream value. The runner
   hands its workflows and providers a user id and a run id only: no request header, grant, token or
-  cookie goes into a workflow argument, a step output, the journal or the head, and tests scan the
-  DBOS tables for the credentials sent with a start and for a token minted during the run. Request
+  cookie goes into a workflow argument, a step output, the journal, the head or the model calls'
+  table (workflow ids only), and tests scan the DBOS tables for the credentials sent with a start
+  and for a token minted during the run. Request
   headers are never logged.
 
 ## Threat model
@@ -272,8 +291,11 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 Known gaps:
 
 
-- A model step cut by a crash is asked for again (and paid again) until orchestration can reattach
-  to a step in flight.
+- A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
+  arrives at once (orchestration has no reattach to a stream in flight). One cut before
+  orchestration answered with its workflow id (while it set the workflow up) is still sent, and
+  paid, again. A request whose saved steps rebuild into a different request body (a different key)
+  is sent again too.
 - The stop fallback's timer lives in the process that took the Stop; if that process dies first, the
   run is not cancelled outright (it still ends on its own Stop or its wall clock).
 - Journal reads poll Postgres; their load per viewer has not been measured.
