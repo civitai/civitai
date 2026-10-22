@@ -136,6 +136,17 @@ export async function getAppAssistantRefusalForUserId(
   userId: number,
   { remoteRunner = false }: { remoteRunner?: boolean } = {}
 ): Promise<AppAssistantRefusal | AppAssistantGateUnavailable | null> {
+  return (await gateUserById(userId, { remoteRunner })).refusal;
+}
+
+/** The user `getAppAssistantRefusalForUserId` judged, when every gate let them through. */
+async function gateUserById(
+  userId: number,
+  { remoteRunner }: { remoteRunner: boolean }
+): Promise<
+  | { refusal: AppAssistantRefusal | AppAssistantGateUnavailable; user?: undefined }
+  | { refusal: null; user: SessionUser }
+> {
   const row = await dbWrite.user.findUnique({
     where: { id: userId },
     select: {
@@ -148,9 +159,10 @@ export async function getAppAssistantRefusalForUserId(
       isModerator: true,
     },
   });
-  if (!row) return { status: 403, error: 'App Assistant is not available on this account' };
-  const refused = accountRefusal(row);
-  if (refused) return refused;
+  if (!row)
+    return { refusal: { status: 403, error: 'App Assistant is not available on this account' } };
+  const accountRefused = accountRefusal(row);
+  if (accountRefused) return { refusal: accountRefused };
   const unavailable: AppAssistantGateUnavailable = {
     status: 503,
     error: 'App Assistant could not check this account just now',
@@ -159,13 +171,54 @@ export async function getAppAssistantRefusalForUserId(
   // Imported here, not at the top: the session client is built at module load, and only this path needs it.
   const { sessionClient } = await import('~/server/auth/session-client');
   const cached = await sessionClient.getSessionUserById(userId).catch(() => null);
-  if (!cached) return unavailable;
+  if (!cached) return { refusal: unavailable };
   const user = { ...cached, ...row, isModerator: !!row.isModerator } as unknown as SessionUser;
   const flags = remoteRunner
     ? [...APP_ASSISTANT_FLAGS, 'appAssistantRemoteRunner' as const]
     : [...APP_ASSISTANT_FLAGS];
-  if (!(await isFliptDecisive(flags, user))) return unavailable;
-  return featureRefusal({ user }, { remoteRunner });
+  if (!(await isFliptDecisive(flags, user))) return { refusal: unavailable };
+  const featureRefused = await featureRefusal({ user }, { remoteRunner });
+  return featureRefused ? { refusal: featureRefused } : { refusal: null, user };
+}
+
+/** The author capability's refusal, as `appDeveloperProcedure` words it. */
+export const APPS_AUTHORING_REFUSED = 'You do not have access to Apps authoring';
+
+export type RunnerDevTunnelRefusal =
+  | (AppAssistantRefusal & { code: 'refused' | 'FORBIDDEN' })
+  | (AppAssistantGateUnavailable & { code: 'unavailable' });
+
+/**
+ * The user behind a run grant, for the server runner's dev-tunnel endpoints
+ * (`/api/internal/app-assistant/dev-tunnel/*`), re-judged on every call:
+ * - every gate the runner's token mint checks (`getAppAssistantRefusalForUserId` with
+ *   `remoteRunner`: ban, onboarding, mute, email verification, `appBlocks` + `appAssistant`, and
+ *   `appAssistantRemoteRunner`), answered `refused`, or `unavailable` when they cannot be judged;
+ * - then the App Blocks author capability `blocks.startDevTunnel` requires through
+ *   `appDeveloperProcedure`, read from the same `getFeatureFlags` evaluation (a Flipt miss falls
+ *   back to its static mod-only rule, as it does there), answered `FORBIDDEN` as there.
+ * The dev-tunnel flag, ownership and the start limit are the caller's to check next, through
+ * `dev-tunnel-access.service.ts`, the same functions the tRPC procedure uses.
+ */
+export async function getRunnerDevTunnelUser(
+  userId: number
+): Promise<
+  { refusal: RunnerDevTunnelRefusal; user?: undefined } | { refusal: null; user: SessionUser }
+> {
+  const gated = await gateUserById(userId, { remoteRunner: true });
+  if (gated.refusal) {
+    const refusal = gated.refusal;
+    return {
+      refusal:
+        'unavailable' in refusal
+          ? { ...refusal, code: 'unavailable' }
+          : { ...refusal, code: 'refused' },
+    };
+  }
+  const features = await getFeatureFlagsAsync({ user: gated.user });
+  if (!features.appBlocksAuthor)
+    return { refusal: { status: 403, error: APPS_AUTHORING_REFUSED, code: 'FORBIDDEN' } };
+  return gated;
 }
 
 export interface AppAssistantToken {
