@@ -3,18 +3,25 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { ReviewCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
 import { COSMETIC_PHASH_VERSION } from '~/server/services/cosmetic-phash.service';
-import { recordUnderSavepoint, type LabelStoreTx } from '~/server/services/label-store.service';
+import {
+  LABEL_STATEMENT_TIMEOUT_MS,
+  recordUnderSavepoint,
+  type LabelStoreTx,
+} from '~/server/services/label-store.service';
 import { stableStringify } from '~/server/utils/entity-change-helpers';
 
-// Moderator verdicts on Creator Shop listings, as label-store labels. See docs/features/label-store.md.
+// See docs/features/label-store.md.
 
 export const CREATOR_SHOP_LABEL_FAMILY = 'creator_shop';
 export const SHOP_REVIEW_QUESTION = 'creator_shop.listing.review';
 export const SHOP_TAKEDOWN_QUESTION = 'creator_shop.listing.takedown';
 
-// The verdict's own work (an approved mystery pack's is the heaviest, and ran under Prisma's 5s
-// default), plus up to four label statements at the label's 3s statement timeout each.
-export const SHOP_VERDICT_TRANSACTION = { maxWait: 10_000, timeout: 25_000 };
+// Must outlast the verdict's own writes (an approved mystery pack's are the slowest) plus up to four
+// label statements, each capped at LABEL_STATEMENT_TIMEOUT_MS.
+export const SHOP_VERDICT_TRANSACTION = {
+  maxWait: 10_000,
+  timeout: 10_000 + 4 * LABEL_STATEMENT_TIMEOUT_MS,
+};
 
 export type ShopVerdictAction = ReviewCreatorShopItemInput['action'] | 'takedown';
 
@@ -80,7 +87,7 @@ export const shopLabelQuestion = (action: ShopVerdictAction) =>
 
 export const shopLabelValue = (action: ShopVerdictAction) => VALUES[action];
 
-/** Unique per verdict: the history entry's time is written in the verdict's own statement, so a live label and a backfill of the same entry share it. */
+/** The history entry's `at` is written in the verdict's own statement, so a live label and a backfill of the same entry must share this ref. */
 export function shopVerdictSourceRef(listingId: number, verdict: ShopVerdict) {
   if (verdict.inferred)
     return `CreatorShopReviewInferred:${listingId}:${verdict.at}:${shopLabelValue(verdict.action)}`;
@@ -141,7 +148,6 @@ export function shopLabelSubject(state: ShopListingState) {
   };
 }
 
-/** The last submission or edit before the verdict: when the listing entered the queue. */
 function queuedAt(meta: CosmeticShopItemMeta | null, at: string) {
   const history = meta?.history ?? [];
   for (let i = history.length - 1; i >= 0; i--) {
@@ -199,7 +205,7 @@ export function shopLabelSnapshot(state: ShopListingState, verdict: ShopVerdict)
   };
 }
 
-/** Records the label and points its subject at the artwork. True when a label was added; the same verdict again adds nothing. */
+/** Records the label, then points its subject at the artwork. */
 export async function writeShopLabel(
   tx: LabelStoreTx,
   state: ShopListingState,
@@ -255,7 +261,6 @@ type ListingRow = {
   members: { cosmeticId: number; artworkKey: string | null }[];
 };
 
-/** Reads listings as they stand, inside the caller's transaction. */
 export async function readShopListingStates(tx: LabelStoreTx, listingIds: number[]) {
   if (!listingIds.length) return [];
   const rows = await tx.$queryRaw<ListingRow[]>`

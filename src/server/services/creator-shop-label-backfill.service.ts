@@ -11,8 +11,7 @@ import {
   type ShopVerdictAction,
 } from '~/server/services/creator-shop-labels.service';
 
-// Records the verdicts Creator Shop listings already carry in `meta.history`, from before the live
-// path wrote labels. A verdict is recorded once: its ref is the one the live path would have used.
+// Records the verdicts already in `meta.history`, from before the live path wrote labels.
 
 export type BackfillListing = ShopListingState & {
   status: string;
@@ -67,7 +66,6 @@ function stateAt(listing: ShopListingState, content: Content, artworkSwapped: bo
     availableQuantity: content.availableQuantity,
   };
   if (artworkSwapped && listing.cosmetic) {
-    // Hashes, checks and dimensions are kept for the current artwork only.
     const { imageHash, imageMeta, autoChecks, ...meta } = listing.meta ?? { purchases: 0 };
     state.meta = meta;
     state.cosmetic = { ...listing.cosmetic, artworkKey: content.artworkKey, pHashHex: null };
@@ -193,8 +191,8 @@ export async function runShopLabelBackfill({
   const planned = rows.flatMap((row) => {
     const state = states.get(row.id);
     if (!state) return [];
-    // A pack's history doesn't say which edit a verdict judged, and holds automatic send-backs of
-    // stale edits as reviews; the live path records these.
+    // Skipped: a pack's history doesn't say which edit a verdict judged, and logs automatic
+    // send-backs as reviews. Only the live path labels packs.
     if (state.box) {
       mysteryPacks++;
       return [];
@@ -241,7 +239,7 @@ export async function runShopLabelBackfill({
       continue;
     }
     if (dryRun) continue;
-    // A label the store refuses is logged to its record_failure table.
+    // The store logs a refused label to record_failure; count it as not recorded and move on.
     const added = await dbWrite
       .$transaction(
         (tx) => writeShopLabel(tx, label.state, label.verdict),

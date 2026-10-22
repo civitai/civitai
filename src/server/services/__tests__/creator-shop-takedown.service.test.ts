@@ -82,7 +82,6 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mocks.createNotification,
 }));
-// The label store's own behaviour is covered on real Postgres in creator-shop-labels.behavior.test.ts.
 vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShopLabels>()),
   recordShopVerdict: vi.fn(async () => true),

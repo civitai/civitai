@@ -2255,7 +2255,7 @@ export const reviewCreatorShopItem = async ({
       }
     ) as Prisma.InputJsonValue;
 
-  // Every side effect below runs after this commits: the unequip sweep must see the verdict.
+  // The unequip sweep reads the verdict from the database, so it must run after this commits.
   const updated = await dbWrite.$transaction(async (tx) => {
     const written =
       action === 'approve'

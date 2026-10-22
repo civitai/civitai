@@ -4,9 +4,14 @@ import { dbWrite } from '~/server/db/client';
 
 export type LabelStoreTx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
 
-const LABEL_STATEMENT_TIMEOUT_MS = 3_000;
+export const LABEL_STATEMENT_TIMEOUT_MS = 3_000;
 
-/** Runs label work under a savepoint with a statement timeout, so a refusing, missing or slow store rolls back to the savepoint and the caller's decision still commits. `SET LOCAL` outlives a released savepoint, so this must be the transaction's last step. Throws only when the savepoint itself fails: the transaction is then aborted and its COMMIT would silently drop the decision. */
+/**
+ * Label work must not fail the caller's decision: a store error rolls back to the savepoint.
+ * `SET LOCAL` outlives a released savepoint, so this must be the transaction's last step.
+ * Throws only if the savepoint itself fails; the transaction is then aborted and its COMMIT would
+ * silently drop the decision.
+ */
 export async function recordUnderSavepoint(
   tx: LabelStoreTx,
   record: () => Promise<boolean>,
