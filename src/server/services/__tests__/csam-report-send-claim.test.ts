@@ -948,6 +948,32 @@ describe('sending each type of report', () => {
       );
     });
 
+    it('sends a URL the filing names twice when only its first fetch failed', async () => {
+      let fetches = 0;
+      fetchBlobAsFile.mockImplementation(async () =>
+        fetches++ === 0 ? null : new File(['generated'], 'generated.png')
+      );
+      primaryRow = {
+        ...twoJobs(1),
+        details: {
+          generatedImages: [
+            { jobId: 'job-1', blobs: [{ url: 'blob-twice' }] },
+            { jobId: 'job-2', blobs: [{ url: 'blob-twice' }] },
+          ],
+        },
+      } as unknown as CsamReportProps;
+
+      await processCsamReport(primaryRow);
+
+      expect(fetches).toBe(2);
+      expect(uploadFile).toHaveBeenCalledTimes(1);
+      expect(submitReport.mock.calls[0][0].additionalInfo).toBeUndefined();
+      expect(stamps()[0].data.details).toMatchObject({
+        generatedImageUploads: [{ url: 'blob-twice', fileId: 'file-1' }],
+      });
+      expect(stamps()[0].data.details).not.toHaveProperty(['readFailures', 'blob-twice']);
+    });
+
     it('waits for an upload in flight before cancelling', async () => {
       fetchBlobAsFile.mockResolvedValue(new File(['generated'], 'generated.png'));
       let inFlightDone = false;

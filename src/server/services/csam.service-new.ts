@@ -1285,9 +1285,11 @@ async function reportGenerationData(claim: SendClaim) {
       }))
     )
   );
-  // One filing can name a URL twice: it is one file, fetched, counted and sent once.
-  const named = new Set<string>();
-  const unique = blobs.filter(({ url }) => !named.has(url) && named.add(url));
+  // One filing can name a URL twice: it is one file, counted and sent once, and a copy that was
+  // fetched wins over one whose fetch failed.
+  const byUrl = new Map<string, (typeof blobs)[number]>();
+  for (const blob of blobs) if (!byUrl.get(blob.url)?.file) byUrl.set(blob.url, blob);
+  const unique = [...byUrl.values()];
   const fetched = unique.flatMap(({ job, url, file }) => (file ? [{ job, url, file }] : []));
   const failed = unique.filter(({ file }) => !file);
   const readFailures = { ...report.details.readFailures };
