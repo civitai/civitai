@@ -17,40 +17,15 @@ export const HOLD_MARKER_TABLE = 'EvidenceHold';
 /** `drift`: the table without its view, so the view was dropped or renamed. Held until it is back. */
 export type HoldMarkerState = 'view' | 'none' | 'drift';
 
-const FALLBACK_BAN_NOTES_TERMS = ['csam', 'ncmec', 'minor'];
-export const FALLBACK_BAN_NOTES_PATTERN = `(${FALLBACK_BAN_NOTES_TERMS.join('|')})`;
-
-/** Whether `pattern` still matches every fallback term. Checked in Postgres: it is a Postgres regex. */
-const coversFallback = (pattern: string) =>
-  sql<boolean>`(${sql.join(
-    FALLBACK_BAN_NOTES_TERMS.map((term) => sql`${term} ~* ${pattern}`),
-    sql` AND `
-  )})`;
-
 /**
- * Whether `notes` match, case-insensitively, the fallback or the pattern deployed in
- * `MOD_HOLD_BAN_NOTES_PATTERN`. The deployed pattern can only widen the match, never narrow it.
+ * Whether `notes` match, case-insensitively, the pattern deployed in `MOD_HOLD_BAN_NOTES_PATTERN`.
+ * Unset or empty matches everything, so every "Other" ban holds until the pattern is configured.
  * It is a Postgres regex: word boundaries are `\m` (start), `\M` (end) and `\y` (either), never
  * `\b`, which Postgres reads as a backspace.
  */
 function banNotesMatchSql(notes: RawBuilder<string>) {
   const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN;
-  const fallback = sql<boolean>`${notes} ~* ${FALLBACK_BAN_NOTES_PATTERN}`;
-  return deployed ? sql<boolean>`(${fallback} OR ${notes} ~* ${deployed})` : fallback;
-}
-
-let reportedPattern: string | undefined;
-
-/** Logs, once per pattern, a deployed pattern that misses a fallback term, which is likely a mistake. */
-async function checkDeployedBanNotesPattern(db: Kysely<DB>) {
-  const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN;
-  if (!deployed || deployed === reportedPattern) return;
-  const { rows } = await sql<{ ok: unknown }>`SELECT ${coversFallback(deployed)} AS ok`.execute(db);
-  reportedPattern = deployed;
-  if (rows[0]?.ok !== true)
-    console.error(
-      '[csam-flag-clear] MOD_HOLD_BAN_NOTES_PATTERN misses a fallback term; the fallback still applies'
-    );
+  return deployed ? sql<boolean>`${notes} ~* ${deployed}` : sql<boolean>`true`;
 }
 
 /**
@@ -138,9 +113,6 @@ export async function getFlagClearHolds(
 ): Promise<Map<number, FlagClearHoldLeg[]>> {
   const held = new Map<number, FlagClearHoldLeg[]>();
   if (!userIds.length) return held;
-  await checkDeployedBanNotesPattern(db).catch((e) =>
-    console.error('[csam-flag-clear] ban-notes pattern check failed', e)
-  );
   const marker = await holdMarkerState(db);
   const legs = flagClearHoldLegs(sql<number>`t.id`, marker);
   const { rows } = await sql<{ id: number } & Record<FlagClearHoldLeg, boolean>>`

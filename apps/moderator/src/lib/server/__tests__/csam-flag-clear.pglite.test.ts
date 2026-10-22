@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 // PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
@@ -20,13 +20,8 @@ vi.mock('../db', () => ({
   },
 }));
 
-const {
-  clearUserCsamFlags,
-  clearRemovedFlagsUnlessHeld,
-  FALLBACK_BAN_NOTES_PATTERN,
-  HOLD_MARKER_TABLE,
-  HOLD_MARKER_VIEW,
-} = await import('../csam-flag-clear');
+const { clearUserCsamFlags, clearRemovedFlagsUnlessHeld, HOLD_MARKER_TABLE, HOLD_MARKER_VIEW } =
+  await import('../csam-flag-clear');
 
 const SCHEMA = `
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
@@ -47,6 +42,7 @@ CREATE TABLE "ModActivity" (
 `;
 
 const MOD = 9;
+const PATTERN = '\\mzzfixture';
 
 // Every user owns three CSAM-flagged images: two removed, one still live. A held user keeps all three.
 const ban = (reasonCode: string | null, detailsInternal?: string) =>
@@ -60,7 +56,7 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   minorBan: { id: 120, bannedAt: true, meta: ban('SexualMinor') },
   minorTrainingBan: { id: 121, bannedAt: true, meta: ban('SexualMinorTraining') },
   noReasonBan: { id: 122, bannedAt: true, meta: ban(null) },
-  otherBanNoted: { id: 123, bannedAt: true, meta: ban('Other', 'see NCMEC ticket') },
+  otherBanNoted: { id: 123, bannedAt: true, meta: ban('Other', 'see zzfixture ticket') },
   otherBanPlain: { id: 124, bannedAt: true, meta: ban('Other', 'spam') },
   harassmentBan: { id: 125, bannedAt: true, meta: ban('Harassment') },
   held: { id: 130 },
@@ -71,7 +67,8 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   mismatch: { id: 140 },
   reportedImage: { id: 150 },
   otherImageReported: { id: 151 },
-  notedByDeployedPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
+  notedByPattern: { id: 160, bannedAt: true, meta: ban('Other', 'zzfixturenote') },
+  otherBanUnset: { id: 161, bannedAt: true, meta: ban('Other', 'spam') },
   driftProbe: { id: 170 },
   lateMarker: { id: 171 },
 };
@@ -97,7 +94,7 @@ const activityFor = async (ids: number[]) =>
 
 beforeAll(async () => {
   // A pattern set in the shell would shift which users hold.
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+  process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   for (const { id, bannedAt, meta } of Object.values(USERS)) {
@@ -135,6 +132,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   dbHandle.current = null;
   await db.close();
 });
@@ -224,35 +222,25 @@ describe('a held user', () => {
 });
 
 describe('the ban-notes pattern', () => {
-  afterAll(() => {
-    delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+  afterEach(() => {
+    process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   });
 
-  it('is read from the deployment, not only the default', async () => {
-    const id = USERS.notedByDeployedPattern.id;
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = `${FALLBACK_BAN_NOTES_PATTERN}|\\mzzfixture`;
+  it.each([undefined, ''])('holds every "Other" ban when it is %j', async (pattern) => {
+    if (pattern === undefined) delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+    else process.env.MOD_HOLD_BAN_NOTES_PATTERN = pattern;
+    const id = USERS.otherBanUnset.id;
 
     expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
     expect(await flagged(id)).toHaveLength(3);
+  });
 
-    // The same notes clear under the default pattern.
-    delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+  it('is read from the deployment', async () => {
+    const id = USERS.notedByPattern.id;
+    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
+
+    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzother';
     expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
-  });
-
-  it('keeps the fallback when a deployed pattern covers its terms but narrows it', async () => {
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = `^${FALLBACK_BAN_NOTES_PATTERN}$`;
-    expect(await clear(USERS.otherBanNoted.id)).toEqual({ ok: false, reason: 'held' });
-  });
-
-  it('falls back, and says so, when the deployed pattern misses a fallback term', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzfixture';
-
-    // Notes only the fallback matches still hold.
-    expect(await clear(USERS.otherBanNoted.id)).toEqual({ ok: false, reason: 'held' });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('misses a fallback term'));
-    error.mockRestore();
   });
 });
 
