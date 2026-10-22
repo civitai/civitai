@@ -96,15 +96,7 @@ export function chunkPosts<T extends { images: unknown[] }>(
   return chunks;
 }
 
-/** Fisher–Yates with the supplied rng so a test can pin the order. */
-export function shuffle<T>(items: T[], rng: Rng = Math.random): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
+export { shuffle } from '@civitai/shared/post-scheduling';
 
 export type EveryUnit = 'minutes' | 'hours' | 'days';
 export const EVERY_UNIT_MINUTES: Record<EveryUnit, number> = { minutes: 1, hours: 60, days: 1440 };
