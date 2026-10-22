@@ -58,6 +58,7 @@ import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
+import { CrucibleEventTagsPanel } from '~/components/Crucible/CrucibleEventTagsPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import {
@@ -690,6 +691,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   { label: 'Ties', value: 'The earlier entry ranks higher' },
                 ]}
               />
+
+              {isModerator && <CrucibleEventTagsPanel crucibleId={crucible.id} />}
 
               {(canEdit || canCancel) && (
                 <Paper className="rounded-lg p-6" bg="dark.6">

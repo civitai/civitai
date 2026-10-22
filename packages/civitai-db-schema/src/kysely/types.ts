@@ -2828,6 +2828,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
