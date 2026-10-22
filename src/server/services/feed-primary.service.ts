@@ -97,6 +97,26 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   route?: FeedPrimaryRoute;
 };
 
+export type DatapacketRescue = 'rescued' | 'still-empty';
+
+/**
+ * Loads the feed's ids. A DataPacket read that finds none of them is retried once on the read
+ * replica: DataPacket answers no rows for images the primary has (on 22 Oct 08:30 UTC, 21 of the
+ * 23 ids in a burst of empty gallery pages were on the read replica, published and scanned), and
+ * the search index fallback would hydrate from DataPacket again. Only an empty page pays for it.
+ */
+export async function hydrateWithReadRescue<T, Q extends { dbTarget?: string }>(
+  query: Q,
+  load: (query: Q) => Promise<T[]>,
+  onRescue?: (outcome: DatapacketRescue) => void
+): Promise<T[]> {
+  const rows = await load(query);
+  if (rows.length || query.dbTarget !== 'datapacket') return rows;
+  const rescued = await load({ ...query, dbTarget: 'read' });
+  onRescue?.(rescued.length ? 'rescued' : 'still-empty');
+  return rescued;
+}
+
 /** The image query for hydrating exactly `ids`: the request's filters without its paging,
  *  period or jump, all applied by the feed (getAllImages would cut the period on createdAt). */
 export function feedHydrateQuery<
