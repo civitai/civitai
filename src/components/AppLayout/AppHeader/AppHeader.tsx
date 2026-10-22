@@ -85,14 +85,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <div ref={searchWrapperRef} className="h-full min-w-0 flex-1">
           {renderSearchComponent({ onSearchDone, isMobile: true })}
         </div>
-        <LegacyActionIcon
-          className="shrink-0"
-          size={44}
+        {/* A plain button: the design-system shell (flag ON) may not render Mantine roots, and the
+            shell icon buttons top out below the 44px tap target. */}
+        <button
+          type="button"
+          className="flex size-11 shrink-0 items-center justify-center rounded-md text-dark-7 hover:bg-gray-1 dark:text-gray-4 dark:hover:bg-dark-5"
           onClick={onSearchDone}
           aria-label="Close search"
         >
           <IconX />
-        </LegacyActionIcon>
+        </button>
       </div>
 
       <HeaderGrid
