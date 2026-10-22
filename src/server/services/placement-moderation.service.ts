@@ -36,8 +36,8 @@ export async function isPlacementBlocked(
     SELECT EXISTS (
       SELECT 1 FROM "UserEngagement"
       WHERE type = 'Block'
-        AND (("userId" = ${ownerId} AND "targetUserId" = ${placerId})
-          OR ("userId" = ${placerId} AND "targetUserId" = ${ownerId}))
+        AND "userId" = ${ownerId}
+        AND "targetUserId" = ${placerId}
     ) AS "exists"
   `;
 
