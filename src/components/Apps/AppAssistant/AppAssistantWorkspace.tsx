@@ -401,10 +401,7 @@ export function AppAssistantWorkspace({
       gate.onToolResult(result);
       // In the browser and from the runner alike: the card offering to free a slot.
       if (isKeepLimitResult(result))
-        setSlot(
-          (shown) =>
-            shown ?? { message: lastSent.current, deleting: false, error: null }
-        );
+        setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
       if (!remoteRunner || result.isError) return;
       const preview = runnerPreviewAction(result);
       if (preview && 'show' in preview)
