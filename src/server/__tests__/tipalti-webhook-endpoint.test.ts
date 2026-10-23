@@ -67,6 +67,7 @@ const run = async (eventData: Record<string, unknown>) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  validateWebhookEvent.mockReset().mockReturnValue({ isValid: true });
   setEnv({ TIPALTI_WEBTOKEN_SECRET: 'secret' });
 });
 
@@ -93,17 +94,13 @@ describe('tipalti webhook endpoint: payeeDetailsChanged', () => {
   });
 });
 
-// What the validator computes for a payload stays on the server.
-const COMPUTED = 'cd'.repeat(32);
+const EXTRA = 'cd'.repeat(32);
 
 describe('tipalti webhook endpoint: a request that fails validation', () => {
   it('returns only an error message', async () => {
     validateWebhookEvent.mockReturnValue({
       isValid: false,
-      hash: COMPUTED,
-      vValue: 'x',
-      stringToSign: 'y',
-      signature: 'sig',
+      extra: EXTRA,
     } as never);
 
     const res = await run({});
@@ -111,6 +108,5 @@ describe('tipalti webhook endpoint: a request that fails validation', () => {
     expect(res._status()).toBe(400);
     expect(Object.keys(res._sent() as object)).toEqual(['error']);
     expect(JSON.stringify(res._sent())).not.toMatch(/[0-9a-f]{64}/);
-    validateWebhookEvent.mockReturnValue({ isValid: true });
   });
 });

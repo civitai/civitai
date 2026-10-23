@@ -3,6 +3,7 @@ import * as xml2js from 'xml2js';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import type { EmerchantPay } from '~/server/http/emerchantpay/emerchantpay.schema';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 
 class EmerchantPayCaller extends HttpCaller {
   private static instance: EmerchantPayCaller;
@@ -244,25 +245,15 @@ class EmerchantPayCaller extends HttpCaller {
         computedSig = createHash('sha512')
           .update(unique_id + apiPassword)
           .digest('hex');
-        console.log('Using WPF signature verification (SHA-512):', {
-          unique_id,
-          received_signature: signature,
-          computed_signature: computedSig,
-        });
       } else {
         // Fallback to original method for other notification types
         computedSig = createHash('sha1')
           .update(unique_id + apiPassword)
           .digest('hex');
-        console.log('Using fallback signature verification (SHA-1):', {
-          unique_id,
-          received_signature: signature,
-          computed_signature: computedSig,
-        });
       }
 
       // Compare signatures (case-insensitive)
-      return signature.toLowerCase() === computedSig.toLowerCase();
+      return timingSafeEqualStrings(computedSig, signature.toLowerCase());
     } catch (error) {
       console.error('Error verifying EmerchantPay webhook signature:', error);
       return false;

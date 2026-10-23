@@ -65,10 +65,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!isValid) {
       await log({
         message: 'Invalid webhook signature',
-        expected_computation: 'SHA-512(unique_id + api_password) for WPF notifications',
         notification_type: notification.notification_type,
-        unique_id: notification.unique_id,
-        received_signature: notification.signature,
       });
 
       return res.status(400).send({

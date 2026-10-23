@@ -86,15 +86,13 @@ describe('nowpayments webhook endpoint', () => {
   });
 });
 
-// What the validator computes for a payload stays on the server.
-const COMPUTED = 'ab'.repeat(64);
+const EXTRA = 'ab'.repeat(64);
 
 describe('nowpayments webhook endpoint: a request that fails validation', () => {
   it('returns only an error message', async () => {
     validateWebhookEvent.mockReturnValueOnce({
       isValid: false,
-      hash: COMPUTED,
-      signature: 'sig',
+      extra: EXTRA,
     } as never);
     const { req, res } = createMocks({ payment_id: 12345, payment_status: 'finished' });
 
@@ -103,6 +101,6 @@ describe('nowpayments webhook endpoint: a request that fails validation', () => 
     expect(res._status()).toBe(400);
     expect(Object.keys(res._sent() as object)).toEqual(['error']);
     expect(JSON.stringify(res._sent())).not.toMatch(/[0-9a-f]{64}/);
-    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(COMPUTED);
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(EXTRA);
   });
 });
