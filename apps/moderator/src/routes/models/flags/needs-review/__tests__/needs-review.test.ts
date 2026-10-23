@@ -87,7 +87,7 @@ beforeEach(() => {
   getHeldDetectionModelCount.mockResolvedValue(3);
   setModelPoiFlag.mockResolvedValue({ ok: true });
   dismissPoiHashMatch.mockResolvedValue({ ok: true });
-  getModelFlagState.mockResolvedValue({ minor: false, poi: false });
+  getModelFlagState.mockResolvedValue({ minor: false, poi: false, poiMatchQueued: true });
 });
 
 describe('held detections', () => {
@@ -141,7 +141,7 @@ describe('file matches', () => {
   });
 
   it('refuses to set minor on a model already flagged minor some other way', async () => {
-    getModelFlagState.mockResolvedValue({ minor: true, poi: false });
+    getModelFlagState.mockResolvedValue({ minor: true, poi: false, poiMatchQueued: true });
     expect(await decide([match], 'minor:file-match')).toMatchObject({
       status: 400,
       data: { error: expect.stringMatching(/already flagged as minor/) },
@@ -170,7 +170,7 @@ describe('real-person file matches', () => {
   });
 
   it('refuses to set the flag on a model already flagged as a real person', async () => {
-    getModelFlagState.mockResolvedValue({ minor: false, poi: true });
+    getModelFlagState.mockResolvedValue({ minor: false, poi: true, poiMatchQueued: false });
     expect(await decide([poiMatch], 'poi:file-match')).toMatchObject({
       status: 400,
       data: { error: expect.stringMatching(/already flagged as real person/) },
@@ -178,8 +178,17 @@ describe('real-person file matches', () => {
     expect(setModelPoiFlag).not.toHaveBeenCalled();
   });
 
+  it('refuses to flag a real-person match someone already ruled', async () => {
+    getModelFlagState.mockResolvedValue({ minor: false, poi: false, poiMatchQueued: false });
+    expect(await decide([poiMatch], 'poi:file-match')).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/no longer waiting/) },
+    });
+    expect(setModelPoiFlag).not.toHaveBeenCalled();
+  });
+
   it('a minor flag does not settle a real-person match', async () => {
-    getModelFlagState.mockResolvedValue({ minor: true, poi: false });
+    getModelFlagState.mockResolvedValue({ minor: true, poi: false, poiMatchQueued: true });
     await decide([poiMatch], 'poi:file-match');
     expect(setModelPoiFlag).toHaveBeenCalledWith(42);
   });
@@ -190,10 +199,19 @@ describe('real-person file matches', () => {
       poi = true;
       return { ok: true, resolved: 'kept' };
     });
-    getModelFlagState.mockImplementation(async () => ({ minor: false, poi }));
+    getModelFlagState.mockImplementation(async () => ({ minor: false, poi, poiMatchQueued: !poi }));
     expect(await decide([heldPoi, poiMatch], 'poi:redetected,poi:file-match', kept)).toMatchObject({
       success: true,
       resolved: 'kept',
+    });
+    expect(setModelPoiFlag).not.toHaveBeenCalled();
+  });
+
+  it('a kept minor detection does not settle a real-person match on a model already poi', async () => {
+    getModelFlagState.mockResolvedValue({ minor: false, poi: true, poiMatchQueued: false });
+    expect(await decide([held, poiMatch], 'minor:redetected,poi:file-match', kept)).toMatchObject({
+      status: 400,
+      data: { error: expect.stringMatching(/already flagged as real person/) },
     });
     expect(setModelPoiFlag).not.toHaveBeenCalled();
   });
@@ -224,7 +242,11 @@ describe('a model with a held minor detection and a file match', () => {
       minor = true;
       return { ok: true, resolved: 'kept' };
     });
-    getModelFlagState.mockImplementation(async () => ({ minor, poi: false }));
+    getModelFlagState.mockImplementation(async () => ({
+      minor,
+      poi: false,
+      poiMatchQueued: false,
+    }));
   };
 
   it('flags both by keeping the detection alone: set-minor would snapshot the flagged state', async () => {

@@ -73,11 +73,6 @@
   const detections = $derived(row.flags.filter((f) => f.redetected));
   const match = $derived(row.match);
   const poiMatch = $derived(row.poiMatch);
-  // Automation flags only off a seed a human stands behind, from the same uploader. The seed is
-  // resolved now, so it can be gone.
-  const poiSeedUploader = $derived(
-    poiMatch?.seedUserId == null ? null : poiMatch.seedUserId === row.userId ? 'same' : 'other'
-  );
   const leads = $derived(leadRefs(row));
   const labels = $derived([...new Set(leads.map((f) => f.label))]);
   const decisions = $derived(needsReviewDecisions(leads));
@@ -102,10 +97,7 @@
     {#each detections as flag (flag.label)}<FlaggedSourceBadge row={flag} />{/each}
     {#if match || poiMatch}<MetaChip tone="blue">hash</MetaChip>{/if}
     {#each labels as label (label)}<FlagBadge {label} />{/each}
-    {#if match || poiSeedUploader === 'other'}
-      <MetaChip tone="amber">different uploader</MetaChip>
-    {/if}
-    {#if poiSeedUploader === 'same'}<MetaChip tone="amber">seed not confirmed</MetaChip>{/if}
+    {#if match}<MetaChip tone="amber">different uploader</MetaChip>{/if}
     <CrossTabChips chips={alsoIn} linked tone="amber" />
   {/snippet}
 
@@ -177,16 +169,11 @@
       />
       <TriageCard dense title={match ? 'Why no real-person flag was applied' : 'Why nothing was applied'}>
         <div class="space-y-2 text-dark-0">
+          <!-- Why it was queued is not stored, and the seeds may have changed since, so this says
+               only what queueing guarantees. -->
           <p class="m-0">
-            {#if poiSeedUploader === 'same'}
-              The matched model is this uploader's, but no moderator stood behind its real-person
-              flag when the match was made, so the flag was not copied over automatically.
-            {:else if poiSeedUploader === 'other'}
-              The uploader is a different account, so the flag was not copied over automatically.
-            {:else}
-              The flag was not copied over automatically: the matched model was uploaded by another
-              account or flagged by the text scan alone.
-            {/if}
+            When the match was made, no model from the same uploader with a moderator behind its
+            real-person flag shared this file, so the flag was not copied over automatically.
             Decide whether this upload is the same content under a new name.
           </p>
           {#if poiMatch.matchedAt}

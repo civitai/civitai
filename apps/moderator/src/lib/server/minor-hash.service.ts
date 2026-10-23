@@ -122,14 +122,21 @@ const notMinorHashClearedPredicate = sql`
 `;
 
 /** Each label's hash flag: the snapshot the main app writes when it applies one, and the activity a
- *  moderator setting the flag by hand logs. Only minor has an accepted (aged-out) key. */
+ *  moderator setting the flag by hand logs. Only minor's flag is presumed correct once its review
+ *  window closes (the main app stamps it accepted); a real-person flag waits until a moderator rules. */
 const HASH_FLAG = {
   minor: {
     snapshot: MINOR_FLAG_SNAPSHOT_KEY,
     setActivity: 'setMinor',
     open: sql`NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})`,
+    windowed: true,
   },
-  poi: { snapshot: POI_FLAG_SNAPSHOT_KEY, setActivity: 'setPoi', open: sql`m.poi` },
+  poi: {
+    snapshot: POI_FLAG_SNAPSHOT_KEY,
+    setActivity: 'setPoi',
+    open: sql`m.poi`,
+    windowed: false,
+  },
 } as const;
 
 /** A later set by hand is a moderator affirming the flag; their decision stands. */
@@ -152,9 +159,13 @@ const hashFlaggedPredicate = (label: FlagLabel, search?: MinorSearch) => {
   AND m.meta->${snapshot}->>'source' = 'auto'
   AND NOT ${humanConfirmedPredicate(label)}
   AND ${HASH_FLAG[label].open}
-  AND ((m.meta->${snapshot}->>'at')::timestamptz > ${reviewWindowCutoff}${
-    search && 'modelOrUserId' in search ? sql` OR m.id = ${search.modelOrUserId}` : sql``
-  })
+  AND ${
+    HASH_FLAG[label].windowed
+      ? sql`((m.meta->${snapshot}->>'at')::timestamptz > ${reviewWindowCutoff}${
+          search && 'modelOrUserId' in search ? sql` OR m.id = ${search.modelOrUserId}` : sql``
+        })`
+      : sql`TRUE`
+  }
 `;
 };
 
@@ -946,7 +957,10 @@ const withDaysLeft = <T extends { modelId: number; flags: Omit<FlaggedFlagItem, 
   key: String(row.modelId),
   flags: row.flags.map((flag) => ({
     ...flag,
-    daysLeft: flag.source === 'hash' && flag.flaggedAt ? reviewDaysLeft(flag.flaggedAt, now) : null,
+    daysLeft:
+      flag.source === 'hash' && HASH_FLAG[flag.label].windowed && flag.flaggedAt
+        ? reviewDaysLeft(flag.flaggedAt, now)
+        : null,
   })),
 });
 
@@ -1117,13 +1131,14 @@ const matchCandidatesCte = sql`
   )
 `;
 
-/** The CTEs a Needs review query starts from, ending in `keyed`: one row per waiting item (a held
- *  detection label, or a file match) with its model, its time (`at`) and its facts. */
 /** Which labels' file matches a Needs review query lists. */
 const matchLabels = (use: NeedsReviewSources, flag: FlaggedFlag) => ({
   minor: use.matches && flag !== 'poi',
   poi: use.matches && flag !== 'minor',
 });
+
+/** The CTEs a Needs review query starts from, ending in `keyed`: one row per waiting item (a held
+ *  detection label, or a file match) with its model, its time (`at`) and its facts. */
 
 function needsReviewKeyedCtes(
   search: MinorSearch | undefined,
@@ -1180,7 +1195,18 @@ function needsReviewKeyedCtes(
         FROM "Model" m
         LEFT JOIN "User" u ON u.id = m."userId"
         WHERE ${poiHashMatchPredicate}
-          AND ${searchPredicate(search, userRefs)}
+          AND ${searchPredicate(
+            search,
+            userRefs,
+            (id) => sql`EXISTS (
+              SELECT 1
+              FROM "ModelFileHash" sh
+              JOIN "ModelFile" sf ON sf.id = sh."fileId" AND sf.type = ${MINOR_HASH_FILE_TYPE}
+              JOIN "ModelVersion" sv ON sv.id = sf."modelVersionId"
+              WHERE sh.type = 'SHA256' AND sh.hash = m.meta->'poiHashMatch'->>'hash'
+                AND sv."modelId" = ${id} AND sv."modelId" <> m.id
+            )`
+          )}
       )`);
     keyed.push(
       sql`SELECT "modelId", at, NULL::jsonb AS flag, NULL::jsonb AS match, "poiMatch", NULL::text AS label FROM poi_matched`
@@ -1333,12 +1359,14 @@ export async function getNeedsReviewCount({
   return result.rows[0]?.count ?? 0;
 }
 
-/** Whether the model carries each flag now, whatever applied it. */
+/** Whether the model carries each flag now, whatever applied it, and whether a real-person match
+ *  still waits on it. From the primary: a flag kept a moment ago in the same decision must show. */
 export async function getModelFlagState(modelId: number) {
-  const result = await sql<Record<FlagLabel, boolean>>`
-    SELECT m.minor, m.poi FROM "Model" m WHERE m.id = ${modelId}
-  `.execute(dbRead);
-  return result.rows[0] ?? { minor: false, poi: false };
+  const result = await sql<Record<FlagLabel, boolean> & { poiMatchQueued: boolean }>`
+    SELECT m.minor, m.poi, COALESCE(m.meta ? 'poiHashMatch', FALSE) AS "poiMatchQueued"
+    FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbWrite);
+  return result.rows[0] ?? { minor: false, poi: false, poiMatchQueued: false };
 }
 
 /** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal

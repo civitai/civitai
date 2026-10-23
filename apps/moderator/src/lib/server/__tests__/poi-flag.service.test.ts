@@ -32,6 +32,12 @@ describe('the real-person hash endpoints', () => {
     expect(bustMinorQueueCounts).toHaveBeenCalled();
   });
 
+  it('passes a refused call through without refreshing the counts', async () => {
+    callModEndpoint.mockResolvedValue({ ok: false, error: 'Forbidden.' });
+    expect(await confirmPoiFlag(42)).toEqual({ ok: false, error: 'Forbidden.' });
+    expect(bustMinorQueueCounts).not.toHaveBeenCalled();
+  });
+
   it('flags a match through set-poi, setting the flag rather than lifting it', async () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { modelId: 42, poi: true } });
     expect(await setModelPoiFlag(42)).toEqual({ ok: true });

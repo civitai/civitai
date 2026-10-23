@@ -6,13 +6,13 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { LINK_CLASS, bytes, dateTime } from '$lib/format';
   import { effectiveSource } from '$lib/minor-flags/appeal-filters';
-  import { FLAG_LABEL_NAMES } from '$lib/minor-flags/flagged-decision';
   import { ago, modelUrl, shortHash, yearMonth } from '$lib/minor-flags/appeal-row';
   import { fetchHashDetail, seedOutcome } from '$lib/minor-flags/hash-detail';
   import { modelUnpublishReasonLabel } from '$lib/model-unpublish-reasons';
   import type { MinorFlagAppealRow, MinorHashReviewRow } from '$lib/server/minor-hash.service';
   import type { FlagLabel } from '$lib/minor-flags/text-scan-verdicts';
 
+  // `minor*` names the seed, whichever label it carries.
   type SharedFileRow = Pick<MinorFlagAppealRow, 'modelId' | 'modelName' | 'userId' | 'username'> &
     Partial<
       Pick<MinorFlagAppealRow, 'flagSource' | 'flagConfirmedFrom'> &
@@ -43,7 +43,11 @@
   } = $props();
 
   // A real-person seed can be the text scan's alone, so it is not called a moderator's.
-  const depicting = $derived(label === 'poi' ? 'a real person' : 'a minor');
+  const WORDING = {
+    minor: { depicting: 'a minor', flagged: 'flagged minor', chip: 'minor, confirmed', by: 'a moderator' },
+    poi: { depicting: 'a real person', flagged: 'flagged real person', chip: 'real person', by: null },
+  } as const;
+  const wording = $derived(WORDING[label]);
 
   // Primitives first, so a reload that hands back an equal row doesn't rebuild the promise.
   const modelId = $derived(row.modelId);
@@ -101,7 +105,8 @@
       {@const hash = row.hash ?? m?.hash ?? null}
       {@const fileName = row.fileName ?? m?.fileName ?? null}
       {@const fileSizeKB = row.fileSizeKB ?? m?.fileSizeKB ?? null}
-      {@const outcome = seedOutcome(d, `flagged ${FLAG_LABEL_NAMES[label]}`)}
+      {@const outcome = seedOutcome(d, wording.flagged)}
+      {@const flaggedBy = d.minorFlaggedByUsername ?? wording.by}
       {#if seedId}
         <TriageCard dense title="Same file as a flagged model">
           <div class="space-y-3">
@@ -122,8 +127,9 @@
                 >.
               </p>
               <p class="m-0 text-dark-0">
-                That model was flagged as depicting {depicting}{#if d.minorFlaggedByUsername || label === 'minor'}{' '}by {d.minorFlaggedByUsername ??
-                  'a moderator'}{/if}{d.minorFlaggedAt ? ` in ${yearMonth(d.minorFlaggedAt)}` : ''}, and was
+                That model was flagged as depicting {wording.depicting}{flaggedBy ? ` by ${flaggedBy}` : ''}{d.minorFlaggedAt
+                  ? ` in ${yearMonth(d.minorFlaggedAt)}`
+                  : ''}, and was
                 <span class="font-semibold {outcome.tone === 'down' ? 'text-red-200' : 'text-amber-200'}"
                   >{outcome.text}</span
                 >{#if outcome.at}&nbsp;<span title={dateTime(outcome.at)}>{ago(outcome.at)}</span
@@ -162,7 +168,7 @@
                   </span>
                 {/if}
                 <div class="flex flex-wrap gap-1">
-                  <MetaChip tone="red">{label === 'poi' ? 'real person' : 'minor, confirmed'}</MetaChip>
+                  <MetaChip tone="red">{wording.chip}</MetaChip>
                   {#if outcome.tone === 'down'}<MetaChip tone="red">{outcome.text}</MetaChip>{/if}
                 </div>
               </div>
@@ -179,7 +185,7 @@
         <TriageCard dense accent="amber" title="Hash match can't be verified">
           <div class="space-y-2 text-dark-0">
             <p class="m-0">
-              The hash sweep matched this model's file to a model flagged as depicting {depicting}. No
+              The hash sweep matched this model's file to a model flagged as depicting {wording.depicting}. No
               flagged model shares that file any more: the model it matched was unflagged, or its
               files or hashes were removed.
             </p>

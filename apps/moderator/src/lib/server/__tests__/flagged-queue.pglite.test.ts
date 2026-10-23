@@ -577,8 +577,7 @@ describe('Auto-flagged: real-person hash flags', () => {
 
   beforeEach(async () => {
     await seed(30, poiSnapshot('auto', daysAgo(3)));
-    // Out of the queue: past the window, confirmed, set by hand since, and lifted.
-    await seed(31, poiSnapshot('auto', daysAgo(31)));
+    // Out of the queue: confirmed, set by hand since, and lifted.
     await seed(32, poiSnapshot('manual', daysAgo(3), { confirmedFrom: 'auto' }));
     await seed(33, poiSnapshot('auto', daysAgo(5)));
     await pg.query(
@@ -592,7 +591,7 @@ describe('Auto-flagged: real-person hash flags', () => {
   it('lists the hash flag the main app applied, under the real-person label', async () => {
     expect(await keys()).toEqual(['30:poi:hash']);
     const [row] = (await getFlaggedModels({ limit: 20 })).items;
-    expect(row.flags[0]).toMatchObject({ daysLeft: 27, prevNsfw: false, prevGalleryLevel: 2 });
+    expect(row.flags[0]).toMatchObject({ daysLeft: null, prevNsfw: false, prevGalleryLevel: 2 });
   });
 
   it('follows the label filter: real person keeps it, minor drops it', async () => {
@@ -625,11 +624,36 @@ describe('Auto-flagged: real-person hash flags', () => {
     expect(await getFlaggedSourceCounts()).toEqual({ all: 2, hash: 2, 'text-scan': 0 });
   });
 
-  it('finds an aged-out flag when searched by its model id', async () => {
-    expect(await keys()).not.toContain('31:poi:hash');
-    expect(
-      flagKeys((await getFlaggedModels({ limit: 20, search: { modelOrUserId: 31 } })).items)
-    ).toEqual(['31:poi:hash']);
+  it('says Needs review also lists a hash-flagged model with a queued real-person match', async () => {
+    // Minor hash-flagged and not poi, so a real-person match on it waits in Needs review.
+    await seed(37, { minorFlagSnapshot: { source: 'auto', at: daysAgo(2) } }, { poi: false });
+    const also = async () =>
+      Object.fromEntries(
+        (await getFlaggedModels({ limit: 20 })).items.map((r) => [r.modelId, r.alsoInNeedsReview])
+      );
+    expect(await also()).toEqual({ 30: false, 37: false });
+    await pg.query(`UPDATE "Model" SET meta = meta || $1::jsonb WHERE id = 37`, [
+      JSON.stringify({ poiHashMatch: { at: daysAgo(1), hash: 'X' } }),
+    ]);
+    expect(await also()).toEqual({ 30: false, 37: true });
+  });
+
+  it('says Auto-flagged also lists a Needs review model carrying a real-person hash flag', async () => {
+    await pg.query(`UPDATE "Model" SET meta = meta || $1::jsonb WHERE id IN (30, 32)`, [
+      JSON.stringify({ textScanFlags: { minor: { redetected: redetected(daysAgo(1)) } } }),
+    ]);
+    const { items } = await needsReview({ limit: 20 });
+    // 32's flag was confirmed, so Auto-flagged no longer lists it.
+    expect(Object.fromEntries(items.map((r) => [r.modelId, r.alsoInAutoFlagged]))).toEqual({
+      30: true,
+      32: false,
+    });
+  });
+
+  it('keeps an unreviewed flag past the minor review window: nothing presumes it correct', async () => {
+    await seed(31, poiSnapshot('auto', daysAgo(40)));
+    expect(await keys()).toEqual(['31:poi:hash', '30:poi:hash']);
+    expect(await getFlaggedCount()).toBe(2);
   });
 
   it('counts the hash flag as a real-person flag in force, as the appeal resolver does', async () => {

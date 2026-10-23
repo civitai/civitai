@@ -272,18 +272,24 @@ const modelSubject = (modelId: number) => `Model #${modelId}`;
 type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
 
 /** The keep and lift of each label's hash flag and file match (no reason yet). */
-const hashRulings = (source: 'hash' | 'file-match', label: FlaggedLabel) =>
-  source === 'hash'
-    ? label === 'poi'
-      ? [confirmPoiFlag, revertPoiFlag]
-      : [confirmMinorFlag, revertMinorFlag]
-    : label === 'poi'
-    ? [setModelPoiFlag, dismissPoiHashMatch]
-    : [setModelMinorFlag, dismissMinorHashMatch];
+const hashRuling = (source: 'hash' | 'file-match', label: FlaggedLabel, keep: boolean) => {
+  // Only the picked pair is read: reading every import, as a table would, breaks the hand-listed
+  // mocks of minor-flag.service in the route tests.
+  if (source === 'hash')
+    return label === 'poi'
+      ? keep
+        ? confirmPoiFlag
+        : revertPoiFlag
+      : keep
+      ? confirmMinorFlag
+      : revertMinorFlag;
+  if (label === 'poi') return keep ? setModelPoiFlag : dismissPoiHashMatch;
+  return keep ? setModelMinorFlag : dismissMinorHashMatch;
+};
 
 /** Rules one flag through the path its source owns: hash flags through the main app's confirm and
  *  revert endpoints, text-scan flags through `ruleTextScanFlag`, re-detections through
- *  `resolveRedetection`, file matches through the label's set and dismiss (`hashRulings`). The caller
+ *  `resolveRedetection`, file matches through the label's set and dismiss (`hashRuling`). The caller
  *  has checked the label, text hash and reason. */
 async function ruleFlag(
   modelId: number,
@@ -292,8 +298,7 @@ async function ruleFlag(
   reason: RulingReason | null
 ): Promise<{ ok: true; resolved: string } | { ok: false; error: string }> {
   if (flag.source === 'hash' || flag.source === 'file-match') {
-    const [onKeep, onLift] = hashRulings(flag.source, flag.label);
-    const result = await (keep ? onKeep : onLift)(modelId);
+    const result = await hashRuling(flag.source, flag.label, keep)(modelId);
     return result.ok
       ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
@@ -566,7 +571,14 @@ async function flagFileMatch(
   label: FlaggedLabel,
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
-  if (!(await getModelFlagState(modelId))[label])
+  const state = await getModelFlagState(modelId);
+  // set-poi applies the flag whatever the queue says, so the lead must still be there.
+  if (label === 'poi' && !state.poi && !state.poiMatchQueued)
+    return {
+      ok: false,
+      error: 'This real-person match is no longer waiting: someone ruled it. Reload the queue.',
+    };
+  if (!state[label])
     return ruleFlag(modelId, { label, source: 'file-match', textHash: null }, true, null);
   const appliedHere = earlier.some(
     (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === label

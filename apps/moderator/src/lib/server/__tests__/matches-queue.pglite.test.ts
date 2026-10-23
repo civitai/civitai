@@ -32,8 +32,11 @@ const { getAutoFlaggedMinorMatch, getMinorQueueCounts, getNeedsReviewCount, getN
 const MATCHES = { detections: false, matches: true };
 const BOTH = { detections: true, matches: true };
 /** The File matches half of Needs review, as a viewer holding only that permission sees it. */
-const matches = (query: { limit: number; offset?: number; search?: { text: string } }) =>
-  getNeedsReviewModels({ ...query, sources: MATCHES });
+const matches = (query: {
+  limit: number;
+  offset?: number;
+  search?: { text: string } | { modelOrUserId: number };
+}) => getNeedsReviewModels({ ...query, sources: MATCHES });
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
@@ -360,6 +363,13 @@ describe('Needs review: real-person file matches', () => {
       matches({ limit: 10, filters: { source: 'all', flag, sort: 'oldest' } } as never);
     expect((await f('poi')).items.map((r) => r.modelId)).toEqual([51]);
     expect((await f('minor')).items).toEqual([]);
+  });
+
+  it("finds the copies of a seed by the seed's model id", async () => {
+    expect(
+      (await matches({ limit: 10, search: { modelOrUserId: 50 } })).items.map((r) => r.modelId)
+    ).toEqual([51]);
+    expect((await matches({ limit: 10, search: { modelOrUserId: 999 } })).items).toEqual([]);
   });
 
   it('searches by username', async () => {

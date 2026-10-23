@@ -1,3 +1,5 @@
+import type { FlagLabel } from './text-scan-verdicts';
+
 /** The payload of `/api/minor-hash-detail/[modelId]`. */
 export type HashDetail = {
   match: {
@@ -34,7 +36,7 @@ export type HashDetail = {
 export async function fetchHashDetail(
   modelId: number,
   minorModelId: number | null = null,
-  label: 'minor' | 'poi' = 'minor'
+  label: FlagLabel = 'minor'
 ): Promise<HashDetail> {
   const params = new URLSearchParams();
   if (minorModelId) params.set('minorModelId', String(minorModelId));
