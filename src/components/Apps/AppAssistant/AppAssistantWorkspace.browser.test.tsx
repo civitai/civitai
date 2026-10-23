@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
+import type { ReactNode } from 'react';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { gateToolSet } from '@civitai/components-chat/core';
 import type * as TrpcMod from '~/utils/trpc';
@@ -49,6 +50,8 @@ const m = vi.hoisted(() => ({
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
     subagents?: unknown;
+    composerTop?: ReactNode;
+    threadEnd?: ReactNode;
   },
   list: [] as Sandbox[],
   /**
@@ -288,7 +291,13 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
           }, 0)
         );
       }, [props.mcpServers]);
-      return <div data-testid="chat" />;
+      // As the real one: the page's content in the chat element's named slots.
+      return (
+        <div data-testid="chat">
+          {props.composerTop ? <div slot="composer-top">{props.composerTop}</div> : null}
+          {props.threadEnd ? <div slot="thread-end">{props.threadEnd}</div> : null}
+        </div>
+      );
     },
   };
 });
@@ -2269,6 +2278,14 @@ describe('AppAssistantWorkspace paused-app notice', () => {
     expect(m.resume).not.toHaveBeenCalled();
   });
 
+  test('the notice is in the chat’s composer-top slot', async () => {
+    m.list = pausedApps();
+    await mount();
+    await expect.element(notice()).toBeVisible();
+    expect(notice().element().closest('[slot]')?.getAttribute('slot')).toBe('composer-top');
+    expect(notice().element().closest('[data-testid="chat"]')).not.toBeNull();
+  });
+
   test('NEGATIVE CONTROL: a running app shows no notice', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: ago(2), createdAt: ago(30) })];
     await mount();
@@ -2686,6 +2703,12 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await settle(100);
     expect(m.send).not.toHaveBeenCalled();
     await expect.element(card()).not.toBeInTheDocument();
+  });
+
+  test('the card is in the chat’s thread-end slot', async () => {
+    await atLimit();
+    expect(card().element().closest('[slot]')?.getAttribute('slot')).toBe('thread-end');
+    expect(card().element().closest('[data-testid="chat"]')).not.toBeNull();
   });
 
   test('when the app used longest ago is the open one, the next oldest is chosen', async () => {

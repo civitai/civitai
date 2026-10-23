@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Anchor, Button, Group, Radio, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Group, Paper, Radio, Stack, Text } from '@mantine/core';
 import { oldestInactiveApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { APP_STATUS, AppError } from '~/components/Apps/AppAssistant/YourApps';
@@ -13,7 +13,7 @@ function usedLine(sandbox: Sandbox): string {
 }
 
 /**
- * Under the chat once the assistant could not make an app because the user keeps as many as they
+ * After the last message once the assistant could not make an app because the user keeps as many as they
  * may: pick one to delete (the one used longest ago, not the open one, is chosen), and the message
  * that hit the limit is sent again.
  */
@@ -51,11 +51,7 @@ export function FreeUpSlotCard({
   const exportPauses = running && apps.some((s) => s.state === 'suspended') ? running.app : null;
 
   return (
-    <section
-      aria-label="Free up a slot"
-      className="shrink-0 px-3 py-2"
-      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
-    >
+    <Paper component="section" aria-label="Free up a slot" withBorder radius="md" p="sm" mb="md">
       <Stack gap="xs">
         <div>
           <Text size="sm" fw={600}>
@@ -112,6 +108,6 @@ export function FreeUpSlotCard({
           </Button>
         </Group>
       </Stack>
-    </section>
+    </Paper>
   );
 }

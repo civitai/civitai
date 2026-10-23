@@ -1,8 +1,8 @@
-import { Button, Group, Stack, Text } from '@mantine/core';
+import { Button, Group, Paper, Stack, Text } from '@mantine/core';
 import { AppError } from '~/components/Apps/AppAssistant/YourApps';
 
 /**
- * Under the chat while the open app is paused: nothing starts it by itself (starting it pauses the
+ * Just above the chat's message box while the open app is paused: nothing starts it by itself (starting it pauses the
  * one that runs), so the user can, here. Follows the app while it starts, whoever started it.
  */
 export function PausedAppNotice({
@@ -27,10 +27,14 @@ export function PausedAppNotice({
   onStart: () => void;
 }) {
   return (
-    <section
+    <Paper
+      component="section"
       aria-label="App status"
-      className="shrink-0 px-3 py-2"
-      style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
+      withBorder
+      radius="md"
+      px="sm"
+      py="xs"
+      mb={6}
     >
       <Stack gap="xs">
         <Group justify="space-between" wrap="nowrap" gap="sm">
@@ -57,6 +61,6 @@ export function PausedAppNotice({
         </Group>
         {!starting && <AppError error={error} />}
       </Stack>
-    </section>
+    </Paper>
   );
 }

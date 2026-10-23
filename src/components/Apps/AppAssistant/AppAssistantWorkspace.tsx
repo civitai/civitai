@@ -1022,29 +1022,35 @@ export function AppAssistantWorkspace({
             onChatChange={onChatOpened}
             subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
             remoteRunner={runner}
+            composerTop={
+              showNotice && active ? (
+                <PausedAppNotice
+                  app={active.app}
+                  starting={starting || active.state === 'starting'}
+                  canStart={
+                    active.state === 'suspended' && (!starting || startingApp === active.app)
+                  }
+                  pending={startingApp === active.app}
+                  pauses={runningOtherApp(apps, active)?.app ?? null}
+                  error={noticeError}
+                  onStart={() => startByHand(active)}
+                />
+              ) : null
+            }
+            threadEnd={
+              slot ? (
+                <FreeUpSlotCard
+                  apps={apps}
+                  openName={activeName}
+                  deleting={slot.deleting}
+                  error={slot.error}
+                  exporting={exporting}
+                  onExport={(sandbox) => void exportApp(sandbox)}
+                  onDelete={freeSlot}
+                />
+              ) : null
+            }
           />
-          {showNotice && active && (
-            <PausedAppNotice
-              app={active.app}
-              starting={starting || active.state === 'starting'}
-              canStart={active.state === 'suspended' && (!starting || startingApp === active.app)}
-              pending={startingApp === active.app}
-              pauses={runningOtherApp(apps, active)?.app ?? null}
-              error={noticeError}
-              onStart={() => startByHand(active)}
-            />
-          )}
-          {slot && (
-            <FreeUpSlotCard
-              apps={apps}
-              openName={activeName}
-              deleting={slot.deleting}
-              error={slot.error}
-              exporting={exporting}
-              onExport={(sandbox) => void exportApp(sandbox)}
-              onDelete={freeSlot}
-            />
-          )}
         </Paper>
         {session && (
           <Paper
