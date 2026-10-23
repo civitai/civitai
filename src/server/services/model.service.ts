@@ -8,6 +8,11 @@ import {
 } from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import {
+  assertOwnersNotUnderLegalHold,
+  LegalHoldError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -6378,6 +6383,14 @@ export async function transferModelOwnership({
   const sourceUserIds = Array.from(new Set(models.map((m) => m.userId)));
   if (models.some((m) => m.userId === targetUserId))
     throw throwBadRequestError('One or more models already belong to the target user');
+
+  // Every hold is keyed on the owner, so moving a held owner's models, posts and images to another
+  // account would take them out of it. For a marker-held owner the database refuses the moves too.
+  await assertOwnersNotUnderLegalHold(sourceUserIds).catch((e: unknown) => {
+    if (e instanceof LegalHoldError)
+      throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
+    throw e;
+  });
 
   const affectedPosts = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT p.id
