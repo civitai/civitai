@@ -83,7 +83,8 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]'
     );
   `);
 });
@@ -122,6 +123,8 @@ beforeEach(async () => {
   );
 
   await holder.db.exec(`
+    DROP VIEW IF EXISTS "EvidenceHeldUser";
+    DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "User", "Post", "Image", "CsamReport";
     INSERT INTO "User" (id, "deletedAt", meta) VALUES
       (${HELD}, now() - interval '1 day', '{}'),
@@ -215,5 +218,75 @@ describe('remove-deleted-user-images under a legal hold', () => {
     expect(await imagesOf(HELD)).toBe(0);
     expect(await postsOf(HELD)).toBe(1);
     expect(await postsOf(UNHELD)).toBe(0);
+  });
+});
+
+describe('remove-deleted-user-images under any account hold', () => {
+  const holdsByImage = {
+    'a CSAM-blocked image on no sent report': `
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${MANY};
+    `,
+    'an image listed on a holding report that names someone else': `
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${REPORT_SUBJECT}, '[{"id": ${MANY}}]');
+    `,
+    'a hold marker': `
+      CREATE TABLE "EvidenceHold" ("userId" int);
+      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
+      INSERT INTO "EvidenceHold" VALUES (${HELD});
+    `,
+  };
+
+  it.each(Object.entries(holdsByImage))(
+    'keeps an account held by %s, and drains everyone else',
+    async (_, hold) => {
+      await holder.db.exec(hold);
+
+      await run();
+
+      expect(await imagesOf(HELD)).toBe(MANY);
+      expect(await postsOf(HELD)).toBe(1);
+      expect(await imagesOf(UNHELD)).toBe(0);
+      expect(await postsOf(UNHELD)).toBe(0);
+    }
+  );
+
+  it.each([
+    [
+      'a review flag other than CSAM',
+      `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = ${MANY}`,
+    ],
+    [
+      'an image blocked for another reason',
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = ${MANY}`,
+    ],
+    [
+      'a CSAM-blocked image a sent report naming them lists, past the hold',
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${MANY};
+       INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${HELD}, now() - interval '2 years', now(), '[{"id": ${MANY}}]');`,
+    ],
+  ])('drains an account with only %s', async (_, state) => {
+    await holder.db.exec(state);
+
+    await run();
+
+    expect(await imagesOf(HELD)).toBe(0);
+    expect(await postsOf(HELD)).toBe(0);
+  });
+
+  it('keeps every image of an account when a hold lands on one after they were read', async () => {
+    let held = false;
+    hooks.beforeDelete = async (ids) => {
+      if (!held && ids.every((id) => id <= MANY)) {
+        await holder.db.exec(holdsByImage['a CSAM-blocked image on no sent report']);
+        held = true;
+      }
+    };
+
+    await run();
+
+    expect(held).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
   });
 });
