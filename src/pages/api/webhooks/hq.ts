@@ -79,12 +79,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   const { task_id: taskId, status } = closed.data;
   // Every done status (wontfix included) closes a task; only a completed one fixes the issue.
-  if (status !== 'complete') return res.status(200).json({ ignored: status });
+  if (status !== 'complete') {
+    await log({ type: 'ignored', taskId, status });
+    return res.status(200).json({ ignored: status });
+  }
+  // No stored link can parse to anything else, so there is nothing to resolve or retry.
+  if (!/^[a-z0-9_-]+$/i.test(taskId)) return res.status(200).json({ ignored: taskId });
 
-  // Keyed on the delivery, not the task: a retry must not re-close an issue a moderator reopened
+  // Keyed on the delivery, not the task: a replay must not re-close an issue a moderator reopened
   // since, while a later reopen-and-close in HQ is a new delivery and should. Marked only once the
-  // work is done, so a delivery that died part-way is retried rather than suppressed; concurrent
-  // duplicates both run, which the resolve tolerates (it skips entries already closed).
+  // work is done, so a delivery that failed part-way is retried rather than lost. The cost: that
+  // retry also re-closes any entry reopened in between, and concurrent duplicates both write the
+  // same idempotent close.
   const processedKey =
     `${REDIS_SYS_KEYS.WEBHOOKS.HQ_PROCESSED}:${req.headers['webhook-id']}` as const;
   try {
@@ -104,7 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   if (result.resolved.length || result.failed.length)
     await log({ type: 'resolved', taskId, ...result });
-  // 5xx so the sender retries; the retry skips the entries this attempt did close.
+  // 5xx so the sender retries the entries that failed.
   if (result.failed.length) return res.status(500).send('Internal Server Error');
 
   await sysRedis

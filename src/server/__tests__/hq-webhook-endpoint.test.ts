@@ -175,6 +175,18 @@ describe('hq webhook endpoint', () => {
     expect(resolveBugsByClickupTaskId).not.toHaveBeenCalled();
   });
 
+  it('acks a task id no stored link could carry without querying for it', async () => {
+    const body = JSON.stringify({
+      type: 'task.closed',
+      data: { task_id: '%', status: 'complete' },
+    });
+
+    const res = await run(body, signedHeaders(body));
+
+    expect(res._status()).toBe(200);
+    expect(resolveBugsByClickupTaskId).not.toHaveBeenCalled();
+  });
+
   it('treats a replay of the same delivery id as a no-op', async () => {
     const body = envelope('complete');
     const headers = signedHeaders(body, { id: 'msg_replayed' });
