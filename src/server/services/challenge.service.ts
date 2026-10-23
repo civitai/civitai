@@ -898,12 +898,18 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const coverImage = challenge.coverImageId
+  const fetchedCover = challenge.coverImageId
     ? await dbRead.image.findUnique({
         where: { id: challenge.coverImageId },
         select: imageSelect,
       })
     : null;
+  const coverImage =
+    fetchedCover &&
+    green?.isGreen &&
+    isImageHiddenFromGreenViewer(fetchedCover.nsfwLevel, green.viewerId)
+      ? null
+      : fetchedCover;
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];

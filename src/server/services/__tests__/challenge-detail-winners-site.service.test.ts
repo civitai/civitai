@@ -5,7 +5,7 @@ import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserService from '~/server/services/user.service';
 
-// The detail page's winners go through the same site gating as the challenge list.
+// The detail page's winners and cover go through the same site gating as the challenge list.
 
 const { mockGetChallengeById } = vi.hoisted(() => ({ mockGetChallengeById: vi.fn() }));
 
@@ -101,7 +101,45 @@ describe('getChallengeDetail — winner images', () => {
     expect(await winnerUrl(NsfwLevel.PG13, VIEWER, true)).toBe(WINNER_URL);
   });
 
-  it('keeps an X winner image off the green site', async () => {
+  it('keeps an X winner image on the mature site', async () => {
     expect(await winnerUrl(NsfwLevel.X, VIEWER, false)).toBe(WINNER_URL);
+  });
+});
+
+describe('getChallengeDetail — cover image', () => {
+  async function cover(nsfwLevel: number, viewerId: number | undefined, isGreen: boolean) {
+    mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      id: 80,
+      url: 'cover-image-url',
+      nsfwLevel,
+      hash: 'cover-hash',
+      width: 512,
+      height: 512,
+      type: 'image',
+    } as never);
+    const detail = await getChallengeDetail(500, viewerId, isGreen, false, true);
+    expect(detail).not.toBeNull();
+    return detail!.coverImage;
+  }
+
+  it.each([
+    ['signed out', undefined],
+    ['signed in', VIEWER],
+  ])('withholds an X cover on the green site (%s)', async (_, viewerId) => {
+    expect(await cover(NsfwLevel.X, viewerId, true)).toBeNull();
+  });
+
+  it('keeps an SFW cover on the green site', async () => {
+    expect((await cover(NsfwLevel.PG, undefined, true))?.url).toBe('cover-image-url');
+  });
+
+  it('keeps a PG-13 cover for a signed-in viewer on the green site', async () => {
+    expect((await cover(NsfwLevel.PG13, VIEWER, true))?.url).toBe('cover-image-url');
+  });
+
+  it('keeps an X cover on the mature site', async () => {
+    expect((await cover(NsfwLevel.X, VIEWER, false))?.url).toBe('cover-image-url');
   });
 });
