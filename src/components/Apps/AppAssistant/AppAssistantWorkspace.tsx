@@ -288,7 +288,8 @@ export function AppAssistantWorkspace({
   // preview in the pane (`noLivePreview`); `restart` is that restart's progress for the open app.
   const [noLivePreview, setNoLivePreview] = useState(false);
   const [restart, setRestart] = useState<{ pending: boolean; error: string | null }>(IDLE_RESTART);
-  const restarting = useRef(false);
+  // The app (its key) whose restart is in flight: one at a time per app, so another app's is not held up.
+  const restarting = useRef<string | null>(null);
   const probedApp = useRef<string | null>(null);
   // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
@@ -655,8 +656,8 @@ export function AppAssistantWorkspace({
   const restartPreview = useCallback(async () => {
     const app = live.current.active;
     // One restart at a time: a second click joins nothing and sends nothing.
-    if (!app || restarting.current) return;
-    restarting.current = true;
+    if (!app || restarting.current === app.app) return;
+    restarting.current = app.app;
     setRestart({ pending: true, error: null });
     try {
       // A paused app is started first, by the page's own start; the runner waits for it to run.
@@ -672,7 +673,7 @@ export function AppAssistantWorkspace({
           error: error instanceof Error && error.message ? error.message : RESTART_PREVIEW_FAILED,
         });
     } finally {
-      restarting.current = false;
+      if (restarting.current === app.app) restarting.current = null;
     }
   }, [runnerCredentials, showPreview]);
   const previewRestart = useMemo(

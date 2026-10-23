@@ -90,7 +90,8 @@ export class PreviewRestarter implements PreviewRestarts {
 
   /**
    * Not tied to the request that asked: a second click shares this restart, so one caller going
-   * away must not stop it for the other. Every step has its own timeout.
+   * away must not stop it for the other. Its civitai calls and sandbox tool calls have their own
+   * timeouts; looking up the app at the sandbox service has none beyond the HTTP client's.
    */
   restart(userId: string, app: string, grant: string): Promise<RestartOutcome> {
     const key = `${userId}\n${app}`;
