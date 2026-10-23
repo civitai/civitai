@@ -37,10 +37,8 @@ import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
   BadgeMuteCtx,
@@ -279,7 +277,6 @@ export function MobileHeaderRows({
   onTogglePin?: () => void;
 }) {
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   const creator = useGetCreator();
   const { handleClose } = useContext(UserMenuCtx);
   const trackHeader = useTrackHeaderOpen('mobile');
@@ -296,11 +293,11 @@ export function MobileHeaderRows({
         }}
         data-panel-row
       >
-        <div className="min-w-0 overflow-hidden">
+        {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
+        <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
           <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
         </div>
       </MenuItemLink>
-      {features.buzzSpendPop && features.canWrite && <SupportChip onClick={handleClose} />}
       <div className="ml-auto">
         <BuzzMenuItem compact onOpen={() => trackHeader('buzz-dashboard')} />
       </div>

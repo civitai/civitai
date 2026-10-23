@@ -16,6 +16,7 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -515,6 +516,34 @@ export async function sendImagesForScanBulk(
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
+ * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
+ * Blocked image.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT c."userId" FROM (
+      SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+      UNION
+      SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+      UNION
+      SELECT ri."userId"
+      FROM "CsamReport" rr
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+    ) c
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+  )
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
+`;
+
+/**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
@@ -523,8 +552,10 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -635,7 +666,21 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
-    const held = [...new Set([...heldActive, ...appealHeld, ...csamReviewHeld, ...evidenceHeld])];
+    // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
+    // reason above.
+    const accountHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
+    ).map((x) => x.id);
+
+    const held = [
+      ...new Set([
+        ...heldActive,
+        ...appealHeld,
+        ...csamReviewHeld,
+        ...evidenceHeld,
+        ...accountHeld,
+      ]),
+    ];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -652,6 +697,7 @@ export const removeBlockedImages = createJob(
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       });
       return {
         processed: 0,
@@ -659,6 +705,7 @@ export const removeBlockedImages = createJob(
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       };
     }
 
