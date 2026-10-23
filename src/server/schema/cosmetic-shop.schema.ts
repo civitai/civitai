@@ -233,7 +233,7 @@ export const cosmeticShopSectionMeta = z.object({
   communityHub: z.boolean().optional(),
   // Shop items carrying this event tag join the section on their own, after its hand-picked items,
   // so an event's approved cosmetics need not be placed one by one. Blank clears it.
-  eventTag: z.preprocess((v) => (v === '' ? undefined : v), eventTagSchema.optional()),
+  eventTag: z.union([z.literal('').transform(() => undefined), eventTagSchema]).optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
