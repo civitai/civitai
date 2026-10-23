@@ -178,9 +178,14 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
           </Stack>
         ) : (
           <DevTunnelBlockHost
+            // A freshly signed entry URL is a fresh mount, so the host re-runs its handshake.
+            key={iframeSrc}
             {...app}
             iframeSrc={iframeSrc}
             fit="viewport"
+            // The app reloaded itself (Vite live reload): re-run the server props in place,
+            // as the DNS gate does, for a freshly signed entry URL.
+            onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.

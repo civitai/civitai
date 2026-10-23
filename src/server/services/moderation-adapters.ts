@@ -13,8 +13,8 @@ import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
   imageCaptionTextScanAdapter,
-  modelRulesTextScanAdapter,
   postTextScanAdapter,
+  retiredModelRulesAdapter,
   storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
@@ -33,7 +33,6 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Challenge: challengeModerationAdapter,
   Crucible: crucibleModerationAdapter,
   Model: modelModerationAdapter,
-  ModelRules: modelRulesTextScanAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
   Bounty: bountyModerationAdapter,
   BountyEntry: bountyEntryTextScanAdapter,
@@ -44,6 +43,8 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,
+  ModelRules: retiredModelRulesAdapter,
+  'ModelRules:shadow': retiredModelRulesAdapter,
 };
 
 export function getModerationAdapter(entityType: string): ModerationAdapter | undefined {

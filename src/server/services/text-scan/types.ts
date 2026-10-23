@@ -1,7 +1,6 @@
-import type { StoredModelRuleMatch } from '@civitai/moderation/model-rules';
 import { NsfwLevel } from '~/server/common/enums';
 
-export const TEXT_SCAN_LABELS = ['nsfw', 'poi', 'minor', 'scam', 'csam', 'modelRules'] as const;
+export const TEXT_SCAN_LABELS = ['nsfw', 'poi', 'minor', 'scam', 'csam'] as const;
 export type TextScanLabel = (typeof TEXT_SCAN_LABELS)[number];
 
 export const NSFW_LEVEL_NAMES = ['none', 'pg13', 'r', 'x', 'xxx'] as const;
@@ -65,11 +64,7 @@ export type TextScanOutput = {
   minor?: { detected: boolean; reason: string };
   scam?: { detected: boolean; reason: string };
   csam?: { detected: boolean; reason: string };
-  modelRules?: { matched: ModelRuleMatch[] };
 };
-
-/** The match as the model returns it; the moderator app reads it back as `StoredModelRuleMatch`. */
-export type ModelRuleMatch = Required<StoredModelRuleMatch>;
 
 /** `base` plus one entry per label, each the `TextScanPrompt.id` used. */
 export type PromptIds = Record<string, number>;
@@ -91,7 +86,6 @@ export type FlagOutcome = {
 export type PoiOutcome = FlagOutcome & { names: string[] };
 export type ScamOutcome = { detected: boolean; reason: string };
 export type CsamOutcome = { detected: boolean; reason: string };
-export type ModelRulesOutcome = { matched: ModelRuleMatch[] };
 
 export type TextScanOutcome = {
   nsfw?: NsfwOutcome;
@@ -99,7 +93,6 @@ export type TextScanOutcome = {
   minor?: FlagOutcome;
   scam?: ScamOutcome;
   csam?: CsamOutcome;
-  modelRules?: ModelRulesOutcome;
   triggeredLabels: TextScanLabel[];
   /** The detected level when `nsfw` was requested, else null. Stored on `EntityModeration.nsfwLevel`. */
   nsfwLevel: number | null;

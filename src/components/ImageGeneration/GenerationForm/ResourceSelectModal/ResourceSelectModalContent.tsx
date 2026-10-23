@@ -9,7 +9,7 @@ import {
   IconSettings,
   IconStack2,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
   ResourceSelectFiltersDropdown,
@@ -28,6 +28,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
 import { ResourceHitList } from './ResourceHitList';
+import { ResourceLookupResult } from './ResourceLookupResult';
+import { parseResourceLookup } from '~/components/ImageGeneration/GenerationForm/resource-lookup';
 
 /** Each role says what it is and what it is judged against. */
 const ROLE_COPY = {
@@ -46,6 +48,7 @@ export function ResourceSelectModalContent() {
 
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  const pasted = useMemo(() => parseResourceLookup(debouncedSearch), [debouncedSearch]);
 
   let allowedTabs = resourceSelectTabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
@@ -133,7 +136,7 @@ export function ResourceSelectModalContent() {
                 value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)}
                 leftSection={<IconSearch size={16} />}
-                placeholder="Search models"
+                placeholder="Search models or paste a link"
                 size="xs"
                 className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-40"
                 // Autofocus opens the on-screen keyboard over half the catalog
@@ -159,7 +162,8 @@ export function ResourceSelectModalContent() {
             scrollRestore={{ key: 'resource-select-modal', enabled: false }}
             className="flex-1 overflow-y-scroll"
           >
-            <ResourceHitList key={tab} query={debouncedSearch} />
+            {pasted && <ResourceLookupResult lookup={pasted.lookup} />}
+            {!pasted?.isLink && <ResourceHitList key={tab} query={debouncedSearch} />}
           </ScrollArea>
         </div>
       </div>

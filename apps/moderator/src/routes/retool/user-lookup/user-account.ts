@@ -146,3 +146,10 @@ export async function fetchAccount(userId: number, version = 0): Promise<Account
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }
+
+/** Review id → image count. Its own endpoint — see `/api/user-review-image-counts`. */
+export async function fetchReviewImageCounts(userId: number): Promise<Record<number, number>> {
+  const r = await fetch(`/api/user-review-image-counts/${userId}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
