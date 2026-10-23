@@ -477,6 +477,10 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'coverUrl',
         'creator',
         'description',
+        // Fork opt-in + provenance. `forkOf` is viewer-scoped: the parent's name/slug are
+        // present only when this viewer may open the parent (see `ListingDetail.forkOf`).
+        'forkOf',
+        'forkable',
         'iconUrl',
         'id',
         // 🔴 The two fields added for the store-detail header. Both are in the

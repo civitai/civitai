@@ -153,6 +153,9 @@ export type StoreScopeEntrypoint =
   | 'trpc-reviews'
   | 'trpc-review-write'
   | 'trpc-my-review'
+  // The fork list on a parent's store page (`appListings.listForks`) — a store read with its own
+  // label so a scope mix on it is distinguishable from the detail read beside it.
+  | 'trpc-forks'
   | 'rest-list'
   | 'rest-detail'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
