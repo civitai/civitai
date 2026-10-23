@@ -7,16 +7,23 @@ import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import type { SessionUser } from '~/types/session';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
 // image fetch path returns, and that the fetch path keeps every visibility filter for an id list.
 
-const h = vi.hoisted(() => ({
-  queryWithTimeout: vi.fn(),
-  fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
-}));
+const h = vi.hoisted(() => {
+  return {
+    queryWithTimeout: vi.fn(),
+    fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
+  };
+});
 
+vi.stubGlobal('fetch', async () =>
+  Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
+);
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   registerCounter: () => ({ inc: vi.fn() }),
@@ -66,6 +73,7 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
+  getBlockedBrowsingTags: vi.fn().mockResolvedValue([{ id: 601, name: 'not browsable' }]),
   getBrowsingSettingAddons: vi.fn().mockResolvedValue([
     {
       type: 'some',
@@ -79,6 +87,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 
 import {
   collectPage,
+  MAX_CANDIDATE_OFFSET,
   searchSemanticImages,
   type CandidateSource,
 } from '~/server/services/semantic-image-search.service';
@@ -86,14 +95,16 @@ import {
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
 const PG = 1;
 
+const ANCHOR = 1;
 const input = (over: Partial<SemanticImageSearchInput> = {}) =>
-  ({ imageId: 1, browsingLevel: PG, limit: 50, ...over } as SemanticImageSearchInput);
+  ({ imageId: ANCHOR, browsingLevel: PG, limit: 50, ...over } as SemanticImageSearchInput);
 
 /** A Qdrant stand-in that serves a fixed ranking and records how often it was asked. */
 function rankedSource(ranking: number[]) {
-  const calls: { offset: number; limit: number }[] = [];
-  const source: CandidateSource = async ({ offset, limit }) => {
-    calls.push({ offset, limit });
+  const calls: Parameters<CandidateSource>[0][] = [];
+  const source: CandidateSource = async (args) => {
+    const { offset, limit } = args;
+    calls.push(args);
     return ranking.slice(offset, offset + limit);
   };
   return { source, calls };
@@ -103,7 +114,7 @@ function rankedSource(ranking: number[]) {
 function visibleOnly(visible: Set<number>) {
   return async ({ ids }: { ids: number[] }) => ({
     items: ids
-      .filter((id) => visible.has(id))
+      .filter((id) => id === ANCHOR || visible.has(id))
       .sort((a, b) => b - a)
       .map((id) => ({ id })),
     nextCursor: undefined,
@@ -111,6 +122,9 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
+  setEnv({ QDRANT_URL: 'http://qdrant.test' });
+  // A text query whose vector is already cached, so no embedding call is made.
+  redisMock.redis.packed.get.mockResolvedValue([0.1, 0.2]);
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
 });
@@ -169,6 +183,25 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(second.items.map((x) => x.id)).toEqual([1012, 1016, 1020]);
   });
 
+  it('resumes after the last candidate shown when a page fills mid-batch', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([11, 12, 13, 14, 15]));
+    const { source } = rankedSource([11, 12, 13, 14, 15]);
+
+    const first = await searchSemanticImages({
+      input: input({ limit: 2 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(first.items.map((x) => x.id)).toEqual([11, 12]);
+
+    const second = await searchSemanticImages({
+      input: input({ limit: 2, cursor: first.nextCursor }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(second.items.map((x) => x.id)).toEqual([13, 14]);
+  });
+
   it('ends paging when the index runs out', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
     const { source } = rankedSource([101, 102, 103]);
@@ -203,40 +236,83 @@ describe('a stale index cannot surface a hidden image', () => {
     });
     expect(items.map((x) => x.id)).toEqual([108, 111]);
   });
+
+  it('refuses "more like this" from an image the viewer cannot see', async () => {
+    h.fakeGetAllImages = async () => ({ items: [], nextCursor: undefined });
+    const { source, calls } = rankedSource([5, 7]);
+    await expect(
+      searchSemanticImages({ input: input({ imageId: 6 }), user: VIEWER, candidateSource: source })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(calls).toEqual([]);
+  });
 });
 
-describe('the hydration query keeps every visibility filter for an id list', () => {
-  async function hydrationSql() {
+describe('tags that cannot be browsed', () => {
+  it('returns an empty page when every chosen tag is one', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([5]));
+    const { source, calls } = rankedSource([5]);
+    const page = await searchSemanticImages({
+      input: input({ tagIds: [601] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(page.items).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('drops one from the index filter and from hydration', async () => {
+    const hydratedTags: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      hydratedTags.push((args as { tags?: number[] }).tags);
+      return visibleOnly(new Set([5]))(args);
+    };
+    const { source, calls } = rankedSource([5]);
+    await searchSemanticImages({
+      input: input({ tagIds: [601, 42] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(JSON.stringify(calls[0].filter)).not.toContain('601');
+    expect(JSON.stringify(calls[0].filter)).toContain('42');
+    expect(hydratedTags.at(-1)).toEqual([42]);
+  });
+});
+
+describe.each([
+  ['a text query', { query: 'a red fox', imageId: undefined }],
+  ['the "more like this" anchor check', {}],
+])('the image query behind %s keeps every visibility filter', (_name, over) => {
+  async function firstImageSql() {
     const { source } = rankedSource([101, 102, 103]);
-    await searchSemanticImages({ input: input(), user: VIEWER, candidateSource: source }).catch(
-      () => undefined
-    );
-    expect(h.queryWithTimeout, 'hydration no longer reaches the image query').toHaveBeenCalled();
+    await searchSemanticImages({
+      input: input(over),
+      user: VIEWER,
+      candidateSource: source,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
     const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
     return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
   }
 
   it.each([
-    ['the candidate ids', /i\."id" = ANY\(\$\d+::int\[\]\)/],
-    ['published posts only', /\(p\."publishedAt" < now\(\)\)/],
-    [
-      'no private posts or blocked ingestion',
-      /p\."availability" != \$\d+ AND i\."ingestion" != 'Blocked'/,
-    ],
+    ['the candidate ids', /i\."id" = ANY\(/],
+    ['published posts only', /p\."publishedAt" < now\(\)/],
+    ['no private posts', /p\."availability" != \$\d+/],
+    ['no blocked ingestion', /i\."ingestion" != 'Blocked'/],
     ['no blocked images', /i\."blockedFor" IS NULL/],
     ['no images awaiting review', /i\."needsReview" IS NULL/],
-    ["the viewer's browsing level", /\(i\."nsfwLevel" & \$\d+\) != 0 AND i\."nsfwLevel" != 0/],
+    ["the viewer's browsing level", /i\."nsfwLevel" & \$\d+/],
     ['the person-of-interest add-on', /i\."poi" != TRUE/],
     ['the minor add-on', /i\."minor" != TRUE/],
-    ['hidden and blocked creators', /i\."userId" != ALL\(\$\d+::int\[\]\)/],
-    ['hidden tags', /NOT EXISTS \( SELECT 1 FROM "TagsOnImageDetails" toi/],
-  ])('%s', async (_name, clause) => {
-    const { text } = await hydrationSql();
+    ['hidden and blocked creators', /i\."userId" != ALL\(/],
+    ['hidden tags', /FROM "TagsOnImageDetails" toi/],
+  ])('%s', async (_clause, clause) => {
+    const { text } = await firstImageSql();
     expect(text).toMatch(clause);
   });
 
   it("binds the viewer's hidden users and tags, and the add-on's tags", async () => {
-    const { values } = await hydrationSql();
+    const { values } = await firstImageSql();
     expect(values).toContainEqual(expect.arrayContaining([901, 902, 903]));
     expect(values).toEqual(expect.arrayContaining([801, 701]));
     expect(values).not.toContain(802);
@@ -256,5 +332,30 @@ describe('collectPage', () => {
     expect(page.items).toEqual([]);
     expect(calls.length).toBe(3);
     expect(page.nextCursor).toBe(90);
+  });
+
+  it('stops paging at the candidate offset cap', async () => {
+    const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
+    const candidates = (offset: number, limit: number) =>
+      source({ query: 1, filter: { must: [], must_not: [] }, offset, limit });
+    const hydrate = async (ids: number[]) => ids.map((id) => ({ id })) as never;
+
+    const last = await collectPage({
+      candidates,
+      hydrate,
+      offset: MAX_CANDIDATE_OFFSET - 5,
+      limit: 10,
+    });
+    expect(last.items).toHaveLength(5);
+    expect(calls.at(-1)).toMatchObject({ offset: MAX_CANDIDATE_OFFSET - 5, limit: 5 });
+    expect(last.nextCursor).toBeUndefined();
+
+    const beyond = await collectPage({
+      candidates,
+      hydrate,
+      offset: MAX_CANDIDATE_OFFSET + 500,
+      limit: 10,
+    });
+    expect(beyond).toEqual({ items: [], nextCursor: undefined });
   });
 });

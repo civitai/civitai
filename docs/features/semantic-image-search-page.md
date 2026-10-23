@@ -21,9 +21,9 @@ Code: `src/server/services/semantic-image-search.service.ts`.
 1. **Query vector.** The text is trimmed and its whitespace collapsed. Case is kept. It is embedded
    with `wemm-2b` at 256 dimensions through the orchestrator's synchronous `multimodalEmbedding`
    recipe, using the system orchestrator client. The vector is cached in Redis for 7 days, keyed on
-   model, dimensions, the index's model revision and a hash of the text. A response whose model
-   revision or profile differs from the one recorded on the collection is refused. "More like
-   this" queries by point id and makes no embedding call.
+   model, dimensions, the index's model revision and profile, and a hash of the text. A response
+   whose model revision or profile differs from the one recorded on the collection is refused.
+   "More like this" queries by point id and makes no embedding call.
 2. **Candidates.** One Qdrant query runs on the `images_semantic` alias (`rescore`,
    `oversampling: 2`). It filters on:
    - the viewer's browsing level (`nsfwLevel`)
@@ -39,6 +39,8 @@ Code: `src/server/services/semantic-image-search.service.ts`.
    `3 × missing` candidates each, at most 100 ids per round. The cursor is an offset into the
    ranking, capped at 2000.
 
+Tags that cannot be browsed are dropped from the tag filter, as on the image feed, and a filter
+made only of such tags returns nothing. "More like this" refuses an image the viewer cannot see.
 The search applies the viewer's hidden images, tags and users, and the browsing-settings add-ons
 (person-of-interest, minor and excluded tags), on the server. The image feed applies those in the
 browser.

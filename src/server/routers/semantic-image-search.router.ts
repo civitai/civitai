@@ -10,7 +10,7 @@ import {
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
-import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
@@ -43,7 +43,8 @@ export const semanticImageSearchRouter = router({
       return { ...result, latencyMs };
     }),
 
-  feedback: semanticSearchProcedure
+  feedback: guardedProcedure
+    .use(isFlagProtected('semanticImageSearch'))
     .use(rateLimit({ limit: 30, period: 60 * 60 }))
     .input(semanticSearchFeedbackSchema)
     .mutation(async ({ input, ctx }) => {

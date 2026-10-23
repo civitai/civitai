@@ -1,13 +1,15 @@
 import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
-import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -72,7 +74,7 @@ async function embedQuery(text: string) {
 
   const hash = createHash('sha256').update(text).digest('hex');
   const key =
-    `${REDIS_KEYS.SEMANTIC_SEARCH.QUERY_VECTOR}:${EMBED_MODEL}:${EMBED_DIMENSIONS}:${stamp.modelRevision}:${hash}` as const;
+    `${REDIS_KEYS.SEMANTIC_SEARCH.QUERY_VECTOR}:${EMBED_MODEL}:${EMBED_DIMENSIONS}:${stamp.modelRevision}:${stamp.profile}:${hash}` as const;
   const cached = await redis.packed.get<number[]>(key);
   if (cached) return cached;
 
@@ -84,11 +86,18 @@ async function embedQuery(text: string) {
   const vector = data?.data?.[0]?.embedding;
   if (error || !vector) throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Embedding failed' });
   // A query vector from another model or profile is meaningless against the index.
-  if (data.modelRevision !== stamp.modelRevision || data.profile !== stamp.profile)
+  if (data.modelRevision !== stamp.modelRevision || data.profile !== stamp.profile) {
+    stampCache = undefined;
+    void logToAxiom({
+      name: 'semantic-search:model-mismatch',
+      type: 'error',
+      details: { query: data.modelRevision, queryProfile: data.profile, index: stamp },
+    }).catch(() => undefined);
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: `Query model ${data.modelRevision}/${data.profile} does not match the index`,
+      message: 'The search model does not match the index',
     });
+  }
 
   await redis.packed.set(key, vector, { EX: QUERY_VECTOR_TTL });
   return vector;
@@ -210,10 +219,18 @@ export async function searchSemanticImages({
   domain?: DomainColor;
   candidateSource?: CandidateSource;
 }) {
-  const [hidden, addonData] = await Promise.all([
+  const [hidden, addonData, blockedTags] = await Promise.all([
     getAllHiddenForUser({ userId: user.id }),
     getBrowsingSettingAddons(),
+    getBlockedBrowsingTags(),
   ]);
+  // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
+  const strip = stripBlockedTagIds(
+    input.tagIds,
+    blockedTags.map((t) => t.id)
+  );
+  if (strip.emptyResult) return { items: [], nextCursor: undefined };
+  const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
   const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
     isModerator: user.isModerator,
@@ -224,18 +241,16 @@ export async function searchSemanticImages({
     ),
   ];
   const hiddenTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
-  const excludedTagIds = [
-    ...new Set([...(input.excludedTagIds ?? []), ...addons.excludedTagIds, ...hiddenTagIds]),
-  ];
+  const viewerExcludedTagIds = [...new Set([...addons.excludedTagIds, ...hiddenTagIds])];
+  const excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...viewerExcludedTagIds])];
   // As applyUserPreferences: an image hidden through a tag vote counts only while that tag is hidden.
   const excludedImageIds = hidden.hiddenImages
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
-  const query = input.imageId ?? (await embedQuery(normalizeQuery(input.query ?? '')));
   const filter = buildCandidateFilter({
     browsingLevel: input.browsingLevel,
-    tagIds: input.tagIds,
+    tagIds,
     excludedTagIds,
     baseModels: input.baseModels,
     types: input.types,
@@ -245,14 +260,17 @@ export async function searchSemanticImages({
 
   // The feed's own fetch path decides visibility (publish state, privacy, blocks, moderation,
   // browsing level, hidden users and tags); Qdrant only proposes candidates.
-  const hydrate: Hydrate = async (ids) => {
+  const fetchVisible = async (
+    ids: number[],
+    filters: { tags?: number[]; excludedTagIds: number[] }
+  ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
         browsingLevel: input.browsingLevel,
-        excludedTagIds,
+        ...filters,
         excludedUserIds,
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
@@ -264,6 +282,14 @@ export async function searchSemanticImages({
     });
     return items;
   };
+  const hydrate: Hydrate = (ids) => fetchVisible(ids, { tags: tagIds, excludedTagIds });
+
+  // "More like this" from an image the viewer cannot see would reveal what it resembles.
+  if (input.imageId) {
+    const [anchor] = await fetchVisible([input.imageId], { excludedTagIds: viewerExcludedTagIds });
+    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+  }
+  const query = input.imageId ?? (await embedQuery(normalizeQuery(input.query ?? '')));
 
   return collectPage({
     candidates: (offset, limit) => candidateSource({ query, filter, offset, limit }),
