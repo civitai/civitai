@@ -105,6 +105,12 @@ const UNLINKED = [
   AN_OFFERING_COVER,
 ];
 
+// Covers of the deleted article. They are not content links, so the article's connections omit them.
+const OWN_COVER = row(13);
+const A_MODERATORS_COVER = row(14, { userId: MODERATOR });
+const COVER_IN_A_COLLECTION = row(15, { uses: ['collectionItems'] });
+const COVERS = [OWN_COVER, A_MODERATORS_COVER, COVER_IN_A_COLLECTION];
+
 const isUnusedCondition = (cond: unknown) =>
   JSON.stringify(cond) === JSON.stringify({ none: {} }) ||
   JSON.stringify(cond) === JSON.stringify({ is: null });
@@ -131,7 +137,9 @@ beforeEach(() => {
     UNLINKED.map((row) => ({ imageId: row.id })) as never
   );
   dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
-    UNLINKED.filter((row) => matches(row, where)).map((row) => ({ id: row.id }))) as never);
+    [...UNLINKED, ...COVERS]
+      .filter((row) => matches(row, where))
+      .map((row) => ({ id: row.id }))) as never);
   const stored = {
     id: ARTICLE_ID,
     userId: AUTHOR,
@@ -229,6 +237,26 @@ describe('deleteArticleById', () => {
       expect(deletedIds()).toEqual([UNUSED_OWN.id]);
     }
   );
+
+  const deleteWithCover = async (cover: Row) => {
+    dbMock.dbWrite.article.delete.mockResolvedValue({ coverId: cover.id } as never);
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+  };
+
+  it("deletes the author's own unused cover", async () => {
+    await deleteWithCover(OWN_COVER);
+
+    expect(deletedIds()).toEqual([UNUSED_OWN.id, OWN_COVER.id]);
+  });
+
+  it.each([
+    ['a moderator uploaded', A_MODERATORS_COVER],
+    ['is still in a collection', COVER_IN_A_COLLECTION],
+  ])('keeps a cover that %s', async (_, cover) => {
+    await deleteWithCover(cover);
+
+    expect(deletedIds()).toEqual([UNUSED_OWN.id]);
+  });
 });
 
 /**
@@ -290,7 +318,8 @@ describe('an owner with a safety report on file', () => {
     expect(orphanedImageIds).toEqual([]);
   });
 
-  it('keeps every content image when the article is deleted', async () => {
+  it('keeps the cover and every content image when the article is deleted', async () => {
+    dbMock.dbWrite.article.delete.mockResolvedValue({ coverId: OWN_COVER.id } as never);
     await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
 
     expect(deletedIds()).toEqual([]);

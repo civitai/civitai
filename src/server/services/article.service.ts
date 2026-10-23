@@ -1692,25 +1692,18 @@ export const deleteArticleById = async ({
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // Delete cover image (DB + S3 + cache). Guarded like the content-image loop below:
-    // unguarded, a rejection here skips the articles-index `Delete` at the end of this
-    // function and the deleted article stays in that index indefinitely.
-    if (deleted.coverId)
-      await deleteImageById({ id: deleted.coverId }).catch((error) => {
-        handleLogError(error, 'article-cover-image-cleanup', {
-          articleId: id,
-          imageId: deleted.coverId,
-        });
-      });
+    // The cover goes through the same checks as the content images: it can be someone else's
+    // upload, or still shown elsewhere.
+    const imageIds = [
+      ...new Set([
+        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...contentImageConnections.map((conn) => conn.imageId),
+      ]),
+    ];
 
-    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    const contentImageIds = contentImageConnections
-      .map((conn) => conn.imageId)
-      .filter((imageId) => imageId !== deleted.coverId);
-
-    if (contentImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
+    if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
       const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
+        where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
         select: { id: true },
       });
 
@@ -1718,12 +1711,17 @@ export const deleteArticleById = async ({
         dbWrite,
         trulyOrphanedImages.map((img) => img.id)
       );
+      // Each delete is caught: a rejection would skip the articles-index `Delete` below, and the
+      // deleted article would stay in that index indefinitely.
       for (const imageId of deletable) {
         await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(error, 'article-content-image-cleanup', {
-            articleId: id,
-            imageId,
-          });
+          handleLogError(
+            error,
+            imageId === deleted.coverId
+              ? 'article-cover-image-cleanup'
+              : 'article-content-image-cleanup',
+            { articleId: id, imageId }
+          );
         });
       }
     }
