@@ -3018,6 +3018,24 @@ model AppBlock {
   spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
   spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
 
+  // FORK PROVENANCE — the app this block was forked from, and the parent commit the fork
+  // started at. Attribution only: no revenue share, no inherited approval, no inherited
+  // paid goods or scopes (a fork's goods and scopes are reviewed on its own publish).
+  //
+  // 🔴 SERVER-WRITTEN ONLY, through `app-fork.service.ts`, and never from the manifest: an
+  // author must not be able to claim (or disclaim) a parent. Write-once.
+  //
+  // 🔴 BOTH FIELDS CARRY THE no-type ANNOTATION, so they are stripped from the generated
+  // client, for the reason `AppListing.visibility` documents: as ordinary fields every
+  // `appBlock` call that returns rows without an explicit `select` would name them, and
+  // would raise P2022 until the manual-apply migration runs. They are read and written by
+  // raw SQL only. The FK (`fork_of_app_block_id` → `app_blocks.id`, ON DELETE SET NULL) and
+  // its partial index live ONLY in migration `20261126120000_app_fork_provenance` — Prisma
+  // cannot declare a relation on a stripped scalar. `fork_of_commit_sha` has no FK, so it
+  // survives the parent's deletion and still marks the block as a fork.
+  forkOfAppBlockId   String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha    String?   @map("fork_of_commit_sha") // @no-type
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -3242,6 +3260,14 @@ model AppBlockPublishRequest {
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
+  // FORK PROVENANCE carried onto the request — copied from the block's own pair when the
+  // request is created, or set by the fork flow for a fork's first version (no block yet).
+  // Read on approve to link the fork's store listing to its parent's. SERVER-WRITTEN ONLY;
+  // the request's `manifest` is never consulted for it. Same no-type posture as
+  // `AppBlock.forkOfAppBlockId` — raw SQL only; FK (ON DELETE SET NULL) + partial index in
+  // migration `20261126120000_app_fork_provenance`.
+  forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
+  forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -3403,6 +3429,22 @@ model AppListing {
   // while the columns are absent rather than 500ing the public store.
   isBeta          Boolean      @default(false) @map("is_beta")
   betaMessage     String?      @map("beta_message")
+  // AUTHOR OPT-IN: "Let others fork this app's source". TRIVIAL, NOT MATERIAL (absent from
+  // `MATERIAL_LISTING_PATCH_FIELDS`, never staged on a shadow revision) — the same posture
+  // as `isBeta`. Written to the LIVE listing only.
+  //
+  // FORK PROVENANCE: the store listing this listing's app was forked from. Set on the
+  // FORK'S publish approval from the publish request's server-written provenance, never
+  // from the manifest. ON DELETE SET NULL — the fork's block keeps `fork_of_commit_sha`, so
+  // a fork whose parent is gone still reads as a fork ("Forked from an app that is no
+  // longer available").
+  //
+  // 🔴 BOTH CARRY THE no-type ANNOTATION — stripped from the generated client, read and
+  // written by raw SQL in `app-fork.service.ts` only, for the reason `visibility` below
+  // documents. The FK, the self-reference CHECK and the partial index that serves "forks of
+  // listing X" live ONLY in migration `20261126120000_app_fork_provenance`.
+  forkable        Boolean      @default(false) // @no-type
+  forkOfListingId String?      @map("fork_of_listing_id") // @no-type
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)

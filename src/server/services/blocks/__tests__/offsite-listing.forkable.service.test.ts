@@ -31,54 +31,21 @@ import {
  * itself is executed for real in `app-fork.service.behavior.test.ts`.
  */
 
-const { mockRead, mockWrite, seq } = vi.hoisted(() => {
-  const makeClient = () => ({
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
-    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 1),
-    appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (args: { data: unknown }) => args.data),
-      update: vi.fn(async (args: { data: unknown }) => args.data),
-      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-    },
-    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
-    appListingScreenshot: {
-      count: vi.fn(async (..._a: unknown[]) => 0),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
-      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
-      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
-    },
-    appListingPublishRequest: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      count: vi.fn(async (..._a: unknown[]) => 0),
-      create: vi.fn(async (args: { data: unknown }) => args.data),
-      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    },
-    image: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
-    appListingModerationEvent: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      create: vi.fn(async (args: { data: unknown }) => args.data),
-    },
-  });
-  const mockRead = makeClient();
-  const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
-    $transaction: ReturnType<typeof vi.fn>;
-  };
-  mockWrite.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
-  return { mockRead, mockWrite, seq: { n: 0 } };
-});
+const { seq } = vi.hoisted(() => ({ seq: { n: 0 } }));
+
+/**
+ * The CANONICAL `~/server/db/client` mock (registered globally in src/__tests__/setup.ts), never a
+ * per-file `vi.mock` — see `no-direct-shared-module-mock.test.ts`. Unconfigured methods answer the
+ * conservative defaults (`findMany` → [], `$executeRaw` → 0, `$transaction` runs its callback on
+ * `dbWrite`); everything these cases depend on is set explicitly in `beforeEach`.
+ */
+const mockRead = dbMock.dbRead;
+const mockWrite = dbMock.dbWrite;
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   throwOnBlockedUserContent: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
   ...(await importOriginal<typeof AppListingRating>()),
   recordListingRatingChangeAfterCommit: vi.fn(async () => undefined),
@@ -127,9 +94,9 @@ function onsiteListing(over: Record<string, unknown> = {}) {
 /** The bound values of every `app_listings.forkable` write, in order. */
 function forkableWrites(): unknown[][] {
   return mockWrite.$executeRaw.mock.calls
-    .map((c) => c[0] as Prisma.Sql)
-    .filter((sql) => sql?.text?.includes('"forkable"'))
-    .map((sql) => sql.values);
+    .map((c: unknown[]) => c[0] as Prisma.Sql)
+    .filter((sql: Prisma.Sql) => sql?.text?.includes('"forkable"'))
+    .map((sql: Prisma.Sql) => sql.values);
 }
 
 /** Make the opt-in column read as present (`available`) or absent (42703 via Prisma raw). */
@@ -160,9 +127,6 @@ beforeEach(() => {
     c.$executeRaw.mockReset().mockResolvedValue(1);
     c.$queryRaw.mockReset().mockResolvedValue([]);
   }
-  mockWrite.$transaction
-    .mockReset()
-    .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   forkableColumn(true);
 });
 

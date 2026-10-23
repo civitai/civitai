@@ -344,6 +344,8 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
     restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],

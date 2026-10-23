@@ -221,6 +221,10 @@ export function buildListingDetailPreview(
     // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
     isBeta: false,
     betaMessage: null,
+    // Built from an OFF-SITE publish request: an off-site app is never forkable and is never a
+    // fork, so these are the honest values, not placeholders.
+    forkable: false,
+    forkOf: null,
     // Same as the card builder's `restrictedAudience`.
     restrictedAudience: null,
     description: null,

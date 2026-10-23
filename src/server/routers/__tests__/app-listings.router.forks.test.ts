@@ -55,7 +55,6 @@ vi.mock('~/server/services/blocks/app-listing.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-forks.service', () => ({
   listListingForks: mocks.listListingForks,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: { tag: 'replica' }, dbWrite: {} }));
 vi.mock('~/server/prom/store-scope.metrics', () => ({ recordStoreScopeApplied: vi.fn() }));
 // appDeveloperProcedure gates on getFeatureFlags(ctx).appBlocksAuthor.
 vi.mock('~/server/services/feature-flags.service', async () => {
@@ -79,6 +78,7 @@ vi.mock('~/server/utils/server-domain', () => ({
 }));
 
 import { appListingsRouter } from '../app-listings.router';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
 
@@ -197,16 +197,16 @@ describe('listForks', () => {
       ],
       nextCursor: null,
     });
-    expect(mocks.listListingForks).toHaveBeenCalledWith(
-      { tag: 'replica' },
-      {
-        parentListingId: 'apl_parent_7010',
-        cursor: null,
-        limit: 5,
-        scope: 'full',
-        floor: 'public',
-        redCapable: false,
-      }
-    );
+    expect(mocks.listListingForks).toHaveBeenCalledTimes(1);
+    // The replica, not the primary: a public read.
+    expect(mocks.listListingForks.mock.calls[0][0]).toBe(dbMock.dbRead);
+    expect(mocks.listListingForks.mock.calls[0][1]).toEqual({
+      parentListingId: 'apl_parent_7010',
+      cursor: null,
+      limit: 5,
+      scope: 'full',
+      floor: 'public',
+      redCapable: false,
+    });
   });
 });

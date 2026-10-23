@@ -25,6 +25,7 @@ import {
 } from '~/components/Apps/appListingEditorTabs';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
+import { ListingForkSetting } from '~/components/Apps/ListingForkSetting';
 import { ListingHistoryPanel } from '~/components/Apps/ListingHistoryPanel';
 import { ListingPublishingPanel } from '~/components/Apps/ListingPublishingPanel';
 import { AppsListingDetailsEditor } from '~/components/Apps/AppsSubmitEditView';
@@ -261,7 +262,19 @@ export default function AppListingEditPage() {
 
             {tabs.includes('details') ? (
               <Tabs.Panel value="details" pt="md" data-testid="apps-edit-panel-details">
-                <AppsListingDetailsEditor listingId={context.appListingId} />
+                <Stack gap="md">
+                  {/* FORKING — on-site only (an off-site app has no source here to fork), and
+                      it gates itself on the `app-blocks-fork` rollout flag. Saves on its own,
+                      in place, never through the form below: see `ListingForkSetting`. */}
+                  {context.kind === 'onsite' ? (
+                    <ListingForkSetting
+                      appListingId={context.appListingId}
+                      forkable={context.forkable}
+                      forkableAvailable={context.forkableAvailable}
+                    />
+                  ) : null}
+                  <AppsListingDetailsEditor listingId={context.appListingId} />
+                </Stack>
               </Tabs.Panel>
             ) : null}
 

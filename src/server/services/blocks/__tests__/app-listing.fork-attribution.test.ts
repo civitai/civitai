@@ -15,31 +15,18 @@ import type { Prisma } from '@prisma/client';
  * for real in `app-fork.service.behavior.test.ts`.
  */
 
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
-    user: { findMany: vi.fn(async () => []) },
-    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-    appListing: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
-      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
-    },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
+// `~/server/db/client` is the global canonical mock (src/__tests__/setup.ts); this file only
+// declares its behaviour, through `dbMock.dbRead`.
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
-  queryCache:
-    () =>
-    async (sql: unknown): Promise<unknown[]> =>
-      mockDbRead.$queryRaw(sql),
+  // The detail read does not use the catalog cache; the list path is not exercised here.
+  queryCache: () => async (): Promise<unknown[]> => [],
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getListingDetail } from '../app-listing.service';
 
 // Pairwise-distinct fixtures; the hidden parent's name and slug are strings that occur nowhere
@@ -48,6 +35,8 @@ const FORK_ID = 'apl_fork_6001';
 const PARENT_ID = 'apl_parent_6002';
 const PARENT_NAME = 'Secret Parent Name';
 const PARENT_SLUG = 'secret-parent-slug';
+
+const mockDbRead = dbMock.dbRead;
 
 function listingRow(over: Record<string, unknown> = {}) {
   return {
@@ -110,8 +99,11 @@ function provenance(
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  mockDbRead.appListing.findFirst.mockClear();
   mockDbRead.appListing.findUnique.mockResolvedValue({ sourceRepoUrl: null });
+  // The public collaborator byline: no seats.
+  mockDbRead.appCollaborator.findMany.mockResolvedValue([]);
+  mockDbRead.user.findMany.mockResolvedValue([]);
 });
 
 describe('getListingDetail — forkOf', () => {

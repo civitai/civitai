@@ -8,8 +8,8 @@ import type { ForkRawClient } from '~/server/services/blocks/app-fork.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-// The degraded paths log; the logger itself is not under test.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+// The degraded paths log through `~/server/logging/client`, which the global test setup
+// replaces with its canonical mock (src/__tests__/setup.ts); nothing here asserts on it.
 
 const {
   FORKABLE_UNAVAILABLE,

@@ -7,9 +7,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // `app-listing.service` (where the store predicate lives) is a large module; these are the mocks
-// its import needs, the same set `app-listing.deploy-gate.test.ts` uses. Nothing here reaches them:
-// the function under test takes its client as an argument.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+// its import needs (`~/server/db/client` is the global canonical mock). Nothing here reaches
+// them: the function under test takes its client as an argument.
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
