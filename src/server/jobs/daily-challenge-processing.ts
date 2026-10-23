@@ -77,6 +77,7 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { DEFAULT_REVIEW_MODEL } from '~/server/games/daily-challenge/challenge-judge-routes';
 import {
   estimateBuzzCost,
   generateArticle,
@@ -1056,6 +1057,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           criteria: c.criteria,
         })),
         nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+        model: DEFAULT_REVIEW_MODEL,
       });
       log('Review prepared', entry.imageId, review);
 
@@ -1135,6 +1137,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       logToAxiom({
         type: 'daily-challenge-review-error',
         message: err.message,
+        model: DEFAULT_REVIEW_MODEL,
         challengeId: currentChallenge.challengeId,
         imageId: entry.imageId,
       });
