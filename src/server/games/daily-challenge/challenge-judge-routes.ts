@@ -1,12 +1,6 @@
 import { AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 
 /**
- * Entry review runs on the Civitai-hosted Qwen 3.8 so it does not depend on OpenRouter (MiMo was
- * erroring there). Unpriced: civitai-llm drops `usage`, so review spend records as 0.
- */
-export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.CIVITAI_QWEN_3_8;
-
-/**
  * Judge selection for pairwise comparisons. A pair is judged by the first route whose ceiling
  * covers it, so swapping a model or moving the adult threshold is an edit to this array and
  * nothing else.

@@ -5,7 +5,6 @@ import type {
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { logToAxiom } from '~/server/logging/client';
-import { DEFAULT_REVIEW_MODEL as DEFAULT_REVIEW_MODEL_ID } from '~/server/games/daily-challenge/challenge-judge-routes';
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage, TokenUsage } from '~/server/services/ai/openrouter';
@@ -42,10 +41,10 @@ import {
 // on an article), which is irrelevant for the once-per-challenge content stages.
 //
 // To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
-// pass the URN as `input.model` from the call site or the Playground; the
-// `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
+// pass its URN or `civitai/*` alias as `input.model` from the call site or the Playground; the
+// `pickClient` dispatcher routes those to the civitai-llm client.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-const DEFAULT_REVIEW_MODEL: AIModel = DEFAULT_REVIEW_MODEL_ID;
+export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
 
 // URN- and civitai/-prefixed models go through the orchestrator's OpenAI-compatible endpoint
 // (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,

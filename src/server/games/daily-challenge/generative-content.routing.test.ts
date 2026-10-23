@@ -11,14 +11,9 @@ vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
 }));
 
 import { getCompletionWithUsage } from './generative-content';
-import { DEFAULT_REVIEW_MODEL } from './challenge-judge-routes';
 
 describe('getCompletionWithUsage routing', () => {
   beforeEach(() => vi.clearAllMocks());
-
-  it('reviews default to the orchestrator-hosted Qwen 3.8', () => {
-    expect(DEFAULT_REVIEW_MODEL).toBe('civitai/qwen3.8');
-  });
 
   it('sends civitai/* models to the orchestrator client, not OpenRouter', async () => {
     llm.getJsonCompletion.mockResolvedValue({ ok: true });
