@@ -7,6 +7,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 const m = vi.hoisted(() => ({
   useBlockToken: vi.fn<(...args: unknown[]) => Record<string, unknown>>(),
   hostProps: null as null | Record<string, unknown>,
+  /** Times a PageBlockHost MOUNTED (not rendered) — a remount is what resets its handshake. */
+  hostMounts: 0,
   gate: null as null | { blockId: string; onSettled: () => unknown },
 }));
 
@@ -14,12 +16,18 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
 }));
 vi.mock('~/components/AppBlocks/useBlockToken', () => ({ useBlockToken: m.useBlockToken }));
-vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
-  PageBlockHost: (props: Record<string, unknown>) => {
-    m.hostProps = props;
-    return <div data-testid="page-block-host" />;
-  },
-}));
+vi.mock('~/components/AppBlocks/PageBlockHost', async () => {
+  const { useEffect } = await import('react');
+  return {
+    PageBlockHost: (props: Record<string, unknown>) => {
+      m.hostProps = props;
+      useEffect(() => {
+        m.hostMounts += 1;
+      }, []);
+      return <div data-testid="page-block-host" />;
+    },
+  };
+});
 vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
   DevTunnelDnsGate: (props: NonNullable<typeof m.gate>) => {
     m.gate = props;
@@ -62,6 +70,7 @@ function loadedAs(page: string, host: string | null) {
 beforeEach(() => {
   m.useBlockToken.mockReset().mockReturnValue({ token: 't', error: null });
   m.hostProps = null;
+  m.hostMounts = 0;
   m.gate = null;
   vi.mocked(router.reload).mockClear();
   vi.mocked(router.replace).mockClear();
@@ -220,6 +229,58 @@ describe('/apps/dev/[blockId] client', () => {
     await expect.element(page.getByTestId('dns-gate')).toBeInTheDocument();
     await screen.rerender(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  // 🔴 REGRESSION (live reload). The app reloaded itself inside the frame (Vite) after it
+  // was ready; the host reports it, and the page re-runs its server props — the SAME
+  // in-place path the DNS gate uses — for a freshly signed entry URL.
+  test('a guest reload re-runs the server props in place, once', async () => {
+    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    const onGuestReloaded = m.hostProps?.onGuestReloaded;
+    expect(onGuestReloaded, 'the page gave the host no way to report a reload').toBeTypeOf(
+      'function'
+    );
+
+    (onGuestReloaded as () => void)();
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith('/apps/dev/my-app', undefined, {
+      scroll: false,
+    });
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  test('a freshly signed entry URL for the same host REMOUNTS the host', async () => {
+    // A remount is what resets the host's handshake: re-rendering the same instance with
+    // a new src would load the new document into a host still parked on `ready`.
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    expect(m.hostMounts).toBe(1);
+
+    await screen.rerender(<DevTunnelPage {...FRAME} iframeSrc={`https://${HOST}/?dev=t2`} />);
+    await vi.waitFor(() => expect(m.hostProps?.iframeSrc).toBe(`https://${HOST}/?dev=t2`));
+    expect(m.hostMounts).toBe(2);
+    expect(router.reload).not.toHaveBeenCalled();
+  });
+
+  test('CONTROL: re-rendering with the SAME entry URL does not remount', async () => {
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    await screen.rerender(<DevTunnelPage {...FRAME} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(m.hostMounts).toBe(1);
+  });
+
+  test('a fresh mint that comes back with no tunnel shows the start commands — no loop', async () => {
+    const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+    (m.hostProps?.onGuestReloaded as () => void)();
+
+    // The tunnel went away between the reload and the re-mint.
+    await screen.rerender(<DevTunnelPage {...FRAME} iframeSrc={null} host={null} />);
+    await expect.element(page.getByText('No active dev tunnel')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.replace).toHaveBeenCalledTimes(1);
     expect(router.reload).not.toHaveBeenCalled();
   });
 

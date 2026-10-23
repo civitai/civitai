@@ -24,17 +24,34 @@ const SESSION = { blockId: 'my-app', sessionId: 'bki_1', host: HOST };
 const m = vi.hoisted(() => ({
   fetchFrame: vi.fn(),
   gate: null as null | { blockId: string; onSettled: () => void },
+  /** The mounted frame host's reload callback (latest render). */
+  onGuestReloaded: null as null | (() => void),
+  /** Times a DevTunnelBlockHost MOUNTED — a remount is what resets the page host's handshake. */
+  frameMounts: 0,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/previewFrame', async (importOriginal) => ({
   ...(await importOriginal<typeof PreviewFrameMod>()),
   fetchPreviewFrame: m.fetchFrame,
 }));
-vi.mock('~/components/AppBlocks/DevTunnelBlockHost', () => ({
-  DevTunnelBlockHost: ({ iframeSrc }: { iframeSrc: string }) => (
-    <div data-testid="frame" data-src={iframeSrc} />
-  ),
-}));
+vi.mock('~/components/AppBlocks/DevTunnelBlockHost', async () => {
+  const { useEffect } = await import('react');
+  return {
+    DevTunnelBlockHost: ({
+      iframeSrc,
+      onGuestReloaded,
+    }: {
+      iframeSrc: string;
+      onGuestReloaded?: () => void;
+    }) => {
+      m.onGuestReloaded = onGuestReloaded ?? null;
+      useEffect(() => {
+        m.frameMounts += 1;
+      }, []);
+      return <div data-testid="frame" data-src={iframeSrc} />;
+    },
+  };
+});
 vi.mock('~/components/AppBlocks/DevTunnelDnsGate', () => ({
   DevTunnelDnsGate: (props: NonNullable<typeof m.gate>) => {
     m.gate = props;
@@ -46,6 +63,8 @@ const { AppAssistantPreview } = await import('./AppAssistantPreview');
 
 beforeEach(() => {
   m.gate = null;
+  m.onGuestReloaded = null;
+  m.frameMounts = 0;
   m.fetchFrame.mockReset();
 });
 
@@ -118,5 +137,69 @@ describe('AppAssistantPreview — a preview the server runner started', () => {
     screen.rerender(<AppAssistantPreview canPreview session={{ ...RUNNER }} />);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🔴 REGRESSION (live reload). Vite reloads the app INSIDE the frame on an edit. The
+ * page host reports that (`onGuestReloaded`, dev-tunnel only — see PageBlockHost) and
+ * the preview answers with the manual Reload's own path: fetch a fresh entry URL, whose
+ * new `iframeSrc` key remounts the host. Before the fix the preview passed no callback,
+ * so the first test below is red.
+ */
+describe('AppAssistantPreview — the app reloaded itself in the frame', () => {
+  const FRESH = { ...FRAME, iframeSrc: `https://${HOST}/?dev=entry-token-2` };
+
+  async function mountReady() {
+    await renderWithProviders(<AppAssistantPreview canPreview session={SESSION} />);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRAME.iframeSrc);
+    expect(m.frameMounts).toBe(1);
+    expect(m.onGuestReloaded, 'the preview gave the host no way to report a reload').toBeTypeOf(
+      'function'
+    );
+  }
+
+  test('fetches one fresh entry URL and remounts the frame host with it', async () => {
+    m.fetchFrame.mockResolvedValueOnce(FRAME).mockResolvedValueOnce(FRESH);
+    await mountReady();
+
+    m.onGuestReloaded!();
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRESH.iframeSrc);
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+    expect(m.frameMounts).toBe(2);
+  });
+
+  test('a burst of reload reports fetches once', async () => {
+    let resolveFresh: (v: unknown) => void = () => undefined;
+    m.fetchFrame
+      .mockResolvedValueOnce(FRAME)
+      .mockReturnValueOnce(new Promise((r) => (resolveFresh = r)))
+      .mockResolvedValue(FRAME);
+    await mountReady();
+
+    const report = m.onGuestReloaded!;
+    report();
+    report();
+    report();
+    resolveFresh(FRESH);
+    await expect.element(page.getByTestId('frame')).toHaveAttribute('data-src', FRESH.iframeSrc);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+    expect(m.frameMounts).toBe(2);
+  });
+
+  test('a failed fresh mint shows the existing error, mounts no frame, and does not retry', async () => {
+    m.fetchFrame
+      .mockResolvedValueOnce(FRAME)
+      .mockRejectedValueOnce(new Error('The preview is unavailable right now'));
+    await mountReady();
+
+    m.onGuestReloaded!();
+    await expect
+      .element(page.getByText('The preview is unavailable right now'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('frame').query()).toBeNull();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
 });

@@ -1645,6 +1645,113 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
   });
 });
 
+/**
+ * DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL (`onGuestReloaded`).
+ *
+ * 🔴 REGRESSION. Vite's live reload is `location.reload()` INSIDE the frame. The host's
+ * init controller has stopped at BLOCK_READY, so the reloaded document never gets a
+ * BLOCK_INIT; and once the ~120 s entry token in `?dev=` has expired the reload is a
+ * 401 the app never even runs in. Either way the preview froze until a manual Reload.
+ * Before the fix nothing observed the frame reloading, so `onGuestReloaded` was never
+ * called and the first test below is red.
+ *
+ * The signal is the frame element's `load` event: the ONLY one both cases share — a
+ * 401 + X-Frame-Options page runs no app code (so no BLOCK_HELLO), but Chromium still
+ * fires `load` on the element (measured 2026-10-23). A load is synthesised with
+ * `dispatchEvent`; the REAL initial load is waited for first (a document-level CAPTURE
+ * listener, installed before render, so it cannot miss it — `load` does not bubble but
+ * capture still reaches the target), so every count below is exact.
+ */
+describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
+  let stopTracking: (() => void) | null = null;
+  afterEach(() => {
+    stopTracking?.();
+    stopTracking = null;
+  });
+
+  /** Count the frame's REAL (trusted) load events. Install BEFORE rendering. */
+  function trackRealFrameLoads() {
+    let trusted = 0;
+    const handler = (e: Event) => {
+      if (e.isTrusted && e.target instanceof HTMLIFrameElement) trusted += 1;
+    };
+    document.addEventListener('load', handler, true);
+    stopTracking = () => document.removeEventListener('load', handler, true);
+    return () => trusted;
+  }
+
+  /** The guest document loaded again (Vite `location.reload()`, or its 401 page). */
+  function guestReload() {
+    const el = iframeElQuery();
+    if (!el) throw new Error('iframe missing');
+    el.dispatchEvent(new Event('load'));
+  }
+
+  async function mountAt(surface: 'dev-tunnel' | 'page-run' | 'private-run') {
+    const realLoads = trackRealFrameLoads();
+    const onGuestReloaded = vi.fn();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} surface={surface} onGuestReloaded={onGuestReloaded} />
+    );
+    await pollFor('the frame’s initial load', () => realLoads() >= 1);
+    return onGuestReloaded;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  test('dev-tunnel: a reload after BLOCK_READY asks for a fresh entry exactly once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    // Positive control for the predicate's other half: the INITIAL load is not a reload.
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a burst of reloads asks once (one remount, never a storm)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+
+    for (let i = 0; i < 5; i++) guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalled());
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a reload BEFORE ready does not ask (the running handshake serves it)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    // e.g. Vite's "new dependencies optimized, reloading" during the first boot: the
+    // controller is still re-posting BLOCK_INIT, so the new document gets one anyway.
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count carried: the next load after ready is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  test.each(['page-run', 'private-run'] as const)(
+    '%s: a reload after BLOCK_READY never asks — dev-tunnel only',
+    async (surface) => {
+      const onGuestReloaded = await mountAt(surface);
+      await driveToReady();
+
+      for (let i = 0; i < 3; i++) guestReload();
+      await settle();
+      expect(onGuestReloaded).not.toHaveBeenCalled();
+    }
+  );
+});
+
 // ===========================================================================
 // THE MISSING-PERMISSIONS BACKSTOP (clawgate 545)
 //
