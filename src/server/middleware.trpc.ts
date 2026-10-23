@@ -403,9 +403,17 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
 }
 
 export function purgeOnSuccess(tags: string[]) {
-  return middleware(async ({ next }) => {
+  return middleware(async ({ next, path }) => {
     const result = await next();
-    if (result.ok) await purgeCache({ tags });
+    // Not awaited: the save returns while the edge refresh runs. If the refresh fails, the
+    // cached response stays until its TTL runs out.
+    if (result.ok)
+      purgeCache({ tags }).catch((error: Error) =>
+        logToAxiom(
+          { name: 'edge-purge-failed', type: 'error', message: error.message, tags, path },
+          'civitai-prod'
+        ).catch(() => undefined)
+      );
 
     return result;
   });
