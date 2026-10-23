@@ -561,7 +561,9 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
         })
       )
       .mockResolvedValue({});
-    stripe.checkout.sessions.list.mockResolvedValue(page([{ id: 'cs_open', status: 'open' }]));
+    stripe.checkout.sessions.list.mockResolvedValue(
+      page([{ id: 'cs_open', status: 'open', subscription: 'sub_inc' }])
+    );
     stripe.checkout.sessions.expire.mockResolvedValue({});
 
     const outcome = await scrub();
@@ -572,6 +574,23 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.errors).toEqual([]);
     expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
       where: { id: 'sub_inc' },
+    });
+  });
+
+  it('treats an incomplete_expired subscription as ended: drops our row, never cancels it', async () => {
+    // Stripe refuses to cancel it, so sending it through the cancel would error on every run and
+    // the account would never finish.
+    stripe.subscriptions.list.mockResolvedValue(
+      page([{ id: 'sub_exp', status: 'incomplete_expired' }])
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.subscriptions.del).not.toHaveBeenCalled();
+    expect(outcome.errors).toEqual([]);
+    expect(outcome.canceledSubscriptions).toEqual([]);
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_exp' },
     });
   });
 

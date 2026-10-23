@@ -1291,7 +1291,10 @@ const deleteStripeSubscription = async (
     const sessions = await stripe.checkout.sessions
       .list({ subscription: subscriptionId, limit: 10 }, options)
       .catch(() => null);
-    const open = sessions?.data.filter((session) => session.status === 'open') ?? [];
+    const open =
+      sessions?.data.filter(
+        (session) => session.status === 'open' && session.subscription === subscriptionId
+      ) ?? [];
     if (!open.length) throw error;
     for (const session of open) await stripe.checkout.sessions.expire(session.id, {}, options);
   }

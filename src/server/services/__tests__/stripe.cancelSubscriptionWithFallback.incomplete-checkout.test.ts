@@ -55,8 +55,10 @@ describe('cancelSubscriptionWithFallback — incomplete subscription with an ope
     stripe.subscriptions.del.mockRejectedValueOnce(openCheckoutRefusal()).mockResolvedValue({});
     stripe.checkout.sessions.list.mockResolvedValue({
       data: [
-        { id: 'cs_old', status: 'expired' },
-        { id: 'cs_open', status: 'open' },
+        { id: 'cs_old', status: 'expired', subscription: SUB_ID },
+        // An open session for a different subscription is never ours to expire.
+        { id: 'cs_other', status: 'open', subscription: 'sub_other' },
+        { id: 'cs_open', status: 'open', subscription: SUB_ID },
       ],
     });
 
@@ -74,7 +76,9 @@ describe('cancelSubscriptionWithFallback — incomplete subscription with an ope
 
   it('succeeds when expiring the session already ended the subscription', async () => {
     stripe.subscriptions.del.mockRejectedValue(openCheckoutRefusal());
-    stripe.checkout.sessions.list.mockResolvedValue({ data: [{ id: 'cs_open', status: 'open' }] });
+    stripe.checkout.sessions.list.mockResolvedValue({
+      data: [{ id: 'cs_open', status: 'open', subscription: SUB_ID }],
+    });
     stripe.subscriptions.retrieve.mockResolvedValue({ id: SUB_ID, status: 'incomplete_expired' });
 
     await expect(cancel()).resolves.toEqual({ type: 'direct' });
@@ -83,11 +87,43 @@ describe('cancelSubscriptionWithFallback — incomplete subscription with an ope
 
   it('still fails, keeping our row, when the retry fails and the subscription is live', async () => {
     stripe.subscriptions.del.mockRejectedValue(openCheckoutRefusal());
-    stripe.checkout.sessions.list.mockResolvedValue({ data: [{ id: 'cs_open', status: 'open' }] });
+    stripe.checkout.sessions.list.mockResolvedValue({
+      data: [{ id: 'cs_open', status: 'open', subscription: SUB_ID }],
+    });
     stripe.subscriptions.retrieve.mockResolvedValue({ id: SUB_ID, status: 'incomplete' });
 
     await expect(cancel()).rejects.toThrow('active checkout session');
     expect(row.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelSubscriptionWithFallback — the guards around the expire', () => {
+  it('a failed expire (the member just paid) stops the cancel: no second delete, no success', async () => {
+    // Expiring a session that completed a moment ago fails. Swallowing that failure would delete
+    // a subscription the member has just paid for.
+    stripe.subscriptions.del.mockRejectedValueOnce(openCheckoutRefusal()).mockResolvedValue({});
+    stripe.checkout.sessions.list.mockResolvedValue({
+      data: [{ id: 'cs_open', status: 'open', subscription: SUB_ID }],
+    });
+    stripe.checkout.sessions.expire.mockRejectedValue(
+      new Error('This Checkout Session is already complete')
+    );
+    stripe.subscriptions.retrieve.mockResolvedValue({ id: SUB_ID, status: 'canceled' });
+
+    await expect(cancel()).rejects.toThrow('already complete');
+    expect(stripe.subscriptions.del).toHaveBeenCalledTimes(1);
+    expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
+    expect(row.delete).not.toHaveBeenCalled();
+  });
+
+  it('a failed session lookup surfaces the ORIGINAL refusal, not the lookup error', async () => {
+    const refusal = openCheckoutRefusal();
+    stripe.subscriptions.del.mockRejectedValue(refusal);
+    stripe.checkout.sessions.list.mockRejectedValue(new Error('list failed'));
+
+    await expect(cancel()).rejects.toBe(refusal);
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.del).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -112,7 +148,7 @@ describe('cancelSubscriptionWithFallback — controls: paths without an open che
     });
     stripe.subscriptions.del.mockRejectedValue(refusal);
     stripe.checkout.sessions.list.mockResolvedValue({
-      data: [{ id: 'cs_done', status: 'complete' }],
+      data: [{ id: 'cs_done', status: 'complete', subscription: SUB_ID }],
     });
 
     await expect(cancel()).rejects.toBe(refusal);
