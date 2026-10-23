@@ -13,6 +13,12 @@ export type DevTunnelBlockHostProps = Omit<DevTunnelFrame, 'iframeSrc' | 'host' 
   fit: 'viewport' | 'fill';
   /** Shown instead of the app when its dev token cannot be minted. */
   tokenErrorFallback: ReactNode;
+  /**
+   * The app reloaded itself in the frame (Vite live reload). Fetch a freshly signed entry
+   * URL and remount this host with it — key it on `iframeSrc` — exactly as a manual
+   * Reload does. See `PageBlockHostProps.onGuestReloaded`.
+   */
+  onGuestReloaded: () => void;
 };
 
 /** The caller's own app, running from its dev tunnel inside the real page host. */
@@ -28,6 +34,7 @@ export function DevTunnelBlockHost({
   scopes,
   fit,
   tokenErrorFallback,
+  onGuestReloaded,
 }: DevTunnelBlockHostProps) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -133,6 +140,7 @@ export function DevTunnelBlockHost({
       theme={theme}
       onConsentGranted={refresh}
       onRetryToken={refresh}
+      onGuestReloaded={onGuestReloaded}
       // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, which 404s unless the
       // viewer has BOTH flags; see `PageBlockHostProps.canOpenPage`.
       canOpenPage={!!(features.appBlocks && features.appBlocksPages)}

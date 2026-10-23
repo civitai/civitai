@@ -2,12 +2,14 @@ import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import type { SyntheticEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { isDevTunnelGuestReload } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
   blockInitStorageMode,
@@ -733,6 +735,13 @@ export interface PageBlockHostProps {
    *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
   onRetryToken?: () => void;
   /**
+   * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
+   * live reload). The parent must fetch a freshly signed entry URL and REMOUNT this host
+   * with it — the same path as its manual Reload. Called at most once per mount; every
+   * other surface never calls it. See `isDevTunnelGuestReload` for the signal and why.
+   */
+  onGuestReloaded?: () => void;
+  /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
    * side-effecting / money / private / cross-user handler replies with a
@@ -882,6 +891,7 @@ export function PageBlockHost({
   theme,
   onConsentGranted,
   onRetryToken,
+  onGuestReloaded,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1692,6 +1702,39 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage]);
+
+  // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
+  // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
+  // only counts `load` events per frame ELEMENT — a Retry re-keys the <iframe>, and the
+  // new element starts from zero — and reports once per mount, so a burst of reloads is
+  // one request. A parent whose fresh mint fails unmounts this host into its own error
+  // state, so there is nothing here to loop. The callback is read through a ref so a
+  // parent's inline arrow cannot change this handler's identity.
+  const frameLoadsRef = useRef<{ frame: HTMLIFrameElement | null; count: number }>({
+    frame: null,
+    count: 0,
+  });
+  const guestReloadReportedRef = useRef(false);
+  const onGuestReloadedRef = useRef(onGuestReloaded);
+  onGuestReloadedRef.current = onGuestReloaded;
+  const handleFrameLoad = useCallback(
+    (event: SyntheticEvent<HTMLIFrameElement>) => {
+      const loads = frameLoadsRef.current;
+      if (loads.frame !== event.currentTarget) {
+        loads.frame = event.currentTarget;
+        loads.count = 0;
+      }
+      loads.count += 1;
+      if (guestReloadReportedRef.current) return;
+      if (
+        !isDevTunnelGuestReload({ surface, loadsOnFrame: loads.count, status: statusRef.current })
+      )
+        return;
+      guestReloadReportedRef.current = true;
+      onGuestReloadedRef.current?.();
+    },
+    [surface]
+  );
 
   // BLOCK_READY → ready.
   useEffect(() => {
@@ -5790,6 +5833,7 @@ export function PageBlockHost({
               key={reloadNonce}
               ref={iframeRef}
               src={renderedIframeSrc}
+              onLoad={handleFrameLoad}
               sandbox={effectiveSandbox}
               referrerPolicy="no-referrer"
               // Sanitize the publisher-controlled appName for the iframe title too
