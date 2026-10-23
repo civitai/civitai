@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { canAccess } from './access';
+import { readerOf } from './chat-read-audit';
 import { getArticle } from './article-lookup.service';
 import {
   chatMessageCounts,
@@ -281,7 +282,7 @@ async function chatItem(id: number, locals: App.Locals) {
   const canRead = canAccess(locals.user, '/retool/chat-audit');
   const [members, transcript] = await Promise.all([
     getChatMembers(id),
-    canRead ? getTranscript(id) : null,
+    canRead ? getTranscript(readerOf(locals.user), id) : null,
   ]);
   // Who the reports are about is worked out on the page (`chatSubject`), over the reports it lists —
   // resolved ones a status filter or a `?report=` link put on screen included, which this read's
