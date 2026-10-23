@@ -107,8 +107,13 @@ describe('getChallengeDetail — winner images', () => {
 });
 
 describe('getChallengeDetail — cover image', () => {
-  async function cover(nsfwLevel: number, viewerId: number | undefined, isGreen: boolean) {
-    mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+  async function cover(
+    nsfwLevel: number,
+    viewerId: number | undefined,
+    isGreen: boolean,
+    challenge: Record<string, unknown> = completedSystemChallenge
+  ) {
+    mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
     dbMock.dbRead.image.findUnique.mockResolvedValue({
       id: 80,
@@ -131,12 +136,28 @@ describe('getChallengeDetail — cover image', () => {
     expect(await cover(NsfwLevel.X, viewerId, true)).toBeNull();
   });
 
+  it('withholds a PG-13 cover on the green site from a signed-out viewer', async () => {
+    expect(await cover(NsfwLevel.PG13, undefined, true)).toBeNull();
+  });
+
   it('keeps an SFW cover on the green site', async () => {
     expect((await cover(NsfwLevel.PG, undefined, true))?.url).toBe('cover-image-url');
   });
 
   it('keeps a PG-13 cover for a signed-in viewer on the green site', async () => {
     expect((await cover(NsfwLevel.PG13, VIEWER, true))?.url).toBe('cover-image-url');
+  });
+
+  // Deliberate, as for winners: the green site never serves its creator a cover above its ceiling
+  // either. The creator still sees it on the mature site and in the moderator edit view.
+  it("withholds an X cover on the green site from the challenge's own creator", async () => {
+    const ownChallenge = {
+      ...completedSystemChallenge,
+      source: 'User',
+      buzzType: 'green',
+      createdById: VIEWER,
+    };
+    expect(await cover(NsfwLevel.X, VIEWER, true, ownChallenge)).toBeNull();
   });
 
   it('keeps an X cover on the mature site', async () => {
