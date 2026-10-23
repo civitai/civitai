@@ -48,7 +48,7 @@ had no `pnpm` at all — which silently disables the daemon's own auto-install p
 has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
 
 **On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
-names, puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
+names (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
 
 ```bash
 nix run .#dev-server -- status

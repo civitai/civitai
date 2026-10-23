@@ -33,7 +33,7 @@ Required environment: database connection strings, authentication providers, S3/
 1. `pnpm install`
 2. `pnpm run db:generate`
 3. `make start` if the services are down.
-4. Start the dev server with the `/dev-server` skill. The daemon keeps whichever node first ran a CLI verb (`process.execPath`) until shutdown, so start it under the node from `.nvmrc`. On NixOS, `nix run .#dev-server` does this.
+4. Start the dev server with the `/dev-server` skill. The daemon keeps whichever node first ran a CLI verb (`process.execPath`) until shutdown, so start it under the node from `.nvmrc`. On NixOS, `nix run .#dev-server` does this, except while nixpkgs lags `.nvmrc` (it gives 24.19.0 until nixpkgs ships 24.22.1; see the note in `flake.nix`).
 
 ## Email
 

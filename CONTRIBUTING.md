@@ -82,7 +82,7 @@ failure: outside the dev shell there are no `PRISMA_*_ENGINE_*` paths, so Prisma
 goes looking for a `linux-nixos` engine that has never been published.
 
 `nvm use` picks the right node up from `.nvmrc`; with Nix, prefix any of these
-with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`).
+with `nix develop -c` (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), or use direnv (`cp .envrc.example .envrc && direnv allow`).
 
 ```bash
 pnpm typecheck                 # full repo
