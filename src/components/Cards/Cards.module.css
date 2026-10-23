@@ -161,9 +161,13 @@
   }
 }
 
-/* Behind a cosmetic nameplate the pill goes near-opaque: its colours are unreadable on a 0.31 black. */
-.creatorPillPlate {
-  background-color: rgba(0, 0, 0, 0.9);
+/* A nameplate's gradient is clipped to the glyphs, so text-shadow can't reach it: a tight dark edge
+   plus a small offset keeps mid-tone plates readable on bright images without a heavier pill.
+   The name's own shadow (UserAvatarSimple.module.scss) is replaced; the extra class beats its
+   dark-scheme rule. */
+.creatorPill.creatorPillPlate > [class] {
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.45));
 }
 
 .creatorAvatar {

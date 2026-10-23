@@ -186,7 +186,6 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
-import { scanModelRules } from '~/server/services/text-scan/submit';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
@@ -912,7 +911,6 @@ export const publishModelHandler = async ({
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
-    if (!isModerator) scanModelRules(updatedModel.id);
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');

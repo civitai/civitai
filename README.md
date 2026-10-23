@@ -55,7 +55,7 @@ for the database. By leveraging these tools, we've been able to create a scalabl
 - [Docker](https://www.docker.com/), with Compose v2 (`docker compose`, not the
   retired hyphenated `docker-compose`). The database, Redis, MinIO, Meilisearch,
   ClickHouse and the mail catcher all run as containers.
-- **Node.js `24.19.0`.** Not "20 or later" — `package.json` declares
+- **Node.js `24.22.1`.** Not "20 or later" — `package.json` declares
   `engines.node: ">=24.0.0 <25"`. The exact version lives in [`.nvmrc`](.nvmrc);
   CI installs that file's version and the production image is built on the same
   one, so `nvm use` (or any tool that reads `.nvmrc`) is the right way to get it.
@@ -74,7 +74,7 @@ for the database. By leveraging these tools, we've been able to create a scalabl
 ```sh
 git clone https://github.com/civitai/civitai.git
 cd civitai
-nvm use                                              # reads .nvmrc -> 24.19.0
+nvm use                                              # reads .nvmrc -> 24.22.1
 corepack enable
 git submodule update --init event-engine-common
 cp .env-example .env.development
