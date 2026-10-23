@@ -140,7 +140,11 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
     expect(grantBuzzPurchase).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 42, amount: 9500 })
     );
-    expect(deposits.get(BigInt(PAYMENT_ID))).toMatchObject({ userId: 42, outcomeAmount: 9.5 });
+    expect(deposits.get(BigInt(PAYMENT_ID))).toMatchObject({
+      userId: 42,
+      outcomeAmount: 9.5,
+      depositFee: null,
+    });
     expect(signalSend.mock.calls.map(([call]) => call.userId)).toEqual([42]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -152,12 +156,27 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
     );
   });
 
-  it('credits nothing when NOWPayments does not report the payment as paid', async () => {
-    caller.getPaymentStatus.mockResolvedValue(apiPayment({ payment_status: 'waiting' }));
+  it('records the owner NOWPayments reports for a payment still confirming', async () => {
+    caller.getPaymentStatus.mockResolvedValue(
+      apiPayment({ payment_status: 'confirming', outcome_amount: null })
+    );
+
+    await deliver(ipn({ payment_status: 'confirming', order_id: 'user:99' }));
+
+    expect(deposits.get(BigInt(PAYMENT_ID))).toMatchObject({ userId: 42, status: 'confirming' });
+    expect(signalSend.mock.calls.map(([call]) => call.userId)).toEqual([42]);
+  });
+
+  it.each([
+    ['NOWPayments does not report it as paid yet', { payment_status: 'confirming' }],
+    ['NOWPayments reports it as paid without an amount', { outcome_amount: null }],
+    ['NOWPayments returns a different payment', { payment_id: 54321 }],
+  ])('asks for redelivery, and credits nothing, when %s', async (_case, over) => {
+    caller.getPaymentStatus.mockResolvedValue(apiPayment(over));
 
     const res = await deliver(ipn());
 
-    expect(res._status()).toBe(200);
+    expect(res._status()).toBe(400);
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
     expect(signalSend).not.toHaveBeenCalled();
@@ -167,6 +186,43 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
     await deliver(ipn());
 
     expect(deposits.get(BigInt(PAYMENT_ID))).toMatchObject({ depositFee: 0.1, serviceFee: 0.2 });
+  });
+
+  it('tells the user when a confirming deposit is paid', async () => {
+    caller.getPaymentStatus.mockResolvedValueOnce(
+      apiPayment({ payment_status: 'confirming', outcome_amount: null })
+    );
+    await deliver(ipn({ payment_status: 'confirming' }));
+    await deliver(ipn());
+
+    expect(signalSend.mock.calls.map(([call]) => call.data.status)).toEqual([
+      'confirming',
+      'finished',
+    ]);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the user when a confirming deposit fails', async () => {
+    caller.getPaymentStatus
+      .mockResolvedValueOnce(apiPayment({ payment_status: 'confirming', outcome_amount: null }))
+      .mockResolvedValueOnce(apiPayment({ payment_status: 'failed', outcome_amount: null }));
+    await deliver(ipn({ payment_status: 'confirming' }));
+    await deliver(ipn({ payment_status: 'failed' }));
+
+    expect(signalSend.mock.calls.map(([call]) => call.data.status)).toEqual([
+      'confirming',
+      'failed',
+    ]);
+  });
+
+  it('tells the user when a deposit already marked finished is credited late', async () => {
+    deposits.set(BigInt(PAYMENT_ID), { status: 'finished', userId: 42, buzzCredited: null });
+
+    await deliver(ipn());
+
+    expect(grantedIds).toEqual(new Set([`np-deposit-${PAYMENT_ID}`]));
+    expect(signalSend).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
   it('credits, signals and notifies once when the same payment is delivered twice', async () => {

@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
+import { isDepositComplete } from '~/server/common/chain-config';
 import { logToAxiom } from '~/server/logging/client';
 import { processDeposit } from '~/server/services/nowpayments.service';
 
@@ -89,6 +90,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!payment) throw new Error(`Payment ${event.payment_id} not found on NOWPayments`);
 
       const verified = eventFromPayment(payment);
+      if (verified.payment_id !== event.payment_id) {
+        throw new Error(
+          `NOWPayments returned payment ${verified.payment_id} for ${event.payment_id}`
+        );
+      }
       const mismatched = VERIFIED_FIELDS.filter(
         (field) => (event[field] ?? null) !== (verified[field] ?? null)
       );
@@ -105,9 +111,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         verified.actually_paid_at_fiat = event.actually_paid_at_fiat;
       }
 
-      const status = verified.payment_status;
-      if (verified.payment_id && status && ACTIONABLE_STATUSES.includes(status)) {
-        await processDeposit(verified.payment_id, status, verified);
+      // NOWPayments' record can trail its own IPN. A 400 has it redeliver once the record catches
+      // up, where a 200 would leave the deposit to the reconcile job.
+      const status = payment.payment_status;
+      if (isDepositComplete(status) && !((verified.outcome_amount ?? 0) > 0)) {
+        throw new Error(`Payment ${event.payment_id} is complete on NOWPayments without an amount`);
+      }
+      if (isDepositComplete(paymentStatus) && !isDepositComplete(status)) {
+        throw new Error(`Payment ${event.payment_id} is not complete on NOWPayments yet`);
+      }
+      if (ACTIONABLE_STATUSES.includes(status)) {
+        await processDeposit(event.payment_id, status, verified);
       }
     }
   } catch (error: any) {

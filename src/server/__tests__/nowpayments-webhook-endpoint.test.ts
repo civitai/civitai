@@ -58,6 +58,7 @@ const run = (payment_status: string) => {
     payment_id: 12345,
     payment_status,
     order_id: 'user:42',
+    outcome_amount: 9.5,
     pay_address: '0xaddr',
     pay_currency: 'btc',
   });

@@ -314,7 +314,7 @@ export const processDeposit = async (
     });
   }
 
-  // A redelivered status changes nothing, so it must not tell the user again.
+  // A redelivery that changes nothing must not tell the user again.
   let statusAdvanced = true;
 
   // Upsert the CryptoDeposit record on every webhook status
@@ -382,7 +382,9 @@ export const processDeposit = async (
   }
 
   const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
-  if (statusAdvanced) {
+  const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
+  const tellUser = statusAdvanced || granted;
+  if (tellUser) {
     await signalClient.send({
       userId,
       target: SignalMessages.CryptoDepositUpdate,
@@ -397,7 +399,7 @@ export const processDeposit = async (
   }
 
   // Send persistent notification for completed deposits
-  if (statusAdvanced && isDepositComplete(webhookStatus) && buzzAmount > 0) {
+  if (tellUser && isDepositComplete(webhookStatus) && buzzAmount > 0) {
     const notificationType =
       webhookStatus === 'partially_paid' ? 'partially-paid' : 'deposit-confirmed';
 
