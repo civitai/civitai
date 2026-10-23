@@ -1232,6 +1232,8 @@ export const banReasonDetails: Record<
     code: BanReasonCode;
     publicBanReasonLabel?: string;
     privateBanReasonLabel: string;
+    /** Set by its own flow, never picked by hand. */
+    systemOnly?: true;
   }
 > = {
   [BanReasonCode.SexualMinor]: {
@@ -1303,6 +1305,7 @@ export const banReasonDetails: Record<
     code: BanReasonCode.Chargeback,
     publicBanReasonLabel: 'Reversed payment',
     privateBanReasonLabel: 'Lost payment dispute (chargeback)',
+    systemOnly: true,
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,

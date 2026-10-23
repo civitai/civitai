@@ -85,6 +85,9 @@ vi.mock('~/server/services/buzz.service', async () => {
   const { BuzzApiError } = await import('@civitai/buzz');
   return {
     completeStripeBuzzTransaction: vi.fn(),
+    getTransactionByExternalId: vi.fn(async (id: string) =>
+      ledger.externalIds.has(id) ? { externalTransactionId: id } : null
+    ),
     getUserBuzzAccount: vi.fn(async ({ accountId }: { accountId: number }) => [
       { id: accountId, balance: ledger.balances.get(accountId) ?? 0, accountType: 'blue' },
     ]),
@@ -158,6 +161,8 @@ type User = {
 };
 let users: Map<number, User>;
 let replicaLag: Map<number, User>;
+type ModActivityRow = { userId: number; entityType: string; entityId: number; activity: string };
+let modActivities: ModActivityRow[];
 
 let rewards: Reward[];
 let referral: { id: number; userId: number; paidMonthCount: number; firstPaidAt: Date | null };
@@ -167,7 +172,11 @@ let gift: Record<string, unknown> | null;
 
 const matches = (value: unknown, cond: any) =>
   cond === undefined ||
-  (cond && typeof cond === 'object' && 'in' in cond ? cond.in.includes(value) : value === cond);
+  (cond instanceof Date
+    ? value instanceof Date && +value === +cond
+    : cond && typeof cond === 'object' && 'in' in cond
+    ? cond.in.includes(value)
+    : value === cond);
 
 function installStore() {
   mockDbWrite.referralReward.findMany.mockImplementation(async ({ where }: any) =>
@@ -189,13 +198,42 @@ function installStore() {
   });
   // As Postgres would: rolls the referral rows back when the callback throws, and holds the row
   // lock a raw `FOR UPDATE` read takes until the transaction ends.
+  // User and ModActivity writes are undone one by one, so a rollback never reverts what a
+  // concurrent transaction committed in the meantime.
   let lockTail = Promise.resolve();
   mockDbWrite.$transaction.mockImplementation(async (fn: any) => {
     const saved = { rewards: structuredClone(rewards), referral: structuredClone(referral) };
+    const undo: (() => void)[] = [];
     let release: (() => void) | undefined;
+    const journaled = {
+      user: new Proxy(mockDbWrite.user, {
+        get: (target, key) =>
+          key !== 'updateMany'
+            ? (target as any)[key]
+            : async (args: any) => {
+                const u = users.get(args.where.id);
+                const before = u && { ...u };
+                const result = await mockDbWrite.user.updateMany(args);
+                undo.push(() => u && Object.assign(u, before));
+                return result;
+              },
+      }),
+      modActivity: new Proxy(mockDbWrite.modActivity, {
+        get: (target, key) =>
+          key !== 'create'
+            ? (target as any)[key]
+            : async (args: any) => {
+                const result = await mockDbWrite.modActivity.create(args);
+                undo.push(() => modActivities.splice(modActivities.indexOf(result), 1));
+                return result;
+              },
+      }),
+    };
     const tx = new Proxy(mockDbWrite, {
       get: (target, key) =>
-        key !== '$queryRaw'
+        key === 'user' || key === 'modActivity'
+          ? journaled[key]
+          : key !== '$queryRaw'
           ? (target as any)[key]
           : async (sql: unknown) => {
               if (!release) {
@@ -211,6 +249,7 @@ function installStore() {
     } catch (err) {
       rewards.splice(0, rewards.length, ...saved.rewards);
       Object.assign(referral, saved.referral);
+      undo.reverse().forEach((u) => u());
       throw err;
     } finally {
       release?.();
@@ -278,10 +317,31 @@ function installStore() {
   mockDbRead.user.findUnique.mockImplementation(
     async (args: any) => replicaLag.get(args.where.id) ?? findUser(args)
   );
+  mockDbWrite.user.findUniqueOrThrow.mockImplementation(async (args: any) => findUser(args));
   mockDbWrite.user.update.mockImplementation(async ({ where, data }: any) => {
     const u = users.get(where.id)!;
     Object.assign(u, data);
     return u;
+  });
+  mockDbWrite.user.updateMany.mockImplementation(async ({ where, data }: any) => {
+    const u = users.get(where.id);
+    if (!u || !matches(u.bannedAt, where.bannedAt)) return { count: 0 };
+    Object.assign(u, data);
+    return { count: 1 };
+  });
+  mockDbWrite.modActivity.findFirst.mockImplementation(
+    async ({ where }: any) =>
+      modActivities.find(
+        (a) =>
+          a.entityType === where.entityType &&
+          a.entityId === where.entityId &&
+          a.activity.startsWith(where.activity.startsWith)
+      ) ?? null
+  );
+  mockDbWrite.modActivity.create.mockImplementation(async ({ data }: any) => {
+    const row = { ...data };
+    modActivities.push(row);
+    return row;
   });
   mockDbWrite.userLink.deleteMany.mockResolvedValue({ count: 0 });
   mockDbWrite.image.updateMany.mockResolvedValue({ count: 0 });
@@ -395,19 +455,24 @@ const dispute = (pi: string | null, amount: number, status = 'needs_response') =
   livemode: true,
 });
 
-async function deliver(type: string, object: unknown, eventId = `evt_${type}`) {
+async function deliver(
+  type: string,
+  object: unknown,
+  eventId = `evt_${type}`,
+  { livemode = true, signature = 'sig' as string | undefined } = {}
+) {
   mockStripe.webhooks.constructEvent.mockReturnValue({
     id: eventId,
     object: 'event',
     api_version: '2022-11-15',
     type,
     created: 0,
-    livemode: true,
+    livemode,
     data: { object },
   });
   const req = Object.assign(Readable.from([Buffer.from('{}')]), {
     method: 'POST',
-    headers: { 'stripe-signature': 'sig' },
+    headers: signature ? { 'stripe-signature': signature } : {},
   });
   const res = {
     statusCode: 200,
@@ -437,6 +502,7 @@ beforeEach(() => {
   gift = null;
   users = new Map();
   replicaLag = new Map();
+  modActivities = [];
   seedUser(REFERRER, 'cus_referrer');
   seedUser(REFEREE, 'cus_referee');
   seedUser(GIFTER, 'cus_gifter');
@@ -634,15 +700,42 @@ describe('stripe webhook: disputes', () => {
     expect(users.get(GIFTER)?.bannedAt).toBeInstanceOf(Date);
     expect(banOf(GIFTER)).toEqual({
       reasonCode: 'Chargeback',
-      detailsInternal: 'Stripe dispute dp_pi_gift lost',
+      detailsInternal: 'Lost payment dispute',
       detailsExternal: 'A payment on this account was reversed.',
     });
     expect(users.get(REFEREE)?.bannedAt).toBeNull();
     expect(banSideEffects.invalidateSession).toHaveBeenCalledWith(GIFTER, 'ban');
     expect(banSideEffects.sendModerationEmail).toHaveBeenCalledTimes(1);
-    expect(disputeBanLogs()).toEqual([
-      expect.objectContaining({ userId: GIFTER, disputeId: 'dp_pi_gift', outcome: 'banned' }),
+    expect(modActivities).toEqual([
+      {
+        userId: -1,
+        entityType: 'user',
+        entityId: GIFTER,
+        activity: 'chargeback:dp_pi_gift:banned',
+      },
     ]);
+    expect(disputeBanLogs()).toEqual([
+      expect.objectContaining({
+        userId: GIFTER,
+        eventId: 'evt_charge.dispute.closed',
+        outcome: 'banned',
+      }),
+    ]);
+  });
+
+  // The account's ModActivity row is the one place the dispute id is kept.
+  it('keeps the dispute id out of every log line', async () => {
+    seedGift('pi_gift');
+
+    await deliver('charge.dispute.created', dispute('pi_gift', 5000));
+    await deliver('charge.dispute.closed', dispute('pi_gift', 5000, 'won'));
+    await deliver('charge.dispute.closed', dispute('pi_gift', 5000, 'lost'));
+    mockStripe.paymentIntents.retrieve.mockRejectedValueOnce(new Error('stripe unavailable'));
+    await deliver('charge.dispute.closed', dispute('pi_gift', 5000, 'lost'), 'evt_retry');
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalled();
+    const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
+    expect(logged).not.toContain('dp_pi_gift');
   });
 
   it("removes none of the payer's models, media, comments or profile links", async () => {
@@ -657,16 +750,23 @@ describe('stripe webhook: disputes', () => {
   });
 
   // toggleBan flips the ban: called on a banned account it would lift the ban.
-  it('leaves an existing ban exactly as it was', async () => {
+  it('leaves an existing ban byte for byte, and records the dispute beside it', async () => {
     const bannedAt = new Date('2026-01-01');
-    const banDetails = { reasonCode: 'Harassment', detailsInternal: 'earlier ban' };
+    const banDetails = { reasonCode: 'Other', detailsInternal: 'earlier ban, see report 12' };
     seedUser(REFEREE, 'cus_referee', { bannedAt, meta: { banDetails } });
+    const before = JSON.stringify(users.get(REFEREE));
 
     const res = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
 
     expect(res.statusCode).toBe(200);
-    expect(users.get(REFEREE)).toMatchObject({ bannedAt, meta: { banDetails } });
-    expect(mockDbWrite.user.update).not.toHaveBeenCalled();
+    expect(JSON.stringify(users.get(REFEREE))).toBe(before);
+    expect(banSideEffects.sendModerationEmail).not.toHaveBeenCalled();
+    expect(modActivities).toEqual([
+      expect.objectContaining({
+        entityId: REFEREE,
+        activity: 'chargeback:dp_pi_buzz:already-banned',
+      }),
+    ]);
     expect(disputeBanLogs()).toEqual([
       expect.objectContaining({ userId: REFEREE, outcome: 'already-banned' }),
     ]);
@@ -678,22 +778,56 @@ describe('stripe webhook: disputes', () => {
     await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'), 'evt_same');
 
     expect(users.get(REFEREE)?.bannedAt).toBe(firstBan);
-    expect(mockDbWrite.user.update).toHaveBeenCalledTimes(1);
-    expect(disputeBanLogs().map((l) => l.outcome)).toEqual(['banned', 'already-banned']);
+    expect(banSideEffects.sendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(modActivities).toHaveLength(1);
+    expect(disputeBanLogs().map((l) => l.outcome)).toEqual(['banned', 'already-recorded']);
   });
 
-  it('does not ban a moderator, and logs it for support', async () => {
+  // A moderator who lifts a dispute ban has decided; a redelivery or a resend must not undo that.
+  it('does not ban again when the dispute is replayed after a moderator lifts the ban', async () => {
+    await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+    Object.assign(users.get(REFEREE)!, { bannedAt: null, meta: {} });
+
+    const res = await deliver(
+      'charge.dispute.closed',
+      dispute('pi_buzz', 5000, 'lost'),
+      'evt_resend'
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(users.get(REFEREE)?.bannedAt).toBeNull();
+    expect(modActivities).toHaveLength(1);
+    expect(disputeBanLogs().map((l) => l.outcome)).toEqual(['banned', 'already-recorded']);
+  });
+
+  it('does not ban a replayed dispute after an earlier ban it found is lifted', async () => {
+    seedUser(REFEREE, 'cus_referee', {
+      bannedAt: new Date('2026-01-01'),
+      meta: { banDetails: { reasonCode: 'Harassment' } },
+    });
+    await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+    Object.assign(users.get(REFEREE)!, { bannedAt: null, meta: {} });
+
+    await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'), 'evt_resend');
+
+    expect(users.get(REFEREE)?.bannedAt).toBeNull();
+    expect(modActivities.map((a) => a.activity)).toEqual(['chargeback:dp_pi_buzz:already-banned']);
+  });
+
+  it('does not ban a moderator, and records it on their account', async () => {
     seedUser(REFEREE, 'cus_referee', { isModerator: true });
 
     await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
 
     expect(users.get(REFEREE)?.bannedAt).toBeNull();
-    expect(disputeBanLogs()).toEqual([
+    expect(modActivities).toEqual([
       expect.objectContaining({
-        type: 'warning',
-        disputeId: 'dp_pi_buzz',
-        outcome: 'skipped-moderator',
+        entityId: REFEREE,
+        activity: 'chargeback:dp_pi_buzz:skipped-moderator',
       }),
+    ]);
+    expect(disputeBanLogs()).toEqual([
+      expect.objectContaining({ type: 'warning', outcome: 'skipped-moderator' }),
     ]);
   });
 
@@ -709,7 +843,7 @@ describe('stripe webhook: disputes', () => {
 
   it('still revokes when the ban fails, asks Stripe to retry, and bans on the retry', async () => {
     seedBuzzPurchase();
-    mockDbWrite.user.update.mockRejectedValueOnce(new Error('db unavailable'));
+    mockDbWrite.user.updateMany.mockRejectedValueOnce(new Error('db unavailable'));
 
     const first = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
 
@@ -728,6 +862,34 @@ describe('stripe webhook: disputes', () => {
     expect(clawbacks()).toHaveLength(1);
   });
 
+  // The ban has committed by then, and a redelivery finds its record and does nothing more.
+  it('finishes the ban when signing the account out fails', async () => {
+    banSideEffects.invalidateSession.mockRejectedValueOnce(new Error('session store unavailable'));
+
+    const res = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+
+    expect(res.statusCode).toBe(200);
+    expect(users.get(REFEREE)?.bannedAt).toBeInstanceOf(Date);
+    expect(banSideEffects.removeUserContent).toHaveBeenCalledTimes(1);
+    expect(banSideEffects.sendModerationEmail).toHaveBeenCalledTimes(1);
+  });
+
+  // Otherwise a ban without its row would be banned again after a moderator lifts it.
+  it('writes the ban and its dispute record together, or neither', async () => {
+    mockDbWrite.modActivity.create.mockRejectedValueOnce(new Error('db unavailable'));
+
+    const first = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+
+    expect(first.statusCode).toBeGreaterThanOrEqual(400);
+    expect(users.get(REFEREE)?.bannedAt).toBeNull();
+    expect(modActivities).toEqual([]);
+
+    await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+
+    expect(users.get(REFEREE)?.bannedAt).toBeInstanceOf(Date);
+    expect(modActivities.map((a) => a.activity)).toEqual(['chargeback:dp_pi_buzz:banned']);
+  });
+
   // toggleBan decides ban or unban from what it reads; a replica that has not yet seen a moderator's
   // unban would turn this ban into a second unban.
   it('bans even when the replica still shows a lifted ban', async () => {
@@ -743,27 +905,84 @@ describe('stripe webhook: disputes', () => {
     expect(banOf(REFEREE)).toMatchObject({ reasonCode: 'Chargeback' });
   });
 
-  it('never lifts a ban a moderator places while the dispute is being handled', async () => {
-    const moderatorBan = { reasonCode: 'Harassment', detailsInternal: 'moderator ban' };
+  // A moderator's ban landing at any point before the write is kept exactly, never replaced.
+  it.each([
+    ['the webhook reads the account', (args: any) => !!args.select?.isModerator],
+    ['the ban is written', (args: any) => !!args.select?.username],
+  ])(
+    'keeps a moderator ban that lands after %s',
+    async (_when, isTheRead: (args: any) => boolean) => {
+      const moderatorBan = { reasonCode: 'Other', detailsInternal: 'see report 12' };
+      const read = mockDbWrite.user.findUnique.getMockImplementation()!;
+      mockDbWrite.user.findUnique.mockImplementation(async (args: any) => {
+        const found = await read(args);
+        const result = found && { ...found };
+        if (isTheRead(args)) {
+          Object.assign(users.get(REFEREE)!, {
+            bannedAt: new Date('2026-01-01'),
+            meta: { banDetails: moderatorBan },
+          });
+        }
+        return result;
+      });
+
+      const res = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+
+      expect(res.statusCode).toBe(200);
+      expect(users.get(REFEREE)?.meta).toEqual({ banDetails: moderatorBan });
+      expect(banSideEffects.sendModerationEmail).not.toHaveBeenCalled();
+      expect(modActivities.map((a) => a.activity)).toEqual([
+        'chargeback:dp_pi_buzz:already-banned',
+      ]);
+    }
+  );
+
+  it('bans one account once when two deliveries of a lost dispute run at the same time', async () => {
+    // Both deliveries read the account for the ban before either writes it.
     const read = mockDbWrite.user.findUnique.getMockImplementation()!;
+    let arrived = 0;
+    let release!: () => void;
+    const bothRead = new Promise<void>((resolve) => (release = resolve));
     mockDbWrite.user.findUnique.mockImplementation(async (args: any) => {
       const found = await read(args);
       const result = found && { ...found };
-      // Lands just after the webhook's own check, before the ban is written.
-      if (args.select?.isModerator) {
-        Object.assign(users.get(REFEREE)!, {
-          bannedAt: new Date('2026-01-01'),
-          meta: { banDetails: moderatorBan },
-        });
-      }
+      if (!args.select?.username) return result;
+      if (++arrived === 2) release();
+      await bothRead;
       return result;
     });
 
-    const res = await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'));
+    await Promise.all([
+      deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'), 'evt_a'),
+      deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'lost'), 'evt_b'),
+    ]);
 
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(users.get(REFEREE)).toMatchObject({ meta: { banDetails: moderatorBan } });
+    expect(arrived).toBe(2);
     expect(users.get(REFEREE)?.bannedAt).toBeInstanceOf(Date);
+    expect(banSideEffects.sendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(banOf(REFEREE)).toMatchObject({ reasonCode: 'Chargeback' });
+    expect(modActivities.map((a) => a.activity).sort()).toEqual([
+      'chargeback:dp_pi_buzz:already-banned',
+      'chargeback:dp_pi_buzz:banned',
+    ]);
+  });
+
+  it('revokes but does not ban for a test-mode event', async () => {
+    seedBuzzPurchase();
+
+    const res = await deliver(
+      'charge.dispute.closed',
+      dispute('pi_buzz', 5000, 'lost'),
+      undefined,
+      {
+        livemode: false,
+      }
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(rewardStatus(1)).toBe('Revoked');
+    expect(users.get(REFEREE)?.bannedAt).toBeNull();
+    expect(disputeBanLogs()).toEqual([expect.objectContaining({ outcome: 'skipped-test-mode' })]);
   });
 
   it('claws back once when a refunded payment is later lost in a dispute', async () => {
@@ -880,6 +1099,36 @@ describe('referral revoke under retries and duplicate deliveries', () => {
     expect(ledger.debits).toHaveLength(1);
   });
 
+  it('logs no shortfall on a retry after the clawback emptied the balance', async () => {
+    seedBuzzPurchase();
+    ledger.balances.set(REFERRER, 250);
+    mockDbWrite.referralReward.updateMany.mockRejectedValueOnce(new Error('db unavailable'));
+
+    await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+    const retry = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+
+    expect(retry.statusCode).toBe(200);
+    expect(rewardStatus(1)).toBe('Revoked');
+    expect(ledger.debits).toHaveLength(1);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'referral-clawback-shortfall' })
+    );
+  });
+
+  // Another delivery can take the debit between this one's check for it and its own debit.
+  it('counts a debit the ledger already holds as taken, and revokes', async () => {
+    seedBuzzPurchase();
+    ledger.externalIds.add('referral-clawback:1');
+    const { getTransactionByExternalId } = await import('~/server/services/buzz.service');
+    vi.mocked(getTransactionByExternalId).mockResolvedValueOnce(null);
+
+    const res = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+
+    expect(res.statusCode).toBe(200);
+    expect(rewardStatus(1)).toBe('Revoked');
+    expect(ledger.debits).toEqual([]);
+  });
+
   it('revokes once when two deliveries of the same event run at the same time', async () => {
     seedBuzzPurchase();
     seedMembershipInvoice('in_1');
@@ -916,5 +1165,19 @@ describe('referral revoke under retries and duplicate deliveries', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'referral-clawback-shortfall' })
     );
+  });
+});
+
+describe('stripe webhook: signature', () => {
+  it('answers 400 to a request without a signature, and handles nothing', async () => {
+    seedBuzzPurchase();
+
+    const res = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000), undefined, {
+      signature: '',
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockStripe.webhooks.constructEvent).not.toHaveBeenCalled();
+    expect(rewardStatus(1)).toBe('Settled');
   });
 });

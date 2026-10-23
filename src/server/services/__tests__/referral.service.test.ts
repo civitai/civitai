@@ -17,6 +17,7 @@ vi.mock('~/utils/signal-client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn().mockResolvedValue({ transactionId: 't1' }),
   getUserBuzzAccount: vi.fn().mockResolvedValue([{ balance: 1_000_000 }]),
+  getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),

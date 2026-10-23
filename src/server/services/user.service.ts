@@ -2352,6 +2352,12 @@ async function bulkUnpublishModelsForBannedUser({
   };
 }
 
+export class AlreadyBannedError extends Error {
+  constructor(id: number) {
+    super(`User ${id} is already banned`);
+  }
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -2366,6 +2372,7 @@ export const toggleBan = async ({
   mediaBlockedByCaller,
   keepProfileLinks,
   onlyBan,
+  banActivity,
 }: ToggleBanUser & {
   userId: number;
   isModerator?: boolean;
@@ -2377,9 +2384,11 @@ export const toggleBan = async ({
   /**
    * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
    * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
-   * already banned rather than unbanning it.
+   * already banned rather than unbanning it, or replacing a ban that lands before the write.
    */
   onlyBan?: boolean;
+  /** Server-only, with `onlyBan`: a `user` ModActivity written in the same transaction as the ban. */
+  banActivity?: string;
 }) => {
   // Get user with username for search index deletion
   const select = { bannedAt: true, meta: true, username: true, email: true } as const;
@@ -2387,7 +2396,7 @@ export const toggleBan = async ({
     ? await dbWrite.user.findUnique({ where: { id }, select })
     : await getUserById({ id, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
-  if (onlyBan && user.bannedAt) throw new Error(`User ${id} is already banned`);
+  if (onlyBan && user.bannedAt) throw new AlreadyBannedError(id);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -2406,15 +2415,31 @@ export const toggleBan = async ({
         },
       };
 
-  const updatedUser = await updateUserById({
-    id,
-    data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
-    updateSource: 'toggleBan',
-  });
+  const data = { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta };
+  const updatedUser = onlyBan
+    ? await dbWrite.$transaction(async (tx) => {
+        const { count } = await tx.user.updateMany({ where: { id, bannedAt: null }, data });
+        if (!count) throw new AlreadyBannedError(id);
+        if (banActivity) {
+          await tx.modActivity.create({
+            data: { userId, entityType: 'user', entityId: id, activity: banActivity },
+          });
+        }
+        return tx.user.findUniqueOrThrow({ where: { id } });
+      })
+    : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
 
-  await invalidateSession(id, 'ban');
+  // The ban has committed: a throw here would skip every step below and fail an action that took.
+  await invalidateSession(id, 'ban').catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'ban-user-invalidate-session',
+      message: (error as Error).message,
+      error,
+    })
+  );
 
   if (!bannedAt) {
     // Run cleanup operations in parallel groups

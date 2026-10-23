@@ -63,7 +63,7 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   chargebackBan: {
     id: 127,
     bannedAt: true,
-    meta: ban('Chargeback', 'Stripe dispute dp_1 lost', 'A payment on this account was reversed.'),
+    meta: ban('Chargeback', 'Lost payment dispute', 'A payment on this account was reversed.'),
   },
   chargebackBanNoNotes: { id: 128, bannedAt: true, meta: ban('Chargeback') },
   held: { id: 130 },
@@ -243,9 +243,8 @@ describe('the ban-notes pattern', () => {
     expect(await flagged(id)).toHaveLength(3);
   });
 
-  // An automated ban is not an "Other" ban, even while every "Other" ban holds.
   it.each(['chargebackBan', 'chargebackBanNoNotes'])(
-    'does not hold a chargeback ban (%s)',
+    'handles an account banned for a lost payment dispute (%s)',
     async (key) => {
       delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
       expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });

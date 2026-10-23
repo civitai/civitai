@@ -76,63 +76,101 @@ const relevantEvents = new Set([
 const idOf = (ref: string | { id: string } | null | undefined) =>
   typeof ref === 'string' ? ref : ref?.id;
 
-type DisputeBanOutcome = 'banned' | 'already-banned' | 'skipped-moderator' | 'no-user' | 'failed';
+type DisputeBanOutcome =
+  | 'banned'
+  | 'already-banned'
+  | 'already-recorded'
+  | 'skipped-moderator'
+  | 'skipped-test-mode'
+  | 'no-user'
+  | 'failed';
+// No dispute id here: the payer's ModActivity row is the one place it is kept.
 const logDisputeBan = (data: {
-  disputeId: string;
+  eventId: string;
   outcome: DisputeBanOutcome;
   userId?: number;
   error?: string;
-}) => log({ type: data.outcome === 'banned' ? 'info' : 'warning', stage: 'dispute-ban', ...data });
+}) =>
+  log({
+    type: data.outcome === 'banned' || data.outcome === 'already-recorded' ? 'info' : 'warning',
+    stage: 'dispute-ban',
+    ...data,
+  });
+
+// One row per lost dispute on the payer's account history. It is also what makes a redelivery, or a
+// resend after a moderator lifts the ban, a no-op, so an unban does not remove it.
+async function settleLostDispute(userId: number, disputeId: string): Promise<DisputeBanOutcome> {
+  const key = `chargeback:${disputeId}:`;
+  const recorded = await dbWrite.modActivity.findFirst({
+    where: { entityType: 'user', entityId: userId, activity: { startsWith: key } },
+    select: { id: true },
+  });
+  if (recorded) return 'already-recorded';
+
+  const record = async (outcome: 'already-banned' | 'skipped-moderator') => {
+    await dbWrite.modActivity.create({
+      data: {
+        userId: constants.system.user.id,
+        entityType: 'user',
+        entityId: userId,
+        activity: key + outcome,
+      },
+    });
+    return outcome;
+  };
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, isModerator: true },
+  });
+  if (!user) return 'no-user';
+  if (user.bannedAt) return record('already-banned');
+  if (user.isModerator) return record('skipped-moderator');
+
+  const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
+  try {
+    await toggleBan({
+      id: userId,
+      userId: constants.system.user.id,
+      reasonCode: BanReasonCode.Chargeback,
+      detailsInternal: 'Lost payment dispute',
+      detailsExternal: 'A payment on this account was reversed.',
+      removeMedia: false,
+      removeModels: false,
+      removeComments: false,
+      // A disputed charge can be a family member's or a mistake, and an unban restores no links.
+      keepProfileLinks: true,
+      // Writes only while the account is unbanned, so a ban that lands first is kept as it is.
+      onlyBan: true,
+      banActivity: key + 'banned',
+    });
+    return 'banned';
+  } catch (err) {
+    if (err instanceof AlreadyBannedError) return record('already-banned');
+    throw err;
+  }
+}
 
 // The payer is the Stripe customer on the PaymentIntent: every checkout creates it for the paying
 // user, so for a gift it is the gifter, not the recipient.
 async function banPayerForLostDispute({
   customerId,
   disputeId,
+  eventId,
 }: {
   customerId: string | undefined;
   disputeId: string;
+  eventId: string;
 }) {
   const payer = customerId
     ? await dbWrite.user.findUnique({ where: { customerId }, select: { id: true } })
     : null;
-  if (!payer) return logDisputeBan({ disputeId, outcome: 'no-user' });
+  if (!payer) return logDisputeBan({ eventId, outcome: 'no-user' });
 
   try {
-    const user = await dbWrite.user.findUnique({
-      where: { id: payer.id },
-      select: { bannedAt: true, isModerator: true },
-    });
-    let outcome: DisputeBanOutcome;
-    if (!user) outcome = 'no-user';
-    else if (user.bannedAt) outcome = 'already-banned';
-    else if (user.isModerator) outcome = 'skipped-moderator';
-    else {
-      const { toggleBan } = await import('~/server/services/user.service');
-      await toggleBan({
-        id: payer.id,
-        userId: constants.system.user.id,
-        reasonCode: BanReasonCode.Chargeback,
-        detailsInternal: `Stripe dispute ${disputeId} lost`,
-        detailsExternal: 'A payment on this account was reversed.',
-        removeMedia: false,
-        removeModels: false,
-        removeComments: false,
-        // A disputed charge can be a family member's or a mistake, and an unban restores no links.
-        keepProfileLinks: true,
-        // toggleBan flips the ban: this keeps a ban that lands after the read above from being lifted.
-        onlyBan: true,
-      });
-      outcome = 'banned';
-    }
-    logDisputeBan({ disputeId, outcome, userId: payer.id });
+    const outcome = await settleLostDispute(payer.id, disputeId);
+    logDisputeBan({ eventId, outcome, userId: payer.id });
   } catch (err) {
-    logDisputeBan({
-      disputeId,
-      outcome: 'failed',
-      userId: payer.id,
-      error: (err as Error).message,
-    });
+    logDisputeBan({ eventId, outcome: 'failed', userId: payer.id, error: (err as Error).message });
     throw err;
   }
 }
@@ -158,7 +196,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     trackWebhookEvent('stripe', rawPayload).catch(() => null);
 
     try {
-      if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
+      if (!sig || !webhookSecret) throw new Error('Missing signature or webhook secret');
       event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
       log({
@@ -473,7 +511,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               type: 'warning',
               stage: 'dispute-created',
               eventId: event.id,
-              disputeId: dispute.id,
               paymentIntentId: idOf(dispute.payment_intent),
               amount: dispute.amount,
               reason: dispute.reason,
@@ -491,7 +528,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 type: 'info',
                 stage: 'dispute-closed-not-lost',
                 eventId: event.id,
-                disputeId: object.id,
                 status: (object as Stripe.Dispute).status,
               });
               break;
@@ -504,9 +540,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 stage: 'refund-no-payment-intent',
                 eventType: event.type,
                 eventId: event.id,
-                objectId: object.id,
+                objectId: isLostDispute ? undefined : object.id,
               });
-              if (isLostDispute) logDisputeBan({ disputeId: object.id, outcome: 'no-user' });
+              if (isLostDispute) logDisputeBan({ eventId: event.id, outcome: 'no-user' });
               break;
             }
             // Stripe sends charge.refunded for every partial refund. Only the one that leaves the
@@ -582,12 +618,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
             // After the revokes, so a failed ban never stops them.
             if (isLostDispute) {
-              if (paymentIntentLoaded) {
+              if (!event.livemode && !isDev) {
+                logDisputeBan({ eventId: event.id, outcome: 'skipped-test-mode' });
+              } else if (paymentIntentLoaded) {
                 await attempt('payer-ban', () =>
-                  banPayerForLostDispute({ customerId, disputeId: object.id })
+                  banPayerForLostDispute({ customerId, disputeId: object.id, eventId: event.id })
                 );
               } else {
-                logDisputeBan({ disputeId: object.id, outcome: 'failed' });
+                logDisputeBan({ eventId: event.id, outcome: 'failed' });
               }
             }
             if (failedStages.length) {
@@ -605,7 +643,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           stage: 'event-handler',
           eventType: event.type,
           eventId: event.id,
-          objectId: object.id,
+          objectId: event.type.startsWith('charge.dispute.') ? undefined : object.id,
           metadata: object.metadata,
           message: `Event handler threw: ${error.message}`,
           error: error.message,

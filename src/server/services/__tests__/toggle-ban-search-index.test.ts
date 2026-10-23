@@ -69,7 +69,7 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
 const roster = vi.hoisted(() => ({ member: vi.fn() }));
 vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
 
-const { toggleBan } = await import('~/server/services/user.service');
+const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
 const USER_ID = 5501;
@@ -359,45 +359,60 @@ describe('toggleBan -> profile links', () => {
 });
 
 describe('toggleBan onlyBan', () => {
-  const banOnly = () =>
+  const banOnly = (banActivity?: string) =>
     toggleBan({
       id: USER_ID,
       reasonCode: BanReasonCode.Chargeback,
       userId: ACTOR_ID,
       onlyBan: true,
+      banActivity,
     } as Parameters<typeof toggleBan>[0]);
   const primaryFindUnique = dbMock.dbWrite.user.findUnique;
+  const userUpdateMany = dbMock.dbWrite.user.updateMany;
+  const modActivityCreate = dbMock.dbWrite.modActivity.create;
+  const unbanned = { bannedAt: null, meta: {}, username: 'someone', email: null };
+
+  beforeEach(() => {
+    primaryFindUnique.mockResolvedValue(unbanned);
+    userUpdateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID });
+  });
 
   it('bans from the primary even while the replica still shows a lifted ban', async () => {
-    userFindUnique.mockResolvedValue({
-      bannedAt: ALREADY_BANNED_AT,
-      meta: {},
-      username: 'someone',
-      email: null,
-    });
-    primaryFindUnique.mockResolvedValue({
-      bannedAt: null,
-      meta: {},
-      username: 'someone',
-      email: null,
-    });
+    userFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
 
-    await banOnly();
+    await banOnly('chargeback:dp_1:banned');
 
-    expect(userUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ bannedAt: expect.any(Date) }) })
+    expect(userUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: USER_ID, bannedAt: null },
+        data: expect.objectContaining({ bannedAt: expect.any(Date) }),
+      })
     );
+    expect(modActivityCreate).toHaveBeenCalledWith({
+      data: {
+        userId: ACTOR_ID,
+        entityType: 'user',
+        entityId: USER_ID,
+        activity: 'chargeback:dp_1:banned',
+      },
+    });
   });
 
   it('refuses, and writes nothing, on an account the primary shows banned', async () => {
-    primaryFindUnique.mockResolvedValue({
-      bannedAt: ALREADY_BANNED_AT,
-      meta: {},
-      username: 'someone',
-      email: null,
-    });
+    primaryFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
 
-    await expect(banOnly()).rejects.toThrow('already banned');
+    await expect(banOnly()).rejects.toBeInstanceOf(AlreadyBannedError);
     expect(userUpdate).not.toHaveBeenCalled();
+    expect(userUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and records nothing, when a ban lands between the read and the write', async () => {
+    userUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(banOnly('chargeback:dp_1:banned')).rejects.toBeInstanceOf(AlreadyBannedError);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(modActivityCreate).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
   });
 });

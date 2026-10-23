@@ -6,7 +6,11 @@ import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  getTransactionByExternalId,
+  getUserBuzzAccount,
+} from '~/server/services/buzz.service';
 // Eager, and shared by every importer of this module: subscriptions.service statically
 // pulls clickhouse, redis and freshdesk, so anything added to its graph is added to theirs.
 import { deliverMonthlyCosmetics } from '~/server/services/subscriptions.service';
@@ -571,6 +575,9 @@ async function clawBackSettledReward(
   reward: { id: number; userId: number; buzzAmount: number },
   reason: string
 ) {
+  const debitId = `referral-clawback:${reward.id}`;
+  // A retry after this debit went through would read the balance it left and log a false shortfall.
+  if (await getTransactionByExternalId(debitId)) return;
   const [account] = await getUserBuzzAccount({ accountId: reward.userId, accountType: 'blue' });
   const taken = Math.min(Math.max(account?.balance ?? 0, 0), reward.buzzAmount);
   if (taken > 0) {
@@ -586,7 +593,7 @@ async function clawBackSettledReward(
         amount: taken,
         type: TransactionType.ChargeBack,
         description: `Referral reward clawback (${reason})`,
-        externalTransactionId: `referral-clawback:${reward.id}`,
+        externalTransactionId: debitId,
       });
     } catch (err) {
       // 409: an earlier attempt already took it, and its balance was read before that debit.
