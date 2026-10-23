@@ -38,6 +38,9 @@ export type VoteResult =
 
 type Db = Kysely<DB> | Transaction<DB>;
 
+/** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
+const CONTROL_SOURCE = 'control-sample';
+
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
@@ -52,6 +55,7 @@ function openItems(db: Db, filters: ScanLabelFilters) {
           .select(sql`1`.as('one'))
           .whereRef('f.itemId', '=', 'i.id')
           .where('f.flaggerVersion', '=', version)
+          .where('f.source', '<>', CONTROL_SOURCE)
       )
     );
   }
@@ -107,6 +111,19 @@ function inSource(source: QueueSource) {
   };
 }
 
+function notVotedBy(userId: number) {
+  return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ScanLabelVote as v')
+          .select(sql`1`.as('one'))
+          .whereRef('v.itemId', '=', 'i.id')
+          .where('v.userId', '=', userId)
+      )
+    );
+}
+
 /** One source drawn by weight, then the others by descending weight to fall back on. */
 export function sourceOrder(rng: () => number): QueueSource[] {
   const sources = Object.keys(QUEUE_MIX) as QueueSource[];
@@ -118,10 +135,10 @@ export function sourceOrder(rng: () => number): QueueSource[] {
 }
 
 /**
- * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
- * A filtered claim skips the mix: a filter can empty a source, and each empty source would walk the
- * whole queue.
+ * A live lease on an open item the moderator has not voted on is returned as-is, so a reload cannot
+ * pile up leases. A held card is kept across a filter change; the filter applies from the next claim.
+ * A new claim draws its source by `QUEUE_MIX`. A filtered claim skips the mix: a filter can empty a
+ * source, and each empty source would walk the whole queue.
  */
 export async function claimNext(
   userId: number,
@@ -138,22 +155,13 @@ export async function claimNext(
       .orderBy('c.expiresAt', 'desc')
       .execute();
     for (const lease of held) {
-      const inView = await openItems(trx, filters)
+      const open = await openItems(trx, {})
         .select('i.id')
         .where('i.id', '=', lease.itemId)
+        .where(notVotedBy(userId))
         .executeTakeFirst();
-      if (inView) return toCard(trx, lease.itemId, lease.expiresAt);
+      if (open) return toCard(trx, lease.itemId, lease.expiresAt);
     }
-    if (held.length)
-      await trx
-        .deleteFrom('ScanLabelClaim')
-        .where('userId', '=', userId)
-        .where(
-          'itemId',
-          'in',
-          held.map((l) => l.itemId)
-        )
-        .execute();
 
     const tried: number[] = [];
     let attempts = 0;
@@ -163,16 +171,7 @@ export async function claimNext(
         attempts++;
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
-          .where(({ not, exists, selectFrom }) =>
-            not(
-              exists(
-                selectFrom('ScanLabelVote as v')
-                  .select(sql`1`.as('one'))
-                  .whereRef('v.itemId', '=', 'i.id')
-                  .where('v.userId', '=', userId)
-              )
-            )
-          )
+          .where(notVotedBy(userId))
           .where(
             (eb) =>
               eb(
@@ -381,6 +380,25 @@ export async function getCounters(
   };
 }
 
+/** A version from the URL that control flags carry. The page treats it as no version filter. */
+export async function isControlFlaggerVersion(
+  version: string,
+  db: Kysely<DB> = dbRead
+): Promise<boolean> {
+  // From the control lane's partial index: a real version has no control flags, so looking it up
+  // by version alone reads every flag of that version to prove it.
+  const row = await db
+    .selectFrom('ScanLabelItem as i')
+    .innerJoin('ScanLabelFlag as f', 'f.itemId', 'i.id')
+    .select(sql`1`.as('one'))
+    .where(sql<boolean>`i.lane = 'control'`)
+    .where('f.flaggerVersion', '=', version)
+    .where('f.source', '=', CONTROL_SOURCE)
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
+
 /** Flagger versions that have at least one open item, newest flag first, for the filter. */
 export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<string[]> {
   const rows = await db
@@ -389,6 +407,7 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .select('f.flaggerVersion')
     .select((eb) => eb.fn.max('f.flaggedAt').as('latest'))
     .where('i.status', '=', 'open')
+    .where('f.source', '<>', CONTROL_SOURCE)
     .groupBy('f.flaggerVersion')
     .orderBy('latest', 'desc')
     .execute();

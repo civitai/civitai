@@ -2484,6 +2484,8 @@ export const takedownCosmeticShopItem = async ({
         status: CosmeticShopItemStatus.Archived,
         listed: false,
         ...(retried ? {} : { archivedAt: now }),
+        // Event tags place the item in tagged sections, as the rows deleted below do by hand.
+        eventTags: [],
         meta: appendItemHistory(
           {
             ...currentMeta,

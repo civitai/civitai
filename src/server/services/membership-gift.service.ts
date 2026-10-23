@@ -1025,7 +1025,10 @@ export async function revokeMembershipGift({
   const gift = await dbWrite.membershipGift.findUnique({
     where: 'giftId' in by ? { id: by.giftId } : { stripePaymentIntentId: by.paymentIntentId },
   });
-  if (!gift) return false;
+  if (!gift) {
+    await log({ type: 'info', stage: 'revoke-no-match', reason, ...by });
+    return false;
+  }
 
   const newStatus = revokedStatus[reason];
 
@@ -1397,8 +1400,14 @@ export type UnfulfilledGiftRefund =
         | 'payment-mismatch'
         | 'payment-not-succeeded'
         | 'not-a-card-payment'
+        | 'live-stripe-objects'
         | 'nothing-refundable';
       status?: string;
+    }
+  | {
+      outcome: 'would-mark-refunded' | 'marked-refunded';
+      paymentIntentId: string;
+      chargeId: string;
     }
   | {
       outcome: 'would-refund' | 'refunded';
@@ -1410,11 +1419,11 @@ export type UnfulfilledGiftRefund =
     };
 
 /**
- * Refund a gift whose payment cleared but which was never fulfilled. The refund goes back to the
- * payment it came from, for whatever of that charge is still unrefunded; the `charge.refunded`
- * webhook then marks the gift Refunded.
+ * Refund a gift whose payment cleared but which was never fulfilled, and mark it Refunded. The
+ * refund goes back to the payment it came from, for whatever of that charge is still unrefunded.
+ * A gift whose charge is already fully refunded is only marked.
  *
- * Dry run unless `execute`. Re-running is a no-op once the charge is fully refunded.
+ * Dry run unless `execute`. Re-running is a no-op once the gift is Refunded.
  */
 export async function refundUnfulfilledMembershipGift({
   giftId,
@@ -1449,12 +1458,21 @@ export async function refundUnfulfilledMembershipGift({
       status: charge.payment_method_details?.type,
     };
   const amount = charge ? charge.amount_captured - charge.amount_refunded : 0;
+  if (charge && charge.amount_captured > 0 && !(amount > 0)) {
+    // Marking alone would leave a live subscription or armed month behind; that needs a person.
+    if (gift.stripeSubscriptionId || gift.armedCouponId)
+      return { outcome: 'skipped', reason: 'live-stripe-objects' };
+    const marked = { paymentIntentId: pi.id, chargeId: charge.id };
+    if (!execute) return { outcome: 'would-mark-refunded', ...marked };
+    await revokeMembershipGift({ giftId: gift.id, reason: 'refund' });
+    return { outcome: 'marked-refunded', ...marked };
+  }
   if (!charge || !(amount > 0)) return { outcome: 'skipped', reason: 'nothing-refundable' };
 
   const plan = { paymentIntentId: pi.id, chargeId: charge.id, amount, currency: charge.currency };
   if (!execute) return { outcome: 'would-refund', ...plan };
 
-  // The refund webhook finds the gift by its payment, so the row has to name it first.
+  // The refund webhook finds the gift by its payment; it is the fallback if marking below fails.
   if (gift.stripePaymentIntentId !== pi.id)
     await dbWrite.membershipGift.update({
       where: { id: gift.id },
@@ -1474,6 +1492,8 @@ export async function refundUnfulfilledMembershipGift({
     refundId: refund.id,
     amount,
   });
+
+  await revokeMembershipGift({ giftId: gift.id, reason: 'refund' });
 
   return { outcome: 'refunded', ...plan, refundId: refund.id };
 }

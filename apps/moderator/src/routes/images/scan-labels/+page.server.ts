@@ -10,6 +10,7 @@ import {
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
+  isControlFlaggerVersion,
   getVotedItemOwner,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
@@ -22,7 +23,11 @@ import {
 } from '$lib/scan-labels';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const query = parseQuery(url, scanLabelFiltersSchema);
+  const parsed = parseQuery(url, scanLabelFiltersSchema);
+  const query =
+    parsed.version && (await isControlFlaggerVersion(parsed.version))
+      ? { ...parsed, version: undefined }
+      : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
   const card = await claimNext(userId, filters);

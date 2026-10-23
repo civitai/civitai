@@ -359,6 +359,19 @@ export type MinorFlagSnapshot = {
   prevMinorImageIds?: number[];
 };
 
+/** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
+export type PoiFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -408,6 +421,11 @@ export type ModelMeta = Partial<{
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  poiFlagSnapshot: PoiFlagSnapshot;
+  /** A file shared with a real-person model that nothing has been applied for: a moderator's lead. */
+  poiHashMatch: { at: string; hash: string };
+  /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
+  poiHashCleared: { at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {

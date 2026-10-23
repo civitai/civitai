@@ -45,6 +45,9 @@ Public collections readable as Public or Unlisted → `nsfw`, a floor on the col
 replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
+ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
+rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
+has no Clavata counterpart.
 
 ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
@@ -117,6 +120,8 @@ A label's action is one of: raise the content rating (the owner can dispute it),
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
 the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals).
+A refused `ImageCaption` is only hidden from readers: its author is not notified, there is no
+appeal, and a clean scan of the caption's current text lets it back.
 
 `csam` is the exception: a positive verdict writes a `TextScanHold` row and nothing else (no report,
 mute, strike, hide or notification). Every type except `ChatMessage` keeps one Pending hold per

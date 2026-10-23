@@ -31,11 +31,8 @@ import type { AppsMeasure } from '~/components/Apps/appsPageWidths';
  * both die here by construction rather than by a better-worded regex.
  *
  * 🔴 AND WHY IT IS IN THE BLOCKING `unit` PROJECT, NOT BESIDE THE PIXEL TEST.
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures real pixels, but the
- * browser-mode `component` project is report-only in CI *and* currently red for reasons
- * unrelated to this code. A permanently-red non-blocking gate trains everyone to click
- * through it, so anything only it catches is effectively unguarded. This file runs in
- * `unit`, which is the tier whose verdict is read.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures real pixels; this file pins
+ * the structure in `unit`, without a browser.
  *
  * Node env, so this is `renderToStaticMarkup` + happy-dom rather than a real browser —
  * which is enough for STRUCTURE (what contains what) though not for pixels. The two
@@ -351,7 +348,7 @@ describe('the measure box, on the rendered tree', () => {
     // WHY THIS IS HERE RATHER THAN IN THE PIXEL TEST: the vertical pins in
     // `AppsPageLayout.geometry.browser.test.tsx` render a header with NO measure, so they
     // are structurally blind to the box this change adds inside the band — and that file
-    // is in the report-only tier anyway. The mechanism that keeps the 16px/32px grouping
+    // is in the browser tier anyway. The mechanism that keeps the 16px/32px grouping
     // intact is that these wrappers contribute no box model of their own, which IS
     // checkable here, in the blocking tier.
     const t = renderLayout(1068, true);

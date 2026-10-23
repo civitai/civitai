@@ -672,7 +672,8 @@ export const getHomeBlockData = async ({
 
       const [cosmeticShopSection] = data;
 
-      if (!cosmeticShopSection || cosmeticShopSection._count.items === 0) {
+      // `_count.items` counts placed items only; a section filled by its event tag has none.
+      if (!cosmeticShopSection || cosmeticShopSection.items.length === 0) {
         return null;
       }
 

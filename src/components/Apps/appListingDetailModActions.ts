@@ -6,8 +6,8 @@ import {
 /**
  * App Store Listings — which MODERATOR actions the listing DETAIL body may offer.
  *
- * Pure + React-free so the correctness gate lives in the blocking node `unit` project
- * (the `.browser.test.tsx` component suites are report-only), mirroring its siblings
+ * Pure + React-free so the correctness gate lives in the node `unit` project,
+ * mirroring its siblings
  * `appListingDetailView` / `appListingModerationTableView`.
  *
  * 🔴 THE STATE MACHINE IS NOT RE-DERIVED HERE. {@link listingModActions} is the single
@@ -103,7 +103,7 @@ export const REVIEW_QUEUE_MANAGE_HREF = '/apps/review?tab=manage';
  *
  * 🔴 LIVES HERE, IN THE REACT-FREE MODULE, AND THAT PLACEMENT IS THE FIX FOR A MEASURED
  * HOLE. It used to be a module-private map inside `ListingTakedownModal.tsx`, which no
- * blocking suite can import — so it was covered only by the report-only browser tier, and
+ * node suite can import — so it was covered only by the browser tier, and
  * there only on the `hide` arm. An adversarial audit measured a ONE-SIDED mutant,
  * `SUBMIT_LABEL['reset-to-pending'] = 'Hide from store'`, surviving BOTH tiers green: the
  * browser assertion reads the hide button, so a change to the reset button's label was
