@@ -32,6 +32,7 @@ import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages'
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { storylinePublishMessage } from '~/components/Storyline/editor/storyline-publish-message';
 import { usePostStorylineDraft } from '~/components/Storyline/editor/usePostStorylineDraft';
+import { useStorylineDraftPublish } from '~/components/Storyline/editor/useStorylineDraftPublish';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
@@ -168,11 +169,13 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   });
   const { pending: storylineDraft } = usePostStorylineDraft(post.id);
   const isFirstChapterDraft = !!storylineDraft && !storylineDraft.parentChapter;
-  const publishLabel = isFirstChapterDraft
-    ? 'Publish chapter 1'
-    : collectionId
-    ? 'Submit'
-    : 'Publish';
+  const storylinePublish = useStorylineDraftPublish({ post, pending: storylineDraft });
+  const storylineChapterNumber = storylineDraft?.parentChapter
+    ? storylineDraft.parentChapter.depth + 2
+    : 1;
+  const publishLabel =
+    storylinePublish.label ??
+    (isFirstChapterDraft ? 'Publish chapter 1' : collectionId ? 'Submit' : 'Publish');
   // #endregion
 
   // #region [publish post]
@@ -184,6 +187,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         publishedAt,
         collectionId,
         collectionTagId,
+        expectedPrice: storylinePublish.expectedPrice,
       },
       {
         onSuccess: async (result, post) => {
@@ -192,7 +196,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             data.publishedAt = publishedAt ?? null;
           });
           if (result?.storyline) {
-            showNotification({ ...storylinePublishMessage(result.storyline), autoClose: 10000 });
+            showNotification({
+              ...storylinePublishMessage(result.storyline, {
+                chapterNumber: storylineChapterNumber,
+              }),
+              autoClose: 10000,
+            });
             await Promise.all([
               queryUtils.storyline.getForPosts.invalidate(),
               queryUtils.storyline.getPendingForPost.invalidate({ postId: id }),
@@ -205,7 +214,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
-        onError: (error) => {
+        onError: async (error) => {
+          if (await storylinePublish.handleError(error)) return;
           showErrorNotification({
             title: 'There was an error while trying to publish your post',
             error,
@@ -434,7 +444,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         >
           {collectionId ? (
             <Button
-              disabled={!canPublish || !!mutating}
+              disabled={!canPublish || !!mutating || storylinePublish.blocked}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isPending}
               data-tour="post:publish"
@@ -444,7 +454,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           ) : (
             <Button.Group>
               <Button
-                disabled={!canPublish || !!mutating}
+                disabled={!canPublish || !!mutating || storylinePublish.blocked}
                 onClick={() => handlePublish()}
                 loading={updatePostMutation.isPending}
                 className="flex-1"
@@ -457,7 +467,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
                   variant="outline"
                   loading={updatePostMutation.isPending}
                   onClick={handleScheduleClick}
-                  disabled={!canPublish || !!mutating}
+                  disabled={!canPublish || !!mutating || storylinePublish.blocked}
                 >
                   <IconClock size={20} />
                 </Button>
@@ -490,6 +500,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             </Tooltip>
           )}
         </Button.Group>
+      )}
+
+      {!post.publishedAt && !isUnpublishedByParent && storylinePublish.caption && (
+        <Text size="xs" c="dimmed" data-testid="storyline-publish-caption">
+          {storylinePublish.caption}
+        </Text>
       )}
 
       {eventCard && <PostEditEventCard {...eventCard} />}

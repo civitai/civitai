@@ -139,14 +139,6 @@ describe('the publish button of a storyline post', () => {
     await expect.element(page.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled();
     expect(page.getByRole('button', { name: 'Publish chapter 1' }).elements()).toHaveLength(0);
   });
-
-  test('a draft continuing a chapter is not labelled chapter 1', async () => {
-    mocks.pending = link({ id: 5, depth: 0, postId: 7 });
-    renderWithProviders(<PostEditSidebar post={post} />);
-
-    await expect.element(page.getByRole('button', { name: 'Publish', exact: true })).toBeEnabled();
-    expect(page.getByRole('button', { name: 'Publish chapter 1' }).elements()).toHaveLength(0);
-  });
 });
 
 describe('after publishing a storyline post', () => {

@@ -107,17 +107,17 @@ describe('StorylineEditorHeader', () => {
     expect(page.getByText('Chapter', { exact: false }).elements()).toHaveLength(0);
   });
 
-  test('a draft continuing a chapter is left to the continuation header', async () => {
-    mocks.pending = pendingLink({ id: 5, depth: 0, postId: 7 });
-    renderWithProviders(
-      <>
-        <span>rendered</span>
-        <StorylineEditorHeader post={draft} />
-      </>
-    );
+  // Chapter 3 (depth 2) is what the draft continues, so the draft is chapter 4.
+  test('a draft continuing a chapter says which chapter it is, linking to the storyline', async () => {
+    mocks.pending = pendingLink({ id: 5, depth: 2, postId: 7 });
+    renderWithProviders(<StorylineEditorHeader post={draft} />);
 
-    await expect.element(page.getByText('rendered')).toBeVisible();
-    expect(page.getByRole('region', { name: 'Storyline' }).elements()).toHaveLength(0);
+    await expect.element(page.getByText('Chapter 4', { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole('link', { name: 'The Patch' }))
+      .toHaveAttribute('href', '/storylines/2');
+    expect(page.getByText('Chapter 1', { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Storyline options' }).elements()).toHaveLength(0);
   });
 });
 

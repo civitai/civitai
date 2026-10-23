@@ -333,6 +333,10 @@ export const postEditQuerySchema = z.object({
   model3dId: z.coerce.number().optional(),
   /** The empty storyline this post is chapter 1 of, set by the storyline start flow. */
   storyline: z.coerce.number().int().positive().optional(),
+  /** The chapter this post continues, set by the storyline continue flow. */
+  continues: z.coerce.number().int().positive().optional(),
+  /** Display only: the number of the chapter being written. */
+  n: z.coerce.number().int().positive().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

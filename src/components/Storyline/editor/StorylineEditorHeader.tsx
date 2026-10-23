@@ -19,8 +19,15 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
     enabled: enabled && isOwner && !pending && !isLoading && isPublished(post),
   });
 
-  // A draft with a parent chapter continues a storyline; that header is not this one.
-  if (pending && !pending.parentChapter)
+  if (pending?.parentChapter)
+    return (
+      <StorylineEditorBanner
+        variant="continue"
+        storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
+        chapterNumber={pending.parentChapter.depth + 2}
+      />
+    );
+  if (pending)
     return (
       <StorylineEditorBanner
         variant="start"

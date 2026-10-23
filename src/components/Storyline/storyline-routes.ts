@@ -13,3 +13,18 @@ export function storylineUrl(storylineId: number) {
 export function storylineWriteChapterUrl(storylineId: number) {
   return `/posts/create?storyline=${storylineId}`;
 }
+
+/**
+ * Where a reader writes the chapter after `parentChapterId`: the post editor, already knowing which
+ * chapter it continues. `n` only labels the page; the chapter's number is set by the route it is
+ * read on.
+ */
+export function storylineContinueUrl({
+  parentChapterId,
+  chapterNumber,
+}: {
+  parentChapterId: number;
+  chapterNumber: number;
+}) {
+  return `/posts/create?continues=${parentChapterId}&n=${chapterNumber}`;
+}
