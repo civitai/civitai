@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Reader } from '../chat-read-audit';
 
 /**
  * The transcript collapsed a message's edit log to the FIRST edit's `oldValue` and the LAST edit's
@@ -65,7 +66,15 @@ vi.mock('../users.service', () => ({
   usernameExists: () => Promise.resolve(true),
 }));
 
+const { recordChatReads } = vi.hoisted(() => ({
+  recordChatReads: vi.fn(
+    async (_reader: number, _reads: { chatId: number; subjectId?: number }[]) => {}
+  ),
+}));
+vi.mock('../chat-read-audit', () => ({ recordChatReads }));
+
 const { getTranscript } = await import('../chat-audit.service');
+const MOD = 99 as Reader;
 
 const edit = (at: string, oldValue: string, newValue: string, actorRole = 'owner') => ({
   messageId: '7',
@@ -93,7 +102,7 @@ describe('a message edited three times', () => {
   });
 
   it('keeps every version rather than the first and last', async () => {
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits?.[7]).toHaveLength(3);
     // v2 and v3 are the ones a collapse throws away, and no count-only assertion notices.
@@ -101,7 +110,7 @@ describe('a message edited three times', () => {
   });
 
   it('pairs each version with the timestamp of the edit that replaced it', async () => {
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     // The defect this replaces put 'v1' next to the 09-04 timestamp. Asserting the pairing is the only
     // way to see that — the text alone was right, and the timestamp alone was right.
@@ -110,14 +119,14 @@ describe('a message edited three times', () => {
   });
 
   it('attributes each edit to its own actor', async () => {
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     // Collapsing kept whichever role came last, so a sender's edits were reported as a moderator's.
     expect(edits?.[7].map((e) => e.actorRole)).toEqual(['owner', 'owner', 'moderator']);
   });
 
   it('chains, so the panel can render a sequence', async () => {
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
     const chain = edits?.[7] ?? [];
 
     for (let i = 1; i < chain.length; i += 1) expect(chain[i].oldValue).toBe(chain[i - 1].newValue);
@@ -132,10 +141,18 @@ describe('a message edited once', () => {
 
   it('is a one-entry list, not a bare object', async () => {
     // The 86% case, and the one the old shape got right — so it has to keep working across the change.
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits?.[7]).toHaveLength(1);
     expect(edits?.[7][0].oldValue).toBe('only-original');
+  });
+});
+
+describe('opening a transcript', () => {
+  it('records that this moderator read the conversation', async () => {
+    recordChatReads.mockClear();
+    await getTranscript(MOD, 1);
+    expect(recordChatReads).toHaveBeenCalledWith(MOD, [{ chatId: 1 }]);
   });
 });
 
@@ -152,7 +169,7 @@ describe('edits recorded in Postgres', () => {
       recordedEdit('2026-09-02T10:00:00Z', 'v1'),
       recordedEdit('2026-09-03T10:00:00Z', 'v2', 99)
     );
-    const { edits, editsPartial } = await getTranscript(1);
+    const { edits, editsPartial } = await getTranscript(MOD, 1);
 
     expect(edits[7]).toEqual([
       expect.objectContaining({ oldValue: 'v1', newValue: 'v2', actorRole: 'owner' }),
@@ -165,7 +182,7 @@ describe('edits recorded in Postgres', () => {
     // v1 -> v2 predates the table. v2 -> v4 is in both: the log row lands a moment after.
     rows.push(edit('2026-09-02 10:00:00', 'v1', 'v2'), edit('2026-09-03 10:00:01', 'v2', 'v4'));
     recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
       ['v1', 'v2'],
@@ -186,7 +203,7 @@ describe('edits recorded in Postgres', () => {
       recordedEdit('2026-09-03T10:00:10Z', 'v2'),
       recordedEdit('2026-09-03T10:00:20Z', 'v1')
     );
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
       ['v1', 'v2'],
@@ -209,7 +226,7 @@ describe('edits recorded in Postgres', () => {
     );
     message.content = 'B';
     try {
-      const { edits } = await getTranscript(1);
+      const { edits } = await getTranscript(MOD, 1);
       expect(edits[7].map((e) => [e.oldValue, e.newValue, e.at])).toEqual([
         ['A', 'B', '2026-09-03T10:00:00Z'],
         ['B', 'A', '2026-09-03T10:00:10.000Z'],
@@ -224,14 +241,14 @@ describe('edits recorded in Postgres', () => {
     // The same A -> B a day apart is two edits, not one seen twice.
     rows.push(edit('2026-09-02 10:00:00', 'v2', 'v4'));
     recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits[7]).toHaveLength(2);
   });
 
   it('says the history is incomplete rather than show part of an unbounded one', async () => {
     for (let i = 0; i < 5_001; i++) recorded.push(recordedEdit('2026-09-03T10:00:00Z', `x${i}`));
-    const { edits, editsPartial } = await getTranscript(1);
+    const { edits, editsPartial } = await getTranscript(MOD, 1);
 
     expect(editsPartial).toBe(true);
     expect(edits[7]).toBeUndefined();
@@ -239,7 +256,7 @@ describe('edits recorded in Postgres', () => {
 
   it('shows a history of exactly the cap in full', async () => {
     for (let i = 0; i < 5_000; i++) recorded.push(recordedEdit('2026-09-03T10:00:00Z', `x${i}`));
-    const { edits, editsPartial } = await getTranscript(1);
+    const { edits, editsPartial } = await getTranscript(MOD, 1);
 
     expect(editsPartial).toBe(false);
     expect(edits[7]).toHaveLength(5_000);
@@ -251,7 +268,7 @@ describe('edits recorded in Postgres', () => {
       recordedEdit('2026-09-03T10:00:05Z', 'v1'),
       recordedEdit('2026-09-03T10:00:04Z', 'v2', 99)
     );
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
       ['v1', 'v2'],
@@ -263,7 +280,7 @@ describe('edits recorded in Postgres', () => {
     // A log row lands after its recorded edit. One a full window later, or well before, is another edit.
     rows.push(edit('2026-09-03 09:59:54', 'v2', 'v4'), edit('2026-09-03 10:01:00', 'v2', 'v4'));
     recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
-    const { edits } = await getTranscript(1);
+    const { edits } = await getTranscript(MOD, 1);
 
     expect(edits[7]).toHaveLength(3);
   });
@@ -271,7 +288,7 @@ describe('edits recorded in Postgres', () => {
   it('still shows recorded edits when the log is down, and says history may be missing', async () => {
     down.clickhouse = true;
     recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v3'));
-    const { edits, editsPartial } = await getTranscript(1);
+    const { edits, editsPartial } = await getTranscript(MOD, 1);
 
     expect(edits[7].map((e) => e.oldValue)).toEqual(['v3']);
     expect(editsPartial).toBe(true);
@@ -280,7 +297,7 @@ describe('edits recorded in Postgres', () => {
   it('still loads from the log before the table exists', async () => {
     down.recorded = true;
     rows.push(edit('2026-09-02 10:00:00', 'v1', 'v4'));
-    const { edits, editsPartial } = await getTranscript(1);
+    const { edits, editsPartial } = await getTranscript(MOD, 1);
 
     expect(edits[7].map((e) => e.oldValue)).toEqual(['v1']);
     expect(editsPartial).toBe(true);

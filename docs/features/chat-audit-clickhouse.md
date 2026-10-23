@@ -15,7 +15,7 @@ happened"**, so treat it as unfinished until all three are done.
 CREATE TABLE IF NOT EXISTS default.chatAuditEvents
 (
     `createdAt` DateTime64(3) DEFAULT now64(3),
-    `type` LowCardinality(String),        -- 'delete' | 'clear' | 'edit'
+    `type` LowCardinality(String),        -- 'delete' | 'clear' | 'edit' | 'read'
     `chatId` Int32,
     `messageId` Int32 DEFAULT 0,          -- 0 for 'clear', which acts on the conversation
     `actorId` Int32,                      -- who performed the act
@@ -85,6 +85,29 @@ The list itself is moderator-gated too. Filter by chat id, actor user id
 and event type; keyset-paginated. Backed by `chat.getAudit`
 (`moderatorProcedure`), which returns empty rather than throwing when ClickHouse
 is absent, so the page reads as unconfigured rather than broken in dev.
+
+### In the moderator app
+
+`/retool/chat-audit-log` is the same list: filter by chat id, actor and event
+type, keyset-paginated. It shows **no message text**; each row links to the
+transcript, which shows the text and records the read. It has its own page grant,
+separate from Chat Audit's, because it shows which moderator read whose
+conversations.
+
+Moderator-app surfaces that return message bodies write a `read` row: the Chat
+Audit transcript, search excerpts, user-messages panel, newest feed and spam
+groups, the report queue's chat preview, User Lookup's sent messages, and Text
+Scan Lab lookups of chat messages. Some restricted review surfaces are
+deliberately left out of this log, and so is `/audit/text-relabel`, whose
+chat excerpts are anonymised copies. One row per chat (and sender, where the surface shows several) per
+read, no dedupe. A spam group spans chats it does not name, so it is recorded as a
+read of the sender with `chatId = 0`.
+
+These writes are **not** behind the `chat-audit-log` flag, and they fail open: if
+ClickHouse is down or stalls past 2s, the read goes ahead and a
+`chat-read-audit-failed` error is logged. The client inserts asynchronously
+without waiting for the flush, so a failure on the server's side of the flush is
+not caught.
 
 ## Known gaps
 
