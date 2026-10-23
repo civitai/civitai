@@ -164,11 +164,6 @@ export const getResourceReviewsInfinite = async ({
     orderBy,
     select: {
       id: true,
-      thread: {
-        select: {
-          commentCount: true,
-        },
-      },
       modelId: true,
       modelVersionId: true,
       details: true,
@@ -199,11 +194,28 @@ export const getResourceReviewsInfinite = async ({
     nextCursor = nextItem?.id;
   }
 
+  const commentCounts = await getReviewCommentCounts(items.map((item) => item.id));
   return {
     nextCursor,
-    items,
+    items: items.map((item) => ({
+      ...item,
+      thread: { commentCount: commentCounts.get(item.id) ?? 0 },
+    })),
   };
 };
+
+/** Not `CommentTopic.commentCount`: that counts replies and tombstones, so the shown number would jump. */
+async function getReviewCommentCounts(reviewIds: number[]) {
+  if (!reviewIds.length) return new Map<number, number>();
+  const rows = await dbRead.$queryRaw<{ reviewId: number; count: number }[]>`
+    SELECT "entityId" AS "reviewId", COUNT(*)::int AS count
+    FROM "CommentV3"
+    WHERE "entityType" = 'review' AND "entityId" IN (${Prisma.join(reviewIds)})
+      AND "parentId" IS NULL AND "deletedAt" IS NULL
+    GROUP BY "entityId"
+  `;
+  return new Map(rows.map((row) => [row.reviewId, row.count]));
+}
 
 export type RatingTotalsModel = {
   '1': number;
@@ -625,9 +637,9 @@ export const getPagedResourceReviews = async ({
       --   FROM "ResourceReviewHelper" rrh
       --   WHERE rrh."resourceReviewId" = rr.id
       -- ) "imageCount",
-      COALESCE(t."commentCount", 0)::int as "commentCount"
+      (SELECT COUNT(*)::int FROM "CommentV3" v
+        WHERE v."entityType" = 'review' AND v."entityId" = rr.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount"
     FROM "ResourceReview" rr
-    LEFT JOIN "Thread" t ON t."reviewId" = rr.id
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
     LIMIT ${limit}

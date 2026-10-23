@@ -1,7 +1,6 @@
 import * as z from 'zod';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
-import { muteableThreadsCte } from '~/server/common/thread-chain';
 
 /**
  * SQL fragment dropping a notification when recipient and acting user are on either side of a block.
@@ -27,22 +26,16 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
           )`;
 
 /**
- * SQL fragment dropping a comment notification when the recipient has muted the thread it happened
- * in, or any thread above it.
+ * SQL fragment dropping a comment notification when the recipient has muted the comment's topic, or
+ * any comment above it.
  *
- * Matching only the comment's own thread would leave a mute set at the head of a conversation silent
- * about replies nested below it, which is the case the control is mostly used for. So this walks up.
+ * The section mute arrives as a `CommentTopicMute` row on the entity, the per-comment mute as a
+ * `CommentMute` row on the comment whose replies it silences (both mirrored from `ThreadMute` until
+ * the toggles move to v3). Ancestry is `path`, so "any comment above it" is one containment test; a
+ * depth-clamped reply answers through `replyToId` a comment off its path, so that is checked too.
  *
- * Climbs the shared ancestor walk in `thread-chain.ts`, which trusts only the server-derived
- * `commentId` edge — the reason, and what that costs, are documented there.
- *
- * The 8 entity-owner processors pin `t` to the entity ROOT thread (`t."imageId" IS NOT NULL` and its
- * siblings) and this only climbs, so a mute set on a conversation under a comment never matches them.
- * Only `toggleSectionMute` writes against a root thread, and it is what makes those 8 reachable —
- * before it existed the clause on them could not match anything. `new-3d-model-comment-nested` pins
- * `t."commentId"` instead, which is why it was reachable from the per-comment control all along.
- *
- * Applied to every processor that can emit for a `CommentV2` EXCEPT `new-mention`. Being named is not
+ * Applied to every processor that can emit for a comment EXCEPT `new-mention` and the three
+ * model-page processors (`MODEL_ONLY` in `no-unmuteable-comment-processor`). Being named is not
  * "somebody responded in a thread you're in" — Justin's call, 2026-08-27. That exemption is safe
  * against the batching rather than in spite of it: the family dedupes by `commentDedupeKey` and runs
  * in priority order, Mention first, so a mention in a muted thread claims the key and the suppressed
@@ -50,15 +43,19 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * same thing in reverse — it claims the key and replaces the notification that was suppressed.
  * `no-unmuteable-comment-processor` pins both directions.
  *
- * A NULL threadId yields no ancestors and passes: the legacy `Comment` branches have no thread.
+ * `alias` names the CommentV3 row the notification is about.
  */
-export const notThreadMuted = (recipient: string, threadId: string) => `NOT EXISTS (
-            ${muteableThreadsCte(threadId)}
-            SELECT 1
-            FROM muteable_threads mt
-            JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
-            WHERE tm."userId" = ${recipient}
-          )`;
+export const notCommentMuted = (recipient: string, alias: string) => `(NOT EXISTS (
+            SELECT 1 FROM "CommentTopicMute" ctm
+            WHERE ctm."userId" = ${recipient}
+              AND ctm."entityType" = ${alias}."entityType" AND ctm."entityId" = ${alias}."entityId"
+          ) AND NOT EXISTS (
+            SELECT 1 FROM "CommentMute" cm
+            JOIN "CommentV3" anc ON anc.id = cm."commentId"
+            WHERE cm."userId" = ${recipient}
+              AND anc.id <> ${alias}.id
+              AND (anc.path @> ${alias}.path OR anc.id = ${alias}."replyToId")
+          ))`;
 
 export type NotificationProcessor = {
   displayName: string;

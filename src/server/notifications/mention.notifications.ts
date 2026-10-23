@@ -5,11 +5,14 @@ import {
 } from '~/server/notifications/base.notifications';
 import {
   CommentNotificationPriority,
-  appListingSlugJoin,
-  appListingSlugResolved,
-  commentDedupeKeyByVersion,
+  commentDedupeKeyByShape,
+  isV1Shaped,
+  legacyId,
   threadTypeLabel,
   threadUrlMap,
+  v3AppListingResolved,
+  v3EntityJoins,
+  v3ThreadDetails,
   withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
@@ -30,8 +33,9 @@ export const mentionNotifications = createNotificationProcessor({
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.Mention,
     prepareMessage: ({ details }) => {
-      const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
-      if (isCommentV2) {
+      const isThreadAddressed =
+        details.mentionedIn === 'comment' && details.threadType !== undefined;
+      if (isThreadAddressed) {
         const url = threadUrlMap(details);
         // The shared `threadTypeLabel` names the ENTITY; `'comment thread'` is this sentence's
         // own shaping of the unaddressable fallback ("…on a comment thread" reads, "…on a
@@ -64,135 +68,33 @@ export const mentionNotifications = createNotificationProcessor({
     prepareQuery: ({ lastSent }) => `
       WITH new_mentions AS (
         SELECT DISTINCT
-          CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          CAST(unnest(regexp_matches(c.content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
           -- The recipient is produced by unnest() in this select list, so it can't be referenced
-          -- from these WHERE clauses. Each branch carries its author out instead, and the block
-          -- filter runs once on the outer query where both sides are finally in scope.
+          -- from these WHERE clauses. The author is carried out instead, and the block filter runs
+          -- once on the outer query where both sides are finally in scope.
           c."userId" "actorId",
-          JSONB_BUILD_OBJECT(
-            'version', 2,
+          CASE WHEN ${isV1Shaped('c')} THEN JSONB_BUILD_OBJECT(
+            'version', 3,
             'mentionedIn', 'comment',
-            'commentId', c.id,
-            'threadId', c."threadId",
-            'threadParentId', COALESCE(
-                root."imageId",
-                root."modelId",
-                root."postId",
-                root."questionId",
-                root."answerId",
-                root."reviewId",
-                root."articleId",
-                root."bountyId",
-                root."bountyEntryId",
-                root."challengeId",
-                root."crucibleId",
-                root."storylineId",
-                root."model3dId",
-                root."comicProjectId",
-                t."imageId",
-                t."modelId",
-                t."postId",
-                t."questionId",
-                t."answerId",
-                t."reviewId",
-                t."articleId",
-                t."bountyId",
-                t."bountyEntryId",
-                t."challengeId",
-                t."crucibleId",
-                t."storylineId",
-                t."model3dId",
-                t."comicProjectId"
-             ),
-            'threadType', CASE
-              WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
-              WHEN COALESCE(root."modelId", t."modelId") IS NOT NULL THEN 'model'
-              WHEN COALESCE(root."postId", t."postId") IS NOT NULL THEN 'post'
-              WHEN COALESCE(root."questionId", t."questionId") IS NOT NULL THEN 'question'
-              WHEN COALESCE(root."answerId", t."answerId") IS NOT NULL THEN 'answer'
-              WHEN COALESCE(root."reviewId", t."reviewId") IS NOT NULL THEN 'review'
-              WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
-              WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
-              WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
-              WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
-              WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
-              WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
-              WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
-              WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
-              -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
-              -- rather than an id column — see appListingSlugJoin.
-              WHEN al.slug IS NOT NULL THEN 'appListing'
-              ELSE 'comment'
-            END,
-             'appListingSlug', al.slug,
-             'commentParentId', COALESCE(
-                t."imageId",
-                t."modelId",
-                t."postId",
-                t."questionId",
-                t."answerId",
-                t."reviewId",
-                t."articleId",
-                t."bountyId",
-                t."bountyEntryId",
-                t."challengeId",
-                t."crucibleId",
-                t."storylineId",
-                t."model3dId",
-                t."commentId"
-             ),
-             'commentParentType', CASE
-                WHEN t."imageId" IS NOT NULL THEN 'image'
-                WHEN t."modelId" IS NOT NULL THEN 'model'
-                WHEN t."postId" IS NOT NULL THEN 'post'
-                WHEN t."questionId" IS NOT NULL THEN 'question'
-                WHEN t."answerId" IS NOT NULL THEN 'answer'
-                WHEN t."reviewId" IS NOT NULL THEN 'review'
-                WHEN t."articleId" IS NOT NULL THEN 'article'
-                WHEN t."bountyId" IS NOT NULL THEN 'bounty'
-                WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
-                WHEN t."challengeId" IS NOT NULL THEN 'challenge'
-                WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
-                WHEN t."storylineId" IS NOT NULL THEN 'storyline'
-                WHEN t."model3dId" IS NOT NULL THEN 'model3d'
-                ELSE 'comment'
-              END,
-            'username', u.username
-          ) "details"
-        FROM "CommentV2" c
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Thread" t ON t.id = c."threadId"
-        LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
-        WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
-          AND c.content LIKE '%"mention:%'
-          -- Unhandled thread types...
-          AND t."questionId" IS NULL
-          AND t."answerId" IS NULL
-          -- Same slug-resolution guard the reply processors carry: those threads are addressed by
-          -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
-          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
-
-        UNION
-
-        SELECT DISTINCT
-          CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
-          c."userId" "actorId",
-          JSONB_BUILD_OBJECT(
-            'mentionedIn', 'comment',
-            'modelId', c."modelId",
-            'commentId', c.id,
-            'parentId', c."parentId",
+            'modelId', c."entityId",
+            'commentId', ${legacyId('c')},
+            'parentId', ${legacyId('p')},
             'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
             'modelName', m.name,
             'username', u.username
-          ) "details"
-        FROM "Comment" c
+          ) ELSE ${v3ThreadDetails(`'mentionedIn', 'comment',`)} END "details"
+        FROM "CommentV3" c
         JOIN "User" u ON c."userId" = u.id
-        JOIN "Model" m ON m.id = c."modelId"
-        WHERE m."userId" > 0
-          AND ${liveCommentCreatedOrEditedSince(lastSent)}
+        LEFT JOIN "CommentV3" p ON p.id = c."parentId"
+        LEFT JOIN "Model" m ON ${isV1Shaped('c')} AND m.id = c."entityId"
+        ${v3EntityJoins('c')}
+        WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
+          AND c."deletedAt" IS NULL
           AND c.content LIKE '%"mention:%'
+          AND (NOT ${isV1Shaped('c')} OR m."userId" > 0)
+          -- Same slug-resolution guard the reply processors carry: those threads are addressed by
+          -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
+          AND ${v3AppListingResolved('c')}
 
         UNION
 
@@ -213,21 +115,22 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.status = 'Published'
       )
       SELECT
-        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
         -- Claiming the dedupe key SUPPRESSES every other notification for this comment, so only claim it
         -- when this mention is a worthy replacement — i.e. prepareMessage above yields a message AND a
         -- working URL. Three ways it doesn't:
         --   * mentionedIn = 'model' — a model DESCRIPTION mention, no comment behind it at all
-        --   * v2 threadType 'comment' — the fallback for a thread entity threadUrlMap can't address
-        --     (clubPost, model3dReview, ...), which renders a dead link
-        --   * v1 parentType 'review' — prepareMessage bails and returns undefined, so the row renders as
-        --     NOTHING. Left unguarded this silently swallows the new-comment the user should have got.
+        --   * threadType 'comment' — the fallback for an entity threadUrlMap can't address, which
+        --     renders a dead link
+        --   * model parentType 'review' — prepareMessage bails and returns undefined, so the row
+        --     renders as NOTHING. Left unguarded this silently swallows the new-comment the user
+        --     should have got.
         -- Anything excluded here still delivers as its own (lower-priority) notification, unchanged.
         case
           when details->>'mentionedIn' <> 'comment' then null
-          when details->>'version' is not null then
-            case when details->>'threadType' <> 'comment' then ${commentDedupeKeyByVersion} end
-          when details->>'parentType' = 'comment' then ${commentDedupeKeyByVersion}
+          when details->>'threadType' is not null then
+            case when details->>'threadType' <> 'comment' then ${commentDedupeKeyByShape} end
+          when details->>'parentType' = 'comment' then ${commentDedupeKeyByShape}
         end "dedupeKey",
         "ownerId"    "userId",
         'new-mention' "type",

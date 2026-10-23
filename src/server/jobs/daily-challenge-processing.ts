@@ -942,9 +942,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   // CollectionItem.tagId, which resets when an entry is removed and re-added — letting
   // users re-roll their score. The judge's comment survives that collection churn.
   const notYetReviewedByJudge = Prisma.sql`NOT EXISTS (
-    SELECT 1 FROM "Thread" th
-    JOIN "CommentV2" cm ON cm."threadId" = th.id
-    WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
+    SELECT 1 FROM "CommentV3" cm
+    WHERE cm."entityType" = 'image' AND cm."entityId" = ci."imageId" AND cm."parentId" IS NULL
+      AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
   )`;
 
   // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
@@ -1035,9 +1035,9 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       // double-comment.
       const [alreadyReviewed] = await dbWrite.$queryRaw<[{ exists: boolean }?]>`
         SELECT EXISTS (
-          SELECT 1 FROM "Thread" th
-          JOIN "CommentV2" cm ON cm."threadId" = th.id
-          WHERE th."imageId" = ${entry.imageId} AND cm."userId" = ${judgingConfig.userId}
+          SELECT 1 FROM "CommentV3" cm
+          WHERE cm."entityType" = 'image' AND cm."entityId" = ${entry.imageId} AND cm."parentId" IS NULL
+            AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
         ) AS "exists"
       `;
       if (alreadyReviewed?.exists) {

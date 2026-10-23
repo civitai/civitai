@@ -13,6 +13,7 @@
 // reaction, comment, approved sticker, recommended review), so `sourceId` is one per
 // (kind, entity, actor) and an add and its removal always pair. Accepted limitation: if the hat
 // came off before the removal, the gate skips it and no removal is sent.
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import type { TrackBatchInput } from '~/server/schema/track.schema';
 import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/placement';
 import type { Session } from '~/types/session';
@@ -169,7 +170,6 @@ export async function onReactionRemoved(input: ReactionInput): Promise<void> {
 // #endregion
 
 // #region comments
-type CommentRoot = Entity & { rootThreadId: number };
 
 // The Image or Article each thread hangs off, through `Thread.rootThreadId` for a reply's thread.
 // That column is server-derived from the parent comment on create; older rows written from client
@@ -185,16 +185,27 @@ async function commentRoots(threadIds: number[]) {
       rootThread: { select: { imageId: true, articleId: true } },
     },
   });
-  const roots = new Map<number, CommentRoot>();
+  const roots = new Map<number, Entity>();
   for (const thread of threads) {
     const root = thread.rootThreadId ? thread.rootThread : thread;
-    const rootThreadId = thread.rootThreadId ?? thread.id;
-    if (root?.imageId)
-      roots.set(thread.id, { rootThreadId, entityType: 'Image', entityId: root.imageId });
+    if (root?.imageId) roots.set(thread.id, { entityType: 'Image', entityId: root.imageId });
     else if (root?.articleId)
-      roots.set(thread.id, { rootThreadId, entityType: 'Article', entityId: root.articleId });
+      roots.set(thread.id, { entityType: 'Article', entityId: root.articleId });
   }
   return roots;
+}
+
+/** The actor's live comments on the entity, at any depth. On the primary: it runs right after a delete. */
+export async function liveCommentsOn(userId: number, { entityType, entityId }: Entity) {
+  const row = await kyselyWrite
+    .selectFrom('CommentV3')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where('userId', '=', userId)
+    .where('entityType', '=', entityType === 'Image' ? 'image' : 'article')
+    .where('entityId', '=', entityId)
+    .where('deletedAt', 'is', null)
+    .executeTakeFirst();
+  return Number(row?.n ?? 0);
 }
 
 const commentAction = (userId: number, { entityType, entityId }: Entity, time: Date) => ({
@@ -250,14 +261,7 @@ export async function onCommentsRemoved(
       const action = commentAction(userId, root, time);
       if (seen.has(action.sourceId)) continue;
       seen.add(action.sourceId);
-      await removeIfLast(action, () =>
-        dbWrite.commentV2.count({
-          where: {
-            userId,
-            thread: { OR: [{ id: root.rootThreadId }, { rootThreadId: root.rootThreadId }] },
-          },
-        })
-      );
+      await removeIfLast(action, () => liveCommentsOn(userId, root));
     }
   } catch (error) {
     swallow('event-points:comment')(error);

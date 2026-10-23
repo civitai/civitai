@@ -10,10 +10,12 @@ import {
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 import {
   MAX_THREAD_CHAIN_DEPTH,
-  muteableThreadsCte,
+  threadAncestorsCte,
   threadIsRooted,
   UNRESOLVED_THREAD_CHAIN_MESSAGE,
 } from '~/server/common/thread-chain';
+import { notCommentMuted } from '~/server/notifications/base.notifications';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import {
   isPrismaForeignKeyViolation,
   throwBadRequestError,
@@ -47,6 +49,7 @@ import {
 } from '~/server/services/commentsv2.reply-threads';
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { CommentEntityType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
@@ -170,9 +173,9 @@ export async function getJudgeCommentForImage({
 }) {
   const result = await dbRead.$queryRaw<[{ content: string }?]>`
     SELECT c.content
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id AND c."userId" = ${judgeUserId}
-    WHERE t."imageId" = ${imageId}
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'image' AND c."entityId" = ${imageId} AND c."parentId" IS NULL
+      AND c."userId" = ${judgeUserId} AND c."deletedAt" IS NULL
     ORDER BY c."createdAt" ASC
     LIMIT 1
   `;
@@ -552,10 +555,9 @@ export async function toggleThreadMute({
 }
 
 /**
- * The section-level mute: silences a whole comment section rather than one conversation under a
- * comment. It is the only writer that targets an ENTITY ROOT thread, which is what makes the mute
- * filter on the entity-owner processors reachable at all — see `notThreadMuted`.
- *
+ * The section-level mute: silences a whole comment section rather than one conversation. Its
+ * `ThreadMute` on the entity root thread reaches `notCommentMuted` as a `CommentTopicMute` row
+ * through the `commentv3_mirror` trigger on `ThreadMute`.
  */
 export async function toggleSectionMute({
   entityType,
@@ -582,6 +584,9 @@ export async function toggleSectionMute({
   return { muted: true, threadId: thread.id };
 }
 
+const isCommentEntityType = (type: string): type is CommentEntityType =>
+  (Object.values(CommentEntityType) as string[]).includes(type);
+
 export async function getSectionMuted({
   entityType,
   entityId,
@@ -591,14 +596,21 @@ export async function getSectionMuted({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true },
   });
-  // `hasThread: false` is not the same as "not muted" and the caller must be able to tell them
-  // apart: nothing can be muted yet, so offering the action would report success over a no-op.
+  // `hasThread: false` is not "not muted": the toggle writes a ThreadMute on the root thread, so
+  // with no thread nothing can be muted and offering the action would report success over a no-op.
   if (!thread) return { muted: false, hasThread: false };
 
-  const mute = await dbRead.threadMute.findUnique({
-    where: { userId_threadId: { userId, threadId: thread.id } },
-    select: { userId: true },
-  });
+  // Read what the suppression reads (`CommentTopicMute`), not the `ThreadMute` the toggle writes:
+  // the mirror trigger keeps them in step, and if they drift the suppression is what the user
+  // experiences. A retired thread type (question, answer) has no topic.
+  if (!isCommentEntityType(entityType)) return { muted: false, hasThread: true };
+  const mute = await kyselyRead
+    .selectFrom('CommentTopicMute')
+    .select('userId')
+    .where('userId', '=', userId)
+    .where('entityType', '=', entityType)
+    .where('entityId', '=', entityId)
+    .executeTakeFirst();
   return { muted: !!mute, hasThread: true };
 }
 
@@ -608,27 +620,17 @@ export async function getThreadMuted({
 }: ToggleThreadMuteInput & { userId: number }) {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { threadId: true, tosViolation: true, childThread: { select: { id: true } } },
+    select: { tosViolation: true, childThread: { select: { id: true } } },
   });
   // Refuses what the toggle refuses; answering for a ToS-removed comment makes this the oracle its
   // neighbour was fixed not to be.
   if (!comment || comment.tosViolation) return { muted: false, viaAncestor: false, canMute: false };
 
-  // Seeded from the comment's OWN thread, not its reply thread, so the answer is right before anyone
-  // has replied — a reply thread is created lazily, and returning early when it is missing reported
-  // "not muted" on every reply-less comment inside a muted discussion while notifications were in
-  // fact suppressed. That is the menu-versus-notification divergence this shared walk exists to
-  // prevent, and skipping the walk was the one way back into it.
-  const ownThreadId = comment.childThread?.id ?? null;
-
-  // Walks ancestors, because SUPPRESSION does, and through the SAME shared CTE rather than a retyped
-  // copy — mirroring it by hand is what makes the menu and the notification disagree. Reading only
-  // this thread made the menu offer "Mute" on a comment already silenced from above, and offer an
-  // "Unmute" that deletes nothing and then claims the notifications are back on.
+  // The suppression's own predicate (`notCommentMuted`), so the label matches what is delivered:
+  // `ancestor` is its verdict on this comment, `own` the user's mute on the comment itself.
   // `dbWrite`, deliberately: the client invalidates this query the moment a toggle succeeds, so off
   // the replica the refetch can return the pre-toggle state — and because the mutation flips from DB
-  // state, the next click then does the opposite of what the label says. `throwIfThreadChainLocked`
-  // reads the primary for the same reason.
+  // state, the next click then does the opposite of what the label says.
   const [row] = await dbWrite.$queryRaw<
     {
       own: boolean | null;
@@ -636,23 +638,23 @@ export async function getThreadMuted({
       locked: boolean | null;
     }[]
   >`
-    ${Prisma.raw(muteableThreadsCte(String(ownThreadId ?? comment.threadId)))}
     SELECT
-      bool_or(tm."threadId" IS NOT NULL AND mt."id" = ${ownThreadId}::int) "own",
-      bool_or(tm."threadId" IS NOT NULL AND mt."id" IS DISTINCT FROM ${ownThreadId}::int) "ancestor",
-      bool_or(th.locked) "locked"
-    FROM muteable_threads mt
-    JOIN "Thread" th ON th.id = mt."id"
-    LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ${userId}
+      EXISTS (SELECT 1 FROM "CommentMute" m WHERE m."userId" = u.id AND m."commentId" = c.id) "own",
+      NOT ${Prisma.raw(notCommentMuted('u.id', 'c'))} "ancestor",
+      (COALESCE((SELECT ct.locked FROM "CommentTopic" ct
+                  WHERE ct."entityType" = c."entityType" AND ct."entityId" = c."entityId"), false)
+        OR EXISTS (SELECT 1 FROM "CommentV3" lk WHERE lk.path @> c.path AND lk.locked)) "locked"
+    FROM "CommentV3" c, (SELECT ${userId}::int AS id) u
+    WHERE c.id = ${commentId}
   `;
 
   const own = row?.own ?? false;
   const ancestor = row?.ancestor ?? false;
   // Muting a comment with no reply thread has to CREATE one, which `throwIfThreadChainLocked`
-  // refuses anywhere in a locked chain. Answered here rather than from the client's `isLocked`,
-  // which is assembled from React nesting and is simply false on a drilled-in or deep-linked
-  // thread — the view a reply notification actually opens.
-  const canMute = !!ownThreadId || !(row?.locked ?? false);
+  // refuses anywhere in a locked chain: the comment, an ancestor or its topic. Answered here rather
+  // than from the client's `isLocked`, which is assembled from React nesting and is simply false on
+  // a drilled-in or deep-linked thread — the view a reply notification actually opens.
+  const canMute = !!comment.childThread || !(row?.locked ?? false);
   return { muted: own || ancestor, viaAncestor: !own && ancestor, canMute };
 }
 
@@ -699,12 +701,12 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
  * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
  */
 const storylineAboveSql = (seed: string) => Prisma.sql`
-  ${Prisma.raw(muteableThreadsCte(seed))}
+  ${Prisma.raw(threadAncestorsCte(seed))}
   SELECT th."storylineId"
   FROM (
-    SELECT mt."id" FROM muteable_threads mt
+    SELECT mt."id" FROM thread_ancestors mt
     UNION ALL
-    SELECT t."rootThreadId" FROM muteable_threads mt JOIN "Thread" t ON t.id = mt."id"
+    SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
   ) chain
   JOIN "Thread" th ON th.id = chain."id"
   WHERE th."storylineId" IS NOT NULL

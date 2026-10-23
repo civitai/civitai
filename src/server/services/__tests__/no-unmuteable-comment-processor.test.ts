@@ -3,7 +3,7 @@ import { commentNotifications } from '~/server/notifications/comment.notificatio
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 
 /**
- * Every notification processor that can emit for a `CommentV2` must carry the per-thread mute filter.
+ * Every notification processor that can emit for a comment must carry the mute filter (`notCommentMuted`).
  *
  * Not a style rule: the comment family dedupes by `commentDedupeKey` and runs in priority batches, so
  * a processor that omits the filter does not merely leak its own notification — it CLAIMS the dedupe
@@ -18,13 +18,14 @@ import { mentionNotifications } from '~/server/notifications/mention.notificatio
  * satisfied it, and a recipient/author swap passed. All three are structural, none was a spelling
  * problem, and none is reachable from here.
  *
- * OUT OF SCOPE, deliberately, in both cases because there is nothing this mechanism could suppress:
- * legacy `Comment` (model-page discussion) rows have no `Thread`; and `new-comic-comment` is written
- * by `createNotification` from `comics.router.ts` rather than by a `prepareQuery`, so no producer-side
- * SQL filter reaches it at all. Its comments are always created in the chapter ROOT thread by that
- * same mutation, and no UI path mutes a root thread, so it has nothing to suppress today. Give comics
- * a reply path, or a way to mute a root thread, and it needs its own filter — this guard cannot see
- * that for you.
+ * OUT OF SCOPE, deliberately:
+ * - the model-page discussion (`MODEL_ONLY` below): no mute control on its page. A model
+ *   `CommentTopicMute` mirrored from a v2 section mute reaches `new-thread-response` but not these
+ *   three; accepted until the model surface flips.
+ * - `new-comic-comment`: written by `createNotification` in `comics.router.ts`, not a
+ *   `prepareQuery`, so no SQL filter reaches it. Its comments are always chapter roots and no UI
+ *   mutes a root. Give comics a reply path or a root mute and it needs its own filter; this guard
+ *   cannot see that.
  */
 
 type Def = { prepareQuery?: (args: { lastSent: string }) => string };
@@ -42,20 +43,28 @@ const sqlFor = (type: string) => defs[type].prepareQuery?.({ lastSent: '2026-01-
  * it: Mention is priority 1, so a mention in a muted thread claims the dedupe key first and the
  * notifications the mute suppressed cannot re-emerge behind it.
  *
- * Adding `notThreadMuted` to `new-mention` REVERSES a product decision. It fails below rather than
+ * Adding `notCommentMuted` to `new-mention` REVERSES a product decision. It fails below rather than
  * passing quietly, which is the point of naming the exemption instead of leaving it as an absence.
  */
 const MUTE_EXEMPT = new Set(['new-mention']);
 
-// Matches the TABLE, not one spelling of the clause: `FROM "Thread" t JOIN "CommentV2" c`, or a line
-// break after FROM, is the same processor and must not fall out of the sweep.
-const v2Types = Object.keys(defs).filter((type) => sqlFor(type).includes('"CommentV2"'));
-const filteredTypes = v2Types.filter((type) => !MUTE_EXEMPT.has(type));
+/**
+ * The model-page discussion: v1-shaped, with no mute control in its UI. Pinned by name below, so a
+ * processor that moves to the thread-addressed shape has to leave this list and gain the filter.
+ */
+const MODEL_ONLY = new Set(['new-comment', 'new-comment-response', 'new-comment-nested']);
+
+// Matches the TABLE, not one spelling of the clause: a line break after FROM is the same processor
+// and must not fall out of the sweep.
+const commentTypes = Object.keys(defs).filter((type) => sqlFor(type).includes('"CommentV3"'));
+const filteredTypes = commentTypes.filter(
+  (type) => !MUTE_EXEMPT.has(type) && !MODEL_ONLY.has(type)
+);
 
 /**
  * The recipient each processor already proved it knows, taken from its OWN block filter rather than
  * from a list maintained here. A hand-written table of expected recipients cannot catch a
- * hand-written mistake, and this is the same class of asymmetry: `notThreadMuted(<author>, ...)` is
+ * hand-written mistake, and this is the same class of asymmetry: `notCommentMuted(<author>, ...)` is
  * valid SQL that suppresses nobody.
  *
  * Read by the clause carrying `type IN ('Block', 'Hide')`, which is the recipient's own direction.
@@ -71,35 +80,38 @@ const blockRecipients = (sql: string) =>
   ].map((m) => m[1].trim());
 
 const muteRecipients = (sql: string) =>
-  [...sql.matchAll(/WHERE tm\."userId" = ([\s\S]+?)\n\s*\)/g)].map((m) => m[1].trim());
+  [...sql.matchAll(/WHERE ctm\."userId" = ([\s\S]+?)\n\s*AND ctm\."entityType"/g)].map((m) =>
+    m[1].trim()
+  );
 
 describe('comment notifications — per-thread mute', () => {
-  // A name added here silently removes two tests per processor and the run stays green at 27, so the
-  // exemption list is pinned as well as documented.
-  it('exempts exactly one processor, on purpose', () => {
+  // A name added here silently removes two tests per processor, so the exemption list is pinned as
+  // well as documented.
+  it('exempts exactly new-mention, on purpose', () => {
     expect([...MUTE_EXEMPT]).toEqual(['new-mention']);
     expect(filteredTypes).toHaveLength(15);
   });
 
   it('finds the family on the real objects', () => {
     // A sweep over an empty list passes vacuously.
-    expect(v2Types.length).toBeGreaterThanOrEqual(14);
-    expect(v2Types).toContain('new-image-comment');
-    expect(v2Types).toContain('new-mention');
+    expect(commentTypes.length).toBeGreaterThanOrEqual(17);
+    expect(commentTypes).toContain('new-image-comment');
+    expect(commentTypes).toContain('new-mention');
   });
 
-  it.each(filteredTypes)('%s suppresses a muted thread', (type) => {
+  it.each(filteredTypes)('%s suppresses a muted topic and a muted ancestor', (type) => {
     const sql = sqlFor(type);
-    expect(sql).toContain('"ThreadMute" tm');
-    // The walk, not just the table: a join that never climbs would silence only the exact thread.
-    expect(sql).toContain('WITH RECURSIVE muteable_threads');
-    // Seeded from the comment's OWN thread alias. Passing `root.id` instead is valid SQL that starts
-    // the walk at NULL for a top-level comment, so the filter matches nothing and suppression dies.
-    expect(sql).toContain('SELECT t.id "id", 0 "depth"');
+    // Both controls: the section mute on the topic and the per-comment mute on an ancestor.
+    expect(sql).toContain('"CommentTopicMute" ctm');
+    expect(sql).toContain('"CommentMute" cm');
+    // Containment, not equality: a join on the exact comment would silence only direct replies.
+    expect(sql).toContain('anc.path @> c.path');
+    // Keyed on the comment the notification is ABOUT. Passing the parent's alias instead starts
+    // containment one level up, so a mute on the parent itself stops matching.
+    expect(sql).toContain('ctm."entityType" = c."entityType"');
     // The connector, not just the clause. `OR` binds looser, so it makes the whole WHERE true for
-    // any unmuted recipient — past `lastSent`, the self-notify guard and the block filter. Only 3 of
-    // these 13 have a whole-statement snapshot that would see it.
-    expect(sql).toMatch(/AND\s+NOT EXISTS\s*\(\s*WITH RECURSIVE muteable_threads/);
+    // any unmuted recipient — past `lastSent`, the self-notify guard and the block filter.
+    expect(sql).toMatch(/AND\s+\(NOT EXISTS\s*\(\s*SELECT 1 FROM "CommentTopicMute"/);
   });
 
   it.each(filteredTypes)('%s mutes for the RECIPIENT, not the comment author', (type) => {
@@ -118,18 +130,30 @@ describe('comment notifications — per-thread mute', () => {
 
   it('leaves direct mentions muteable ONLY through the global new-mention setting', () => {
     const sql = sqlFor('new-mention');
-    expect(sql).toContain('FROM "CommentV2"');
-    expect(sql).not.toContain('"ThreadMute"');
+    expect(sql).toContain('FROM "CommentV3"');
+    expect(sql).not.toContain('"CommentMute"');
+    expect(sql).not.toContain('"CommentTopicMute"');
   });
 
-  it('leaves the legacy Comment-only processors alone', () => {
-    const legacy = Object.keys(defs).filter(
-      (type) =>
-        sqlFor(type).includes('FROM "Comment"') && !sqlFor(type).includes('FROM "CommentV2"')
-    );
-    expect(legacy.sort()).toEqual(
-      ['new-comment', 'new-comment-nested', 'new-comment-response'].sort()
-    );
-    for (const type of legacy) expect(sqlFor(type)).not.toContain('"ThreadMute"');
+  it('leaves the model-page discussion processors alone, and nothing else', () => {
+    // The set is derived from the SQL, not from MODEL_ONLY: a processor that reads only model
+    // comments and nothing else is the one that may skip the filter.
+    const modelOnly = Object.keys(defs).filter((type) => {
+      const sql = sqlFor(type);
+      return (
+        sql.includes(`c."entityType" = 'model'`) &&
+        !sql.includes('threadType') &&
+        !sql.includes('mention')
+      );
+    });
+    expect(modelOnly.sort()).toEqual([...MODEL_ONLY].sort());
+    for (const type of modelOnly) expect(sqlFor(type)).not.toContain('"CommentMute"');
+  });
+
+  it('reads no old comment table anywhere in the family', () => {
+    for (const type of Object.keys(defs)) {
+      const sql = sqlFor(type);
+      expect(sql, type).not.toMatch(/"CommentV2"|"Thread"|"ThreadMute"|FROM "Comment" /);
+    }
   });
 });
