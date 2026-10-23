@@ -22,6 +22,7 @@ import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { dbWrite } from '~/server/db/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   recordBuzzPurchaseKickback,
   recordMembershipPaymentReward,
@@ -52,6 +53,9 @@ async function buffer(readable: Readable) {
   }
   return Buffer.concat(chunks);
 }
+
+// Well past Stripe's retry window.
+const AIR_NOTIFIED_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const relevantEvents = new Set([
   'checkout.session.completed',
@@ -338,12 +342,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   checkoutSession.customer_details?.email || checkoutSession.customer_email;
                 const name = checkoutSession.customer_details?.name ?? 'Stripe Customer';
 
-                if (!email || isDev) {
-                  return;
+                if (isDev) {
+                  log({ type: 'info', stage: 'air-dev-skip', eventId: event.id });
+                  break;
+                }
+                if (!email) {
+                  log({ type: 'warning', stage: 'air-no-email', eventId: event.id });
+                  break;
                 }
 
-                await notifyAir({ email, name });
-                return;
+                // Stripe delivers at least once; AIR hears about each checkout once.
+                const notifiedKey =
+                  `${REDIS_SYS_KEYS.WEBHOOKS.STRIPE_AIR_NOTIFIED}:${checkoutSession.id}` as const;
+                const claimed = await sysRedis.set(notifiedKey, '1', {
+                  NX: true,
+                  EX: AIR_NOTIFIED_TTL_SECONDS,
+                });
+                if (!claimed) {
+                  log({ type: 'info', stage: 'air-already-notified', eventId: event.id });
+                  break;
+                }
+                try {
+                  await notifyAir({ email, name });
+                } catch (err) {
+                  await sysRedis.del(notifiedKey);
+                  throw err;
+                }
+                break;
               }
 
               await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
