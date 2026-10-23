@@ -865,6 +865,19 @@ export const publishModelHandler = async ({
     const { isModerator } = ctx.user;
     if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
       throw throwAuthorizationError('You are not authorized to publish this model');
+    // The model's status says nothing about its versions: one a moderator took down while the
+    // model stayed public must not come back because its id was in this list.
+    if (!isModerator && input.versionIds?.length) {
+      const downed = await dbWrite.modelVersion.count({
+        where: {
+          id: { in: input.versionIds },
+          modelId: input.id,
+          status: { in: constants.modPublishOnlyStatuses },
+        },
+      });
+      if (downed)
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+    }
 
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
