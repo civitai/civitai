@@ -336,17 +336,17 @@ describe('UserMenu_Click', () => {
   // their place.
   it.each([
     // Desktop rows are Mantine Menu.Items, which close the menu themselves.
-    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0],
-    ['mobile', () => createElement(MobileHeaderRows), 2],
+    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0, 'Buy Buzz'],
+    ['mobile', () => createElement(MobileHeaderRows), 2, 'Buy'],
   ] as const)(
     'records the %s header rows as header opens, and not Buy Buzz',
-    async (surface, node, closes) => {
+    async (surface, node, closes, buyLabel) => {
       await mount(node());
       await click(row('Avatar'));
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
         [...document.querySelectorAll('.mantine-Button-root')].find(
-          (el) => el.textContent === 'Buy Buzz'
+          (el) => el.textContent === buyLabel
         )
       );
 
@@ -392,14 +392,12 @@ describe('UserMenu_Click', () => {
     }
   );
 
-  // The Pro chip replaced a full row that closed the menu through `MenuItemLink`.
-  it('closes the menu from the Pro chip, and records nothing', async () => {
+  it('keeps the Pro chip out of the mobile header rows, whatever the flags', async () => {
     mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
     await mount(createElement(MobileHeaderRows));
-    await click(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]'));
 
-    expect(handleClose).toHaveBeenCalledTimes(1);
-    expect(mocks.actions).toEqual([]);
+    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
+    expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
   });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
