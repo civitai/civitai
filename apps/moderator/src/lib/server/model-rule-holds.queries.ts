@@ -7,11 +7,12 @@ import {
   type ModelRulesHoldMatch,
   type StoredModelRuleSnapshot,
 } from '@civitai/moderation/model-rules';
-import type {
-  HoldMode,
-  ModelRuleHoldFilters,
-  ModelRuleHoldModeFilter,
-  ModelRuleHoldStatusFilter,
+import {
+  holdClearsRules,
+  type HoldMode,
+  type ModelRuleHoldFilters,
+  type ModelRuleHoldModeFilter,
+  type ModelRuleHoldStatusFilter,
 } from '$lib/model-rule-holds';
 import { dbRead } from './db';
 import { escapeLike } from './like';
@@ -45,6 +46,8 @@ export type ModelRuleHoldRow = {
   uploadType: string | null;
   /** `training` when a training run, not a publish or an edit, raised the hold. */
   source: 'training' | null;
+  /** A ruling clears the matched rules for the text instead of restoring the model. */
+  clearsRules: boolean;
   poi: boolean;
   minor: boolean;
   textHash: string;
@@ -148,6 +151,8 @@ export async function listModelRuleHolds({
       sql<string | null>`m.status::text`.as('modelStatus'),
       sql<string | null>`m.type::text`.as('modelType'),
       sql<string | null>`m."uploadType"::text`.as('uploadType'),
+      sql<string | null>`m.availability::text`.as('modelAvailability'),
+      sql<boolean>`m."deletedAt" is not null`.as('modelDeleted'),
       sql<boolean>`coalesce(m.poi, false)`.as('poi'),
       sql<boolean>`coalesce(m.minor, false)`.as('minor'),
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
@@ -174,25 +179,33 @@ export async function listModelRuleHolds({
     .offset(offset)
     .execute();
 
-  const items = rows.slice(0, limit).map(({ meta, entityId, ...row }): ModelRuleHoldRow => {
-    const parsed = parseModelRulesHoldMeta(meta);
-    return {
-      ...row,
-      modelId: entityId,
-      username: row.username ?? null,
-      modelName: row.modelName ?? null,
-      decidedByUsername: row.decidedByUsername ?? null,
-      mode: parsed.mode,
-      decision: parsed.decision ?? null,
-      applied: row.hiddenAt !== null && row.restoredAt === null,
-      fields: parsed.fields,
-      matches: parsed.matches,
-      rules: parsed.rules,
-      redetected: parsed.kind === 'redetected' && parsed.priorHoldId !== undefined,
-      priorHoldId: parsed.priorHoldId ?? null,
-      source: parsed.source ?? null,
-    };
-  });
+  const items = rows
+    .slice(0, limit)
+    .map(({ meta, entityId, modelAvailability, modelDeleted, ...row }): ModelRuleHoldRow => {
+      const parsed = parseModelRulesHoldMeta(meta);
+      return {
+        ...row,
+        modelId: entityId,
+        username: row.username ?? null,
+        modelName: row.modelName ?? null,
+        decidedByUsername: row.decidedByUsername ?? null,
+        mode: parsed.mode,
+        decision: parsed.decision ?? null,
+        applied: row.hiddenAt !== null && row.restoredAt === null,
+        fields: parsed.fields,
+        matches: parsed.matches,
+        rules: parsed.rules,
+        redetected: parsed.kind === 'redetected' && parsed.priorHoldId !== undefined,
+        priorHoldId: parsed.priorHoldId ?? null,
+        source: parsed.source ?? null,
+        clearsRules: holdClearsRules({
+          source: parsed.source ?? null,
+          modelStatus: row.modelStatus,
+          modelAvailability,
+          modelDeleted,
+        }),
+      };
+    });
   return { items, hasMore: rows.length > limit };
 }
 
