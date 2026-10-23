@@ -434,6 +434,22 @@ describe('awardBountyEntry', () => {
     ]);
   });
 
+  it('names every supporter of a bounty several users funded, each with what they put in', async () => {
+    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+    await awardBountyEntry({ id: 10, userId: 5 });
+    const [[transactions]] = buzz.createBuzzTransactionMany.mock.calls as [
+      [{ details: unknown }[]]
+    ];
+    expect(transactions.map((t) => t.details)).toEqual(
+      transactions.map(() => ({
+        entityId: 4,
+        entityType: 'Bounty',
+        supporterIds: [5, 6],
+        supporterAmounts: [100, 50],
+      }))
+    );
+  });
+
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();

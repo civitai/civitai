@@ -69,6 +69,12 @@ function mockLedger({
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
+function issuedSqls(marker: string) {
+  return mockClickhouse.$query.mock.calls
+    .map((_, i) => squash(sqlOf(i)))
+    .filter((s) => s.includes(marker));
+}
+
 function issuedSql(marker: string) {
   const sql = mockClickhouse.$query.mock.calls
     .map((_, i) => sqlOf(i))
@@ -298,6 +304,19 @@ describe('getBankableAmount', () => {
     expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(1_000);
     expect(issuedSql("AND date < toDateTime('2026-12-14 00:00:00', 'UTC')")).toContain(
       "date >= toDateTime('2026-12-10 00:00:00', 'UTC')"
+    );
+    const spentReads = mockClickhouse.$query.mock.calls
+      .map((_, i) => squash(sqlOf(i)))
+      .filter((sql) => sql.includes('AS spent'));
+    // The live read starts where the stored total ends, so no day is counted twice.
+    expect(spentReads.filter((sql) => !sql.includes('AND date < '))).toEqual([
+      expect.stringContaining("date >= toDateTime('2026-12-14 00:00:00', 'UTC')"),
+    ]);
+    // Stored only once ingest holds a row a full day past the stored total.
+    expect(issuedSqls('AS settled')).toContain(
+      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(
+        new Date('2026-12-15T00:00:00Z')
+      )} LIMIT 1`
     );
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
