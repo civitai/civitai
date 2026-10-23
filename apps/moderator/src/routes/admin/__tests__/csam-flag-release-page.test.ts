@@ -143,5 +143,8 @@ describe('the release page', () => {
     expect(status).toMatch(/NOTHING RELEASED YET/);
     expect(status).toMatch(/type 3771 below/);
     expect(status).not.toMatch(/3,771/);
+    // The approval and reason the release will record, since the fields above may have been edited.
+    expect(status).toContain(COUNTED.approvalRef);
+    expect(status).toContain(COUNTED.reason);
   });
 });

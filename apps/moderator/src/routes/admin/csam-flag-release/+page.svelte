@@ -42,7 +42,9 @@
   <form
     method="POST"
     action="?/count"
-    use:enhance={() => {
+    use:enhance={({ cancel }) => {
+      // One request at a time: a second count, or a count during a release, could land out of order.
+      if (counting || releasing) return cancel();
       // Cleared as the count goes out, so a keystroke during it keeps the release hidden.
       edited = false;
       counting = true;
@@ -70,7 +72,7 @@
       <Input name="reason" required value={typed?.reason ?? ''} />
     </label>
     <div>
-      <Button type="submit" variant="outline">Count</Button>
+      <Button type="submit" variant="outline" disabled={counting || releasing}>Count</Button>
     </div>
   </form>
 
@@ -80,7 +82,7 @@
       method="POST"
       action="?/release"
       use:enhance={({ cancel }) => {
-        if (releasing) return cancel();
+        if (releasing || counting) return cancel();
         releasing = true;
         return async ({ update }) => {
           try {
@@ -95,7 +97,8 @@
       <p class="text-sm font-semibold text-yellow-200" role="status">
         Count only, NOTHING RELEASED YET. User #{counted.userId}: {counted.count} removed
         {counted.count === 1 ? 'image' : 'images'} would be released. Held by:
-        {counted.legs.join(', ')}. To release, type {counted.count} below and press Release.
+        {counted.legs.join(', ')}. Approval: {counted.approvalRef}. Reason: {counted.reason}. To
+        release, type {counted.count} below and press Release.
       </p>
       <input type="hidden" name="userId" value={counted.userId} />
       <input type="hidden" name="approvalRef" value={counted.approvalRef} />
