@@ -8,9 +8,11 @@ import { isNeverRatedVideoStep, isUnratedOutput } from '~/shared/orchestrator/wo
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
 
 // A blob HEAD waits for the scan verdict, and a failed scan is only resubmitted by a read, so an
-// unrated output keeps one HEAD open until it is rated instead of polling the workflow.
+// unrated output keeps one HEAD open until it is rated. The blob verdict can lag the workflow's
+// rating, so a HEAD that keeps failing falls back to re-reading the workflow.
 export const UNRATED_RETRY_MIN_MS = 2000;
 export const UNRATED_RETRY_MAX_MS = 60_000;
+export const UNRATED_GIVE_UP_MS = 10 * 60_000;
 
 export function unratedRetryDelay(attempt: number) {
   return Math.min(UNRATED_RETRY_MIN_MS * 2 ** attempt, UNRATED_RETRY_MAX_MS);
@@ -67,10 +69,26 @@ export function createUnratedOutputWatcher({
   refetch: (workflowIds: string[]) => Promise<unknown>;
 }) {
   const watching = new Set<string>();
+  // Outputs of one workflow share a single refetch.
+  const refetching = new Map<string, Promise<unknown>>();
+
+  function refetchWorkflow(workflowId: string) {
+    let pending = refetching.get(workflowId);
+    if (!pending) {
+      pending = refetch([workflowId])
+        .catch((error) => console.error('[generation] unrated output refetch failed', error))
+        .finally(() => refetching.delete(workflowId));
+      refetching.set(workflowId, pending);
+    }
+    return pending;
+  }
 
   async function follow(outputId: string, { workflowId, url }: UnratedOutput) {
+    const isUnrated = () => selectUnratedOutputs(readWorkflows()).has(outputId);
+    const watchedAt = Date.now();
     try {
       let failures = 0;
+      let failedReads = 0;
       for (;;) {
         const startedAt = Date.now();
         const verdict = await readVerdict(url).catch(() => null);
@@ -82,8 +100,16 @@ export function createUnratedOutputWatcher({
         }
         // A long wait cut off (an API pod shutting down in a deploy) is not a run of failures.
         if (Date.now() - startedAt >= UNRATED_RETRY_MAX_MS) failures = 0;
+        if (++failedReads >= 2) {
+          await refetchWorkflow(workflowId);
+          if (!isUnrated()) return;
+        }
+        if (Date.now() - watchedAt >= UNRATED_GIVE_UP_MS) {
+          console.warn('[generation] gave up waiting for an output rating', outputId);
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, unratedRetryDelay(failures++)));
-        if (!selectUnratedOutputs(readWorkflows()).has(outputId)) return;
+        if (!isUnrated()) return;
       }
     } catch (error) {
       console.error('[generation] unrated output verdict failed', error);
