@@ -5,11 +5,18 @@
  * the values used in the main Civitai application for consistency.
  */
 
+import { NsfwLevel } from '../types/image-feed-types';
+
 /**
- * NSFW levels that are considered restricted (R, X, XXX)
- * Values: 16 (R), 32 (X), 64 (XXX)
+ * NSFW levels that are considered restricted (R, X, XXX, Blocked).
+ * Must match nsfwBrowsingLevelsArray in the main Civitai application.
  */
-export const NSFW_RESTRICTED_LEVELS = [16, 32, 64] as const;
+export const NSFW_RESTRICTED_LEVELS = [
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+  NsfwLevel.Blocked,
+] as const;
 
 /**
  * Base models that have NSFW licensing restrictions

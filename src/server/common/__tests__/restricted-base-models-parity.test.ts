@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { baseModelRecords, licenseById } from '~/shared/constants/basemodel.constants';
-import { NSFW_RESTRICTED_BASE_MODELS } from '../../../../apps/event-engine/src/common/constants/feed.constants';
-import { NSFW_RESTRICTED_BASE_MODELS as SUBMODULE_RESTRICTED_BASE_MODELS } from '../../../../event-engine-common/constants/feed.constants';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import {
+  NSFW_RESTRICTED_BASE_MODELS,
+  NSFW_RESTRICTED_LEVELS,
+} from '../../../../apps/event-engine/src/common/constants/feed.constants';
+import {
+  NSFW_RESTRICTED_BASE_MODELS as SUBMODULE_RESTRICTED_BASE_MODELS,
+  NSFW_RESTRICTED_LEVELS as SUBMODULE_RESTRICTED_LEVELS,
+} from '../../../../event-engine-common/constants/feed.constants';
 
 // `nsfwRestrictedBaseModels` (derived from the licence flags in constants.ts) is the source. The
 // shared registry and the event-engine feed keep their own copies; a base missing from the
@@ -29,5 +37,20 @@ describe('restricted base models parity', () => {
   // bump turns this red, which is the cue to make it a plain `it`.
   it.fails('event-engine-common feed restricts the same bases', () => {
     expect([...SUBMODULE_RESTRICTED_BASE_MODELS].sort()).toEqual(source);
+  });
+
+  // The feed excludes `nsfwLevel IN levels AND baseModel IN bases`, so an R image on a
+  // restricted base is excluded only if R is in the levels.
+  it('event-engine feed excludes an R image on a restricted base', () => {
+    expect(NSFW_RESTRICTED_BASE_MODELS).toContain('SD 3.5 Large');
+    expect(NSFW_RESTRICTED_LEVELS).toContain(NsfwLevel.R);
+    expect([...NSFW_RESTRICTED_LEVELS]).toEqual(nsfwBrowsingLevelsArray);
+  });
+
+  // `it.fails` until the pointer moves past civitai/event-engine-common#16, like the case above.
+  it.fails('event-engine-common feed excludes an R image on a restricted base', () => {
+    expect(SUBMODULE_RESTRICTED_BASE_MODELS).toContain('SD 3.5 Large');
+    expect(SUBMODULE_RESTRICTED_LEVELS).toContain(NsfwLevel.R);
+    expect([...SUBMODULE_RESTRICTED_LEVELS]).toEqual(nsfwBrowsingLevelsArray);
   });
 });
