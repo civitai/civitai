@@ -7,6 +7,7 @@ import {
   IconFlag,
   IconPencil,
   IconRadar2,
+  IconSparkles,
   IconTrash,
 } from '@tabler/icons-react';
 import Router from 'next/router';
@@ -130,6 +131,15 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           leftSection={<IconEye size={14} stroke={1.5} />}
         >
           View Post
+        </Menu.Item>
+      )}
+      {features.semanticImageSearch && isImage && image.type === 'image' && (
+        <Menu.Item
+          component={NextLink}
+          href={`/search/semantic?imageId=${imageId}`}
+          leftSection={<IconSparkles size={14} stroke={1.5} />}
+        >
+          More like this
         </Menu.Item>
       )}
       <RemixGalleryMenuItems

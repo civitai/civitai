@@ -23,6 +23,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](feed-impressions.md) |
+| Semantic image search page (`/search/semantic`) | [docs/features/semantic-image-search-page.md](semantic-image-search-page.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](challenge-platform.md) |

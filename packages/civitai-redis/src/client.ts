@@ -3204,6 +3204,13 @@ const REDIS_KEYS_UNPREFIXED = {
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
+  SEMANTIC_SEARCH: {
+    /*
+      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
+      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${sha1(text)}`, TTL 7d.
+     */
+    QUERY_VECTOR: 'semantic-search:query-vector',
+  },
 } as const;
 
 /**
