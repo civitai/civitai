@@ -36,6 +36,7 @@ import {
   setCreatorShopItemListed,
   unarchiveCreatorShopItem,
 } from '../creator-shop.service';
+import { updateCreatorShopPack } from '../creator-shop-pack.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const submitted = {
@@ -90,7 +91,8 @@ const rows = (stale: ReturnType<typeof row>, locked: ReturnType<typeof row>) => 
   dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(stale as never);
   dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(stale as never);
   lockedRead.mockImplementation(() => {
-    if (!lock.mock.calls.length) throw new Error('read the row before locking it');
+    if (!lock.mock.calls.some(([values]) => values[0] === 42))
+      throw new Error('read the row before locking it');
     return locked;
   });
 };
@@ -154,6 +156,39 @@ describe('a verdict pinned to the version the moderator reviewed', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  // `null` is a real version (an item with no history yet), not a missing pin.
+  it('is refused when the item had no history when opened and has some now', async () => {
+    rows(row('PendingReview', { imageHash: 'old' }), after);
+    await expect(
+      reviewCreatorShopItem({
+        id: 42,
+        reviewerId: 99,
+        action: 'approve',
+        stickersEnabled: false,
+        reviewedVersion: null,
+      })
+    ).rejects.toThrow(/changed since you opened it/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('revert is refused when the item left Published since it was read', async () => {
+    rows(
+      row('Published', { history: [submitted] }),
+      row('PendingReview', { history: [submitted] })
+    );
+    await expect(
+      reviewCreatorShopItem({
+        id: 42,
+        reviewerId: 99,
+        action: 'revert',
+        rejectionReason: 'needs another look',
+        stickersEnabled: false,
+        reviewedVersion: submitted.at,
+      })
+    ).rejects.toThrow(/Only published items/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('keeps the edit the moderator reviewed, when the replica has not caught up with it', async () => {
     rows(before, after);
     await reviewCreatorShopItem({
@@ -179,6 +214,40 @@ describe('a listing change made while another write commits', () => {
     expect(writtenMeta()?.history?.map((e) => e.kind)).toEqual(['submitted', 'refunded']);
   });
 
+  it('re-listing is refused when a rejection landed since the item was read', async () => {
+    rows(row('Published', { history: [submitted] }), row('Rejected', { history: [submitted] }));
+    await expect(setCreatorShopItemListed({ id: 42, userId: 11, listed: true })).rejects.toThrow(
+      /Rejected items are final/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('restoring is refused when a takedown landed since the item was read', async () => {
+    rows(
+      row('Archived', { history: [submitted] }),
+      row('Archived', {
+        history: [submitted],
+        takedown: { reason: 'IP', moderatorId: 99, at: '2026-10-03T00:00:00.000Z' },
+      })
+    );
+    await expect(unarchiveCreatorShopItem({ id: 42, userId: 11 })).rejects.toThrow(/taken down/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  // Withheld decides whether the archive refunds the buyers, so it must be judged on the row as it
+  // stands: here an edit pulled the item back into review after it was read as Published.
+  it('archiving refunds buyers of an item withheld since it was read, keeping its history', async () => {
+    rows(
+      row('Published', { history: [submitted] }),
+      row('PendingReview', { displayApproved: false, history: [submitted, artSwapped] })
+    );
+    await archiveCreatorShopItem({ id: 42, userId: 11 });
+    expect(writtenMeta()).toMatchObject({
+      withdrawnRefund: { trigger: 'archive' },
+      history: [{ kind: 'submitted' }, { kind: 'edited' }],
+    });
+  });
+
   it('restoring keeps the history entry committed since the item was read', async () => {
     rows(
       row('Archived', { history: [submitted] }),
@@ -201,6 +270,58 @@ describe('a listing change made while another write commits', () => {
       row('Rejected', { history: [submitted, rejected] })
     );
     await expect(archiveCreatorShopItem({ id: 42, userId: 11 })).rejects.toThrow(
+      /Rejected items are final/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('a bundle pack edited while it is being reviewed', () => {
+  const pack = (status: string, meta: Record<string, unknown>) => ({
+    ...row(status, meta),
+    cosmeticId: null,
+    cosmetic: null,
+    members: [{ cosmeticId: 5 }, { cosmeticId: 6 }],
+  });
+  const rejected = {
+    at: '2026-10-03T00:00:00.000Z',
+    userId: 99,
+    kind: 'reviewed',
+    status: 'Rejected',
+    action: 'reject',
+  };
+
+  it('moves the version, so a verdict on the pack as first loaded is refused', async () => {
+    const loaded = pack('PendingReview', { coverUrl: 'old-cover', history: [submitted] });
+    rows(loaded, loaded);
+    await updateCreatorShopPack({ id: 42, userId: 11, name: 'Bait title' });
+    const edited = writtenMeta();
+    expect(edited?.history?.at(-1)).toMatchObject({
+      kind: 'edited',
+      changes: [{ field: 'name', from: 'Golden Laurel', to: 'Bait title' }],
+    });
+
+    update.mockClear();
+    rows(loaded, { ...loaded, title: 'Bait title', meta: edited as Record<string, unknown> });
+    await expect(
+      reviewCreatorShopItem({
+        id: 42,
+        reviewerId: 99,
+        action: 'approve',
+        stickersEnabled: false,
+        reviewedVersion: submitted.at,
+      })
+    ).rejects.toThrow(/changed since you opened it/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  // Writing the replica's copy back would erase the rejection and return the pack to the queue.
+  it('is refused when a rejection landed since the replica read, and writes nothing', async () => {
+    rows(
+      pack('PendingReview', { history: [submitted] }),
+      pack('Rejected', { history: [submitted, rejected] })
+    );
+    await expect(updateCreatorShopPack({ id: 42, userId: 11, name: 'Bait title' })).rejects.toThrow(
       /Rejected items are final/
     );
     expect(update).not.toHaveBeenCalled();

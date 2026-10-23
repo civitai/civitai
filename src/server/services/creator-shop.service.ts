@@ -97,6 +97,7 @@ import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pack.service';
 import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
+import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 // The shop-item shape, which already carries the creator and lister for
@@ -707,21 +708,6 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
   return item;
 };
 
-/**
- * Locks an item's row for the rest of the transaction and reads it. `meta` is written back whole,
- * so building it from any earlier read would erase an edit, verdict or refund entry committed since.
- * NO KEY: still serialises with those writes, without holding up a purchase's foreign-key insert.
- */
-const lockShopItem = async (tx: Prisma.TransactionClient, id: number) => {
-  await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR NO KEY UPDATE`;
-  const item = await tx.cosmeticShopItem.findUnique({
-    where: { id },
-    select: { status: true, meta: true, unitAmount: true, rejectionReason: true },
-  });
-  if (!item) throw throwNotFoundError('Shop item not found');
-  return item;
-};
-
 export const updateCreatorShopItem = async ({
   userId,
   isModerator,
@@ -964,6 +950,13 @@ export const updateCreatorShopItem = async ({
   if (price != null) recordChange('price', existing.unitAmount, price);
   if (availableQuantity !== undefined)
     recordChange('quantity', existing.availableQuantity, availableQuantity);
+  const yesNo = (value?: boolean) => (value ? 'yes' : 'no');
+  if (acceptsBlueBuzz !== undefined)
+    recordChange('acceptsBlueBuzz', yesNo(meta.acceptsBlueBuzz), yesNo(acceptsBlueBuzz));
+  if (resaleChanged) {
+    recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
+    recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
+  }
 
   const reviewNote = !backToReview
     ? undefined
