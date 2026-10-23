@@ -62,6 +62,7 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
 import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
@@ -1265,6 +1266,10 @@ function CreatorShopReviewPage() {
                             : true
                         }
                       />
+                    )}
+
+                    {selected.status !== CosmeticShopItemStatus.Archived && !isMysteryPack && (
+                      <ShopItemEventTagsPanel shopItemId={selected.id} />
                     )}
 
                     <Stack gap={8}>

@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 
 export type GetPaginatedCosmeticShopItemInput = z.infer<typeof getPaginatedCosmeticShopItemInput>;
 export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
@@ -230,6 +231,9 @@ export const cosmeticShopSectionMeta = z.object({
   // Renders the sitewide community-cosmetics feed in place of hand-picked
   // items, so mods control the hub's placement/banner/copy like any section.
   communityHub: z.boolean().optional(),
+  // Shop items carrying this event tag join the section on their own, after its hand-picked items,
+  // so an event's approved cosmetics need not be placed one by one. Blank clears it.
+  eventTag: z.preprocess((v) => (v === '' ? undefined : v), eventTagSchema.optional()),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
@@ -242,6 +246,12 @@ export const upsertCosmeticShopSectionInput = z.object({
   image: comfylessImageSchema.nullish(),
   published: z.boolean().optional(),
   meta: cosmeticShopSectionMeta.optional(),
+});
+
+export type SetShopItemEventTagsInput = z.infer<typeof setShopItemEventTagsInput>;
+export const setShopItemEventTagsInput = z.object({
+  shopItemId: z.number().int().positive(),
+  eventTags: eventTagsSchema,
 });
 
 export type ShopItemSectionInput = z.infer<typeof shopItemSectionInput>;
