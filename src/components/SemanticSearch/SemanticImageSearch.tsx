@@ -135,7 +135,7 @@ export function SemanticImageSearch() {
         />
       </div>
 
-      {imageId && (
+      {imageId && !isError && (
         <Alert color="blue">
           Showing images similar to{' '}
           <Link href={`/images/${imageId}`} className="underline">
@@ -162,7 +162,9 @@ export function SemanticImageSearch() {
         </Center>
       ) : isError ? (
         <Alert color="red" title="Search failed">
-          {error.message}
+          {error.data?.code === 'NOT_FOUND' || error.data?.code === 'TOO_MANY_REQUESTS'
+            ? error.message
+            : 'Search is unavailable right now, try again.'}
         </Alert>
       ) : !items.length ? (
         <NoContent message="No images matched. Try other words or fewer filters." />
