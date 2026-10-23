@@ -526,15 +526,130 @@ describe('refundUnfulfilledMembershipGift', () => {
     );
   });
 
-  it('refunds nothing when the charge is already fully refunded', async () => {
+  const refundedStatusWrite = () =>
+    mockDbWrite.membershipGift.update.mock.calls.find(([args]) => args.data?.status === 'Refunded');
+
+  // The refund webhook is a second path, not the one this relies on: deliveries have gone missing.
+  it('marks the gift Refunded itself once the refund succeeds', async () => {
+    mockStripe.paymentIntents.retrieve.mockResolvedValue(paidIntent({ amount_captured: 1000 }));
+
+    await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+
+    expect(refundedStatusWrite()).toBeDefined();
+    expect(mockStripe.refunds.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.membershipGift.update.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('marks a Pending gift whose charge is already fully refunded, moving no money', async () => {
     mockStripe.paymentIntents.retrieve.mockResolvedValue(
       paidIntent({ amount_captured: 1000, amount_refunded: 1000 })
     );
 
+    const dry = await refundUnfulfilledMembershipGift({ giftId: 'gift_1' });
+    expect(dry).toMatchObject({ outcome: 'would-mark-refunded', chargeId: 'ch_1' });
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+
+    const result = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+    expect(result).toMatchObject({ outcome: 'marked-refunded', chargeId: 'ch_1' });
+    expect(refundedStatusWrite()).toBeDefined();
+    expect(mockStripe.refunds.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'the payment belongs to another gift',
+      {},
+      { metadata: { giftId: 'gift_2' } },
+      'payment-mismatch',
+    ],
+    ['the payment has not succeeded', {}, { status: 'processing' }, 'payment-not-succeeded'],
+    [
+      'the gift has its own subscription',
+      { stripeSubscriptionId: 'sub_1' },
+      {},
+      'live-stripe-objects',
+    ],
+    ['the gift has an armed month', { armedCouponId: 'gift_gift_1_m1' }, {}, 'live-stripe-objects'],
+  ])(
+    'does not mark a fully refunded gift Refunded when %s',
+    async (_, giftOver, intentOver, reason) => {
+      mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...paidPendingGift, ...giftOver });
+      mockStripe.paymentIntents.retrieve.mockResolvedValue({
+        ...paidIntent({ amount_captured: 1000, amount_refunded: 1000 }),
+        ...intentOver,
+      });
+
+      const result = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+
+      expect(result).toMatchObject({ outcome: 'skipped', reason });
+      expect(refundedStatusWrite()).toBeUndefined();
+    }
+  );
+
+  it('does not mark a fully refunded gift Refunded when it was not paid by card', async () => {
+    mockStripe.paymentIntents.retrieve.mockResolvedValue(
+      paidIntent({
+        amount_captured: 1000,
+        amount_refunded: 1000,
+        payment_method_details: { type: 'customer_balance' },
+      })
+    );
+
     const result = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
 
-    expect(result).toEqual({ outcome: 'skipped', reason: 'nothing-refundable' });
-    expect(mockStripe.refunds.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: 'skipped', reason: 'not-a-card-payment' });
+    expect(refundedStatusWrite()).toBeUndefined();
+  });
+
+  describe('run again', () => {
+    let row: Record<string, unknown>;
+    let charge: Record<string, unknown>;
+    let failNextWrite: boolean;
+
+    beforeEach(() => {
+      failNextWrite = false;
+      row = { ...paidPendingGift };
+      charge = { amount_captured: 1000, amount_refunded: 0 };
+      mockDbWrite.membershipGift.findUnique.mockImplementation(async ({ where }: any) =>
+        where.id === row.id ? { ...row } : null
+      );
+      mockDbWrite.membershipGift.update.mockImplementation(async ({ data }: any) => {
+        if (failNextWrite) {
+          failNextWrite = false;
+          throw new Error('connection reset');
+        }
+        row = { ...row, ...data };
+        return row;
+      });
+      mockStripe.paymentIntents.retrieve.mockImplementation(async () => paidIntent(charge));
+      mockStripe.refunds.create.mockImplementation(async () => {
+        charge = { ...charge, amount_refunded: 1000 };
+        return { id: 're_1' };
+      });
+    });
+
+    it('is a no-op after a refund', async () => {
+      await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+      const again = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+
+      expect(again).toEqual({ outcome: 'already-refunded' });
+      expect(mockStripe.refunds.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks the gift on a re-run when the refund went through but marking it failed', async () => {
+      failNextWrite = true;
+      await expect(
+        refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true })
+      ).rejects.toThrow('connection reset');
+      expect(row.status).toBe('Pending');
+
+      const again = await refundUnfulfilledMembershipGift({ giftId: 'gift_1', execute: true });
+
+      expect(again).toMatchObject({ outcome: 'marked-refunded' });
+      expect(row.status).toBe('Refunded');
+      expect(mockStripe.refunds.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('refuses a payment that was not made by card', async () => {

@@ -150,19 +150,18 @@ which you skipped and why. Typical shapes:
 
 If your own instructions (or the primary checkout's `CLAUDE.local.md`) name a **review-record store**
 for PR reviews, the lanes' work is recorded there so a later reviewer of the same PR can see it and not
-redo it (step 3a). For that, open each lane's prompt with **its published lane prompt file**,
-verbatim, from the **default branch** (`origin/main`), never from the PR or the tree under review, and
-take its version from those same bytes; the store's instructions say how the version is computed. Put
-the inputs above (the scope, the intent doc for the intent lane, the delivery route, the diff on a
-re-run) after the file, never inside it. The prompt ends with the structured-result contract. Record the
-exact model id each lane reports it ran on, not the alias in its definition. A lane run from an edited or
-different copy of the file cannot claim that version, and a result recorded under a version or model it
-did not run is worse than no record.
+redo it (step 3a). A recorded lane is identified by **its definition file in `.claude/agents/`, as it is
+on the default branch**: its version is taken from that file's raw bytes, and its model is that file's
+`model:` value exactly as written (`opus`, `sonnet`), not a resolved model id. The store's instructions
+say how the version is computed.
 
-The lane's own definition must come from the default branch too: when a store is configured, run step 0's
-`git checkout origin/main -- .claude` even for a `main`-based head, so a PR that edits a lane cannot
-review itself under its own edit. A lane with no prompt file on the default branch is spawned as usual
-and recorded as no run at all.
+So when a store is configured, run step 0's `git checkout origin/main -- .claude` even for a `main`-based
+head, and note the `origin/main` commit you took it from: the lanes then run under the default-branch
+definitions, and a PR that edits a lane cannot review itself under its own edit. Spawn the lanes as usual,
+with the usual inputs, and ask each to end its report with the structured result the store's
+instructions define. A lane run under any other copy of its definition, or with a model override,
+cannot claim that version or model, and a result recorded under a version or model it did not run is
+worse than no record.
 
 No store configured: nothing here changes, and step 3a does not apply.
 
