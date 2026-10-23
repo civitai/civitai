@@ -15,23 +15,31 @@ import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentG
  *   - `BLOCK_HELLO` while ready: a NEW document announced itself after the app was ready.
  *     The SDK says hello once per document, before it can ack READY, so a hello on a ready
  *     host is a reload whose entry token was still valid.
- *   - a `load` while ready, when a load has ALREADY been seen since the last hello: the
- *     refused reload. It runs no app code, so it never says hello, but Chromium still fires
- *     `load` on the frame element (measured 2026-10-23, a 401 carrying
- *     X-Frame-Options: DENY).
+ *   - a `load` while ready that leaves MORE loads than hellos on this frame (and at least
+ *     two loads): the refused reload. It runs no app code, so it never says hello, but
+ *     Chromium still fires `load` on the frame element (measured 2026-10-23, a 401
+ *     carrying X-Frame-Options: DENY). Every document the app itself served said hello
+ *     once; a load no hello accounts for is a document the app did not serve.
  *
- * WHY "SINCE THE LAST HELLO", not "any load after ready" and not "the second load ever".
- *   - The first `load` can arrive AFTER BLOCK_READY: the app acks as soon as its module
- *     code receives the init, while `load` also waits for every image and stylesheet
- *     (measured in Chromium: READY at 24 ms, the first `load` at 624 ms). "Any load after
- *     ready" would remount on it, and the remounted frame would do it again — a loop.
- *   - An app whose boot navigates its document ONCE before READY (a `location.replace`, or
- *     Vite's "new dependencies optimized" reload) loads twice; counting loads over the
- *     frame's whole life would call the second one a reload, every time — a loop again.
- *     The second document's hello resets the count, so its own late `load` is a first.
- *   - Residual, stated rather than hidden: an app on an SDK that never says hello AND
- *     navigates during boot still reads as reloading. `@civitai/sdk` has said hello since
- *     its first release and `@civitai/app-sdk` since 2026-08, so that is a pre-2026-08 app.
+ * WHY "MORE LOADS THAN HELLOS", and not the alternatives each audit round falsified:
+ *   - not "any load after ready": the first `load` can arrive AFTER BLOCK_READY, since the
+ *     app acks as soon as its module code receives the init while `load` also waits for
+ *     every image and stylesheet (measured in Chromium: READY at 24 ms, the first `load`
+ *     at 624 ms). That remounts on the first load, and the remounted frame does it again —
+ *     a loop.
+ *   - not "the second load ever": an app whose boot replaces its document ONCE before
+ *     READY (a `location.replace`, Vite's "new dependencies optimized" reload) loads twice
+ *     — a loop again. Both of its documents said hello, so 2 loads / 2 hellos is not one.
+ *   - not "loads since the last hello": that assumes a document's hello reaches the host
+ *     before the same document's `load`. An app that starts its SDK late (e.g. in a React
+ *     mount effect) can say hello after it; the hello then erased its own document's
+ *     load, and the later 401 reload went unanswered. Counting both needs no order.
+ *   - "at least two loads" keeps an SDK that never says hello from reading its own first
+ *     load as a reload.
+ *   - Residual, stated rather than hidden: an app that navigates during boot BEFORE its
+ *     SDK says hello (or on an SDK that never does) reads as reloading — once per such
+ *     boot, so a loop only if it does that on every boot. `@civitai/sdk` has said hello
+ *     since its first release, and `@civitai/blocks-react` since 2026-08-04.
  *
  * Every `load` must be OBSERVED for the count to mean anything, so the dev-tunnel host
  * mounts its frame client-side only (DevTunnelBlockHost): a frame in the server-rendered
@@ -50,12 +58,13 @@ export type GuestFrameEvent = 'hello' | 'load';
 export function isDevTunnelGuestReload(args: {
   surface: BlockHostSurface;
   event: GuestFrameEvent;
-  /** `load` events on the current frame element since its last BLOCK_HELLO, INCLUDING
-   *  the one being judged (reset by a hello, and when the element is remounted). */
-  loadsSinceHello: number;
+  /** `load` events on this frame since it was (re)mounted, INCLUDING the one judged. */
+  loads: number;
+  /** BLOCK_HELLOs from this frame since it was (re)mounted, including the one judged. */
+  hellos: number;
   status: 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 }): boolean {
-  const { surface, event, loadsSinceHello, status } = args;
+  const { surface, event, loads, hellos, status } = args;
   if (surface !== 'dev-tunnel' || status !== 'ready') return false;
-  return event === 'hello' || loadsSinceHello >= 2;
+  return event === 'hello' || (loads >= 2 && loads > hellos);
 }

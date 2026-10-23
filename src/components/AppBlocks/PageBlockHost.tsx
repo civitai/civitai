@@ -2,7 +2,6 @@ import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import type { SyntheticEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
@@ -1667,26 +1666,33 @@ export function PageBlockHost({
 
   // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
   // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
-  // only feeds it: `load` events on the frame ELEMENT since the guest's last BLOCK_HELLO
-  // (a hello starts a new document; a Retry re-keys the <iframe>, and the new element
-  // starts from zero), and the hello itself. It reports once per mount, so a burst of
-  // reloads is one request; a parent whose fresh mint fails unmounts this host into its
-  // own error state, so there is nothing here to loop. The callback is read through a ref
-  // so a parent's inline arrow cannot change these handlers' identity.
-  const guestFrameRef = useRef<{ frame: HTMLIFrameElement | null; loadsSinceHello: number }>({
-    frame: null,
-    loadsSinceHello: 0,
-  });
+  // only feeds it the frame's `load` events and BLOCK_HELLOs, counted since the frame was
+  // (re)mounted — a Retry re-keys the <iframe> via `reloadNonce`, which restarts both
+  // counts. It reports once per mount, so a burst of reloads is one request; a parent
+  // whose fresh mint fails unmounts this host into its own error state, so there is
+  // nothing here to loop. The callback is read through a ref so a parent's inline arrow
+  // cannot change these handlers' identity.
+  const guestFrameRef = useRef({ loads: 0, hellos: 0 });
+  useEffect(() => {
+    // Only on a RE-key (the first mount starts at zero), after the new <iframe> commits —
+    // its document needs a network round trip before it can load or say hello.
+    if (reloadNonce === 0) return;
+    guestFrameRef.current = { loads: 0, hellos: 0 };
+  }, [reloadNonce]);
   const guestReloadReportedRef = useRef(false);
   const onGuestReloadedRef = useRef(onGuestReloaded);
   onGuestReloadedRef.current = onGuestReloaded;
-  const reportIfGuestReload = useCallback(
+  const noteGuestFrame = useCallback(
     (event: GuestFrameEvent) => {
+      const guest = guestFrameRef.current;
+      if (event === 'load') guest.loads += 1;
+      else guest.hellos += 1;
       if (guestReloadReportedRef.current) return;
       const reload = isDevTunnelGuestReload({
         surface,
         event,
-        loadsSinceHello: guestFrameRef.current.loadsSinceHello,
+        loads: guest.loads,
+        hellos: guest.hellos,
         status: statusRef.current,
       });
       if (!reload) return;
@@ -1695,22 +1701,7 @@ export function PageBlockHost({
     },
     [surface]
   );
-  const handleFrameLoad = useCallback(
-    (event: SyntheticEvent<HTMLIFrameElement>) => {
-      const guest = guestFrameRef.current;
-      if (guest.frame !== event.currentTarget) {
-        guest.frame = event.currentTarget;
-        guest.loadsSinceHello = 0;
-      }
-      guest.loadsSinceHello += 1;
-      reportIfGuestReload('load');
-    },
-    [reportIfGuestReload]
-  );
-  const noteGuestHello = useCallback(() => {
-    reportIfGuestReload('hello');
-    guestFrameRef.current.loadsSinceHello = 0;
-  }, [reportIfGuestReload]);
+  const handleFrameLoad = useCallback(() => noteGuestFrame('load'), [noteGuestFrame]);
 
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
@@ -1747,10 +1738,10 @@ export function PageBlockHost({
       const marks = launchMarksRef.current;
       if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
-      noteGuestHello();
+      noteGuestFrame('hello');
     });
     return off;
-  }, [onMessage, noteGuestHello]);
+  }, [onMessage, noteGuestFrame]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
