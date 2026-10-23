@@ -81,7 +81,7 @@ const {
   csamFlaggedIds,
   evidenceHeldUserIds,
   accountHeldIds,
-  markerObjects,
+  markerView,
   withoutModActivity,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
@@ -96,11 +96,8 @@ const {
   const evidenceHeldUserIds: number[] = [];
   // Blocked images of accounts under any other account hold.
   const accountHeldIds: number[] = [];
-  // Which of the hold marker's objects the database has, by quoted name.
-  const markerObjects = { '"EvidenceHeldUser"': true, '"EvidenceHold"': true } as Record<
-    string,
-    boolean
-  >;
+  // Whether the database has the hold marker's view.
+  const markerView = { present: true };
   // Images whose block has no moderator takedown on record, so they take the non-retracting call.
   const withoutModActivity: number[] = [];
   const mockEnv = {
@@ -135,7 +132,7 @@ const {
       ? flatten(first.strings, first.values)
       : flatten(first, rawValues);
     sqlLog.push(sql);
-    if (sql.includes('to_regclass')) return [{ present: !!markerObjects[values[0] as string] }];
+    if (sql.includes('SELECT to_regclass(')) return [{ present: markerView.present }];
     // Routed before the report lookup below: the account hold reads "CsamReport" too.
     if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
     if (sql.includes('FROM "CsamReport"')) {
@@ -183,7 +180,7 @@ const {
     csamFlaggedIds,
     evidenceHeldUserIds,
     accountHeldIds,
-    markerObjects,
+    markerView,
     withoutModActivity,
     mockEnv,
     mockDbRead: {
@@ -248,6 +245,30 @@ const TRAINING_ENV = {
   APPEAL_OWNER_HASH_KEY: 'o',
 };
 
+// The default fixture with image 7's account held: 5, 6 and 10 are legal-held, 7 leaves the batch,
+// 2 is inside retention, 3 and 4 are stale, and 1 and 8 are deleted as takedowns.
+const EXPECTED_SUMMARY = {
+  name: 'remove-blocked-images',
+  deleted: 2,
+  heldAtDelete: 0,
+  retracted: 2,
+  deletedWithoutRetraction: 0,
+  staleRemoved: 2,
+  waitingForRetention: 1,
+  csamHeld: 3,
+  appealHeld: 0,
+  csamReviewHeld: 0,
+  evidenceHeld: 0,
+  accountHeld: 1,
+};
+// Every queued image held one way or another, so the batch is empty.
+const EXPECTED_QUIET_SUMMARY = {
+  name: 'remove-blocked-images',
+  processed: 0,
+  csamHeld: 3,
+  accountHeld: 6,
+};
+
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 async function runJob() {
   return (await removeBlockedImages.run(ctx).result) as Partial<{
@@ -258,6 +279,9 @@ async function runJob() {
     csamHeld: number;
     appealHeld: number;
     csamReviewHeld: number;
+    evidenceHeld: number;
+    accountHeld: number;
+    processed: number;
     skipped: string;
   }>;
 }
@@ -297,8 +321,7 @@ beforeEach(() => {
   csamFlaggedIds.length = 0;
   evidenceHeldUserIds.length = 0;
   accountHeldIds.length = 0;
-  markerObjects['"EvidenceHeldUser"'] = true;
-  markerObjects['"EvidenceHold"'] = true;
+  markerView.present = true;
   withoutModActivity.length = 0;
   extraImages.length = 0;
   extraQueue.length = 0;
@@ -374,7 +397,7 @@ describe('remove-blocked-images retention clock', () => {
     // The account hold reads "CsamReport" too, from the batch exclusion.
     expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([
       [legalHoldUserIdsSql],
-      [accountHeldBlockedImagesSql(true)],
+      [accountHeldBlockedImagesSql],
     ]);
   });
 
@@ -425,40 +448,36 @@ describe('remove-blocked-images retention clock', () => {
     ).toBe(true);
   });
 
-  // What the post-deploy check reads: the job runner itself logs only that a run succeeded.
-  it("logs the run's counts", async () => {
-    const result = await runJob();
-
-    const summary = mockLogToAxiom.mock.calls
-      .map((c) => c[0] as Record<string, unknown>)
-      .find((a) => a.message === 'finished');
-    expect(summary).toMatchObject({ ...result, name: 'remove-blocked-images' });
-    expect(result.deleted).toBeGreaterThan(0);
-    expect(typeof summary?.durationMs).toBe('number');
-  });
-
-  // `to_regclass('"EvidenceHeldUser"')` only names it as text, which a database without it accepts.
-  const namesMarkerView = () => sqlLog.some((sql) => sql.includes('FROM "EvidenceHeldUser"'));
-
-  it('deletes nothing, and names no missing view, when the marker table is there without its view', async () => {
-    markerObjects['"EvidenceHeldUser"'] = false;
+  it('deletes nothing, and runs nothing that names the marker view, on a database without it', async () => {
+    markerView.present = false;
     const result = await runJob();
 
     expect(result.skipped).toBe('hold-marker-view-missing');
     expect(mockDeleteImages).not.toHaveBeenCalled();
-    expect(namesMarkerView()).toBe(false);
+    expect(execLog.map((e) => e.sql)).not.toContain('SELECT evidence_hold_purge_unheld()');
+    // The existence check passes the name as a value, so any match here is a statement naming it.
+    expect(sqlLog.filter((sql) => sql.includes('EvidenceHeldUser'))).toEqual([]);
   });
 
-  it('still deletes, naming no marker view, on a database without either marker object', async () => {
-    markerObjects['"EvidenceHeldUser"'] = false;
-    markerObjects['"EvidenceHold"'] = false;
+  // What the post-deploy check reads: the job runner itself logs only that a run succeeded.
+  const summaryLog = () =>
+    mockLogToAxiom.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((a) => a.message === 'finished');
+
+  it("logs the run's counts", async () => {
+    accountHeldIds.push(7);
     await runJob();
 
-    expect(deletedIds()).toContain(1);
-    expect(namesMarkerView()).toBe(false);
-    expect(deleteOptions()?.onlyWhere).toEqual(
-      purgeHoldGuard({ holdForTrainingCopy: false, markerView: false })
-    );
+    expect(summaryLog()).toMatchObject(EXPECTED_SUMMARY);
+    expect(Number.isFinite(summaryLog()?.durationMs)).toBe(true);
+  });
+
+  it("logs a quiet run's counts", async () => {
+    accountHeldIds.push(1, 2, 3, 4, 7, 8);
+    await runJob();
+
+    expect(summaryLog()).toMatchObject(EXPECTED_QUIET_SUMMARY);
   });
 
   it('keeps every Blocked image of an account under any other account hold out of the batch', async () => {
@@ -641,9 +660,7 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     const onlyWhere = deleteOptions()?.onlyWhere as { sql: string } | undefined;
-    expect(onlyWhere?.sql).toBe(
-      purgeHoldGuard({ holdForTrainingCopy: false, markerView: true }).sql
-    );
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard({ holdForTrainingCopy: false }).sql);
   });
 
   it('adds the training-copy hold only when the copy job is configured', async () => {
@@ -651,12 +668,8 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     const onlyWhere = deleteOptions()?.onlyWhere as { sql: string } | undefined;
-    expect(onlyWhere?.sql).toBe(
-      purgeHoldGuard({ holdForTrainingCopy: true, markerView: true }).sql
-    );
-    expect(onlyWhere?.sql).not.toBe(
-      purgeHoldGuard({ holdForTrainingCopy: false, markerView: true }).sql
-    );
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard({ holdForTrainingCopy: true }).sql);
+    expect(onlyWhere?.sql).not.toBe(purgeHoldGuard({ holdForTrainingCopy: false }).sql);
   });
 
   it('guards the non-retracting delete as well as the takedown one', async () => {
@@ -668,7 +681,7 @@ describe('remove-blocked-images retention clock', () => {
     );
     expect(guards).toHaveLength(2);
     for (const guard of guards) {
-      expect(guard?.sql).toBe(purgeHoldGuard({ holdForTrainingCopy: false, markerView: true }).sql);
+      expect(guard?.sql).toBe(purgeHoldGuard({ holdForTrainingCopy: false }).sql);
     }
   });
 
