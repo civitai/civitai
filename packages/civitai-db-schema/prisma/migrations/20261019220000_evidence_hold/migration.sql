@@ -2,6 +2,10 @@
 --
 -- Apply this BEFORE deploying the code that reads "EvidenceHeldUser": the purge jobs query the view
 -- and fail on a database that lacks it.
+--
+-- On production, apply it only in the same transaction as the moderation team's exceptions step (ask
+-- the migration's owner); applied alone, its backfill releases holds that step keeps, and a release is
+-- final. Needs the TEMPORARY privilege (see the backfill at the end).
 
 CREATE TABLE "EvidenceHold" (
   "id" SERIAL PRIMARY KEY,

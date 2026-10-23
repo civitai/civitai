@@ -1207,12 +1207,13 @@ describe('the migration backfill', () => {
   });
 });
 
-// Legal's exceptions are expired reports whose holds were promised on. Released by the backfill, the
-// end guard would refuse the extension that follows in the same transaction.
+// Reports the applier extends at apply time. Released by the backfill, the end guard would refuse the
+// extension that follows in the same transaction.
 describe('the migration backfill with a keep list', () => {
   const KEPT_USER = 33;
   const KEPT_SECONDARY_USER = 34;
   const UNLISTED_USER = 35;
+  const LISTED_RECENT_USER = 36; // listed, but still inside its year
   let db: PGlite;
 
   beforeAll(async () => {
@@ -1221,9 +1222,10 @@ describe('the migration backfill with a keep list', () => {
     await db.exec(`
       INSERT INTO "CsamReport" (id, "userId", "reportSentAt", details) VALUES
         (1, ${KEPT_USER}, now() - interval '400 days', '{"secondaryUserId": ${KEPT_SECONDARY_USER}}'),
-        (2, ${UNLISTED_USER}, now() - interval '400 days', '{}');
+        (2, ${UNLISTED_USER}, now() - interval '400 days', '{}'),
+        (3, ${LISTED_RECENT_USER}, now() - interval '30 days', '{}');
       CREATE TEMP TABLE evidence_hold_backfill_keep (report_id INTEGER PRIMARY KEY);
-      INSERT INTO evidence_hold_backfill_keep VALUES (1);
+      INSERT INTO evidence_hold_backfill_keep VALUES (1), (3);
     `);
     await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   });
@@ -1246,19 +1248,20 @@ describe('the migration backfill with a keep list', () => {
       { userId: KEPT_USER, released: false },
       { userId: KEPT_SECONDARY_USER, released: false },
       { userId: UNLISTED_USER, released: true },
+      { userId: LISTED_RECENT_USER, released: false },
     ]);
   });
 
   it("lets the applier's extension hold a listed report again", async () => {
     // Past its year and unreleased: not held until extended.
-    expect(await heldUsers()).toEqual([]);
+    expect(await heldUsers()).toEqual([LISTED_RECENT_USER]);
     await db.exec(`
       UPDATE "EvidenceHold"
       SET "extendedUntil" = now() + interval '1 year', "extensionRequestedBy" = 'agency',
           "extensionReference" = 'ref'
       WHERE "csamReportId" = 1;
     `);
-    expect(await heldUsers()).toEqual([KEPT_USER, KEPT_SECONDARY_USER]);
+    expect(await heldUsers()).toEqual([KEPT_USER, KEPT_SECONDARY_USER, LISTED_RECENT_USER]);
   });
 
   it('drops the list with the migration', async () => {
