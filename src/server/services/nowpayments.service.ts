@@ -346,7 +346,7 @@ export const processDeposit = async (
   if (event.payment_id) {
     try {
       // Fetch existing record for status ordering and data preservation
-      const existing = await dbRead.cryptoDeposit.findUnique({
+      const existing = await dbWrite.cryptoDeposit.findUnique({
         where: { paymentId: BigInt(event.payment_id) },
         select: { status: true, payAmount: true, outcomeAmount: true, buzzCredited: true,
                   bonusBuzz: true, multiplier: true, depositFee: true, serviceFee: true,
@@ -379,12 +379,7 @@ export const processDeposit = async (
         waiting: 0, unverified_exhausted: 0, confirming: 1, sending: 1, partially_paid: 1, unverified: 1.5,
         failed: 2, buzz_failed: 3, finished: 4,
       };
-      const existingRank = existing ? (statusRank[existing.status] ?? 0) : -1;
       const nextRank = statusRank[depositStatus] ?? 0;
-      // Only advance status forward; finished is immutable.
-      const shouldUpdateStatus = !existing || (existing.status !== 'finished' && nextRank > existingRank)
-        || (existing.status === 'buzz_failed' && depositStatus === 'finished');
-      statusAdvanced = shouldUpdateStatus;
 
       await dbWrite.cryptoDeposit.upsert({
         where: { paymentId: BigInt(event.payment_id) },
@@ -394,12 +389,18 @@ export const processDeposit = async (
           status: depositStatus,
           ...depositData,
         },
-        update: {
-          ...(shouldUpdateStatus ? { status: depositStatus } : {}),
-          userId,
-          ...depositData,
-        },
+        update: { userId, ...depositData },
       });
+      // Status only moves forward, and only from what the row holds at write time: another
+      // delivery may have moved it since `existing` was read. finished is immutable.
+      const { count } = await dbWrite.cryptoDeposit.updateMany({
+        where: {
+          paymentId: BigInt(event.payment_id),
+          status: { notIn: Object.keys(statusRank).filter((s) => statusRank[s] >= nextRank) },
+        },
+        data: { status: depositStatus },
+      });
+      statusAdvanced = !existing || count > 0;
     } catch (e) {
       await log({
         message: 'Failed to upsert CryptoDeposit record',

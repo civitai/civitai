@@ -354,6 +354,28 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     expect(grantBuzzPurchase).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a paid claim on the sweep when it lands while a confirming IPN is being recorded', async () => {
+    caller.getPaymentStatus.mockResolvedValue(apiPayment({ payment_status: 'confirming' }));
+    const read = dbMock.dbWrite.cryptoDeposit.findUnique.getMockImplementation()!;
+    let landed = false;
+    dbMock.dbWrite.cryptoDeposit.findUnique.mockImplementation(async (args: any) => {
+      const row = await read(args);
+      if (!landed && args.select?.payAmount) {
+        landed = true;
+        await deliver(ipn({ order_id: 'user:99' }));
+      }
+      return row;
+    });
+
+    await deliver(ipn({ payment_status: 'confirming' }));
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', userId: 42 });
+
+    caller.getPaymentStatus.mockResolvedValue(apiPayment());
+    await retryFailedDeposits();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished' });
+    expect(grantBuzzPurchase).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps a paid claim on the sweep when a verified confirming IPN follows it', async () => {
     caller.getPaymentStatus.mockResolvedValue(apiPayment({ payment_status: 'confirming' }));
     await deliver(ipn({ order_id: 'user:99' }));
@@ -593,6 +615,17 @@ describe('nowpayments webhook: telling the user', () => {
     await deliver(ipn());
 
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('signals a repeated confirming notification once', async () => {
+    caller.getPaymentStatus.mockResolvedValue(
+      apiPayment({ payment_status: 'confirming', outcome_amount: null })
+    );
+
+    await deliver(ipn({ payment_status: 'confirming' }));
+    await deliver(ipn({ payment_status: 'confirming' }));
+
+    expect(signalSend).toHaveBeenCalledTimes(1);
   });
 
   it('credits, signals and notifies once when the same payment is delivered twice', async () => {
