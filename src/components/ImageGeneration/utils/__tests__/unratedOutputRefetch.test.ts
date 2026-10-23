@@ -4,6 +4,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  UNRATED_RETRY_MAX_MS,
   UNRATED_RETRY_MIN_MS,
   applyCachedOutputRating,
   createUnratedOutputWatcher,
@@ -170,6 +171,54 @@ describe('createUnratedOutputWatcher', () => {
     watch();
 
     expect(verdict).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the workflow while the blob has no verdict, since the workflow can be rated first', async () => {
+    const { watch, verdict, refetch, setWorkflows } = setup(async () => {
+      throw new Error('503');
+    });
+    refetch.mockImplementation(async () => {
+      setWorkflows([workflow('wf-1', [image('a', { nsfwLevel: 'pg' })])]);
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MIN_MS);
+
+    expect(refetch).toHaveBeenCalledWith(['wf-1']);
+    await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MAX_MS * 2);
+    expect(verdict).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one workflow refetch between that workflow’s outputs', async () => {
+    const workflows = [workflow('wf-1', [image('a'), image('b')])];
+    const refetch = vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 1_000)));
+    const watch = createUnratedOutputWatcher({
+      readWorkflows: () => workflows,
+      readVerdict: async () => {
+        throw new Error('503');
+      },
+      applyRating: vi.fn(),
+      refetch,
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MIN_MS);
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  // A tab left open must not poll forever for an output that is never rated.
+  it('gives up after ten minutes without a rating, and a later watch starts over', async () => {
+    const tenMinutes = 10 * 60_000;
+    const { watch, verdict } = setup(async () => {
+      throw new Error('503');
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(tenMinutes + UNRATED_RETRY_MAX_MS);
+    const reads = verdict.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(tenMinutes);
+
+    expect(verdict).toHaveBeenCalledTimes(reads);
+    watch();
+    expect(verdict).toHaveBeenCalledTimes(reads + 1);
   });
 });
 
