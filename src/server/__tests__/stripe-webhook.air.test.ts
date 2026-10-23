@@ -153,6 +153,7 @@ describe('stripe webhook: Civitai AIR checkout', () => {
       }),
       'webhooks'
     );
+    expect(loggedText()).not.toContain('buyer@example.com');
   });
 
   it('asks Stripe to retry, and tells AIR nothing, when the checkout cannot be claimed', async () => {
