@@ -14,6 +14,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
 | Moderator app: Model Flags (appeals, flagged, file matches) | [docs/features/moderator-model-flags.md](moderator-model-flags.md) |
 | CSAM text holds queue (moderator app) | [docs/features/text-scan-csam-holds.md](text-scan-csam-holds.md) |
+| Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
 | Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ALIAS_KINDS,
   MODEL_RULE_LIMITS,
+  aliasKindField,
+  aliasWorkflowIdField,
   isSemanticDefinition,
-  parseModelRulesStoredResult,
+  parseModelRulesHoldMeta,
   semanticModelRuleSchema,
   storedModelRuleSchema,
 } from './model-rules';
@@ -75,34 +78,57 @@ describe('term word cap', () => {
   });
 });
 
-describe('parseModelRulesStoredResult', () => {
-  it('reads matches, snapshot, literal ids and the hold flag', () => {
-    expect(
-      parseModelRulesStoredResult({
-        labels: { modelRules: { matched: [{ ruleId: 1, reason: ' r ' }, 'x', { ruleId: 'y' }] } },
-        modelRules: {
-          snapshot: [{ id: 1, subject: 'A' }, { id: 'b' }],
-          literalRuleIds: [7, 'x', 5],
-        },
-        meta: { heldAtPublish: true },
-      })
-    ).toEqual({
-      matched: [{ ruleId: 1, reason: ' r ' }],
-      snapshot: [{ id: 1, subject: 'A' }],
-      literalRuleIds: [7, 5],
-      heldAtPublish: true,
-    });
+describe('parseModelRulesHoldMeta', () => {
+  it('reads a full hold meta back', () => {
+    const meta = {
+      mode: 'active',
+      fields: [{ heading: 'Name', text: 'Hero One LoRA' }],
+      matches: [{ ruleId: 3, term: 'Hero One', field: 'Name', fieldIndex: 0, start: 0, end: 8 }],
+      rules: [{ id: 3, subject: 'Example Franchise', description: 'd', aliases: ['Hero One'] }],
+      applied: true,
+      kind: 'redetected',
+      priorHoldId: 9,
+    };
+    expect(parseModelRulesHoldMeta(meta)).toEqual(meta);
   });
 
-  it('degrades to empty for anything else', () => {
-    const empty = { matched: [], snapshot: [], literalRuleIds: [], heldAtPublish: false };
-    expect(parseModelRulesStoredResult(null)).toEqual(empty);
-    expect(parseModelRulesStoredResult({ labels: { modelRules: { matched: 'x' } } })).toEqual(
-      empty
-    );
-    expect(parseModelRulesStoredResult({ modelRules: { literalRuleIds: [3] } })).toEqual({
-      ...empty,
-      literalRuleIds: [3],
+  it('keeps the entries that parse and tolerates an empty or missing meta', () => {
+    expect(
+      parseModelRulesHoldMeta({
+        fields: [{ heading: 'Name', text: 'x' }, { heading: 4 }],
+        matches: 'nope',
+        rules: [{ id: 1, subject: 'S' }],
+      })
+    ).toEqual({
+      mode: 'shadow',
+      fields: [{ heading: 'Name', text: 'x' }],
+      matches: [],
+      rules: [{ id: 1, subject: 'S', description: '', aliases: [] }],
     });
+    for (const meta of [null, undefined, 'x', []])
+      expect(parseModelRulesHoldMeta(meta)).toMatchObject({ fields: [], matches: [], rules: [] });
   });
+});
+
+describe('aliasKindField', () => {
+  it('accepts every known kind', () => {
+    for (const kind of ALIAS_KINDS) expect(aliasKindField.parse(kind)).toBe(kind);
+  });
+
+  it.each(['nickname', '', 5, null, undefined])('files %j under other', (value) => {
+    expect(aliasKindField.parse(value)).toBe('other');
+  });
+});
+
+describe('aliasWorkflowIdField', () => {
+  it('accepts an opaque token', () => {
+    expect(aliasWorkflowIdField.parse('wf_0123456789-AB')).toBe('wf_0123456789-AB');
+  });
+
+  it.each(['', 'short', '../etc/passwd', 'has space 1234', 'a'.repeat(129), 5, null])(
+    'rejects %j',
+    (value) => {
+      expect(aliasWorkflowIdField.safeParse(value).success).toBe(false);
+    }
+  );
 });

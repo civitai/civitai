@@ -4964,6 +4964,7 @@ export type ScanLabelClaim = {
   itemId: number;
   userId: number;
   expiresAt: Timestamp;
+  token: Generated<string | null>;
 };
 export type ScanLabelCopyObject = {
   key: string;
@@ -5023,6 +5024,7 @@ export type ScanLabelVote = {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Generated<Timestamp>;
+  claimToken: string | null;
 };
 export type ScannerContentSnapshot = {
   contentHash: string;

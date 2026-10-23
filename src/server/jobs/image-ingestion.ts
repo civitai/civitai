@@ -16,7 +16,7 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -568,6 +568,18 @@ export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
+    const startedAt = Date.now();
+    // The run's counts, in Axiom: the job runner logs only that a run succeeded.
+    const finished = <T extends Record<string, number>>(summary: T) => {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'finished',
+        ...summary,
+        durationMs: Date.now() - startedAt,
+      }).catch(() => undefined);
+      return summary;
+    };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
 
     // Fails closed: a run that cannot read the legal holds deletes nothing.
@@ -624,10 +636,21 @@ export const removeBlockedImages = createJob(
       return { skipped: 'legal-hold-lookup-failed' };
     }
 
+    // The hold marker's statements below name its view, so on a database without it (a restore or a
+    // copy from before its migration) they would fail part-way through: nothing is deleted there.
+    if (!(await holdMarkerViewExists())) {
+      logToAxiom({
+        type: 'warning',
+        name: 'remove-blocked-images',
+        message: 'hold marker view missing: nothing deleted this run',
+      }).catch(() => undefined);
+      return { skipped: 'hold-marker-view-missing' };
+    }
+
     // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
     // its own. A failure costs only the sweep. Gated like the deletes below, and kept above every
-    // early return but the failed hold lookup: it is also what clears a copy made in a race with the
-    // release.
+    // early return but the failed hold lookup and the missing view (which it names): it is also what
+    // clears a copy made in a race with the release.
     if (env.DATABASE_IS_PROD)
       await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
         logToAxiom({
@@ -699,14 +722,14 @@ export const removeBlockedImages = createJob(
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
-      return {
+      return finished({
         processed: 0,
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
-      };
+      });
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -889,7 +912,7 @@ export const removeBlockedImages = createJob(
     `;
     }
 
-    return {
+    return finished({
       deleted: deleted.length,
       heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
@@ -904,7 +927,8 @@ export const removeBlockedImages = createJob(
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
       evidenceHeld: evidenceHeld.length,
-    };
+      accountHeld: accountHeld.length,
+    });
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
   // grabbing the lock mid-run would double-delete and hit S3/DB twice.
