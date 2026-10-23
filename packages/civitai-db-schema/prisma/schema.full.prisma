@@ -7603,6 +7603,7 @@ model ScanLabelVote {
   reasonComment String?
   msOnItem      Int?
   createdAt DateTime @default(now()) @db.Timestamptz(3)
+  claimToken    String?  @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId, createdAt])
@@ -7612,6 +7613,7 @@ model ScanLabelClaim {
   itemId    Int
   userId    Int
   expiresAt DateTime @db.Timestamptz(3)
+  token     String?  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
   @@id([itemId, userId])
   @@index([userId])

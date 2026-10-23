@@ -139,6 +139,9 @@ export function AppAssistantPreview({
             key={frame.data.iframeSrc}
             {...frame.data}
             fit="fill"
+            // The app reloaded itself (Vite live reload): the Reload button's own path. Not
+            // `cancelRefetch`, so reports arriving mid-fetch join it rather than restart it.
+            onGuestReloaded={() => void frame.refetch({ cancelRefetch: false })}
             tokenErrorFallback={
               <Stack p="md">
                 <Alert color="red" variant="light">

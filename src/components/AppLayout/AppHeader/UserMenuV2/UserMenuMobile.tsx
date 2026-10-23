@@ -2,17 +2,29 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import {
   closestCenter,
   DndContext,
+  KeyboardSensor,
   MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Divider, Popover, Text, UnstyledButton } from '@mantine/core';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { Button, Divider, Popover, Text, UnstyledButton } from '@mantine/core';
+import {
+  IconArrowsSort,
+  IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
+  IconGripVertical,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
-import React, { useContext, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   AccountSwitcher,
   BuzzMenuItem,
@@ -132,6 +144,14 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
+    // dnd-kit cancels a keyboard drag on this same Escape, from a listener on the document that a
+    // stopped event never reaches.
+    if (
+      (event.target as HTMLElement).closest?.(
+        '[aria-roledescription="sortable"][aria-pressed="true"]'
+      )
+    )
+      return;
     event.stopPropagation();
     if (switching) setSwitching(false);
     else if (path.length) back();
@@ -310,11 +330,22 @@ export function MobilePinned({
   announce: (text: string) => void;
 }) {
   const guard = useDragClickGuard();
+  const [reordering, setReordering] = useState(false);
   // No PointerSensor: a finger emits pointer events too, so it would start a drag on any swipe.
+  // Reordering drags by a handle that opts out of scrolling, so a touch needs no hold first.
+  // The keyboard sensor takes Enter and Space from any row it can reach, so only the handles get it.
+  const keyboard = useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates });
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } })
+    useSensor(TouchSensor, {
+      activationConstraint: reordering ? { distance: 4 } : { delay: 250, tolerance: 6 },
+    }),
+    reordering ? keyboard : undefined
   );
+
+  useEffect(() => {
+    if (!pinned.length) setReordering(false);
+  }, [pinned.length]);
 
   if (!pinned.length)
     return (
@@ -331,11 +362,33 @@ export function MobilePinned({
     if (item) announce(`Moved ${item.label}`);
   };
 
+  // Holding a link opens iOS's preview instead of lifting the row, so a phone reorders in a mode.
+  const canReorder = !!onToggle && pins.canEdit && pinned.length > 1;
+  const finishReordering = () => {
+    setReordering(false);
+    pins.flush();
+  };
+
   return (
     <>
-      <Text size="xs" c="dimmed" fw={600} px="md" pt={8} pb={2}>
-        Pinned
-      </Text>
+      <div className="flex items-center justify-between pb-0.5 pl-4 pr-2 pt-2">
+        <Text size="xs" c="dimmed" fw={600}>
+          Pinned
+        </Text>
+        {(canReorder || reordering) && (
+          <Button
+            variant="subtle"
+            color="gray"
+            size="compact-sm"
+            className="!h-8"
+            leftSection={reordering ? <IconCheck size={16} /> : <IconArrowsSort size={16} />}
+            aria-pressed={reordering}
+            onClick={reordering ? finishReordering : () => setReordering(true)}
+          >
+            {reordering ? 'Done' : 'Reorder'}
+          </Button>
+        )}
+      </div>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -345,7 +398,12 @@ export function MobilePinned({
       >
         <SortableContext items={pinned.map((x) => x.id)} strategy={verticalListSortingStrategy}>
           {pinned.map((item) => (
-            <SortableMobileItem key={item.id} item={item} onToggle={onToggle} />
+            <SortableMobileItem
+              key={item.id}
+              item={item}
+              onToggle={onToggle}
+              reordering={reordering}
+            />
           ))}
         </SortableContext>
       </DndContext>
@@ -356,25 +414,53 @@ export function MobilePinned({
 function SortableMobileItem({
   item,
   onToggle,
+  reordering,
 }: {
   item: ResolvedMenuItem;
   onToggle?: (item: ResolvedMenuItem) => void;
+  reordering: boolean;
 }) {
-  const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({
-    id: item.id,
-  });
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    position: 'relative',
+    zIndex: isDragging ? 1 : undefined,
+  } as const;
+
+  if (reordering)
+    return (
+      <div ref={setNodeRef} style={style} className="flex items-center pr-2">
+        <div className={clsx(ROW, 'min-w-0 flex-1 hover:bg-transparent')}>
+          <item.icon stroke={1.5} color={item.color} />
+          <MenuItemLabel item={item} />
+        </div>
+        <LegacyActionIcon
+          ref={setActivatorNodeRef}
+          size="lg"
+          variant="subtle"
+          color="gray"
+          aria-label={`Reorder ${item.label}`}
+          // The handle opts out of scrolling, so a finger on it drags the row instead.
+          style={{ touchAction: 'none' }}
+          {...attributes}
+          {...listeners}
+        >
+          <IconGripVertical />
+        </LegacyActionIcon>
+      </div>
+    );
+
   return (
-    <div
-      ref={setNodeRef}
-      {...listeners}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        position: 'relative',
-        zIndex: isDragging ? 1 : undefined,
-        touchAction: 'pan-y',
-      }}
-    >
+    <div ref={setNodeRef} {...listeners} style={{ ...style, touchAction: 'pan-y' }}>
       <MobileItem item={item} pinned fromPins onToggle={onToggle} />
     </div>
   );
