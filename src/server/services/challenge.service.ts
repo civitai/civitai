@@ -344,7 +344,24 @@ const challengeCardQuery = Prisma.sql`
 // Hydrate card rows with profile pictures/cosmetics and cover images, then shape into
 // ChallengeListItem. `createdBy` is always the real creator; the judge is a separate field. Which
 // of the two is shown as the author is a client concern (see getChallengeDisplayUser).
-async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<ChallengeListItem[]> {
+// The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
+type SiteViewer = { isGreen: boolean; viewerId?: number };
+
+// A cover the site's rating ceiling allows for this viewer, else null.
+function coverWithinSite<T extends { nsfwLevel: number }>(
+  cover: T | null | undefined,
+  site: SiteViewer
+): T | null {
+  if (!cover) return null;
+  return site.isGreen && isImageHiddenFromGreenViewer(cover.nsfwLevel, site.viewerId)
+    ? null
+    : cover;
+}
+
+async function mapChallengeRowsToCards(
+  items: ChallengeCardRow[],
+  site: SiteViewer
+): Promise<ChallengeListItem[]> {
   const userIds = [
     ...new Set(
       items
@@ -364,9 +381,10 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
   });
 
   return items.map((item) => {
-    const coverImage = item.coverImageId
-      ? coverImages.find((img) => img.id === item.coverImageId)
-      : null;
+    const coverImage = coverWithinSite(
+      item.coverImageId ? coverImages.find((img) => img.id === item.coverImageId) : null,
+      site
+    );
 
     return {
       id: item.id,
@@ -508,7 +526,7 @@ export async function getMyChallenges({
 
   if (!rows.length) return [];
 
-  const baseCards = await mapChallengeRowsToCards(rows);
+  const baseCards = await mapChallengeRowsToCards(rows, { isGreen, viewerId: userId });
 
   return enrichMyChallengeCards(
     baseCards,
@@ -526,7 +544,10 @@ export async function getMyChallenges({
  * Challenges" row. Returns at most `limit` cards, active first then soonest-upcoming. System
  * challenges are always Scanned, so no scan gate is needed — only the visibility gate applies.
  */
-export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]> {
+export async function getDailyChallenges(
+  site: SiteViewer,
+  limit = 4
+): Promise<ChallengeListItem[]> {
   const items = await dbRead.$queryRaw<ChallengeCardRow[]>`
     ${challengeCardQuery}
     WHERE c.source = ${ChallengeSource.System}::"ChallengeSource"
@@ -535,7 +556,7 @@ export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]
     ORDER BY CASE c.status WHEN 'Active' THEN 0 ELSE 1 END ASC, c."startsAt" ASC
     LIMIT ${limit}
   `;
-  return mapChallengeRowsToCards(items);
+  return mapChallengeRowsToCards(items, site);
 }
 
 export async function getInfiniteChallenges(
@@ -846,7 +867,10 @@ export async function getInfiniteChallenges(
     }
   }
 
-  const challenges = await mapChallengeRowsToCards(items);
+  const challenges = await mapChallengeRowsToCards(items, {
+    isGreen: isGreen ?? false,
+    viewerId: currentUserId,
+  });
 
   return {
     items: challenges,
@@ -3308,7 +3332,7 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
 // Batch-map event coverImageIds to the ChallengeCoverImage shape (mirrors the challenge-cover
 // mapping in mapChallengeRowsToCards above so both produce identical shapes).
-async function getEventCoverImages(coverImageIds: (number | null)[]) {
+async function getEventCoverImages(coverImageIds: (number | null)[], site: SiteViewer) {
   const ids = coverImageIds.filter(isDefined);
   if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
   const images = await dbRead.image.findMany({
@@ -3317,6 +3341,7 @@ async function getEventCoverImages(coverImageIds: (number | null)[]) {
   });
   const map = new Map<number, ChallengeCoverImage>();
   for (const img of images) {
+    if (!coverWithinSite(img, site)) continue;
     map.set(img.id, {
       id: img.id,
       url: img.url,
@@ -3334,8 +3359,8 @@ async function getEventCoverImages(coverImageIds: (number | null)[]) {
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
  */
-export async function getActiveEvents(viewerId?: number): Promise<ChallengeEventListItem[]> {
-  const excludedUserIds = await getChallengeExcludedUserIds(viewerId);
+export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventListItem[]> {
+  const excludedUserIds = await getChallengeExcludedUserIds(site.viewerId);
   const events = await dbRead.challengeEvent.findMany({
     where: {
       active: true,
@@ -3389,7 +3414,10 @@ export async function getActiveEvents(viewerId?: number): Promise<ChallengeEvent
     },
   });
 
-  const eventCoverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+  const eventCoverMap = await getEventCoverImages(
+    events.map((e) => e.coverImageId),
+    site
+  );
 
   // Batch-enrich all challenges across all events
   const allChallenges = events.flatMap((e) => e.challenges);
@@ -3481,7 +3509,10 @@ export async function getActiveEvents(viewerId?: number): Promise<ChallengeEvent
       const creator = users.get(creatorId);
       const judgeInfo = c.judgeId ? judgeMap.get(c.judgeId) : null;
       const judgeUser = judgeInfo ? users.get(judgeInfo.userId) : null;
-      const coverImage = c.coverImageId ? coverImages.get(c.coverImageId) : null;
+      const coverImage = coverWithinSite(
+        c.coverImageId ? coverImages.get(c.coverImageId) : null,
+        site
+      );
 
       return {
         id: c.id,
@@ -3544,7 +3575,8 @@ export async function getActiveEvents(viewerId?: number): Promise<ChallengeEvent
  * The `challenges` array is always empty — the grid loads separately via an infinite query.
  */
 export async function getChallengeEventById(
-  id: number
+  id: number,
+  site: SiteViewer
 ): Promise<ChallengeEventListItem & { challengeCount: number; active: boolean }> {
   const event = await dbRead.challengeEvent.findUnique({
     where: { id },
@@ -3571,7 +3603,7 @@ export async function getChallengeEventById(
   });
   if (!event) throw throwNotFoundError('Challenge event not found');
 
-  const coverMap = await getEventCoverImages([event.coverImageId]);
+  const coverMap = await getEventCoverImages([event.coverImageId], site);
   return {
     id: event.id,
     title: event.title,
@@ -3609,7 +3641,11 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
     },
   });
 
-  const coverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+  // Moderator management view, which, like the challenge edit view, is not site-gated.
+  const coverMap = await getEventCoverImages(
+    events.map((e) => e.coverImageId),
+    { isGreen: false }
+  );
   return events.map(({ coverImageId, ...e }) => ({
     ...e,
     coverImage: coverImageId ? coverMap.get(coverImageId) ?? null : null,
