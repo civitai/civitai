@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { reportHolds, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  reportHolds,
+  userNamedOnHoldingReportSql,
+  userUnderLegalHoldSql,
+} from '~/server/utils/legal-hold';
 
 /** What a moderator is told. Never says which hold applies. */
 export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
@@ -201,6 +205,28 @@ export async function assertAccountNotUnderLegalHold(
     name: 'account-legal-hold',
     message: 'Account deletion refused',
     details: { userId, legs: hold.legs },
+  });
+  throw new LegalHoldError();
+}
+
+/**
+ * The owner-level hold the purge jobs read (`userUnderLegalHoldSql`), for moving content between
+ * owners. Throws `LegalHoldError` when any of `userIds` is held, `LegalHoldUnconfirmedError` when that
+ * cannot be read.
+ */
+export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
+  const rows = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
+    SELECT o."userId", ${userUnderLegalHoldSql(Prisma.raw('o."userId"'))} AS held
+    FROM unnest(${userIds}::int[]) AS o("userId")
+  `.catch(() => null);
+  if (!rows || rows.length !== userIds.length) throw new LegalHoldUnconfirmedError();
+  const held = rows.filter((r) => r.held !== false).map((r) => r.userId);
+  if (!held.length) return;
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: 'Owner change refused',
+    details: { userIds: held },
   });
   throw new LegalHoldError();
 }

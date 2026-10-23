@@ -8,13 +8,13 @@ const {
   mockGetLatestAppeal,
   mockCreateEntityAppeal,
   mockReopenAppeal,
-  mockGetAppealExcludedIds,
+  mockIsAppealBlockedByHoldMarker,
 } = vi.hoisted(() => ({
   mockGetImageById: vi.fn(),
   mockGetLatestAppeal: vi.fn(),
   mockCreateEntityAppeal: vi.fn(),
   mockReopenAppeal: vi.fn(),
-  mockGetAppealExcludedIds: vi.fn(),
+  mockIsAppealBlockedByHoldMarker: vi.fn(),
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -29,7 +29,7 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   getLatestAppeal: mockGetLatestAppeal,
   createEntityAppeal: mockCreateEntityAppeal,
   reopenAppeal: mockReopenAppeal,
-  getAppealExcludedIds: mockGetAppealExcludedIds,
+  isAppealBlockedByHoldMarker: mockIsAppealBlockedByHoldMarker,
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
@@ -56,7 +56,7 @@ beforeEach(() => {
   mockGetLatestAppeal.mockResolvedValue(null);
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
-  mockGetAppealExcludedIds.mockResolvedValue({ images: new Set(), users: new Set() });
+  mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -390,21 +390,15 @@ describe('createEntityAppealHandler — Storyline', () => {
 });
 
 // A hold marker's kept image reads as a moderator block. The image cases above are the control.
-describe('createEntityAppealHandler — an image the appeal flow excludes', () => {
-  beforeEach(() =>
+describe('createEntityAppealHandler — an image under a hold marker', () => {
+  it('refuses, before any charge, in the usual words', async () => {
     mockGetImageById.mockResolvedValue({
       id: 99,
       userId: 602767,
       blockedFor: 'moderated',
       needsReview: null,
-    })
-  );
-
-  it.each([
-    ['its owner', { images: new Set<number>(), users: new Set([602767]) }],
-    ['the image', { images: new Set([99]), users: new Set<number>() }],
-  ])('refuses, before any charge, when %s is excluded', async (_name, excluded) => {
-    mockGetAppealExcludedIds.mockResolvedValue(excluded);
+    });
+    mockIsAppealBlockedByHoldMarker.mockResolvedValue(true);
 
     await expect(
       createEntityAppealHandler({
@@ -412,7 +406,7 @@ describe('createEntityAppealHandler — an image the appeal flow excludes', () =
         ctx: ctxUser(602767),
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: IMAGE_NOT_APPEALABLE });
-    expect(mockGetAppealExcludedIds).toHaveBeenCalledWith({ imageIds: [99], userIds: [602767] });
+    expect(mockIsAppealBlockedByHoldMarker).toHaveBeenCalledWith({ imageId: 99, userId: 602767 });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

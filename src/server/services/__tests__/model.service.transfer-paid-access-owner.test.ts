@@ -54,7 +54,7 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<typeof LegalHoldService>()),
-  assertAccountNotUnderLegalHold: mockAssertNotHeld,
+  assertOwnersNotUnderLegalHold: mockAssertNotHeld,
 }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: vi.fn() },
@@ -118,7 +118,12 @@ vi.mock('~/server/search-index', () => ({
 import { transferModelOwnership } from '~/server/services/model.service';
 import { constants } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
+import {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LegalHoldError,
+  LegalHoldUnconfirmedError,
+} from '~/server/services/legal-hold.service';
 
 /** The operations handed to the ONE $transaction call, in order. */
 let transactionOps: unknown[] = [];
@@ -187,7 +192,7 @@ beforeEach(() => {
       return Promise.resolve();
     });
 
-  mockAssertNotHeld.mockResolvedValue({ markerView: true });
+  mockAssertNotHeld.mockResolvedValue(undefined);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: TARGET_USER_ID });
   dbMock.dbWrite.model.findMany.mockResolvedValue(
     MODEL_IDS.map((id) => ({ id, userId: SOURCE_USER_ID, nsfw: false }))
@@ -501,10 +506,13 @@ describe('transferModelOwnership marks a model official on arrival', () => {
   });
 });
 
-// Every hold is keyed on the owner, so a transfer would move a held owner's posts and images out of it.
+// Every hold is keyed on the owner, so a transfer would move a held owner's content out of it.
 describe('transferModelOwnership under a legal hold', () => {
-  it('refuses with the hold message and moves nothing', async () => {
-    mockAssertNotHeld.mockRejectedValueOnce(new LegalHoldError());
+  it.each([
+    ['held', () => new LegalHoldError(), LEGAL_HOLD_REFUSAL],
+    ['unreadable', () => new LegalHoldUnconfirmedError(), HOLD_UNCONFIRMED],
+  ])('refuses, and moves nothing, when the hold is %s', async (_name, error, message) => {
+    mockAssertNotHeld.mockRejectedValueOnce(error());
 
     await expect(
       transferModelOwnership({
@@ -512,8 +520,22 @@ describe('transferModelOwnership under a legal hold', () => {
         targetUserId: TARGET_USER_ID,
         modUserId: MOD_USER_ID,
       })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
-    expect(mockAssertNotHeld).toHaveBeenCalledWith(SOURCE_USER_ID);
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('checks every owner the models come from', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      { id: MODEL_IDS[0], userId: SOURCE_USER_ID, nsfw: false },
+      { id: MODEL_IDS[1], userId: SOURCE_USER_ID + 1, nsfw: false },
+    ]);
+
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockAssertNotHeld).toHaveBeenCalledWith([SOURCE_USER_ID, SOURCE_USER_ID + 1]);
   });
 });

@@ -248,6 +248,7 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
         "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
         "details" JSONB NOT NULL DEFAULT '{}'
       );
+      CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
       CREATE FUNCTION update_post_nsfw_levels(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
     `);
     await db.exec(HOLD_MIGRATION);

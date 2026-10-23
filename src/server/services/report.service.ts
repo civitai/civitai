@@ -1101,7 +1101,8 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Keep in step with the moderator app's exclusion lookup.
+// Keep the CSAM legs in step with the moderator app's exclusion lookup; the hold-marker leg is
+// this app's alone, since a kept image is only offered for appeal here.
 export async function getAppealExcludedIds({
   imageIds,
   userIds,
@@ -1132,6 +1133,21 @@ export async function getAppealExcludedIds({
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
+}
+
+/** Whether the owner is under a hold marker or the image is one it kept. Unreadable counts as yes. */
+export async function isAppealBlockedByHoldMarker({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  const [row] = await dbWrite.$queryRaw<{ blocked: unknown }[]>`
+    SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
+      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" WHERE "imageId" = ${imageId}) AS blocked
+  `;
+  return row?.blocked !== false;
 }
 
 async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {

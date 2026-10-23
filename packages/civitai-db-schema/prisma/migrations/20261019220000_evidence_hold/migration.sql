@@ -24,11 +24,13 @@ CREATE TABLE "EvidenceHold" (
   CONSTRAINT "EvidenceHold_report_role_check" CHECK (("role" = 'manual') = ("csamReportId" IS NULL)),
   -- A release is a logged act: who and why, never just a timestamp.
   CONSTRAINT "EvidenceHold_release_logged_check" CHECK (
-    "releasedAt" IS NULL OR ("releasedById" IS NOT NULL AND "releaseReason" IS NOT NULL)
+    "releasedAt" IS NULL OR ("releasedById" IS NOT NULL AND btrim(COALESCE("releaseReason", '')) <> '')
   ),
   -- An extension records who asked for it and their reference.
   CONSTRAINT "EvidenceHold_extension_logged_check" CHECK (
-    "extendedUntil" IS NULL OR ("extensionRequestedBy" IS NOT NULL AND "extensionReference" IS NOT NULL)
+    "extendedUntil" IS NULL OR (
+      btrim(COALESCE("extensionRequestedBy", '')) <> '' AND btrim(COALESCE("extensionReference", '')) <> ''
+    )
   )
 );
 
@@ -123,7 +125,7 @@ BEGIN
     UPDATE "Image"
     SET "ingestion" = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'moderated', "updatedAt" = now()
     WHERE "id" = OLD."id" AND NOT (
-      "ingestion" = 'Blocked' AND "blockedFor" IN ('moderated', 'tos', 'CSAM')
+      "ingestion" = 'Blocked' AND COALESCE("blockedFor", '') IN ('moderated', 'tos', 'CSAM')
     );
     UPDATE "Image" SET "postId" = NULL, "updatedAt" = now()
     WHERE "id" = OLD."id" AND "postId" IS NOT NULL;
@@ -142,8 +144,8 @@ CREATE TRIGGER "Image_evidence_hold"
 BEFORE DELETE ON "Image"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_image();
 
--- A held owner's images and posts keep their owner: the hold, and every trigger here, is keyed on
--- it, so moving a row to another account (a model transfer) would take it out of the hold.
+-- A held owner's models, images and posts keep their owner: the hold is keyed on it, so moving a row
+-- to another account (a model transfer) would take it out of the hold.
 CREATE OR REPLACE FUNCTION evidence_hold_keep_owner() RETURNS trigger AS $$
 BEGIN
   IF NEW."userId" IS DISTINCT FROM OLD."userId"
@@ -162,9 +164,14 @@ CREATE TRIGGER "Post_evidence_hold_owner"
 BEFORE UPDATE OF "userId" ON "Post"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_owner();
 
+CREATE TRIGGER "Model_evidence_hold_owner"
+BEFORE UPDATE OF "userId" ON "Model"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_owner();
+
 -- A hold only ends by date or by a recorded release, and its row is a record that stays: it is never
--- deleted, a released row never changes, and a release changes nothing but the release itself.
--- While unreleased, its owner and source never change and its end only stays or moves later.
+-- deleted and a released row never changes. While unreleased, only its end and its extension change,
+-- and the end only stays or moves later; an extension's who and reference change only with a new end.
+-- A release sets only the release columns, stamped now.
 CREATE OR REPLACE FUNCTION evidence_hold_guard_end() RETURNS trigger AS $$
 DECLARE
   -- A NULL "releaseAt" holds until released, so it is the latest end there is.
@@ -178,18 +185,28 @@ BEGIN
   IF OLD."releasedAt" IS NOT NULL THEN
     RAISE EXCEPTION 'EvidenceHold % is released and cannot change', OLD."id";
   END IF;
-  IF NEW."userId" IS DISTINCT FROM OLD."userId"
-    OR NEW."csamReportId" IS DISTINCT FROM OLD."csamReportId"
-    OR NEW."role" IS DISTINCT FROM OLD."role"
-    OR NEW."reportSentAt" IS DISTINCT FROM OLD."reportSentAt" THEN
+  IF (NEW."id", NEW."userId", NEW."csamReportId", NEW."role", NEW."reportSentAt", NEW."reason",
+      NEW."createdAt", NEW."createdById")
+    IS DISTINCT FROM (OLD."id", OLD."userId", OLD."csamReportId", OLD."role", OLD."reportSentAt",
+      OLD."reason", OLD."createdAt", OLD."createdById") THEN
     RAISE EXCEPTION 'EvidenceHold % cannot change its owner or source', OLD."id";
   END IF;
   IF NEW."releasedAt" IS NOT NULL THEN
-    IF NEW."releaseAt" IS DISTINCT FROM OLD."releaseAt"
-      OR NEW."extendedUntil" IS DISTINCT FROM OLD."extendedUntil" THEN
+    IF (NEW."releaseAt", NEW."extendedUntil", NEW."extensionRequestedBy", NEW."extensionReference")
+      IS DISTINCT FROM (OLD."releaseAt", OLD."extendedUntil", OLD."extensionRequestedBy",
+        OLD."extensionReference") THEN
       RAISE EXCEPTION 'EvidenceHold % cannot change its dates in a release', OLD."id";
     END IF;
+    NEW."releasedAt" := now();
     RETURN NEW;
+  END IF;
+  IF NEW."releasedById" IS NOT NULL OR NEW."releaseReason" IS NOT NULL THEN
+    RAISE EXCEPTION 'EvidenceHold % is released only with "releasedAt"', OLD."id";
+  END IF;
+  IF NEW."extendedUntil" IS NOT DISTINCT FROM OLD."extendedUntil"
+    AND (NEW."extensionRequestedBy", NEW."extensionReference")
+      IS DISTINCT FROM (OLD."extensionRequestedBy", OLD."extensionReference") THEN
+    RAISE EXCEPTION 'EvidenceHold % changes who asked for an extension only with a new one', OLD."id";
   END IF;
   new_end := CASE WHEN NEW."releaseAt" IS NULL THEN 'infinity'::timestamp
     ELSE GREATEST(NEW."releaseAt", COALESCE(NEW."extendedUntil", NEW."releaseAt")) END;
