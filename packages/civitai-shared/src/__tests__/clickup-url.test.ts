@@ -200,6 +200,8 @@ describe('isClickupTaskUrl, HQ links', () => {
     ['an HQ page that is not a task', 'https://hq.civitai.com/868kfwm3j'],
     ['a team-style ClickUp path on the HQ host', 'https://hq.civitai.com/t/8459928/868kfwm3j'],
     ['a hyphenated id', 'https://hq.civitai.com/t/DEV-1234'],
+    // HQ ids are lower-case and completions match case-sensitively, so this would never close.
+    ['an upper-cased id', 'https://hq.civitai.com/t/868KFWM3J'],
     ['another civitai host', 'https://civitai.com/t/868kfwm3j'],
     ['a host merely ending in the HQ one', 'https://hq.civitai.com.attacker.test/t/868kfwm3j'],
     ['a non-http scheme on the HQ host', 'ftp://hq.civitai.com/t/868kfwm3j'],

@@ -64,7 +64,7 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
     return (
       segments.length === 2 &&
       segments[0] === 't' &&
-      /^[a-z0-9]+$/i.test(segments[1]) &&
+      /^[a-z0-9]+$/.test(segments[1]) &&
       clickupTaskIdFromUrl(url) === segments[1]
     );
   }
