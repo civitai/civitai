@@ -203,6 +203,10 @@ describe('isClickupTaskUrl, HQ links', () => {
     ['another civitai host', 'https://civitai.com/t/868kfwm3j'],
     ['a host merely ending in the HQ one', 'https://hq.civitai.com.attacker.test/t/868kfwm3j'],
     ['a non-http scheme on the HQ host', 'ftp://hq.civitai.com/t/868kfwm3j'],
+    // URL parsing normalises these to `/t/868kfwm3j`, but the matcher reads the raw text as null.
+    ['a trailing dot segment', 'https://hq.civitai.com/t/868kfwm3j/.'],
+    ['backslash separators', 'https://hq.civitai.com/t\\868kfwm3j'],
+    ['a tab inside the id', 'https://hq.civitai.com/t/868k\tfwm3j'],
   ])('refuses %s', (_label, input) => {
     expect(isClickupTaskUrl(input)).toBe(false);
   });

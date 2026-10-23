@@ -227,8 +227,8 @@
                reopen and re-complete does. The honest statement is "not retroactively", never
                "never": told "it will not auto-close", a moderator leaves the box blank.
 
-               🔴 THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the link on
-               the issue board afterwards needs `bugsEdit`, a per-user grant NOT conferred by
+               🔴 THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the link
+               on the issue board afterwards needs `bugsEdit`, a per-user grant NOT conferred by
                `isModerator`: 3 of 24 moderators hold it. For the rest this box is the only chance
                to link the task, which is why the sentence says "may not be able to". -->
           <p class="text-xs text-dark-2">

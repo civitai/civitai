@@ -58,8 +58,15 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
   const host = parsed.hostname.toLowerCase();
   if (host === HQ_HOST) {
     // HQ serves a task at `/t/<id>` only, so there is no team segment or sub-tab to disambiguate.
+    // `pathname` is normalised (dot segments, `\`, tabs) but the matcher reads the raw string, so
+    // the two must agree on the id or the link stores and never matches.
     const segments = parsed.pathname.split('/').filter(Boolean);
-    return segments.length === 2 && segments[0] === 't' && /^[a-z0-9]+$/i.test(segments[1]);
+    return (
+      segments.length === 2 &&
+      segments[0] === 't' &&
+      /^[a-z0-9]+$/i.test(segments[1]) &&
+      clickupTaskIdFromUrl(url) === segments[1]
+    );
   }
   if (!CLICKUP_HOSTS.has(host)) return false;
 
