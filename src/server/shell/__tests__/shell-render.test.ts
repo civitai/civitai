@@ -17,6 +17,7 @@ import type client from 'prom-client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as AuthSessionModule from '~/server/auth/get-server-auth-session';
+import type * as SearchApiKeyModule from '~/components/Search/search-api-key';
 
 const SEEDS = vi.hoisted(() => ({
   tosMeta: { hash: 'tos-hash', baseline: 'tos-baseline', fieldKeys: { blue: 'tosBlue' } },
@@ -50,6 +51,13 @@ vi.mock('~/server/services/settings-bootstrap.service', () => ({
 vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthSessionModule>()),
   getServerAuthSession: h.authSession,
+}));
+
+// Next preloads every `dynamic()` module before rendering, and a few build a search client at module
+// scope from env this suite does not set.
+vi.mock('~/components/Search/search-api-key', async (importOriginal) => ({
+  ...(await importOriginal<typeof SearchApiKeyModule>()),
+  createInstantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
 }));
 
 import AppWithTRPC from '~/pages/_app';

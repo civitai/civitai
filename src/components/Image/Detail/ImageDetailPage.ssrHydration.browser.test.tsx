@@ -112,6 +112,10 @@ async function flush() {
 
 async function hydrate(status: Status) {
   const html = renderToString(<Tree status={status} />);
+  // The "server" render runs in the browser here, so `next/head` takes its client branch and React
+  // warns about `useLayoutEffect` in `renderToString`. A real server has no `window`; only the
+  // hydration is measured.
+  consoleErrors = [];
   const container = document.createElement('div');
   container.innerHTML = html;
   document.body.appendChild(container);
@@ -194,7 +198,8 @@ describe('the image page on a shell boot', () => {
     const detail = container.querySelector('[data-testid="image-detail"]');
     expect(detail?.getAttribute('data-image-id')).toBe('123');
     expect(mounted.length).toBeGreaterThan(0);
-    expect(new Set(mounted)).toEqual(new Set(['123']));
+    // The browser router's query parse makes it a number, as on a full render.
+    expect(new Set(mounted)).toEqual(new Set([123]));
     expect(consoleErrors).toEqual([]);
   });
 
