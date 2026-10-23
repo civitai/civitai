@@ -24,13 +24,14 @@ import { LazyMotion } from 'motion/react';
 import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { GLOBAL_VOLUME_KEY } from '~/components/EdgeMedia/EdgeVideo';
 import {
   JudgeReactionBar,
   type JudgeReactionBarProps,
 } from '~/components/Crucible/JudgeReactionBar';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobileDevice } from '~/hooks/useIsMobile';
+import { useHasCoarsePointer } from '~/hooks/useIsMobile';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -514,7 +515,7 @@ function ImageCard({
     }
   };
 
-  const isMobileDevice = useIsMobileDevice() === true;
+  const coarsePointer = useHasCoarsePointer();
 
   const lastTimeRef = useRef<number | null>(null);
   const watchedRef = useRef(0);
@@ -660,10 +661,10 @@ function ImageCard({
           reactions={reactions ?? []}
           reactionsLoaded={reactionsLoaded}
           side={position}
-          // Native video controls own the bottom edge, so the pill sits above them.
+          // Desktop video shows native controls along the bottom edge, so the pill sits above them.
           className={clsx(
             'absolute right-2.5 z-10',
-            isVideo && !isMobileDevice ? 'bottom-[60px]' : 'bottom-2.5'
+            isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
           )}
         />
 
@@ -690,7 +691,7 @@ function ImageCard({
  */
 function setElementSound(video: HTMLVideoElement, soundOn: boolean) {
   if (soundOn) {
-    const stored = readLocalStorageValue<number>({ key: 'global-volume', defaultValue: 0 });
+    const stored = readLocalStorageValue<number>({ key: GLOBAL_VOLUME_KEY, defaultValue: 0 });
     if (stored > 0 && stored <= 1) video.volume = stored;
   }
   video.muted = !soundOn;
@@ -730,8 +731,7 @@ function JudgingMedia({
   onTimeUpdate,
 }: JudgingMediaProps) {
   const ref = useRef<HTMLDivElement>(null);
-  // `undefined` while hydrating, so the first render matches the server's desktop markup.
-  const isMobileDevice = useIsMobileDevice() === true;
+  const coarsePointer = useHasCoarsePointer();
   const [status, setStatus] = useState<MediaStatus>('loading');
   const isVideo = entry.image.type === MediaType.video;
   const getVideo = () => ref.current?.querySelector('video') ?? null;
@@ -815,7 +815,7 @@ function JudgingMedia({
 
   const handleTap = (e: React.MouseEvent) => {
     const video = getVideo();
-    // Native controls (fullscreen) toggle playback themselves.
+    // Fullscreen's native controls handle taps; toggling here too would double-toggle.
     if (!video || e.target !== video || video.controls) return;
     if (video.paused) play(video);
     else video.pause();
@@ -823,7 +823,7 @@ function JudgingMedia({
 
   useEffect(() => {
     const video = getVideo();
-    if (!video || !isMobileDevice || status !== 'loaded') return;
+    if (!video || !coarsePointer || status !== 'loaded') return;
     const exit = () => {
       video.controls = false;
     };
@@ -837,7 +837,7 @@ function JudgingMedia({
       video.removeEventListener('webkitendfullscreen', exit);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `getVideo` only reads the ref
-  }, [isMobileDevice, status]);
+  }, [coarsePointer, status]);
 
   const enterFullscreen = () => {
     const video = getVideo() as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
@@ -872,7 +872,7 @@ function JudgingMedia({
       onErrorCapture={handleError}
       onPlayCapture={isVideo ? () => onPlay(side) : undefined}
       onVolumeChangeCapture={isVideo ? handleVolumeChange : undefined}
-      onClick={isVideo && isMobileDevice ? handleTap : undefined}
+      onClick={isVideo && coarsePointer ? handleTap : undefined}
       onPointerEnter={isVideo ? handlePointerEnter : undefined}
       onPointerLeave={isVideo ? handlePointerLeave : undefined}
     >
@@ -882,10 +882,9 @@ function JudgingMedia({
         // Off for video, where it autoplays every clip in view: a judge plays one at a time.
         anim={!isVideo}
         muted
-        // Native rather than EdgeVideo's own bar, which has no seek control — judging a clip
-        // means re-watching a moment, not just replaying it from the top. A phone's native bar
-        // covers most of the clip, so there it only appears in fullscreen.
-        html5Controls={!isMobileDevice}
+        // Native rather than EdgeVideo's own bar, which has no seek control (judges re-watch moments).
+        // Off on touch screens, where the native bar covers most of the clip; fullscreen turns it on.
+        html5Controls={!coarsePointer}
         width={600}
         // EdgeImage caps maxWidth at the requested width, which pinned a narrower image
         // to the left of its box instead of centring it.
@@ -939,7 +938,7 @@ function JudgingMedia({
 
       {isVideo && status === 'loaded' && (
         <div className="absolute right-2 top-2 z-10 flex gap-2">
-          {isMobileDevice && (
+          {coarsePointer && (
             <ActionIcon
               className="bg-black/60 hover:bg-black/80"
               size={44}
