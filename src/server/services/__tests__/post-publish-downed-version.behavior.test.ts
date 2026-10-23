@@ -82,7 +82,7 @@ beforeEach(async () => {
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
 });
 
-const { updatePost } = await import('~/server/services/post.service');
+const { createPost, updatePost } = await import('~/server/services/post.service');
 
 const draftOn = async (modelVersionId: number) => {
   await pg.query(`INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (1, $1, $2)`, [
@@ -124,5 +124,39 @@ describe('publishing a post on a version a moderator took down', () => {
 
     await publish();
     expect(await isPublished()).toBe(true);
+  });
+});
+
+describe('an already-public post on a taken-down version', () => {
+  it('still writes nothing and refuses nothing, as before the guard', async () => {
+    // Left up until the clean-up runs; a re-sent publishedAt must not turn an edit into an error.
+    await pg.query(
+      `INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES (1, $1, $2, now() - interval '1 day')`,
+      [OWNER, DOWNED]
+    );
+
+    await expect(publish()).resolves.toBeTruthy();
+  });
+});
+
+describe('creating a post already published', () => {
+  // Past the guard, createPost reads the version for visibility; stopping there shows the guard let it by.
+  const PASSED_GUARD = 'passed the publish guard';
+  beforeEach(() => {
+    dbMock.dbWrite.modelVersion.findUnique.mockRejectedValue(new Error(PASSED_GUARD) as never);
+  });
+  const create = (modelVersionId: number, publishedAt?: Date, isModerator = false) =>
+    createPost({ userId: OWNER, isModerator, modelVersionId, publishedAt } as never);
+
+  it('refuses the owner on a taken-down version', async () => {
+    await expect(create(DOWNED, new Date())).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it.each([
+    ['a draft on a taken-down version', DOWNED, undefined, false],
+    ['a moderator', DOWNED, new Date(), true],
+    ['a live version', LIVE, new Date(), false],
+  ])('lets %s through', async (_label, version, publishedAt, isModerator) => {
+    await expect(create(version, publishedAt, isModerator)).rejects.toThrow(PASSED_GUARD);
   });
 });

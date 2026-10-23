@@ -876,6 +876,9 @@ export const createPost = async ({
 
   let availability: Availability = Availability.Public;
 
+  if (data.modelVersionId && data.publishedAt && !isModerator)
+    await assertPublishableVersion(data.modelVersionId);
+
   if (data.modelVersionId) {
     const modelVersion = await dbWrite.modelVersion.findUnique({
       where: { id: data.modelVersionId },
@@ -992,6 +995,17 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
       OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
 )`;
 
+const TAKEN_DOWN_PUBLISH_ERROR =
+  "This post can't be published: its model or model version has been taken down.";
+
+/** Refuses a non-moderator publishing straight onto a taken-down version. */
+async function assertPublishableVersion(modelVersionId: number) {
+  const [check] = await dbWrite.$queryRaw<{ downed: boolean }[]>`
+    SELECT ${onDownedVersionSql(Prisma.sql`${modelVersionId}::int`)} AS downed
+  `;
+  if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+}
+
 export const updatePost = async ({
   id,
   user,
@@ -1084,14 +1098,13 @@ export const updatePost = async ({
       `;
       // A moderator's take-down unpublishes the version's posts; an owner publishing one afterwards
       // would put it back up. Checked in the same statement as the write, so it cannot race the take-down.
-      if (!writtenRows.length && !user.isModerator) {
+      // A post already public writes nothing either, and stays the no-op it always was.
+      const alreadyPublic = !!updated.publishedAt && updated.publishedAt <= new Date();
+      if (!writtenRows.length && !user.isModerator && !alreadyPublic) {
         const [check] = await tx.$queryRaw<{ downed: boolean }[]>`
           SELECT ${onDownedVersionSql(Prisma.sql`${updated.modelVersionId}::int`)} AS downed
         `;
-        if (check?.downed)
-          throw throwBadRequestError(
-            "This post can't be published: its model version was taken down by a moderator."
-          );
+        if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
       }
       // Reflect the actually-written timestamp (may be the stashed
       // prevPublishedAt rather than the submitted value). The controller's

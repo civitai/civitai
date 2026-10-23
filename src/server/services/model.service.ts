@@ -6031,7 +6031,11 @@ export const privateModelFromTraining = async ({
 
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
+        where: {
+          modelId: id,
+          // A version a moderator took down stays down; this is not a republish path for it.
+          ...(user.isModerator ? {} : { status: { notIn: constants.modPublishOnlyStatuses } }),
+        },
         data: {
           // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
