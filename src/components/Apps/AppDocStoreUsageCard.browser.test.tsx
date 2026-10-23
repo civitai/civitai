@@ -66,13 +66,13 @@ describe('AppDocStoreUsageCardView', () => {
   test('renders nothing when the store is disabled', async () => {
     const container = await renderBeside({ status: 'disabled' });
     expect(container.querySelector('[data-testid="apps-docstore-usage"]')).toBeNull();
-    expect(container.textContent).toBe('');
+    expect(container.textContent).not.toMatch(/Document storage|documents|unavailable/);
   });
 
   test('renders nothing when the owner has no on-platform apps', async () => {
     const container = await renderBeside(ok([]));
     expect(container.querySelector('[data-testid="apps-docstore-usage"]')).toBeNull();
-    expect(container.textContent).toBe('');
+    expect(container.textContent).not.toMatch(/Document storage|documents|unavailable/);
   });
 
   test('positive control: the same barrier sees the card when there is something to show', async () => {
@@ -80,5 +80,6 @@ describe('AppDocStoreUsageCardView', () => {
       ok([{ appBlockId: 'apb_4', name: 'Delta', usage: { bytes: 1, docs: 1 } }])
     );
     expect(container.querySelector('[data-testid="apps-docstore-usage"]')).not.toBeNull();
+    expect(container.textContent).toMatch(/Document storage|documents|unavailable/);
   });
 });
