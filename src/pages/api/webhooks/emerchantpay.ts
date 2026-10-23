@@ -90,7 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.log(`❌ Error message: ${errorMessage}`);
-    return res.status(400).send(`Webhook Error: ${errorMessage}`);
+    return res.status(400).send('Webhook Error');
   }
 
   return res.status(200).json({ received: true });

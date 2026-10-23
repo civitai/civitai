@@ -200,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         message: `Signature verification failed: ${error.message}`,
         error: error.message,
       });
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send('Webhook Error');
     }
 
     // Only a verified payload is recorded. Fire and forget, never throws.
@@ -648,7 +648,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           stack: error.stack,
         });
         return res.status(400).send({
-          error: error.message,
+          error: 'Webhook handler failed',
         });
       }
     }
