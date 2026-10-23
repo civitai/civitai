@@ -18,6 +18,9 @@ type ModelModActivity = {
     | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch'
+    | 'setPoiAutoHash'
+    | 'revertPoiAutoHash'
+    | 'dismissPoiHashMatch'
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;

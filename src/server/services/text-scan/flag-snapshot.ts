@@ -147,7 +147,9 @@ export function isModelFlagAppealable(model: { minor: boolean; poi: boolean; met
   const hasMinorSnapshot = isRecord(model.meta) && !!model.meta.minorFlagSnapshot;
   return (
     (model.minor && (hasMinorSnapshot || hasOpenTextScanFlag(model.meta, 'minor'))) ||
-    (model.poi && hasOpenTextScanFlag(model.meta, 'poi'))
+    (model.poi &&
+      ((isRecord(model.meta) && !!model.meta.poiFlagSnapshot) ||
+        hasOpenTextScanFlag(model.meta, 'poi')))
   );
 }
 
