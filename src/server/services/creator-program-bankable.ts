@@ -67,24 +67,17 @@ export const PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL = `(
 
 const userAccountTypesSql = Object.values(BuzzType).map(sqlString).join(', ');
 
-/**
- * Earnings paid from another user's own Buzz account. These count only beyond what the creator
- * sent that same user (`SENT_TO_USER_SQL`), netted per user over the whole window, whichever
- * transfer came first.
- */
+/** Paid from a user's own Buzz account. */
 export const RECEIVED_FROM_USER_SQL = `(fromAccountId > 0 AND fromAccountType IN (${userAccountTypesSql}))`;
 
 /**
- * Buzz a creator sent from any of their own accounts to another user's, whatever the type. Blue
- * counts too, so netting does not depend on every payment path paying out in the colour it was
- * paid in.
+ * Buzz sent from one user's accounts to another's, whatever the type. Blue counts too, so the
+ * counterparty review does not depend on every payment path paying out in the colour it was paid
+ * in.
  */
 export const SENT_TO_USER_SQL = `(fromAccountType IN (${userAccountTypesSql}) AND toAccountId > 0 AND toAccountType IN (${userAccountTypesSql}))`;
 
-/**
- * A sale the platform pays out to the seller after charging the buyer. The buyer, named in
- * `details`, is who paid it, so it nets against what the creator sent that buyer.
- */
+/** A sale the platform pays out to the seller after charging the buyer, named in `details`. */
 export const PLATFORM_PAID_SALE_SQL = `(type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0)`;
 
 /** A bounty award, paid by the platform out of what the bounty's supporters put in. */
@@ -156,8 +149,10 @@ export function receivedFromUsersSql(where: string, funders: BountyFunder[]) {
 export type BankableLedger = {
   /** Yellow + green balance at the cutover. */
   snapshot: number;
-  /** Bankable earnings since the cutover, net of what the creator sent the users who paid them. */
+  /** Bankable earnings since the cutover. */
   earned: number;
+  /** What the creator paid other users since the cutover, in Buzz that became bankable for them. */
+  spent: number;
   /** Closed months since the cutover: banked, minus extracted, plus extraction fees. */
   consumed: number;
 };
@@ -213,6 +208,51 @@ async function getCutoverSnapshot(userId: number, now: Date) {
   return snapshot;
 }
 
+/** Awarded bounties `userId` helped fund, with their part of each. */
+async function getBountiesFundedBy(userId: number) {
+  const funded = await dbRead.$queryRaw<{ bountyId: number }[]>`
+    SELECT "bountyId" FROM "BountyBenefactor"
+    WHERE "userId" = ${userId}
+      AND "awardedAt" IS NOT NULL
+      AND currency = 'BUZZ'
+      AND "unitAmount" > 0
+  `;
+  const funders = await getBountyFunders(funded.map((r) => r.bountyId));
+  return funders.filter((f) => f.userId === userId);
+}
+
+/**
+ * What `userId` paid other users since the cutover, counted where it became bankable for them:
+ * paid from their own account, a platform-paid sale they bought, and their part of a bounty they
+ * helped fund.
+ */
+export function paidToUsersSql(userId: number, funded: BountyFunder[]) {
+  const paidTo = `toAccountId > 0 AND toAccountId != ${userId} AND toAccountType IN (${buzzBankTypesSql})
+    AND date >= ${clickhouseDateTime(BANKABLE_CUTOVER)}`;
+  const arms = [
+    `SELECT toInt64(amount) AS amount FROM buzzTransactions
+    WHERE fromAccountId = ${userId} AND ${paidTo}
+      AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}`,
+    `SELECT toInt64(amount) AS amount FROM buzzTransactions
+    WHERE ${PLATFORM_PAID_SALE_SQL} AND ${paidTo}
+      AND JSONExtractInt(details, 'purchasedBy') = ${userId}`,
+  ];
+  if (funded.length)
+    arms.push(`SELECT intDiv(award.amount * funder.unitAmount, funder.total) AS amount
+    FROM (
+      SELECT JSONExtractInt(details, 'entityId') AS bountyId, toInt64(amount) AS amount
+      FROM buzzTransactions
+      WHERE ${BOUNTY_AWARD_SQL} AND ${paidTo}
+    ) AS award
+    INNER JOIN (
+      SELECT * FROM values('bountyId Int64, unitAmount Int64, total Int64', ${funded
+        .map((f) => `(${f.bountyId}, ${f.unitAmount}, ${f.total})`)
+        .join(', ')})
+    ) AS funder ON funder.bountyId = award.bountyId`);
+
+  return `SELECT sum(amount) AS spent FROM (${arms.join(' UNION ALL ')})`;
+}
+
 /**
  * The ClickHouse half of the bankable amount, or `null` before the cutover or without ClickHouse
  * (only the tier cap applies then). This month's deposits are not in it: see `withBankedThisMonth`.
@@ -223,26 +263,9 @@ export async function getBankableLedger(
 ): Promise<BankableLedger | null> {
   if (now < BANKABLE_CUTOVER || !clickhouse) return null;
 
+  const ch = clickhouse;
   const monthStart = dayjs.utc(now).startOf('month').toDate();
-  const earnedSince = `toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql}) AND date >= ${clickhouseDateTime(
-    BANKABLE_CUTOVER
-  )}`;
-  const returnedSql = (funders: BountyFunder[]) => `
-    SELECT sum(least(received.amount, sent.amount)) AS returned FROM (
-      ${receivedFromUsersSql(earnedSince, funders)}
-    ) AS received
-    INNER JOIN (
-      SELECT toInt64(toAccountId) AS counterparty, toInt64(sum(amount)) AS amount
-      FROM buzzTransactions
-      WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
-        AND date >= ${clickhouseDateTime(BANKABLE_CUTOVER)}
-      GROUP BY counterparty
-    ) AS sent ON sent.counterparty = received.payer
-  `;
-
-  // Bounty supporters come from Postgres, so the netting is read again only for a creator who
-  // was awarded one.
-  const [snapshot, [sums], [returnedWithoutBounties], awarded] = await Promise.all([
+  const [snapshot, [sums], [paid]] = await Promise.all([
     getCutoverSnapshot(userId, now),
     clickhouse.$query<{ earned: number; consumed: number }>`
       SELECT
@@ -265,20 +288,15 @@ export async function getBankableLedger(
             AND date >= ${BANKABLE_CUTOVER} AND date < ${monthStart}
         ) AS consumed
     `,
-    clickhouse.$query<{ returned: number }>(returnedSql([])),
-    clickhouse.$query<{ bountyId: number }>(awardedBountiesSql(earnedSince)),
+    getBountiesFundedBy(userId).then((funded) =>
+      ch.$query<{ spent: number }>(paidToUsersSql(userId, funded))
+    ),
   ]);
-
-  const funders = await getBountyFunders(
-    awarded.map((r) => Number(r.bountyId)).filter((id) => Number.isInteger(id) && id > 0)
-  );
-  const [returned] = funders.length
-    ? await clickhouse.$query<{ returned: number }>(returnedSql(funders))
-    : [returnedWithoutBounties];
 
   return {
     snapshot,
-    earned: Number(sums?.earned ?? 0) - Number(returned?.returned ?? 0),
+    earned: Number(sums?.earned ?? 0),
+    spent: Number(paid?.spent ?? 0),
     consumed: Number(sums?.consumed ?? 0),
   };
 }
@@ -291,9 +309,15 @@ export function withBankedThisMonth(
   ledger: BankableLedger,
   bankedThisMonth: number
 ): BankableAmount {
+  // What the creator paid other users comes out of what they earned, never out of the snapshot.
+  // Both are totals since the cutover, so paying out more than was earned carries forward.
   const remaining = Math.max(
     0,
-    ledger.snapshot + ledger.earned - ledger.consumed - bankedThisMonth
+    ledger.snapshot +
+      // A ledger cached before `spent` existed has none.
+      Math.max(0, ledger.earned - (ledger.spent ?? 0)) -
+      ledger.consumed -
+      bankedThisMonth
   );
   return { ...ledger, remaining };
 }

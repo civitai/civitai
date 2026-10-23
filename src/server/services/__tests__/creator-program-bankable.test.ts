@@ -20,6 +20,7 @@ import {
   BANKABLE_EARNING_PREDICATE_SQL,
   getBankableAmount,
   getBountyFunders,
+  paidToUsersSql,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
   RECEIVED_FROM_USER_SQL,
@@ -43,24 +44,17 @@ function sqlOf(callIndex: number) {
   );
 }
 
-/**
- * ClickHouse returns UInt64 sums as strings, so the fixtures do too. `returned` answers the netting
- * read; `returnedWithBounties` answers it once bounty supporters are part of it.
- */
+/** ClickHouse returns UInt64 sums as strings, so the fixtures do too. */
 function mockLedger({
   snapshot,
   earned,
-  returned = 0,
-  returnedWithBounties = returned,
-  awardedBounties = [],
+  spent = 0,
   consumed,
   ingestSettled = true,
 }: {
   snapshot?: number;
   earned: number;
-  returned?: number;
-  returnedWithBounties?: number;
-  awardedBounties?: number[];
+  spent?: number;
   consumed: number;
   ingestSettled?: boolean;
 }) {
@@ -70,9 +64,7 @@ function mockLedger({
     if (sql.includes('AS settled')) return ingestSettled ? [{ settled: 1 }] : [];
     if (sql.includes('AS consumed'))
       return [{ earned: String(earned), consumed: String(consumed) }];
-    if (sql.includes('AS returned'))
-      return [{ returned: String(sql.includes('values(') ? returnedWithBounties : returned) }];
-    if (sql.includes('AS bountyId')) return awardedBounties.map((bountyId) => ({ bountyId }));
+    if (sql.includes('AS spent')) return [{ spent: String(spent) }];
     throw new Error(`unexpected query: ${sql}`);
   });
 }
@@ -90,6 +82,7 @@ function issuedSql(marker: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   sysRedis.hGet.mockResolvedValue(null);
+  mockDbRead.$queryRaw.mockResolvedValue([]);
 });
 afterEach(() => {
   mockClickhouse.$query.mockReset();
@@ -124,43 +117,34 @@ describe('getBankableAmount', () => {
     expect(result).toEqual({
       snapshot: 100_000,
       earned: 50_000,
+      spent: 0,
       consumed: 30_000,
       remaining: 100_000,
     });
   });
 
-  // Both arms on one fixture: the same 100k round trip counts in full when nothing went back, and
-  // counts nothing once the creator sent the same user 100k.
-  it('counts Buzz from a user only beyond what the creator sent that user', async () => {
-    mockLedger({ snapshot: 0, earned: 100_000, returned: 0, consumed: 0 });
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(100_000);
+  it('subtracts what the creator paid other users from what they earned', async () => {
+    mockLedger({ snapshot: 0, earned: 10_000, spent: 3_000, consumed: 0 });
 
-    mockLedger({ snapshot: 0, earned: 100_000, returned: 100_000, consumed: 0 });
-    expect(await getBankableAmount(userId, 0, afterSettle)).toEqual({
-      snapshot: 0,
-      earned: 0,
-      consumed: 0,
-      remaining: 0,
-    });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(7_000);
   });
 
-  it('keeps the part of a payment that was not sent back', async () => {
-    mockLedger({ snapshot: 10_000, earned: 100_000, returned: 30_000, consumed: 0 });
+  // Justin, 2026-10-23: paying other users nets against new earnings only. If you are about to let
+  // it reach the cutover snapshot, that is a product decision to take back to him, not a cleanup.
+  it('never takes what the creator paid other users out of the cutover snapshot', async () => {
+    mockLedger({ snapshot: 50_000, earned: 0, spent: 80_000, consumed: 0 });
 
-    const result = await getBankableAmount(userId, 0, afterSettle);
-
-    expect(result).toEqual({ snapshot: 10_000, earned: 70_000, consumed: 0, remaining: 80_000 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(50_000);
   });
 
-  // Sending Buzz back after banking it leaves a shortfall that later earnings fill first.
-  it('carries Buzz sent back after banking as a shortfall against later earnings', async () => {
-    mockLedger({ snapshot: 0, earned: 150_000, returned: 100_000, consumed: 100_000 });
-
+  // Both are totals since the cutover, so a month of paying out more than was earned is made up
+  // from later earnings first.
+  it('carries paying out more than was earned against later earnings', async () => {
+    mockLedger({ snapshot: 0, earned: 10_000, spent: 13_000, consumed: 0 });
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
 
-    mockLedger({ snapshot: 0, earned: 230_000, returned: 100_000, consumed: 100_000 });
-
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(30_000);
+    mockLedger({ snapshot: 0, earned: 15_000, spent: 13_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(2_000);
   });
 
   it('never reports a negative remaining amount', async () => {
@@ -229,7 +213,13 @@ describe('getBankableAmount', () => {
 
     const result = await getBankableAmount(userId, 0, afterSettle);
 
-    expect(result).toEqual({ snapshot: 0, earned: 2_000, consumed: 0, remaining: 2_000 });
+    expect(result).toEqual({
+      snapshot: 0,
+      earned: 2_000,
+      spent: 0,
+      consumed: 0,
+      remaining: 2_000,
+    });
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
       String(userId),
@@ -300,40 +290,18 @@ describe('getBankableAmount', () => {
     );
   });
 
-  // Pinned whole: a wrong join key still returns a plausible number.
-  it('nets what each user paid against what the creator sent that user', async () => {
+  it("counts the creator's part of each awarded bounty they helped fund as paid", async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ bountyId: 7 }]).mockResolvedValueOnce([
+      { bountyId: 7, userId, unitAmount: 60_000 },
+      { bountyId: 7, userId: 99, unitAmount: 40_000 },
+    ]);
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
     await getBankableAmount(userId, 0, afterSettle);
 
-    const since = `toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00'`;
-    expect(issuedSql('AS returned')).toBe(
-      squash(`SELECT sum(least(received.amount, sent.amount)) AS returned FROM (
-          ${receivedFromUsersSql(since, [])}
-        ) AS received
-        INNER JOIN (
-          SELECT toInt64(toAccountId) AS counterparty, toInt64(sum(amount)) AS amount
-          FROM buzzTransactions
-          WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
-            AND date >= '2026-11-01 00:00:00'
-          GROUP BY counterparty
-        ) AS sent ON sent.counterparty = received.payer`)
-    );
-  });
-
-  it('nets a bounty award against the supporters who funded it', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([{ bountyId: 7, userId: 99, unitAmount: 100_000 }]);
-    mockLedger({
-      snapshot: 0,
-      earned: 100_000,
-      returned: 0,
-      returnedWithBounties: 100_000,
-      awardedBounties: [7],
-      consumed: 0,
-    });
-
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
-    expect(issuedSql('values(')).toContain('(7, 99, 100000, 100000)');
+    const spentSql = issuedSql('AS spent');
+    expect(spentSql).toContain('(7, 60000, 100000)');
+    expect(spentSql).not.toContain('(7, 40000, 100000)');
   });
 
   it('reads closed months only for what was consumed, leaving this month to the bank account', async () => {
@@ -435,6 +403,32 @@ describe('getBountyFunders', () => {
       { bountyId: 7, userId: 2, unitAmount: 40, total: 100 },
       { bountyId: 8, userId: 3, unitAmount: 5, total: 5 },
     ]);
+  });
+});
+
+describe('paidToUsersSql', () => {
+  // Pinned whole: a wrong account column still returns a plausible number.
+  it('counts payments from the creator, sales they bought and their part of bounties they funded', () => {
+    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00'`;
+    expect(
+      squash(paidToUsersSql(42, [{ bountyId: 7, userId: 42, unitAmount: 60, total: 100 }]))
+    ).toBe(
+      squash(`SELECT sum(amount) AS spent FROM (SELECT toInt64(amount) AS amount FROM buzzTransactions
+        WHERE fromAccountId = 42 AND ${paidTo}
+          AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+        UNION ALL SELECT toInt64(amount) AS amount FROM buzzTransactions
+        WHERE (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0) AND ${paidTo}
+          AND JSONExtractInt(details, 'purchasedBy') = 42
+        UNION ALL SELECT intDiv(award.amount * funder.unitAmount, funder.total) AS amount
+        FROM (
+          SELECT JSONExtractInt(details, 'entityId') AS bountyId, toInt64(amount) AS amount
+          FROM buzzTransactions
+          WHERE (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty') AND ${paidTo}
+        ) AS award
+        INNER JOIN (
+          SELECT * FROM values('bountyId Int64, unitAmount Int64, total Int64', (7, 60, 100))
+        ) AS funder ON funder.bountyId = award.bountyId)`)
+    );
   });
 });
 
