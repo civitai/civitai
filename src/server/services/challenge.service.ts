@@ -4295,7 +4295,10 @@ export async function getCompletedChallengesWithWinners(
   // Transform results
   const coverImageMap = new Map(coverImages.map((img) => [img.id, img]));
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
-    const coverImage = item.coverImageId ? coverImageMap.get(item.coverImageId) ?? null : null;
+    const coverImage = coverWithinSite(
+      item.coverImageId ? coverImageMap.get(item.coverImageId) : null,
+      { isGreen: isGreen ?? false, viewerId: currentUserId }
+    );
     const metadata = parseChallengeMetadata(item.metadata);
     const parsedCategories = challengeJudgingCategoriesSchema.safeParse(item.judgingCategories);
 

@@ -64,3 +64,16 @@ describe.each([
     expect(getChallengeEventById).toHaveBeenCalledWith(7, site);
   });
 });
+
+describe('challenge router for a signed-out viewer on the green site', () => {
+  const site = { isGreen: true, viewerId: undefined };
+
+  it('passes the site without a viewer', async () => {
+    await caller(true, null).getDaily();
+    await caller(true, null).getActiveEvents();
+    await caller(true, null).getEventById({ id: 7 });
+    expect(getDailyChallenges).toHaveBeenCalledWith(site);
+    expect(getActiveEvents).toHaveBeenCalledWith(site);
+    expect(getChallengeEventById).toHaveBeenCalledWith(7, site);
+  });
+});

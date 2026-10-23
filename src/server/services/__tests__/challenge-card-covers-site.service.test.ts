@@ -30,6 +30,7 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 const {
   getActiveEvents,
   getChallengeEventById,
+  getCompletedChallengesWithWinners,
   getDailyChallenges,
   getInfiniteChallenges,
   getMyChallenges,
@@ -129,6 +130,16 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
       limit: 20,
       isGreen: site.isGreen,
     } as Parameters<typeof getMyChallenges>[0]);
+    return items[0].coverImage;
+  },
+  'previous winners': async (site) => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ ...cardRow, status: 'Completed' }] as never);
+    const { items } = await getCompletedChallengesWithWinners({
+      limit: 20,
+      currentUserId: site.viewerId,
+      isGreen: site.isGreen,
+    } as Parameters<typeof getCompletedChallengesWithWinners>[0]);
     return items[0].coverImage;
   },
   'event banner': async (site) => {
