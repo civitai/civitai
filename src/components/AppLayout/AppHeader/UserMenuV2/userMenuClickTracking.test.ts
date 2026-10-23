@@ -171,7 +171,7 @@ describe('UserMenu_Click', () => {
     await click(row('Link'));
     expect(civitaiLink.onClick).toHaveBeenCalledTimes(1);
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'civitai-link', group: 'help', pinned: false, surface: 'mobile' },
+      { item: 'civitai-link', group: 'creator-tools', pinned: false, surface: 'mobile' },
     ]);
   });
 
