@@ -66,26 +66,37 @@ function refusal(userId: number, result: Extract<ReleaseHeldFlagsResult, { ok: f
   }
 }
 
+/** What the operator typed, handed back on a refusal so the form keeps it. */
+const refill = (form: FormData) => ({
+  userId: String(form.get('userId') ?? ''),
+  approvalRef: String(form.get('approvalRef') ?? ''),
+  reason: String(form.get('reason') ?? ''),
+});
+
 export const actions: Actions = {
   count: async ({ request, locals }) => {
     if (!isAdmin(locals)) return fail(403, { error: 'Admins only.' });
-    const input = parseForm(countSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
+    const form = await request.formData();
+    const input = parseForm(countSchema, form);
+    if (typeof input === 'string') return fail(400, { error: input, refill: refill(form) });
     const result = await releaseHeldUserCsamFlags({
       ...input,
       moderatorId: locals.user.id,
       dryRun: true,
     });
-    if (!result.ok) return fail(409, { error: refusal(input.userId, result) });
+    if (!result.ok)
+      return fail(409, { error: refusal(input.userId, result), refill: refill(form) });
     return { counted: { ...input, count: result.count, legs: result.legs } };
   },
 
   release: async ({ request, locals }) => {
     if (!isAdmin(locals)) return fail(403, { error: 'Admins only.' });
-    const input = parseForm(releaseSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
+    const form = await request.formData();
+    const input = parseForm(releaseSchema, form);
+    if (typeof input === 'string') return fail(400, { error: input, refill: refill(form) });
     const result = await releaseHeldUserCsamFlags({ ...input, moderatorId: locals.user.id });
-    if (!result.ok) return fail(409, { error: refusal(input.userId, result) });
+    if (!result.ok)
+      return fail(409, { error: refusal(input.userId, result), refill: refill(form) });
     return {
       released: `Released ${result.count} flag${result.count === 1 ? '' : 's'} for user #${
         input.userId

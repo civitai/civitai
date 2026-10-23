@@ -8,6 +8,13 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const counted = $derived(form && 'counted' in form ? form.counted : null);
+  type Typed = { userId: number | string; approvalRef: string; reason: string };
+  const typed: Typed | null = $derived(
+    counted ?? (form && 'refill' in form ? (form.refill as Typed) : null)
+  );
+  // Editing a field after the count would leave the release acting on the values counted, not shown.
+  let edited = $state(false);
+  let releasing = $state(false);
 </script>
 
 <header class="page-header">
@@ -31,18 +38,28 @@
 {/if}
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <form method="POST" action="?/count" use:enhance class="grid max-w-xl gap-3">
+  <form
+    method="POST"
+    action="?/count"
+    use:enhance={() =>
+      async ({ update }) => {
+        await update({ reset: false });
+        edited = false;
+      }}
+    oninput={() => (edited = true)}
+    class="grid max-w-xl gap-3"
+  >
     <label class="grid gap-1 text-sm">
       User id
-      <Input name="userId" inputmode="numeric" required value={counted?.userId ?? ''} />
+      <Input name="userId" inputmode="numeric" required value={typed?.userId ?? ''} />
     </label>
     <label class="grid gap-1 text-sm">
       Approval reference
-      <Input name="approvalRef" required class="font-mono" value={counted?.approvalRef ?? ''} />
+      <Input name="approvalRef" required class="font-mono" value={typed?.approvalRef ?? ''} />
     </label>
     <label class="grid gap-1 text-sm">
       Reason
-      <Input name="reason" required value={counted?.reason ?? ''} />
+      <Input name="reason" required value={typed?.reason ?? ''} />
     </label>
     <div>
       <Button type="submit" variant="outline">Count</Button>
@@ -50,11 +67,18 @@
   </form>
 
   <!-- Its own form, so Enter in the count field submits Release and never Count. -->
-  {#if counted}
+  {#if counted && !edited}
     <form
       method="POST"
       action="?/release"
-      use:enhance
+      use:enhance={({ cancel }) => {
+        if (releasing) return cancel();
+        releasing = true;
+        return async ({ update }) => {
+          await update();
+          releasing = false;
+        };
+      }}
       class="mt-4 grid max-w-xl gap-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3"
     >
       <p class="text-sm font-semibold text-yellow-200" role="status">
@@ -70,7 +94,7 @@
         <Input name="expectedCount" inputmode="numeric" autocomplete="off" required />
       </label>
       <div>
-        <Button type="submit" variant="destructive">Release</Button>
+        <Button type="submit" variant="destructive" disabled={releasing}>Release</Button>
       </div>
     </form>
   {/if}

@@ -122,6 +122,21 @@ describe('the release page', () => {
     });
   });
 
+  it('keeps what was typed after a refusal, and asks for a new count before any release', () => {
+    show({
+      error: 'Nothing was released.',
+      refill: { userId: '40', approvalRef: COUNTED.approvalRef, reason: COUNTED.reason },
+    });
+    const value = (name: string) =>
+      document.querySelector<HTMLInputElement>(`form[action="?/count"] [name="${name}"]`)?.value;
+    expect([value('userId'), value('approvalRef'), value('reason')]).toEqual([
+      '40',
+      COUNTED.approvalRef,
+      COUNTED.reason,
+    ]);
+    expect(document.querySelector('form[action="?/release"]')).toBeNull();
+  });
+
   it('says nothing is released yet, and gives the number to type without separators', () => {
     show({ counted: COUNTED });
     const status = document.querySelector('[role="status"]')!.textContent!;
