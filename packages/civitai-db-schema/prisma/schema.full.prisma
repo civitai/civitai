@@ -2889,6 +2889,8 @@ model WorkerClient {
   client                 OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
   /// The orchestrator provider this pool's workers register as.
   provider               String
+  /// The `subject_token_type` URNs this client may exchange.
+  subjectTokenTypes      String[]    @default([])
   /// Salad container groups whose IMDS tokens this client accepts.
   saladContainerGroupIds String[]    @default([])
   createdAt              DateTime    @default(now())

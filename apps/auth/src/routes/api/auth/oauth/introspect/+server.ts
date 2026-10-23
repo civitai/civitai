@@ -4,7 +4,7 @@ import { env } from '$env/dynamic/private';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
-import { parseBody } from '$lib/server/oauth/http';
+import { basicCredentials, parseBody } from '$lib/server/oauth/http';
 import { carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 
@@ -32,29 +32,6 @@ function clientIdList(value: string | undefined): Set<string> {
       .map((id) => id.trim())
       .filter(Boolean)
   );
-}
-
-/** RFC 6749 §2.3.1 form-urlencodes each half of a Basic credential. */
-function formDecode(value: string): string {
-  try {
-    return decodeURIComponent(value.replace(/\+/g, ' '));
-  } catch {
-    return value;
-  }
-}
-
-function basicCredentials(request: Request): { id: string; secret: string } | null {
-  const header = request.headers.get('authorization') ?? '';
-  if (!/^basic /i.test(header)) return null;
-  let decoded: string;
-  try {
-    decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8');
-  } catch {
-    return null;
-  }
-  const sep = decoded.indexOf(':');
-  if (sep < 0) return null;
-  return { id: formDecode(decoded.slice(0, sep)), secret: formDecode(decoded.slice(sep + 1)) };
 }
 
 export const POST: RequestHandler = async ({ request }) => {

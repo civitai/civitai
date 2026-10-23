@@ -9,6 +9,9 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { createKyselyFake } from '../../../../test/kysely-fake';
 import { blockWorkerDevice, createWorkerClient } from '../worker-admin';
 
+const DEVICE_ID = 'urn:civitai:token-type:device-id';
+const JWT = 'urn:ietf:params:oauth:token-type:jwt';
+
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let db: never;
@@ -41,6 +44,7 @@ describe('createWorkerClient', () => {
       id: 'workers-salad',
       name: 'Salad workers',
       provider: 'salad',
+      subjectTokenTypes: [JWT],
       saladContainerGroupIds: ['group-a'],
     });
 
@@ -60,21 +64,39 @@ describe('createWorkerClient', () => {
       expect.objectContaining({
         clientId: 'workers-salad',
         provider: 'salad',
+        subjectTokenTypes: [JWT],
         saladContainerGroupIds: ['group-a'],
       }),
     ]);
   });
 
+  it.each([
+    ['no accepted types', { subjectTokenTypes: [] }, /at least one/],
+    ['an unknown type', { subjectTokenTypes: ['urn:other'] }, /unknown subject token type/],
+    [
+      'device ids on a Salad pool',
+      { subjectTokenTypes: [DEVICE_ID, JWT], saladContainerGroupIds: ['group-a'] },
+      /cannot accept device ids/,
+    ],
+    ['Salad tokens without a group', { subjectTokenTypes: [JWT] }, /needs at least one/],
+  ])('refuses %s, writing nothing', async (_, over, error) => {
+    await expect(
+      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', ...over })
+    ).rejects.toThrow(error);
+    expect(tables.OauthClient).toHaveLength(0);
+    expect(tables.WorkerClient).toHaveLength(0);
+  });
+
   it('refuses unless exactly one account holds the system role', async () => {
     tables.UserRole.push({ userId: 901, role: 'system:workload' });
-    await expect(createWorkerClient(db, { id: 'x', name: 'x', provider: 'x' })).rejects.toThrow(
-      /found 2/
-    );
+    await expect(
+      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', subjectTokenTypes: [DEVICE_ID] })
+    ).rejects.toThrow(/found 2/);
 
     tables.UserRole.splice(0, tables.UserRole.length);
-    await expect(createWorkerClient(db, { id: 'x', name: 'x', provider: 'x' })).rejects.toThrow(
-      /found 0/
-    );
+    await expect(
+      createWorkerClient(db, { id: 'x', name: 'x', provider: 'x', subjectTokenTypes: [DEVICE_ID] })
+    ).rejects.toThrow(/found 0/);
     expect(tables.OauthClient).toHaveLength(0);
   });
 });

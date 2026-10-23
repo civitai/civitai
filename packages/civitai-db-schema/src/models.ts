@@ -2185,6 +2185,7 @@ export interface WorkerClient {
   clientId: string;
   client?: OauthClient;
   provider: string;
+  subjectTokenTypes: string[];
   saladContainerGroupIds: string[];
   createdAt: Date;
 }

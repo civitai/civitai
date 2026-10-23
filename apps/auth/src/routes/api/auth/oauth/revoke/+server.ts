@@ -4,7 +4,12 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { parseBody, setWildcardCors, setPublicClientCors } from '$lib/server/oauth/http';
+import {
+  basicCredentials,
+  parseBody,
+  setWildcardCors,
+  setPublicClientCors,
+} from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/revoke — RFC 7009 token revocation. Ported from src/pages/api/auth/oauth/revoke.ts.
@@ -24,7 +29,10 @@ export const OPTIONS: RequestHandler = () => {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   const body = await parseBody(request);
-  const { token, token_type_hint, client_id, client_secret } = body;
+  const { token, token_type_hint } = body;
+  const basic = basicCredentials(request);
+  const client_id = basic?.id ?? body.client_id;
+  const client_secret = basic?.secret ?? body.client_secret;
   // Real CLIENT IP from proxy headers (not the shared ingress peer) — keyed per-client, or null →
   // limit skipped, never one global bucket. `'unknown'` is for the audit log only, not the limiter.
   const clientIp = getClientIp(request);

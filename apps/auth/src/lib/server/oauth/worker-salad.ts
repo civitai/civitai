@@ -1,8 +1,9 @@
 import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
 import { env } from '$env/dynamic/private';
+import { DEVICE_ID_PATTERN } from './constants';
 
-// Salad IMDS JWT verification for the worker token-exchange grant. Off unless WORKER_SALAD_JWT_ENABLED is
-// "true"; the JWKS URL, and optionally the issuer and audience, come from config.
+// Salad IMDS JWT verification for the worker token-exchange grant. On only when WORKER_SALAD_JWT_ENABLED
+// is "true" and the JWKS URL, issuer, audience and algorithms are all configured.
 
 export type SaladIdentity = { machineId: string; containerGroupId: string };
 
@@ -21,8 +22,23 @@ const TOKEN_ERRORS = [
   errors.JOSENotSupported,
 ];
 
+type SaladConfig = { jwksUrl: string; issuer: string; audience: string; algorithms: string[] };
+
+function saladConfig(): SaladConfig | null {
+  const algorithms = (env.WORKER_SALAD_JWT_ALGORITHMS ?? '')
+    .split(',')
+    .map((a) => a.trim())
+    .filter(Boolean);
+  const jwksUrl = env.WORKER_SALAD_JWKS_URL;
+  const issuer = env.WORKER_SALAD_JWT_ISSUER;
+  const audience = env.WORKER_SALAD_JWT_AUDIENCE;
+  const enabled = env.WORKER_SALAD_JWT_ENABLED === 'true';
+  if (!enabled || !jwksUrl || !issuer || !audience || algorithms.length === 0) return null;
+  return { jwksUrl, issuer, audience, algorithms };
+}
+
 export function saladJwtEnabled(): boolean {
-  return env.WORKER_SALAD_JWT_ENABLED === 'true' && !!env.WORKER_SALAD_JWKS_URL;
+  return saladConfig() !== null;
 }
 
 const jwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -38,13 +54,14 @@ function jwksFor(url: string) {
 
 /** Verify a Salad IMDS JWT and read the machine and container group it was issued to. */
 export async function verifySaladJwt(token: string): Promise<SaladIdentity> {
-  const url = env.WORKER_SALAD_JWKS_URL;
-  if (!url) throw new SaladTokenError('Salad JWKS URL is not configured');
+  const config = saladConfig();
+  if (!config) throw new Error('Salad JWT verification is not configured');
   let payload: Record<string, unknown>;
   try {
-    ({ payload } = await jwtVerify(token, jwksFor(url), {
-      issuer: env.WORKER_SALAD_JWT_ISSUER || undefined,
-      audience: env.WORKER_SALAD_JWT_AUDIENCE || undefined,
+    ({ payload } = await jwtVerify(token, jwksFor(config.jwksUrl), {
+      issuer: config.issuer,
+      audience: config.audience,
+      algorithms: config.algorithms,
       requiredClaims: ['exp'],
     }));
   } catch (err) {
@@ -55,8 +72,9 @@ export async function verifySaladJwt(token: string): Promise<SaladIdentity> {
   }
   const machineId = payload.salad_machine_id;
   const containerGroupId = payload.salad_container_group_id;
-  if (typeof machineId !== 'string' || !machineId || typeof containerGroupId !== 'string') {
+  if (typeof machineId !== 'string' || typeof containerGroupId !== 'string') {
     throw new SaladTokenError('token is missing Salad claims');
   }
+  if (!DEVICE_ID_PATTERN.test(machineId)) throw new SaladTokenError('invalid salad_machine_id');
   return { machineId, containerGroupId };
 }

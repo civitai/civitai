@@ -2,7 +2,12 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
-import { SYSTEM_WORKLOAD_ROLE, TOKEN_EXCHANGE_GRANT } from './constants';
+import {
+  DEVICE_ID_TOKEN_TYPE,
+  JWT_TOKEN_TYPE,
+  SYSTEM_WORKLOAD_ROLE,
+  TOKEN_EXCHANGE_GRANT,
+} from './constants';
 
 // Operator actions on workload clients and worker devices. They take the db as an argument and import
 // nothing from `$lib`/`$env`, so scripts/worker-client.ts can run them outside SvelteKit.
@@ -11,8 +16,26 @@ export type CreateWorkerClientInput = {
   id: string;
   name: string;
   provider: string;
+  /** The `subject_token_type` URNs the client may exchange. */
+  subjectTokenTypes: string[];
   saladContainerGroupIds?: string[];
 };
+
+/** Why `input` is not a valid workload client, or null. */
+export function workerClientInputError(input: CreateWorkerClientInput): string | null {
+  const types = input.subjectTokenTypes;
+  const groups = input.saladContainerGroupIds ?? [];
+  if (types.length === 0) return 'at least one subject token type is required';
+  const unknown = types.find((t) => t !== DEVICE_ID_TOKEN_TYPE && t !== JWT_TOKEN_TYPE);
+  if (unknown) return `unknown subject token type ${unknown}`;
+  if (groups.length > 0 && types.includes(DEVICE_ID_TOKEN_TYPE)) {
+    return 'a client with Salad container groups cannot accept device ids';
+  }
+  if (types.includes(JWT_TOKEN_TYPE) && groups.length === 0) {
+    return 'accepting Salad tokens needs at least one Salad container group';
+  }
+  return null;
+}
 
 /**
  * Register a workload client owned by the `system:workload` account. Returns the client secret, which
@@ -22,6 +45,9 @@ export async function createWorkerClient(
   db: Kysely<DB>,
   input: CreateWorkerClientInput
 ): Promise<{ clientId: string; secret: string }> {
+  const invalid = workerClientInputError(input);
+  if (invalid) throw new Error(`Invalid workload client: ${invalid}`);
+
   const owners = await db
     .selectFrom('UserRole')
     .select('userId')
@@ -51,6 +77,7 @@ export async function createWorkerClient(
       .values({
         clientId: input.id,
         provider: input.provider,
+        subjectTokenTypes: input.subjectTokenTypes,
         saladContainerGroupIds: input.saladContainerGroupIds ?? [],
       })
       .execute();

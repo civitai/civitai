@@ -82,12 +82,15 @@ const DEVICE_ID_TYPE = 'urn:civitai:token-type:device-id';
 const JWT_TYPE = 'urn:ietf:params:oauth:token-type:jwt';
 const WORKER = TokenScope.WorkerRegister;
 const OWNER = 900;
-const POOL = 'workers-salad';
+const POOL = 'workers-dp';
+const SALAD_POOL = 'workers-salad';
 const OTHER_POOL = 'workers-other';
 const ORCHESTRATOR = 'orchestrator';
 const LINK = 'link-service';
 const DEVICE = 'machine-0001';
 const SALAD_GROUP = 'group-a';
+const SALAD_ISSUER = 'https://salad.example';
+const SALAD_AUDIENCE = 'https://auth.civitai.example/workers';
 
 const secrets: Record<string, string> = {};
 let saladKey: CryptoKey;
@@ -142,6 +145,13 @@ async function introspect(token: string, caller = ORCHESTRATOR) {
   return (await res.json()) as Record<string, unknown>;
 }
 
+function saladExchange(subjectToken: string) {
+  return exchange(
+    { subject_token: subjectToken, subject_token_type: JWT_TYPE },
+    { clientId: SALAD_POOL }
+  );
+}
+
 async function revoke(token: string, clientId: string) {
   const res = await REVOKE({
     request: form('revoke', { token, client_id: clientId, client_secret: secrets[clientId] }),
@@ -153,7 +163,11 @@ async function revoke(token: string, clientId: string) {
 function saladJwt(
   claims: Record<string, unknown> = {},
   key: CryptoKey = saladKey,
-  { expires = true }: { expires?: boolean } = {}
+  {
+    expires = true,
+    issuer = SALAD_ISSUER,
+    audience = SALAD_AUDIENCE,
+  }: { expires?: boolean; issuer?: string; audience?: string } = {}
 ): Promise<string> {
   const jwt = new SignJWT({
     salad_machine_id: 'salad-machine-7',
@@ -161,6 +175,8 @@ function saladJwt(
     ...claims,
   })
     .setProtectedHeader({ alg: 'ES256', kid: 'salad-1' })
+    .setIssuer(issuer)
+    .setAudience(audience)
     .setIssuedAt();
   return (expires ? jwt.setExpirationTime('5m') : jwt).sign(key);
 }
@@ -179,13 +195,30 @@ beforeEach(() => {
   for (const key of Object.keys(h.tables)) delete h.tables[key];
   h.tables.OauthClient = [
     confidentialClient(POOL),
+    confidentialClient(SALAD_POOL),
     confidentialClient(OTHER_POOL),
     confidentialClient(ORCHESTRATOR, { grants: ['client_credentials'], allowedScopes: 0 }),
     confidentialClient(LINK, { grants: ['client_credentials'], allowedScopes: 0 }),
   ];
   h.tables.WorkerClient = [
-    { clientId: POOL, provider: 'salad', saladContainerGroupIds: [SALAD_GROUP] },
-    { clientId: OTHER_POOL, provider: 'dp-other', saladContainerGroupIds: [] },
+    {
+      clientId: POOL,
+      provider: 'dp',
+      subjectTokenTypes: [DEVICE_ID_TYPE],
+      saladContainerGroupIds: [],
+    },
+    {
+      clientId: SALAD_POOL,
+      provider: 'salad',
+      subjectTokenTypes: [JWT_TYPE],
+      saladContainerGroupIds: [SALAD_GROUP],
+    },
+    {
+      clientId: OTHER_POOL,
+      provider: 'dp-other',
+      subjectTokenTypes: [DEVICE_ID_TYPE],
+      saladContainerGroupIds: [],
+    },
   ];
   h.tables.User = [{ id: 501, username: 'link-user', deletedAt: null, bannedAt: null }];
   h.tables.ApiKey = [];
@@ -199,6 +232,9 @@ beforeEach(() => {
   process.env.OAUTH_INTROSPECTION_CLIENT_IDS = LINK;
   process.env.WORKER_SALAD_JWT_ENABLED = '';
   process.env.WORKER_SALAD_JWKS_URL = 'https://salad.example/jwks.json';
+  process.env.WORKER_SALAD_JWT_ISSUER = SALAD_ISSUER;
+  process.env.WORKER_SALAD_JWT_AUDIENCE = SALAD_AUDIENCE;
+  process.env.WORKER_SALAD_JWT_ALGORITHMS = 'ES256';
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-23T12:00:00.000Z'));
 });
@@ -337,12 +373,42 @@ describe('worker token exchange', () => {
     expect(workerKeys()).toHaveLength(0);
   });
 
-  it('refuses a malformed device id and an unknown subject token type', async () => {
+  it('refuses a malformed device id', async () => {
     expect((await exchange({ subject_token: 'has spaces' })).body.error).toBe('invalid_request');
     expect((await exchange({ subject_token: 'x'.repeat(129) })).body.error).toBe('invalid_request');
-    expect((await exchange({ subject_token_type: 'urn:other' })).body.error).toBe(
-      'invalid_request'
-    );
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a subject token type the client does not accept', async () => {
+    process.env.WORKER_SALAD_JWT_ENABLED = 'true';
+    expect((await exchange({ subject_token_type: 'urn:other' })).body.error).toBe('invalid_grant');
+    const jwt = await saladJwt();
+    const res = await exchange({ subject_token: jwt, subject_token_type: JWT_TYPE });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a device id from a Salad pool client', async () => {
+    const res = await exchange({}, { clientId: SALAD_POOL });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+
+    // Also when the client's accepted types list device ids by mistake.
+    const salad = h.tables.WorkerClient.find((c) => c.clientId === SALAD_POOL)!;
+    salad.subjectTokenTypes = [JWT_TYPE, DEVICE_ID_TYPE];
+    expect((await exchange({}, { clientId: SALAD_POOL })).body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('clears tokens left for a blocked device when it next tries to exchange', async () => {
+    await exchange();
+    // A token written by an exchange that raced the block.
+    rows('WorkerDevice')[0].status = 'blocked';
+    expect(workerKeys()).toHaveLength(1);
+
+    const res = await exchange();
+    expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
   });
 
@@ -360,30 +426,28 @@ describe('worker token exchange — Salad IMDS JWT', () => {
   });
 
   it('accepts a token signed by the Salad key for an allowed group', async () => {
-    const res = await exchange({ subject_token: await saladJwt(), subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt());
     expect(res.status).toBe(200);
     expect(rows('WorkerDevice')[0]).toMatchObject({ issuer: 'salad', subject: 'salad-machine-7' });
   });
 
   it('refuses it while the flag is off', async () => {
     process.env.WORKER_SALAD_JWT_ENABLED = '';
-    const res = await exchange({ subject_token: await saladJwt(), subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt());
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_request');
     expect(workerKeys()).toHaveLength(0);
   });
 
   it('refuses a token with a bad signature', async () => {
-    const forged = await saladJwt({}, strangerKey);
-    const res = await exchange({ subject_token: forged, subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt({}, strangerKey));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
   });
 
   it('refuses a token without an expiry', async () => {
-    const forever = await saladJwt({}, saladKey, { expires: false });
-    const res = await exchange({ subject_token: forever, subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt({}, saladKey, { expires: false }));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
@@ -391,18 +455,71 @@ describe('worker token exchange — Salad IMDS JWT', () => {
 
   it('answers a server error, not invalid_grant, when the JWKS cannot be fetched', async () => {
     h.jwksDown = true;
-    const res = await exchange({ subject_token: await saladJwt(), subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt());
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('server_error');
     expect(workerKeys()).toHaveLength(0);
   });
 
   it('refuses a container group not on the client allowlist', async () => {
-    const foreign = await saladJwt({ salad_container_group_id: 'group-b' });
-    const res = await exchange({ subject_token: foreign, subject_token_type: JWT_TYPE });
+    const res = await saladExchange(await saladJwt({ salad_container_group_id: 'group-b' }));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
+  });
+
+  it.each([
+    'WORKER_SALAD_JWKS_URL',
+    'WORKER_SALAD_JWT_ISSUER',
+    'WORKER_SALAD_JWT_AUDIENCE',
+    'WORKER_SALAD_JWT_ALGORITHMS',
+  ])('is off while %s is unset, whatever the flag says', async (name) => {
+    process.env[name] = '';
+    const res = await saladExchange(await saladJwt());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_request');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a token for another audience or from another issuer', async () => {
+    const otherAudience = await saladJwt({}, saladKey, { audience: 'https://elsewhere.example' });
+    expect((await saladExchange(otherAudience)).body.error).toBe('invalid_grant');
+    const otherIssuer = await saladJwt({}, saladKey, { issuer: 'https://not-salad.example' });
+    expect((await saladExchange(otherIssuer)).body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a token signed with an algorithm outside the configured list', async () => {
+    const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const claims = {
+      salad_machine_id: 'm1',
+      salad_container_group_id: SALAD_GROUP,
+      iss: SALAD_ISSUER,
+      aud: SALAD_AUDIENCE,
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    const none = `${enc({ alg: 'none', kid: 'salad-1' })}.${enc(claims)}.`;
+    const hs256 = await new SignJWT(claims)
+      .setProtectedHeader({ alg: 'HS256', kid: 'salad-1' })
+      .sign(new TextEncoder().encode('x'.repeat(32)));
+    expect((await saladExchange(none)).body.error).toBe('invalid_grant');
+    expect((await saladExchange(hs256)).body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a valid token whose algorithm the config does not list', async () => {
+    process.env.WORKER_SALAD_JWT_ALGORITHMS = 'RS256';
+    const res = await saladExchange(await saladJwt());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a machine id that is not a valid device id', async () => {
+    const res = await saladExchange(await saladJwt({ salad_machine_id: 'x'.repeat(129) }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(rows('WorkerDevice')).toHaveLength(0);
   });
 });
 
@@ -418,7 +535,7 @@ describe('worker token introspection', () => {
     expect(await introspect(token)).toEqual({
       active: true,
       client_id: POOL,
-      worker_provider: 'salad',
+      worker_provider: 'dp',
       device_id: DEVICE,
       device_issuer: 'self',
       scope: String(WORKER),
@@ -440,6 +557,24 @@ describe('worker token introspection', () => {
     await revoke(token, POOL);
     expect(await introspect(token)).toEqual({ active: false });
     expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('reads it as inactive after its client revokes it with HTTP Basic credentials', async () => {
+    const token = await issue();
+    const basic = Buffer.from(`${POOL}:${secrets[POOL]}`).toString('base64');
+    const res = await REVOKE({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/revoke', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          authorization: `Basic ${basic}`,
+        },
+        body: new URLSearchParams({ token }),
+      }),
+      locals: {},
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await introspect(token)).toEqual({ active: false });
   });
 
   it('ignores a revoke from another workload client with the same owner', async () => {

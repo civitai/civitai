@@ -52,7 +52,8 @@ export const POST: RequestHandler = async ({ request }) => {
   const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
-  // fresh bucket each request.
+  // fresh bucket each request. The worker exchange has its own, larger bucket: a pool of workers can
+  // share one egress IP.
   if (!(await checkOAuthRateLimit(isWorkerExchange ? 'worker-token' : 'token', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);

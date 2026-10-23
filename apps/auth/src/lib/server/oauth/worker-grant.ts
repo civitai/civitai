@@ -13,6 +13,7 @@ import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import {
+  DEVICE_ID_PATTERN,
   DEVICE_ID_TOKEN_TYPE,
   JWT_TOKEN_TYPE,
   OAUTH_TOKEN_PREFIX,
@@ -23,11 +24,8 @@ import { logOAuthEvent } from './audit-log';
 import { scopeToString, stringToScope } from './scope';
 import { SaladTokenError, saladJwtEnabled, verifySaladJwt } from './worker-salad';
 
-// RFC 8693 token exchange for workload clients: the client authenticates with its secret (the library
-// does that before `handle`), the worker presents its device credential as `subject_token`, and gets back
-// a `Worker` token carrying only WorkerRegister, with no refresh token.
-
-const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+// RFC 8693 token exchange for workload clients: a worker trades its device credential (`subject_token`)
+// for a `Worker` token carrying only WorkerRegister, with no refresh token.
 
 /** What the token route attaches to the library request for this grant. */
 export type WorkerGrantRequestContext = { clientIp: string | null };
@@ -64,6 +62,7 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
       .innerJoin('OauthClient', 'OauthClient.id', 'WorkerClient.clientId')
       .select([
         'WorkerClient.clientId',
+        'WorkerClient.subjectTokenTypes',
         'WorkerClient.saladContainerGroupIds',
         'OauthClient.userId',
         'OauthClient.allowedScopes',
@@ -87,48 +86,55 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
     }
 
     const now = new Date();
-    const deviceRow = await db
-      .insertInto('WorkerDevice')
-      .values({
-        clientId: workload.clientId,
-        issuer: device.issuer,
-        subject: device.subject,
-        lastIp: clientIp,
-      })
-      .onConflict((oc) =>
-        oc
-          .columns(['clientId', 'issuer', 'subject'])
-          .doUpdateSet({ lastSeenAt: now, lastIp: clientIp })
-      )
-      .returning(['id', 'status'])
-      .executeTakeFirstOrThrow();
+    const accessToken = OAUTH_TOKEN_PREFIX + generateKey(36);
+    const expiresAt = new Date(now.getTime() + WORKER_TOKEN_TTL * 1000);
+    // One transaction: the upsert holds the device row's lock until the token is written, so a
+    // concurrent blockWorkerDevice either runs first (and this sees `blocked`) or deletes the new token.
+    const deviceRow = await db.transaction().execute(async (trx) => {
+      const row = await trx
+        .insertInto('WorkerDevice')
+        .values({
+          clientId: workload.clientId,
+          issuer: device.issuer,
+          subject: device.subject,
+          lastIp: clientIp,
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(['clientId', 'issuer', 'subject'])
+            .doUpdateSet({ lastSeenAt: now, lastIp: clientIp })
+        )
+        .returning(['id', 'status'])
+        .executeTakeFirstOrThrow();
+
+      // Each exchange adds a row, so clear this device's old ones as it goes: expired ones, and any
+      // left behind for a blocked device.
+      let sweep = trx
+        .deleteFrom('ApiKey')
+        .where('workerDeviceId', '=', row.id)
+        .where('type', '=', 'Worker');
+      if (row.status === 'active') sweep = sweep.where('expiresAt', '<', now);
+      await sweep.execute();
+      if (row.status !== 'active') return row;
+
+      await trx
+        .insertInto('ApiKey')
+        .values({
+          key: generateSecretHash(accessToken),
+          name: `worker:${workload.clientId}`,
+          tokenScope: TokenScope.WorkerRegister,
+          userId: workload.userId,
+          type: 'Worker',
+          expiresAt,
+          clientId: workload.clientId,
+          workerDeviceId: row.id,
+        })
+        .execute();
+      return row;
+    });
     if (deviceRow.status !== 'active') {
       throw new InvalidGrantError('Invalid grant: device is blocked');
     }
-
-    // Each exchange adds a row, so clear this device's expired ones as it goes.
-    await db
-      .deleteFrom('ApiKey')
-      .where('workerDeviceId', '=', deviceRow.id)
-      .where('type', '=', 'Worker')
-      .where('expiresAt', '<', now)
-      .execute();
-
-    const accessToken = OAUTH_TOKEN_PREFIX + generateKey(36);
-    const expiresAt = new Date(now.getTime() + WORKER_TOKEN_TTL * 1000);
-    await db
-      .insertInto('ApiKey')
-      .values({
-        key: generateSecretHash(accessToken),
-        name: `worker:${workload.clientId}`,
-        tokenScope: TokenScope.WorkerRegister,
-        userId: workload.userId,
-        type: 'Worker',
-        expiresAt,
-        clientId: workload.clientId,
-        workerDeviceId: deviceRow.id,
-      })
-      .execute();
 
     logOAuthEvent({
       type: 'worker.token.issued',
@@ -152,9 +158,15 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
 async function resolveDevice(
   subjectToken: string,
   subjectTokenType: string,
-  workload: { saladContainerGroupIds: string[] }
+  workload: { subjectTokenTypes: string[]; saladContainerGroupIds: string[] }
 ): Promise<WorkerDeviceRef> {
+  const notAccepted = () =>
+    new InvalidGrantError('Invalid grant: `subject_token_type` is not accepted for this client');
+  if (!workload.subjectTokenTypes.includes(subjectTokenType)) throw notAccepted();
+
   if (subjectTokenType === DEVICE_ID_TOKEN_TYPE) {
+    // A Salad pool's devices are identified by their Salad tokens.
+    if (workload.saladContainerGroupIds.length > 0) throw notAccepted();
     if (!DEVICE_ID_PATTERN.test(subjectToken)) {
       throw new InvalidRequestError('Invalid parameter: `subject_token`');
     }

@@ -6095,6 +6095,10 @@ export type WorkerClient = {
    */
   provider: string;
   /**
+   * The `subject_token_type` URNs this client may exchange.
+   */
+  subjectTokenTypes: Generated<string[]>;
+  /**
    * Salad container groups whose IMDS tokens this client accepts.
    */
   saladContainerGroupIds: Generated<string[]>;

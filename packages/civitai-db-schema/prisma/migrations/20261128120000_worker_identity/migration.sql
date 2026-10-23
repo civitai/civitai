@@ -1,6 +1,12 @@
 -- MANUAL APPLY ONLY, in each environment. Run it with psql in autocommit mode, one statement at a time,
 -- NOT inside a transaction: `ADD VALUE` and `CREATE INDEX CONCURRENTLY` refuse to run in a transaction
--- block. Every statement is idempotent, so re-running the file is safe.
+-- block. Every statement is idempotent, so re-running the file is safe, and a statement that fails on
+-- the lock timeout below can simply be run again.
+--
+-- If the CONCURRENTLY index build is interrupted it leaves an INVALID index behind, which
+-- `IF NOT EXISTS` then skips. Check with
+--   SELECT indisvalid FROM pg_index WHERE indexrelid = '"ApiKey_workerDeviceId_idx"'::regclass;
+-- and if it is false, run `DROP INDEX CONCURRENTLY "ApiKey_workerDeviceId_idx";` and re-run the CREATE.
 --
 -- Worker identity at the auth hub: workload OAuth clients whose workers trade a device credential for a
 -- 15-minute `Worker` token through the token-exchange grant (RFC 8693).
@@ -11,18 +17,21 @@
 --     container groups). Deleted with its OauthClient.
 --   * `WorkerDevice`: the device registry, unique on (clientId, issuer, subject). Deleted with its client.
 --   * `ApiKey.workerDeviceId`: the device a Worker token was issued to. Deleted with its device.
---   * Role `system:workload` and a `system_workers` user holding it, to own the workload clients. The hub
---     produces no session for a holder of that role.
+--   * Role `system:workload` and a `system-workers` user holding it, to own the workload clients. The hub
+--     produces no session for a holder of that role. Signup never produces a username with a hyphen.
 --
 -- ORDER: deploy the main app and the hub with the regenerated Prisma client (which knows `Worker`) BEFORE
 -- applying this. Nothing writes a `Worker` row until a WorkerClient exists, and none exists until an
 -- operator creates one after both steps.
+
+SET lock_timeout = '3s';
 
 ALTER TYPE "ApiKeyType" ADD VALUE IF NOT EXISTS 'Worker';
 
 CREATE TABLE IF NOT EXISTS "WorkerClient" (
   "clientId" TEXT NOT NULL,
   "provider" TEXT NOT NULL,
+  "subjectTokenTypes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   "saladContainerGroupIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "WorkerClient_pkey" PRIMARY KEY ("clientId"),
@@ -70,13 +79,15 @@ INSERT INTO "Role" ("id", "description")
 VALUES ('system:workload', 'Owner of workload OAuth clients. A holder cannot sign in.')
 ON CONFLICT ("id") DO NOTHING;
 
--- The role goes only to a user this statement created. If `system_workers` is already taken, nothing is
+-- The role goes only to a user this statement created. If `system-workers` is already taken, nothing is
 -- inserted; pick another name rather than granting the role to an existing account.
 WITH created AS (
   INSERT INTO "User" ("username")
-  VALUES ('system_workers')
+  VALUES ('system-workers')
   ON CONFLICT ("username") DO NOTHING
   RETURNING "id"
 )
 INSERT INTO "UserRole" ("userId", "role", "note")
 SELECT "id", 'system:workload', 'Owns workload OAuth clients' FROM created;
+
+RESET lock_timeout;
