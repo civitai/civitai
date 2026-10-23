@@ -132,12 +132,21 @@ describe('getBankableAmount', () => {
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(7_000);
   });
 
-  // Justin, 2026-10-23: paying other users nets against new earnings only. If you are about to let
-  // it reach the cutover snapshot, that is a product decision to take back to him, not a cleanup.
-  it('never takes what the creator paid other users out of the cutover snapshot', async () => {
-    mockLedger({ snapshot: 50_000, earned: 0, spent: 80_000, consumed: 0 });
+  // Justin, 2026-10-23: Buzz paid to other users beyond what was earned since the cutover also
+  // comes out of the cutover snapshot. If you are about to shield the snapshot from it, that is a
+  // product decision to take back to him, not a cleanup.
+  it('takes what the creator paid other users beyond their earnings out of the cutover snapshot', async () => {
+    mockLedger({ snapshot: 100_000, earned: 0, spent: 100_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
 
-    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(50_000);
+    mockLedger({ snapshot: 100_000, earned: 20_000, spent: 50_000, consumed: 0 });
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(70_000);
+  });
+
+  it('leaves the cutover snapshot whole while earnings cover what was paid', async () => {
+    mockLedger({ snapshot: 100_000, earned: 30_000, spent: 20_000, consumed: 0 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(110_000);
   });
 
   // Both are totals since the cutover, so a month of paying out more than was earned is made up
@@ -239,14 +248,16 @@ describe('getBankableAmount', () => {
     expect(sysRedis.hSet).not.toHaveBeenCalled();
   });
 
-  it('checks ingest for a row dated at least an hour past the cutover', async () => {
+  it('checks ingest for a row dated at least an hour past the cutover and not in the future', async () => {
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
     await getBankableAmount(userId, 0, afterSettle);
 
     const settledAt = new Date(BANKABLE_CUTOVER.getTime() + 60 * 60 * 1000);
     expect(issuedSql('AS settled')).toBe(
-      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(settledAt)} LIMIT 1`
+      `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(
+        settledAt
+      )} AND date <= ${String(afterSettle)} LIMIT 1`
     );
   });
 
@@ -316,7 +327,7 @@ describe('getBankableAmount', () => {
     expect(issuedSqls('AS settled')).toContain(
       `SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${String(
         new Date('2026-12-15T00:00:00Z')
-      )} LIMIT 1`
+      )} AND date <= ${String(afterSettle)} LIMIT 1`
     );
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,

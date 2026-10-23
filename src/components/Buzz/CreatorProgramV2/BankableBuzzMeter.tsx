@@ -47,7 +47,7 @@ export function BankableBuzzMeter({
       label: 'Not bankable',
       value: notBankable,
       color: 'gray.6',
-      description: `Generation compensation, rewards, bought Buzz, and earnings matched by what you paid other users since ${cutover}. It is still yours to spend.`,
+      description: `Generation compensation, rewards, bought Buzz, and Buzz matched by what you paid other users since ${cutover}. It is still yours to spend.`,
     },
   ].filter((segment) => segment.value > 0);
   const held = bankableNow + overCap + notBankable;

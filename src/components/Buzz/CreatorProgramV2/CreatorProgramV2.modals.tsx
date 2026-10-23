@@ -272,9 +272,9 @@ const BankableBuzzInfo = ({
       <p className="font-bold">Bankable Buzz</p>
       <p>
         Each month you can bank the lower of your Cap and your bankable Buzz. Generation
-        compensation is still paid to you but is not bankable. What you earn from other users counts
-        after subtracting what you pay other users: tips, Early Access, shop items, bounties and
-        donations.
+        compensation is still paid to you but is not bankable. What you pay other users (tips, Early
+        Access, shop items, bounties and donations) is subtracted from what you earn, then from your
+        Buzz on {cutover}.
       </p>
 
       <Table className="table-auto">
@@ -298,8 +298,8 @@ const BankableBuzzInfo = ({
       {paid > bankable.earned && (
         <p className="text-xs">
           You&apos;ve paid other users <BuzzAmount amount={paid - bankable.earned} /> more than
-          you&apos;ve earned since {cutover}. Your next earnings make that up first. Your Buzz from{' '}
-          {cutover} isn&apos;t affected.
+          you&apos;ve earned since {cutover}. That comes out of your Buzz from {cutover}, and
+          anything beyond it out of what you earn next.
         </p>
       )}
 
@@ -322,7 +322,7 @@ const BankableBuzzInfo = ({
             <li>Generation compensation</li>
             <li>Buzz you bought</li>
             <li>Rewards and credits from Civitai</li>
-            <li>Earnings matched by Buzz you paid other users</li>
+            <li>Buzz matched by what you paid other users</li>
           </ul>
         </div>
       </div>

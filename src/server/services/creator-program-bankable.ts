@@ -148,12 +148,12 @@ export type BankableAmount = BankableLedger & {
 
 /**
  * A row dated past the settle point shows ingest has reached it; the clock alone would store a
- * short snapshot forever if ingest stalled.
+ * short snapshot forever if ingest stalled. A row dated in the future proves nothing.
  */
 async function hasIngestSettled(now: Date, settledAt = SNAPSHOT_SETTLED_AT) {
   if (now < settledAt || !clickhouse) return false;
   const rows = await clickhouse.$query<{ settled: number }>`
-    SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${settledAt} LIMIT 1
+    SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${settledAt} AND date <= ${now} LIMIT 1
   `;
   return rows.length > 0;
 }
@@ -335,13 +335,14 @@ export function withBankedThisMonth(
   ledger: BankableLedger,
   bankedThisMonth: number
 ): BankableAmount {
-  // What the creator paid other users comes out of what they earned, never out of the snapshot.
-  // Both are totals since the cutover, so paying out more than was earned carries forward.
+  // What the creator paid other users comes out of what they earned, then out of the snapshot.
+  // Both are totals since the cutover, so later earnings make up the snapshot first.
   const remaining = Math.max(
     0,
     ledger.snapshot +
+      ledger.earned -
       // A ledger cached before `spent` existed has none.
-      Math.max(0, ledger.earned - (ledger.spent ?? 0)) -
+      (ledger.spent ?? 0) -
       ledger.consumed -
       bankedThisMonth
   );
