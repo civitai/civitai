@@ -361,9 +361,9 @@ export const updatePostHandler = async ({
     const updatedPost = await updatePost({
       ...input,
       user: ctx.user,
-      // The guards `storyline.addChapter` and `placement.submitStorylineContinuation` have on their
-      // procedures, for the chapter or continuation a storyline draft becomes as it is published.
-      // (The submit rate limit is on `post.update` itself.)
+      // `placement.submitStorylineContinuation`'s procedure guards, for the continuation a
+      // storyline draft submits as it is published (its rate limit is on `post.update` itself).
+      // An owner's draft is held to the owner's own standing in the service.
       storyline: ctx.features.storylines
         ? {
             expectedPrice,

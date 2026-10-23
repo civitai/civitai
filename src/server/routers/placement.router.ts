@@ -178,8 +178,6 @@ function assertStorylinesEnabled(ctx: Context) {
   if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
 
-export { STORYLINE_SUBMIT_RATE_LIMIT };
-
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
     assertPromotionSurfaceReadable(ctx, input.surface);

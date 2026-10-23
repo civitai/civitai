@@ -37,7 +37,8 @@ beforeAll(async () => {
   db.pg = new PGlite();
   await db.pg.exec(`
     CREATE TABLE "User" ("id" integer PRIMARY KEY, username text, "bannedAt" timestamp(3),
-      "deletedAt" timestamp(3), muted boolean NOT NULL DEFAULT false);
+      "deletedAt" timestamp(3), muted boolean NOT NULL DEFAULT false,
+      "emailVerified" timestamp(3) DEFAULT now(), meta jsonb DEFAULT '{}');
     CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer, "nsfwLevel" integer NOT NULL DEFAULT 0,
       "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Report" ("id" integer PRIMARY KEY);
@@ -70,7 +71,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(`
-    UPDATE "User" SET muted = false;
+    UPDATE "User" SET muted = false, "emailVerified" = now(), meta = '{}';
     DELETE FROM "StorylinePendingChapter";
     DELETE FROM "StorylineChapterEdge";
     DELETE FROM "StorylineChapter";
@@ -211,6 +212,27 @@ describe("the readiness pass's selection", () => {
 
     await db.pg.exec(`UPDATE "User" SET muted = true WHERE id = ${OWNER}`);
     expect(await selected()).toEqual([]);
+  });
+
+  it('leaves the drafts of an owner required to verify their email, until they do', async () => {
+    const ready = await post();
+    await pending(ready, await storyline());
+    await db.pg.exec(`UPDATE "User" SET "emailVerified" = NULL WHERE id = ${OWNER}`);
+    // Unverified, but never asked to verify: an older account.
+    expect(await selected()).toEqual([ready]);
+
+    await db.pg.exec(
+      `UPDATE "User" SET meta = '{"emailVerificationRequired": true}' WHERE id = ${OWNER}`
+    );
+    expect(await selected()).toEqual([]);
+  });
+
+  it('leaves a link whose post another user wrote', async () => {
+    const ready = await post();
+    await pending(ready, await storyline());
+    await pending(await post({ userId: STRANGER }), await storyline());
+
+    expect(await selected()).toEqual([ready]);
   });
 
   it('takes at most a batch, lowest post first', async () => {

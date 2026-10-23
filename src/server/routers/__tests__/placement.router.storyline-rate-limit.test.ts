@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as MiddlewareTrpc from '~/server/middleware.trpc';
+import { STORYLINE_SUBMIT_RATE_LIMIT } from '~/shared/utils/storyline-placement';
 
 /**
  * 🔴 The submit rate limit is the only spam control a zero-priced storyline
@@ -30,9 +31,7 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
   };
 });
 
-const { placementRouter, STORYLINE_SUBMIT_RATE_LIMIT } = await import(
-  '~/server/routers/placement.router'
-);
+const { placementRouter } = await import('~/server/routers/placement.router');
 
 type ProcedureDef = { _def: { middlewares: unknown[] } };
 const procedure = (name: string) =>

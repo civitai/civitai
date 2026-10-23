@@ -154,7 +154,16 @@ beforeEach(() => {
     [STRANGER, 'stranger'],
     [COLLABORATOR, 'collaborator'],
   ] as const)
-    db.insert('user', { id, username, image: null, bannedAt: null, deletedAt: null });
+    db.insert('user', {
+      id,
+      username,
+      image: null,
+      bannedAt: null,
+      deletedAt: null,
+      muted: false,
+      emailVerified: new Date(0),
+      meta: {},
+    });
   const story = {
     userId: OWNER,
     status: 'Ongoing',
@@ -284,14 +293,37 @@ describe("the owner's chapter 1", () => {
     expect(chapterOf(DRAFT)).toBeDefined();
   });
 
-  it('is dropped, with the reason, for an owner who may not add to a storyline', async () => {
+  it.each([
+    ['muted', { muted: true }],
+    [
+      'required to verify their email',
+      { emailVerified: null, meta: { emailVerificationRequired: true } },
+    ],
+  ])(
+    'waits, keeping the link, while the owner is %s, whoever publishes',
+    async (_name, standing) => {
+      db.update('user', { id: OWNER }, standing);
+      draft(OWNER, { storylineId: EMPTY_STORY });
+
+      for (const actorId of [OWNER, MODERATOR])
+        await expect(publish(actorId)).resolves.toMatchObject({
+          status: 'waiting',
+          reason: 'restricted',
+        });
+      expect(chapterOf(DRAFT)).toBeUndefined();
+      expect(link()).toBeDefined();
+
+      db.update('user', { id: OWNER }, { muted: false, emailVerified: new Date() });
+      await expect(promotePendingChapter(DRAFT)).resolves.toMatchObject({ status: 'written' });
+    }
+  );
+
+  it("is judged on the owner's standing, not the publisher's", async () => {
     draft(OWNER, { storylineId: EMPTY_STORY });
 
     await expect(
       publish(OWNER, { submitRefusal: 'Verify your email address to do this' })
-    ).resolves.toMatchObject({ status: 'dropped', reason: 'Verify your email address to do this' });
-    expect(chapterOf(DRAFT)).toBeUndefined();
-    expect(link()).toBeUndefined();
+    ).resolves.toMatchObject({ status: 'chapterWritten' });
   });
 
   it('keeps the link, for the readiness pass, when the write fails for a reason that may pass', async () => {
@@ -645,7 +677,7 @@ describe('the readiness pass', () => {
     expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('drops a draft it is refused for, keeps one that failed otherwise, and goes on', async () => {
+  it('drops a draft it is refused for, and goes on to the next', async () => {
     // Refused: the chapter's author blocked the owner after the draft was linked.
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
     db.update('storylineChapter', { id: ROOT_CHAPTER }, { userId: COLLABORATOR });

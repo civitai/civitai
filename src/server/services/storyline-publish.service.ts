@@ -1,6 +1,7 @@
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { contentRestriction } from '~/server/common/content-restriction';
 import { createNotification } from '~/server/services/notification.service';
 import {
   checkStorylineContinuationAtPublish,
@@ -40,7 +41,7 @@ export type StorylinePublishContext = {
   /** The continuation price the contributor was shown. */
   expectedPrice?: number;
   spendType: BuzzSpendType;
-  /** Why this account may not add to a storyline (muted, email not verified), if it may not. */
+  /** Why the requester may not submit a continuation (muted, email not verified), if they may not. */
   submitRefusal?: string;
   /** The request may spend Buzz: a session or a full-scope key, not a narrower token. */
   canSpend: boolean;
@@ -56,7 +57,8 @@ export type StorylinePublishOutcome = { storylineId: number } & (
   | { status: 'dropped'; reason: string }
 );
 
-type PendingChapterWait = 'notReady' | 'cannotSubmit' | 'aboveRating';
+/** `restricted`: the owner is muted or has to verify their email, which `storyline.addChapter` refuses. */
+type PendingChapterWait = 'notReady' | 'cannotSubmit' | 'aboveRating' | 'restricted';
 
 export type PreparedStorylinePublish = { postId: number; storylineId: number; userId: number } & (
   | { kind: 'closed'; reason: string }
@@ -103,7 +105,6 @@ export async function prepareStorylinePublish({
   if (!isOwner && (!context.canSpend || actorId !== link.userId)) return null;
 
   const closed = (reason: string) => ({ ...base, kind: 'closed' as const, reason });
-  if (context.submitRefusal) return closed(context.submitRefusal);
   if (link.parentChapterId == null)
     return link.storyline.tosViolation
       ? closed('This storyline was taken down')
@@ -119,6 +120,7 @@ export async function prepareStorylinePublish({
     return reason ? closed(reason) : { ...base, kind: 'owner' };
   }
 
+  if (context.submitRefusal) return closed(context.submitRefusal);
   const terms = await checkStorylineContinuationAtPublish({
     placerId: link.userId,
     parentPostId,
@@ -256,6 +258,13 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
       // A contributor's draft is submitted for the owner's approval, never written directly.
       if (!storyline || storyline.userId !== link.userId)
         throw new Error(`storyline: post ${postId} is not its storyline owner's draft`);
+      // The owner's own standing, whoever publishes: a moderator's click does not lift a mute.
+      // Both pass, so the link waits for them.
+      const owner = await tx.user.findUnique({
+        where: { id: link.userId },
+        select: { muted: true, emailVerified: true, meta: true },
+      });
+      if (!owner || contentRestriction(owner)) return { status: 'waiting', reason: 'restricted' };
 
       const post = await tx.post.findUnique({
         where: { id: postId },
@@ -411,8 +420,12 @@ export function selectReadyPendingChapters(limit: number) {
     LEFT JOIN "StorylineChapter" parent ON parent.id = pc."parentChapterId"
     WHERE pc."userId" = st."userId"
       AND p."userId" = pc."userId"
-      -- Held while the owner is muted, as storyline.addChapter refuses them.
+      -- Held while the owner is restricted (contentRestriction), as storyline.addChapter refuses them.
       AND NOT u.muted
+      AND NOT (
+        u."emailVerified" IS NULL
+        AND COALESCE(u.meta -> 'emailVerificationRequired' = 'true'::jsonb, false)
+      )
       AND NOT st."tosViolation"
       AND p."publishedAt" <= now()
       AND NOT p."tosViolation"
