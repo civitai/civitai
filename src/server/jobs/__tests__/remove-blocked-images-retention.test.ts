@@ -223,7 +223,11 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(a
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import { purgeHoldGuard, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import {
+  accountHeldBlockedImagesSql,
+  purgeHoldGuard,
+  removeBlockedImages,
+} from '~/server/jobs/image-ingestion';
 import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
 
 const TRAINING_ENV = {
@@ -357,7 +361,11 @@ describe('remove-blocked-images retention clock', () => {
     const holdCalls = (calls: unknown[][]) =>
       calls.filter((c) => sqlText(c[0]).includes('FROM "CsamReport"'));
     expect(holdCalls(mockDbRead.$queryRaw.mock.calls)).toEqual([]);
-    expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([[legalHoldUserIdsSql]]);
+    // The account hold reads "CsamReport" too, from the batch exclusion.
+    expect(holdCalls(mockDbWrite.$queryRaw.mock.calls)).toEqual([
+      [legalHoldUserIdsSql],
+      [accountHeldBlockedImagesSql],
+    ]);
   });
 
   // An id that is not a number names no user, so it is dropped rather than failing every run.
@@ -413,12 +421,6 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(deletedIds()).not.toContain(1);
     expect(batchWhere()?.entityId?.notIn).toContain(1);
-    // Read off the primary, as the other holds are.
-    expect(
-      mockDbWrite.$queryRaw.mock.calls.some(([first]) =>
-        ('strings' in first ? first.strings : first).join('?').includes('SELECT c."userId" FROM')
-      )
-    ).toBe(true);
   });
 
   // A hold that ends by its date writes nothing, so this run is what clears what it kept; the

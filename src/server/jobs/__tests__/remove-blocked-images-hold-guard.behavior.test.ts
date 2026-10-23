@@ -50,7 +50,7 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
-import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
+import { accountHeldBlockedImagesSql, purgeHoldGuard } from '~/server/jobs/image-ingestion';
 import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
@@ -1207,6 +1207,44 @@ describe('purgeHoldGuard holds every image of an account under any account hold'
 
     // PLAIN's owner has no flagged image: only OWNER's row is held.
     expect(rows.map((r) => r.id)).toEqual([A]);
+  });
+});
+
+describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
+  const [FLAG_OWNER, BLOCK_OWNER, PAST_OWNER, LISTED_OWNER, LONG_LISTED_OWNER] = [
+    66, 67, 68, 69, 70,
+  ];
+  const read = async () =>
+    sorted(
+      (
+        await holder.db.query<{ id: number }>(
+          accountHeldBlockedImagesSql.text,
+          accountHeldBlockedImagesSql.values as unknown[]
+        )
+      ).rows.map((r) => r.id)
+    );
+
+  it('returns every Blocked image of an account held by a flag, a CSAM block or a listed image, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor") VALUES
+        (90, ${FLAG_OWNER}, 'Scanned', 'csam', NULL),
+        (91, ${FLAG_OWNER}, 'Blocked', NULL, NULL),
+        (92, ${FLAG_OWNER}, 'Scanned', NULL, NULL),
+        (93, ${BLOCK_OWNER}, 'Blocked', NULL, 'CSAM'),
+        (94, ${BLOCK_OWNER}, 'Blocked', NULL, 'moderated'),
+        (95, ${PAST_OWNER}, 'Blocked', NULL, 'CSAM'),
+        (96, ${PAST_OWNER}, 'Blocked', NULL, NULL),
+        (97, ${LISTED_OWNER}, 'Scanned', NULL, NULL),
+        (98, ${LISTED_OWNER}, 'Blocked', NULL, NULL),
+        (99, ${LONG_LISTED_OWNER}, 'Blocked', NULL, NULL);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images) VALUES
+        (${PAST_OWNER}, now() - interval '2 years', now(), '[{"id": 95}]'),
+        (${REPORT_SUBJECT}, NULL, NULL, '[{"id": 97}]'),
+        (${REPORT_SUBJECT}, now() - interval '2 years', now(), '[{"id": 99}]');
+    `);
+
+    // FLAGGED (12) is the base fixture's flagged image; its owner is held the same way.
+    expect(await read()).toEqual([FLAGGED, 91, 93, 94, 98]);
   });
 });
 

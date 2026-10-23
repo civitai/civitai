@@ -520,10 +520,37 @@ export { MODERATOR_TAKEDOWN_ACTIVITIES };
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
  */
+/**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" IN (
+      SELECT c."userId" FROM (
+        SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+        UNION
+        SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+        UNION
+        SELECT ri."userId"
+        FROM "CsamReport" rr
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+        ) re
+        JOIN "Image" ri
+          ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+      ) c
+      WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+    )
+`;
+
 export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: boolean }) {
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
+    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
@@ -637,21 +664,9 @@ export const removeBlockedImages = createJob(
       : [];
 
     // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
-    // reason above. Read over the owners those holds can name: one with a CSAM review flag or a CSAM
-    // block. An image held only by a report listing it is left to the DELETE's own guard.
+    // reason above.
     const accountHeld = (
-      await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT i.id FROM "Image" i
-        WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND i."userId" IN (
-            SELECT c."userId" FROM (
-              SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
-              UNION
-              SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
-            ) c
-            WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
-          )
-      `
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
     ).map((x) => x.id);
 
     const held = [
