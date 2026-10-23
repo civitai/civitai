@@ -6,8 +6,10 @@
   import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { LINK_CLASS, dateTime, plainText } from '$lib/format';
+  import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { postedIds } from './posted-ids';
-  import type { Account } from './user-account';
+  import { fetchReviewImageCounts, type Account } from './user-account';
       import ListCard from './ListCard.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
@@ -91,6 +93,9 @@
     },
   });
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
+
+  // Its own fetch, so the list renders without waiting on it — see `/api/user-review-image-counts`.
+  const imageCounts = $derived(browser ? fetchReviewImageCounts(userId) : SSR_PENDING);
 </script>
 
 {#if form.error}
@@ -157,9 +162,13 @@
                     </a>
                   {/if}
                   {#if r.rating !== null}<span class="text-dark-0">{r.rating}★</span>{/if}
-                  {#if r.imageCount}
-                    <span class="text-xs text-dark-2">{r.imageCount} img</span>
-                  {/if}
+                  {#await imageCounts then counts}
+                    {#if counts[r.id]}
+                      <span class="text-xs text-dark-2">{counts[r.id]} img</span>
+                    {/if}
+                  {:catch}
+                    <!-- An image count is a detail: a failed lookup leaves it off rather than the row. -->
+                  {/await}
                   {#if r.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
                   {#if r.nsfw}<Badge variant="secondary">NSFW</Badge>{/if}
                   {#if r.exclude}<Badge variant="secondary">excluded</Badge>{/if}
