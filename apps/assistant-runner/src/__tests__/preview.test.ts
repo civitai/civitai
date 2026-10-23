@@ -11,7 +11,11 @@ import {
   type DevTunnelStartInput,
 } from '../app-assistant/dev-tunnel';
 import { PREVIEW_KEEPALIVE_MS, publicKeyOf } from '../app-assistant/preview';
-import { AppAssistantTools } from '../app-assistant/provider';
+import {
+  AUTO_PREVIEW_SHOWN,
+  AppAssistantTools,
+  autoPreviewFailed,
+} from '../app-assistant/provider';
 import type { OpenTools } from '../interfaces';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 
@@ -232,15 +236,17 @@ describe('start_preview on the runner', () => {
     expect(tunnels.stopped).toEqual([SESSION]);
   });
 
-  it('runs two starts of one step one after the other, so neither key replaces the other’s', async () => {
+  it('runs two starts of one step one after the other: the second answers the first’s preview', async () => {
     fake.add('my-app');
     const { tools } = await open();
     const results = await Promise.all([
       call(tools.tools, 'start_preview'),
       call(tools.tools, 'start_preview'),
     ]);
-    expect(results.map((r) => r.shown)).toEqual([true, true]);
-    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect', 'tunnel_key', 'tunnel_connect']);
+    expect(results[1]).toEqual(results[0]);
+    expect(results[0]).toMatchObject({ shown: true });
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+    expect(tunnels.started).toHaveLength(1);
   });
 
   it('refuses a block id that is not one, before anything is asked', async () => {
@@ -424,5 +430,152 @@ describe('CivitaiDevTunnels', () => {
     await expect(
       odd.tunnels.forRun(async () => GRANT).start({ blockId: 'my-app', sshPublicKey: 'k' })
     ).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});
+
+describe('the preview opens by itself once the dev server starts', () => {
+  const DEV_COMMAND =
+    'cd my-app && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173';
+  const RUNNING = JSON.stringify({ running: true, pid: 42, command: DEV_COMMAND });
+  beforeEach(() => {
+    fake.tools.set('dev_server_start', () => RUNNING);
+  });
+  const startDevServer = (tools: ToolSet, command = DEV_COMMAND) =>
+    call(tools, 'sandbox__dev_server_start', { command }) as unknown as Promise<unknown>;
+  const shownReports = (reported: ChatToolResult[]) =>
+    reported.filter((r) => r.name === 'start_preview' && !r.isError);
+
+  it('opens it exactly once, tells the page, and tells the assistant', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    const result = await startDevServer(tools.tools);
+
+    expect(tunnels.started).toHaveLength(1);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+    // The page sees it as it sees a start_preview call: the block and the host, never the tunnel id.
+    expect(shownReports(reported)).toEqual([
+      {
+        name: 'start_preview',
+        input: {},
+        output: { shown: true, blockId: 'my-app', host: HOST, next_step: expect.any(String) },
+        isError: false,
+      },
+    ]);
+    expect(JSON.stringify(reported)).not.toContain(SESSION);
+    // The assistant reads the dev server's own answer, then that the user now sees the preview.
+    expect(result).toBe(`${RUNNING}\n\n${AUTO_PREVIEW_SHOWN}`);
+    expect(String(result)).not.toContain(SESSION);
+  });
+
+  it('takes the block id, scopes and auth from the project’s manifest', async () => {
+    fake.add('my-app');
+    fake.tools.set('read_file', (args) =>
+      args.path === 'tip-calc/block.manifest.json'
+        ? JSON.stringify({ blockId: 'tip-calc', scopes: ['models:read:self'], auth: 'block-token' })
+        : 'export {}'
+    );
+    const { tools } = await open();
+    await startDevServer(tools.tools, DEV_COMMAND.replace('my-app', 'tip-calc'));
+    expect(tunnels.started).toEqual([
+      {
+        blockId: 'tip-calc',
+        sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY,
+        declaredScopes: ['models:read:self'],
+        declaredAuth: 'block-token',
+      },
+    ]);
+  });
+
+  it('opens nothing again on a second dev server start in the same run', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    await startDevServer(tools.tools);
+    expect(await startDevServer(tools.tools)).toBe(RUNNING);
+    expect(tunnels.started).toHaveLength(1);
+    expect(shownReports(reported)).toHaveLength(1);
+  });
+
+  it('a refusal never fails the dev server start, is said once, and is not tried again this run', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    tunnels.startError = new DevTunnelError('no', 429, 'TOO_MANY_REQUESTS');
+    const result = await startDevServer(tools.tools);
+    expect(typeof result).toBe('string');
+    expect(result).toBe(
+      `${RUNNING}\n\n${autoPreviewFailed(
+        'Too many previews were started in the last hour. Tell the user to wait a few minutes.'
+      )}`
+    );
+    expect(reported.find((r) => r.name === 'sandbox__dev_server_start')).toMatchObject({
+      isError: false,
+    });
+    expect(shownReports(reported)).toEqual([]);
+    expect(tunnelCalls()).toEqual(['tunnel_key']);
+    // Once per run: a second start of the dev server does not ask civitai again.
+    tunnels.startError = null;
+    expect(await startDevServer(tools.tools)).toBe(RUNNING);
+    expect(tunnels.started).toHaveLength(1);
+  });
+
+  it('a start_preview after it opens nothing: it answers the same preview', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    await startDevServer(tools.tools);
+    const again = await call(tools.tools, 'start_preview');
+    expect(again).toEqual(shownReports(reported)[0]!.output);
+    expect(tunnels.started).toHaveLength(1);
+    expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+  });
+
+  it('a preview the assistant opened first is not opened again, nor announced again', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    await call(tools.tools, 'start_preview');
+    expect(await startDevServer(tools.tools)).toBe(RUNNING);
+    expect(tunnels.started).toHaveLength(1);
+    expect(shownReports(reported)).toHaveLength(1);
+  });
+
+  it('opens nothing when the dev server did not start', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    fake.tools.set('dev_server_start', () => JSON.stringify({ running: false, lastExit: 1 }));
+    await startDevServer(tools.tools);
+    fake.tools.set('dev_server_start', () => {
+      throw new Error('a dev server is already running');
+    });
+    await startDevServer(tools.tools);
+    expect(tunnels.started).toEqual([]);
+    expect(tunnelCalls()).toEqual([]);
+  });
+
+  it('keeps the opened preview alive while the run lives, and stops at its end', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    fake.add('my-app');
+    const { tools } = await open();
+    await startDevServer(tools.tools);
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 2);
+    expect(tunnels.kept).toEqual([SESSION, SESSION]);
+    await tools.close();
+    await vi.advanceTimersByTimeAsync(KEEPALIVE_MS * 5);
+    expect(tunnels.kept).toHaveLength(2);
+  });
+
+  it('opens nothing by itself where the preview is not set up', async () => {
+    fake.add('my-app');
+    const tools = await new AppAssistantTools({
+      sandboxUrl: fake.url,
+      tokens: () => async (purpose) => `test-token-${purpose}`,
+      log: quiet,
+    }).open({
+      userId: 'u-1',
+      runId: 'run-1',
+      conversationId: 'conv-1',
+      page: { app: 'my-app' },
+      signal: new AbortController().signal,
+    });
+    opened.push(tools);
+    expect(await startDevServer(tools.tools)).toBe(RUNNING);
+    expect(tunnelCalls()).toEqual([]);
   });
 });
