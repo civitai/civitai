@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
+import { UNVERIFIED_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -856,6 +857,7 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
              "feeCurrency", "paidFiat", chain, "createdAt", "updatedAt"
       FROM "CryptoDeposit"
       WHERE "userId" = ${userId}
+        AND status NOT IN (${Prisma.join(UNVERIFIED_DEPOSIT_STATUSES)})
       ORDER BY "createdAt" DESC
       LIMIT 10
     `),

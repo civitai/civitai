@@ -6,7 +6,7 @@ import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { isDepositComplete } from '~/server/common/chain-config';
 import { logToAxiom } from '~/server/logging/client';
-import { processDeposit } from '~/server/services/nowpayments.service';
+import { processDeposit, recordUnverifiedDeposit } from '~/server/services/nowpayments.service';
 
 export const config = {
   api: {
@@ -87,17 +87,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // status and credits nothing.
     if (ACTIONABLE_STATUSES.includes(paymentStatus)) {
       const payment = await client.getPaymentStatus(event.payment_id);
-      if (!payment) {
-        log({ stage: 'payment-verify-unavailable', paymentId: event.payment_id });
-        throw new Error(`Payment ${event.payment_id} not found on NOWPayments`);
-      }
-
-      const verified = eventFromPayment(payment);
-      if (verified.payment_id !== event.payment_id) {
+      const verified = payment ? eventFromPayment(payment) : null;
+      // NOWPayments' record can trail its own IPN. A paid IPN it cannot confirm yet is handed to
+      // the retry sweep, and the 400 asks NOWPayments to redeliver.
+      const unconfirmed = !payment
+        ? 'unavailable'
+        : verified?.payment_id !== event.payment_id
+        ? 'different-payment'
+        : isDepositComplete(paymentStatus) && !isDepositComplete(payment.payment_status)
+        ? 'not-complete'
+        : null;
+      if (!payment || !verified || unconfirmed) {
+        log({
+          stage: 'payment-verify-unavailable',
+          paymentId: event.payment_id,
+          reason: unconfirmed,
+        });
+        if (isDepositComplete(paymentStatus)) await recordUnverifiedDeposit(event);
         throw new Error(
-          `NOWPayments returned payment ${verified.payment_id} for ${event.payment_id}`
+          `Payment ${event.payment_id} not confirmed by NOWPayments (${unconfirmed})`
         );
       }
+
       const mismatched = VERIFIED_FIELDS.filter(
         (field) => (event[field] ?? null) !== (verified[field] ?? null)
       );
@@ -114,15 +125,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         verified.actually_paid_at_fiat = event.actually_paid_at_fiat;
       }
 
-      // NOWPayments' record can trail its own IPN. A 400 asks for redelivery once the record
-      // catches up; a 200 would leave the deposit to the reconcile job alone.
       const status = payment.payment_status;
-      if (isDepositComplete(status) && !((verified.outcome_amount ?? 0) > 0)) {
-        throw new Error(`Payment ${event.payment_id} is complete on NOWPayments without an amount`);
-      }
-      if (isDepositComplete(paymentStatus) && !isDepositComplete(status)) {
-        throw new Error(`Payment ${event.payment_id} is not complete on NOWPayments yet`);
-      }
       if (ACTIONABLE_STATUSES.includes(status)) {
         await processDeposit(event.payment_id, status, verified);
       }

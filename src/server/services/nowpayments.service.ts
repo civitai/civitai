@@ -22,6 +22,7 @@ import {
   getChainForNetworkWithFallback,
   isDepositComplete,
   outcomeAmountToBuzz,
+  UNVERIFIED_DEPOSIT_STATUSES,
 } from '~/server/common/chain-config';
 
 /** IPN callback URL — configurable for dev (webhook.site) vs prod */
@@ -148,30 +149,50 @@ export const getDepositAddress = async (userId: number, chain = 'evm') => {
   return result;
 };
 
+const userIdFromOrderId = (orderId: string | null | undefined) => {
+  if (!orderId?.startsWith('user:')) return null;
+  const userId = parseInt(orderId.split(':')[1], 10);
+  return userId && !isNaN(userId) ? userId : null;
+};
+
+/** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
+export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) => {
+  const userId = userIdFromOrderId(event.order_id);
+  if (!event.payment_id || !userId) return;
+  const paymentId = BigInt(event.payment_id);
+
+  const existing = await dbRead.cryptoDeposit.findUnique({
+    where: { paymentId },
+    select: { status: true },
+  });
+  if (!existing) {
+    await dbWrite.cryptoDeposit.upsert({
+      where: { paymentId },
+      create: { paymentId, userId, status: 'unverified', payCurrency: event.pay_currency ?? 'unknown' },
+      update: {},
+    });
+    return;
+  }
+  // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here.
+  await dbWrite.cryptoDeposit.updateMany({
+    where: { paymentId, status: { in: ['waiting', 'confirming', 'sending', 'partially_paid', 'failed'] } },
+    data: { status: 'buzz_failed', retryCount: 0 },
+  });
+};
+
 export const processDeposit = async (
   paymentId: number,
   webhookStatus: string,
   event: NOWPayments.WebhookEvent
 ) => {
-  // Extract userId from order_id format "user:{userId}"
-  const orderId = event.order_id;
-  if (!orderId || !orderId.startsWith('user:')) {
+  const userId = userIdFromOrderId(event.order_id);
+  if (!userId) {
     await log({
-      message: 'Invalid order_id format in deposit webhook',
+      message: 'Invalid order_id in deposit',
       paymentId,
-      orderId,
+      orderId: event.order_id,
     });
-    throw new Error('Invalid order_id format');
-  }
-
-  const userId = parseInt(orderId.split(':')[1], 10);
-  if (!userId || isNaN(userId)) {
-    await log({
-      message: 'Could not parse userId from order_id',
-      paymentId,
-      orderId,
-    });
-    throw new Error('Invalid userId in order_id');
+    throw new Error('Invalid order_id');
   }
 
   // Determine chain from pay_address → wallet → chain lookup
@@ -193,6 +214,8 @@ export const processDeposit = async (
   if (isDepositComplete(webhookStatus)) {
     const outcomeAmount = event.outcome_amount;
     if (!outcomeAmount || outcomeAmount <= 0) {
+      // NOWPayments can report a payment paid before its amount settles; the sweep retries it.
+      buzzGrantFailed = true;
       await log({
         message: 'Finished deposit with no outcome_amount',
         paymentId,
@@ -349,7 +372,7 @@ export const processDeposit = async (
       // (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
       // into a terminal state, and a `finished` arriving after `failed` must still win.
       const statusRank: Record<string, number> = {
-        waiting: 0, confirming: 1, sending: 1, partially_paid: 1,
+        unverified: 0, unverified_exhausted: 0, waiting: 0, confirming: 1, sending: 1, partially_paid: 1,
         failed: 2, buzz_failed: 3, finished: 4,
       };
       const existingRank = existing ? (statusRank[existing.status] ?? 0) : -1;
@@ -369,6 +392,7 @@ export const processDeposit = async (
         },
         update: {
           ...(shouldUpdateStatus ? { status: depositStatus } : {}),
+          userId,
           ...depositData,
         },
       });
@@ -383,7 +407,7 @@ export const processDeposit = async (
 
   const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
-  const tellUser = statusAdvanced || granted;
+  const tellUser = !buzzGrantFailed && (statusAdvanced || granted);
   if (tellUser) {
     await signalClient.send({
       userId,
@@ -662,13 +686,13 @@ async function reconcileSinglePayment(
 const MAX_BUZZ_RETRIES = 72;
 
 /**
- * Sweep CryptoDeposit records stuck in buzz_failed and retry granting buzz.
+ * Sweep CryptoDeposit records stuck in buzz_failed or unverified and retry granting buzz.
  * Re-fetches from the NP API for fresh data before each retry.
  */
 export const retryFailedDeposits = async () => {
   const failedDeposits = await dbRead.cryptoDeposit.findMany({
-    where: { status: 'buzz_failed', retryCount: { lt: MAX_BUZZ_RETRIES } },
-    select: { paymentId: true, retryCount: true },
+    where: { status: { in: ['buzz_failed', 'unverified'] }, retryCount: { lt: MAX_BUZZ_RETRIES } },
+    select: { paymentId: true, retryCount: true, status: true },
     orderBy: [{ retryCount: 'asc' }, { updatedAt: 'asc' }],
     take: 50, // Cap per run to avoid overloading
   });
@@ -679,19 +703,54 @@ export const retryFailedDeposits = async () => {
   let failed = 0;
   let exhausted = 0;
 
+  const countRetry = async (
+    deposit: { paymentId: bigint; retryCount: number; status: string },
+    error?: string
+  ) => {
+    const where = { paymentId: deposit.paymentId, status: deposit.status };
+    const newCount = deposit.retryCount + 1;
+    if (newCount < MAX_BUZZ_RETRIES) {
+      await dbWrite.cryptoDeposit.updateMany({ where, data: { retryCount: { increment: 1 } } });
+      failed++;
+      return;
+    }
+    // Support tells a deposit NOWPayments never confirmed from one whose grant kept failing.
+    const neverVerified = deposit.status === 'unverified';
+    await dbWrite.cryptoDeposit.updateMany({
+      where,
+      data: { retryCount: newCount, status: neverVerified ? 'unverified_exhausted' : 'failed' },
+    });
+    await log(
+      neverVerified
+        ? {
+            stage: 'payment-verify-exhausted',
+            message: 'NOWPayments never confirmed this deposit, marked unverified_exhausted',
+            paymentId: Number(deposit.paymentId),
+            retryCount: newCount,
+            error,
+          }
+        : {
+            message: 'Deposit exhausted max retries, marked as failed',
+            paymentId: Number(deposit.paymentId),
+            retryCount: newCount,
+            error,
+          }
+    );
+    exhausted++;
+  };
+
   for (const deposit of failedDeposits) {
     const numericId = Number(deposit.paymentId);
 
     try {
       // Re-fetch from NP API for fresh data (outcome_amount may have been updated)
       const payment = await nowpaymentsCaller.getPaymentStatus(numericId);
-      if (!payment || !isDepositComplete(payment.payment_status)) {
-        // Payment not found or not complete yet — increment retry, skip
-        await dbWrite.cryptoDeposit.updateMany({
-          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
-          data: { retryCount: { increment: 1 } },
-        });
-        failed++;
+      if (
+        !payment ||
+        Number(payment.payment_id) !== numericId ||
+        !isDepositComplete(payment.payment_status)
+      ) {
+        await countRetry(deposit);
         continue;
       }
 
@@ -729,52 +788,13 @@ export const retryFailedDeposits = async () => {
         });
         succeeded++;
       } else if (updated?.status === 'buzz_failed') {
-        // Only increment if still buzz_failed (another path may have fixed it)
-        const newCount = deposit.retryCount + 1;
-        if (newCount >= MAX_BUZZ_RETRIES) {
-          await dbWrite.cryptoDeposit.updateMany({
-            where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
-            data: { retryCount: newCount, status: 'failed' },
-          });
-          await log({
-            message: 'Deposit exhausted max retries, marked as failed',
-            paymentId: numericId,
-            retryCount: newCount,
-          });
-          exhausted++;
-        } else {
-          await dbWrite.cryptoDeposit.updateMany({
-            where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
-            data: { retryCount: { increment: 1 } },
-          });
-          failed++;
-        }
+        await countRetry({ ...deposit, status: 'buzz_failed' });
       } else {
         // Status changed by another path (e.g., webhook fixed it) — skip
         succeeded++;
       }
     } catch (e) {
-      // Increment retry count — only if still buzz_failed
-      const newCount = deposit.retryCount + 1;
-      if (newCount >= MAX_BUZZ_RETRIES) {
-        await dbWrite.cryptoDeposit.updateMany({
-          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
-          data: { retryCount: newCount, status: 'failed' },
-        });
-        await log({
-          message: 'Deposit exhausted max retries, marked as failed',
-          paymentId: numericId,
-          retryCount: newCount,
-          error: e instanceof Error ? e.message : String(e),
-        });
-        exhausted++;
-      } else {
-        await dbWrite.cryptoDeposit.updateMany({
-          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
-          data: { retryCount: { increment: 1 } },
-        });
-        failed++;
-      }
+      await countRetry(deposit, e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -790,12 +810,14 @@ export const getDepositHistory = async (userId: number, page = 1, perPage = 3) =
 
   const [deposits, total] = await Promise.all([
     dbRead.cryptoDeposit.findMany({
-      where: { userId },
+      where: { userId, status: { notIn: UNVERIFIED_DEPOSIT_STATUSES } },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * perPage,
       take: perPage,
     }),
-    dbRead.cryptoDeposit.count({ where: { userId } }),
+    dbRead.cryptoDeposit.count({
+      where: { userId, status: { notIn: UNVERIFIED_DEPOSIT_STATUSES } },
+    }),
   ]);
 
   return {

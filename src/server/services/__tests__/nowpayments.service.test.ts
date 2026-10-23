@@ -276,42 +276,32 @@ describe('processDeposit', () => {
     expect(result?.buzzAmount).toBe(100000);
   });
 
-  it('handles zero outcome_amount on finished', async () => {
-    const event = makeWebhookEvent({ outcome_amount: 0 });
-    const result = await processDeposit(12345, 'finished', event);
+  // A paid payment without an amount is left to the retry sweep, not closed as finished with
+  // nothing credited (which nothing would ever revisit).
+  it.each([0, null])(
+    'leaves a paid deposit with outcome_amount %s to the retry sweep',
+    async (amount) => {
+      const event = makeWebhookEvent({ outcome_amount: amount });
+      const result = await processDeposit(12345, 'finished', event);
 
-    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
-    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ status: 'buzz_failed' }) })
+      );
+      expect(mockSignalClient.send).not.toHaveBeenCalled();
+    }
+  );
 
-  it('handles null outcome_amount on finished', async () => {
-    const event = makeWebhookEvent({ outcome_amount: null });
-    const result = await processDeposit(12345, 'finished', event);
-
-    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
-    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
-  });
-
-  it('throws on missing order_id', async () => {
-    const event = makeWebhookEvent({ order_id: null });
-    await expect(processDeposit(12345, 'finished', event)).rejects.toThrow(
-      'Invalid order_id format'
-    );
-  });
-
-  it('throws on invalid order_id format', async () => {
-    const event = makeWebhookEvent({ order_id: 'invalid-format' });
-    await expect(processDeposit(12345, 'finished', event)).rejects.toThrow(
-      'Invalid order_id format'
-    );
-  });
-
-  it('throws on non-numeric userId in order_id', async () => {
-    const event = makeWebhookEvent({ order_id: 'user:abc' });
-    await expect(processDeposit(12345, 'finished', event)).rejects.toThrow(
-      'Invalid userId in order_id'
-    );
-  });
+  it.each([null, 'invalid-format', 'user:abc'])(
+    'refuses order_id %s and records nothing',
+    async (order_id) => {
+      const event = makeWebhookEvent({ order_id });
+      await expect(processDeposit(12345, 'finished', event)).rejects.toThrow('Invalid order_id');
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(mockDbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
+    }
+  );
 
   it('uses externalTransactionId with payment_id for idempotency', async () => {
     const event = makeWebhookEvent({ outcome_amount: 5.0 });
