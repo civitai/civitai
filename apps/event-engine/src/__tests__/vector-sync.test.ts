@@ -625,6 +625,11 @@ describe('collection layout', () => {
       ['baseModels', 'nsfwLevel', 'postId', 'sortAt', 'tagIds', 'type', 'userId'].sort()
     );
     expect(created.every((c) => c.field_schema.on_disk === true)).toBe(true);
+    // userId is only an exclusion and postId is not a search filter: no HNSW links for them.
+    const noHnsw = created.filter(
+      (c) => (c.field_schema as { enable_hnsw?: boolean }).enable_hnsw === false
+    );
+    expect(noHnsw.map((c) => c.field_name).sort()).toEqual(['postId', 'userId']);
   });
 });
 

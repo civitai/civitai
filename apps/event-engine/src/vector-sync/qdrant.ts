@@ -7,14 +7,15 @@ export const VECTOR_DIMENSIONS = 256;
 export const EMBED_MODEL = 'wemm-2b';
 
 // On disk, all of them: RAM is budgeted for the quantized vectors. Ids and tags are only ever
-// matched, so they skip the range index; nsfwLevel is filtered by range and match.
+// matched, so they skip the range index; nsfwLevel is filtered by range and match. userId (an
+// exclusion) and postId (not a search filter) get no payload-aware HNSW links.
 const PAYLOAD_INDEXES: Array<[keyof ImagePayload, Schemas['PayloadSchemaParams']]> = [
   ['nsfwLevel', { type: 'integer', lookup: true, range: true, on_disk: true }],
   ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
   ['baseModels', { type: 'keyword', on_disk: true }],
   ['type', { type: 'keyword', on_disk: true }],
-  ['userId', { type: 'integer', lookup: true, range: false, on_disk: true }],
-  ['postId', { type: 'integer', lookup: true, range: false, on_disk: true }],
+  ['userId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],
+  ['postId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],
   ['sortAt', { type: 'datetime', on_disk: true }],
 ];
 
