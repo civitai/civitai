@@ -266,6 +266,23 @@ describe('restartRunnerPreview', () => {
     expect(error).toMatchObject({ message, status: 429, code: 'rate-limited' });
   });
 
+  it('an older runner without the route shows the generic words, not its 404 message', async () => {
+    const { run } = restart(() =>
+      Response.json(
+        {
+          message: 'Route POST:/api/assistant-runner/apps/my-shop/preview not found',
+          error: 'Not Found',
+          statusCode: 404,
+        },
+        { status: 404 }
+      )
+    );
+    await expect(run()).rejects.toMatchObject({
+      message: 'The preview could not start just now. Try again in a moment.',
+      status: 404,
+    });
+  });
+
   it('reads only the block and host of an answer, and refuses an answer that is not one', async () => {
     const leaky = restart(() =>
       Response.json({ v: 1, blockId: 'my-shop', host: HOST, sessionId: 'bki_x' })

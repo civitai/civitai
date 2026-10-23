@@ -233,7 +233,9 @@ export async function restartRunnerPreview(
   const shown = res.ok ? runnerPreviewOf(data) : null;
   if (shown) return shown;
   throw new RunnerPreviewError(
-    !res.ok && typeof data?.message === 'string' && data.message
+    // Only the runner's own refusals (`v: 1`) carry words for the user: an older runner without
+    // this route answers Fastify's 404, whose message names the route.
+    !res.ok && data?.v === 1 && typeof data.message === 'string' && data.message
       ? data.message
       : RESTART_PREVIEW_FAILED,
     res.ok ? 503 : res.status,
