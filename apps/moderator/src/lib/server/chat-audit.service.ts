@@ -429,6 +429,9 @@ export async function getTranscript(
   };
 }
 
+/** Per transcript, across all its messages. */
+const RECORDED_EDITS_CAP = 5_000;
+
 /**
  * Edits from `ChatMessageEdit`, written in the same statement as the edit. Each row holds the text it
  * replaced; the text it left is the next row's, or the message's current content.
@@ -448,28 +451,46 @@ async function getRecordedEdits(
         messages.map((m) => m.id)
       )
       .orderBy('id', 'asc')
+      .limit(RECORDED_EDITS_CAP + 1)
       .execute();
+    // Edits are not rate-limited, so one message can carry any number of them. Over the cap the
+    // transcript shows none rather than an arbitrary subset, and says the history is incomplete.
+    if (rows.length > RECORDED_EDITS_CAP) return null;
 
     const byId = new Map(messages.map((m) => [m.id, m]));
     const byMessage: Record<number, MessageEdit[]> = {};
-    rows.forEach((r, i) => {
+    for (const r of rows) {
       const message = byId.get(r.messageId);
-      if (!message) return;
-      const next = rows.slice(i + 1).find((n) => n.messageId === r.messageId);
-      (byMessage[r.messageId] ??= []).push({
+      if (!message) continue;
+      const chain = (byMessage[r.messageId] ??= []);
+      const prev = chain.at(-1);
+      if (prev) prev.newValue = r.previousContent;
+      chain.push({
         at: new Date(r.createdAt).toISOString(),
         oldValue: r.previousContent,
-        newValue: next?.previousContent ?? message.content,
+        newValue: message.content,
         truncated: false,
         actorRole: r.editorId === message.userId ? 'owner' : 'moderator',
       });
-    });
+    }
     return byMessage;
   } catch (e) {
     // The moderator app can deploy before the table's migration is applied.
     console.error('[chat-audit] recorded message edits unavailable', e);
     return null;
   }
+}
+
+/** First index whose value is at least `min`, in an ascending list. */
+function lowerBound(sorted: number[], min: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < min) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** The same edit lands in both sources, its ClickHouse row inserted just after the Postgres one. */
@@ -486,21 +507,36 @@ export function mergeEdits(
 ): Record<number, MessageEdit[]> {
   const merged: Record<number, MessageEdit[]> = {};
   for (const id of new Set([...Object.keys(recorded), ...Object.keys(logged)].map(Number))) {
-    const pending = [...(recorded[id] ?? [])];
-    const onlyLogged = (logged[id] ?? []).filter((l) => {
-      const i = pending.findIndex(
-        (r) =>
-          r.oldValue === l.oldValue &&
-          r.newValue === l.newValue &&
-          Math.abs(Date.parse(r.at) - Date.parse(l.at)) < SAME_EDIT_WINDOW_MS
-      );
-      if (i === -1) return true;
-      pending.splice(i, 1);
-      return false;
+    const rec = recorded[id] ?? [];
+    const log = logged[id] ?? [];
+    // Closest pairs first, so text that goes back and forth inside the window pairs each logged edit
+    // with its own recorded one rather than whichever came first.
+    const byTime = rec
+      .map((r, ri) => ({ r, ri, at: Date.parse(r.at) }))
+      .sort((a, b) => a.at - b.at);
+    const times = byTime.map((x) => x.at);
+    const pairs: { li: number; ri: number; gap: number }[] = [];
+    log.forEach((l, li) => {
+      const at = Date.parse(l.at);
+      // Only the recorded edits inside the window are compared.
+      for (let k = lowerBound(times, at - SAME_EDIT_WINDOW_MS); k < byTime.length; k++) {
+        const { r, ri } = byTime[k];
+        const gap = Math.abs(times[k] - at);
+        if (times[k] - at >= SAME_EDIT_WINDOW_MS) break;
+        if (gap < SAME_EDIT_WINDOW_MS && r.oldValue === l.oldValue && r.newValue === l.newValue)
+          pairs.push({ li, ri, gap });
+      }
     });
-    merged[id] = [...onlyLogged, ...(recorded[id] ?? [])].sort(
-      (a, b) => Date.parse(a.at) - Date.parse(b.at)
-    );
+    pairs.sort((a, b) => a.gap - b.gap);
+    const dropped = new Set<number>();
+    const taken = new Set<number>();
+    for (const { li, ri } of pairs) {
+      if (dropped.has(li) || taken.has(ri)) continue;
+      dropped.add(li);
+      taken.add(ri);
+    }
+    const onlyLogged = log.filter((_, li) => !dropped.has(li));
+    merged[id] = [...onlyLogged, ...rec].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   }
   return merged;
 }

@@ -192,6 +192,49 @@ describe('edits recorded in Postgres', () => {
     ]);
   });
 
+  it('pairs each logged edit with the closest recorded one when the text goes back and forth', async () => {
+    // A -> B logged only (old build), then B -> A and A -> B in both. The first logged A -> B is 20s
+    // from the recorded A -> B and must not take it from the logged A -> B that IS it.
+    rows.push(
+      edit('2026-09-03 10:00:00', 'A', 'B'),
+      edit('2026-09-03 10:00:10', 'B', 'A'),
+      edit('2026-09-03 10:00:20', 'A', 'B')
+    );
+    recorded.push(
+      recordedEdit('2026-09-03T10:00:10Z', 'B'),
+      recordedEdit('2026-09-03T10:00:20Z', 'A')
+    );
+    message.content = 'B';
+    try {
+      const { edits } = await getTranscript(1);
+      expect(edits[7].map((e) => [e.oldValue, e.newValue, e.at])).toEqual([
+        ['A', 'B', '2026-09-03T10:00:00Z'],
+        ['B', 'A', '2026-09-03T10:00:10.000Z'],
+        ['A', 'B', '2026-09-03T10:00:20.000Z'],
+      ]);
+    } finally {
+      message.content = 'v4';
+    }
+  });
+
+  it('keeps a logged edit that repeats a recorded one outside the window', async () => {
+    // The same A -> B a day apart is two edits, not one seen twice.
+    rows.push(edit('2026-09-02 10:00:00', 'v2', 'v4'));
+    recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
+    const { edits } = await getTranscript(1);
+
+    expect(edits[7]).toHaveLength(2);
+  });
+
+  it('says the history is incomplete rather than show part of an unbounded one', async () => {
+    // Edits are not rate-limited; the read is capped at 5,000 rows and the mock ignores the LIMIT.
+    for (let i = 0; i < 5_001; i++) recorded.push(recordedEdit('2026-09-03T10:00:00Z', `x${i}`));
+    const { edits, editsPartial } = await getTranscript(1);
+
+    expect(editsPartial).toBe(true);
+    expect(edits[7]).toBeUndefined();
+  });
+
   it('still shows recorded edits when the log is down, and says history may be missing', async () => {
     down.clickhouse = true;
     recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v3'));
