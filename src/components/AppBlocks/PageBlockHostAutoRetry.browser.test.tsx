@@ -934,7 +934,7 @@ function listenForHostPosts(frame: HTMLIFrameElement) {
 /**
  * Like `pollFor`, but REPORTS instead of throwing, so the caller's own `expect` is
  * the failure — and on a much smaller budget (100 iterations: ≤100 ms virtual,
- * ≥1 s real; ~3 s observed on a loaded CI runner). `pollFor`'s 500-iteration budget can outlast the 15 s test
+ * ≥1 s real; ~4 s measured per exhausted poll in CI run 40004842650). `pollFor`'s 500-iteration budget can outlast the 15 s test
  * timeout on a loaded runner, and then a "the limit moved" regression surfaces as
  * a generic "Test timed out" instead of this test's assertion (seen in CI under a
  * 30-s-for-every-surface mutant). Used only where the awaited thing is a React
