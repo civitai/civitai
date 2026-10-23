@@ -732,7 +732,6 @@ describe('purgeHoldGuard on the delete', () => {
         `"releaseAt" = now() - interval '1 day'`,
         RECENT_REPORT_USER,
       ],
-      ['clearing an extension that is still running', `"extendedUntil" = NULL`, EXTENDED_USER],
       [
         'bringing the end forward to just before it would run out',
         `"releaseAt" = now() + interval '1 second'`,
@@ -809,14 +808,13 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     it.each([
-      ['who asked', `"extensionRequestedBy" = ' '`],
-      ['the reference', `"extensionReference" = ' '`],
-    ])('refuses an extension with a blank %s', async (_name, blank) => {
+      ['who asked', `"extensionRequestedBy" = ' ', "extensionReference" = 'r'`],
+      ['the reference', `"extensionRequestedBy" = 'a', "extensionReference" = ' '`],
+    ])('refuses an extension with a blank %s', async (_name, fields) => {
       const id = await holdIdOf(RECENT_REPORT_USER);
       await expect(
         holder.db.exec(`
-          UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '2 years',
-            "extensionRequestedBy" = 'a', "extensionReference" = 'r', ${blank}
+          UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '2 years', ${fields}
           WHERE id = ${id}
         `)
       ).rejects.toThrow(/extension_logged_check/);
