@@ -193,6 +193,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   let deletedCount = 0;
   let errorCount = 0;
   let skippedCount = 0;
+  let heldCount = 0;
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
@@ -242,17 +243,35 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       `;
       const deletedSet = new Set(deletedRows.map((r) => r.id));
       const deleted = deletable.filter((id) => deletedSet.has(id));
-      const held = deletable.filter((id) => !deletedSet.has(id));
       deletedCount += deleted.length;
 
-      if (held.length > 0) {
-        logToAxiom({
-          type: 'info',
-          name: 'remove-old-drafts',
-          message: 'Kept old draft models of owners under a legal hold',
-          modelIds: held,
-          userIds: held.map((id) => userByModelId.get(id) ?? null),
-        });
+      // Not deleted and still there is held; gone already (another delete got there first) is not.
+      // Reporting only, so a failure here must not fail a batch whose deletes have committed.
+      const notDeleted = deletable.filter((id) => !deletedSet.has(id));
+      if (notDeleted.length > 0) {
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Model" WHERE id = ANY(${notDeleted}) ORDER BY id
+        `.then(
+          (rows) => {
+            heldCount += rows.length;
+            // Model ids only: the same held drafts come up every night.
+            if (rows.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models of owners under a legal hold',
+                modelIds: rows.map((r) => r.id),
+              });
+          },
+          (error: unknown) =>
+            logToAxiom({
+              type: 'error',
+              name: 'remove-old-drafts',
+              message: 'Failed to read which old draft models a legal hold kept',
+              error: (error as Error)?.message,
+              modelIds: notDeleted,
+            })
+        );
       }
       if (deleted.length === 0) continue;
 
@@ -310,6 +329,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   log(
     `Removed ${deletedCount} old draft models` +
       `${skippedCount > 0 ? `, ${skippedCount} skipped for recent activity` : ''}` +
+      `${heldCount > 0 ? `, ${heldCount} kept for a legal hold` : ''}` +
       `${errorCount > 0 ? `, ${errorCount} failed` : ''}`
   );
 });

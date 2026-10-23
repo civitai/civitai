@@ -21,18 +21,26 @@ vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: un
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 
 const HOLD_MIGRATION = path.resolve(
   __dirname,
   '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
 );
 
-const HELD_OWNER = 1;
+// One owner per way of being held, and one who is not.
+const MARKED_OWNER = 1; // a hold marker
+const REPORTED_OWNER = 3; // named on a report not yet sent: no marker row exists for them
 const FREE_OWNER = 2;
-const HELD_MODEL = 10;
+const MODELS = [
+  { id: 10, userId: MARKED_OWNER, versionId: 100 },
+  { id: 30, userId: REPORTED_OWNER, versionId: 300 },
+  { id: 40, userId: PLACEHOLDER_OWNER_ID, versionId: 400 },
+  { id: 20, userId: FREE_OWNER, versionId: 200 },
+];
 const FREE_MODEL = 20;
-const HELD_VERSION = 100;
 const FREE_VERSION = 200;
+const KEPT_MODELS = [10, 30, 40];
 
 let db: PGlite;
 
@@ -66,7 +74,8 @@ beforeAll(async () => {
   `);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   await db.exec(`
-    INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${HELD_OWNER}, 'manual', 'review');
+    INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
   `);
 });
 afterAll(() => db.close());
@@ -75,16 +84,16 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
     DELETE FROM "Model";
-    INSERT INTO "Model" (id, "userId") VALUES (${HELD_MODEL}, ${HELD_OWNER}), (${FREE_MODEL}, ${FREE_OWNER});
-    INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES
-      (${HELD_VERSION}, ${HELD_MODEL}, now() - interval '200 days', now() - interval '200 days'),
-      (${FREE_VERSION}, ${FREE_MODEL}, now() - interval '200 days', now() - interval '200 days');
+    INSERT INTO "Model" (id, "userId") VALUES ${MODELS.map((m) => `(${m.id}, ${m.userId})`).join(
+      ', '
+    )};
+    INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${MODELS.map(
+      (m) => `(${m.versionId}, ${m.id}, now() - interval '200 days', now() - interval '200 days')`
+    ).join(', ')};
   `);
-  // The replica SELECT names both as candidates; everything on the primary runs on the stand-in.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([
-    { id: HELD_MODEL, userId: HELD_OWNER },
-    { id: FREE_MODEL, userId: FREE_OWNER },
-  ]);
+  // The replica SELECT names every model as a candidate; everything on the primary runs on the
+  // stand-in.
+  dbMock.dbRead.$queryRaw.mockResolvedValue(MODELS.map(({ id, userId }) => ({ id, userId })));
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -96,17 +105,23 @@ beforeEach(async () => {
 
 const remainingModels = async () =>
   (await db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`)).rows.map((r) => r.id);
+const axiomEvents = (message: string) =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([arg]) => arg as Record<string, unknown>)
+    .filter((arg) => arg.message === message);
 
 describe('remove-old-drafts under a legal hold', () => {
-  it("keeps a held owner's model and its file registrations, and deletes the rest", async () => {
+  it("keeps every held owner's model and its file registrations, and deletes the rest", async () => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
 
-    expect(await remainingModels()).toEqual([HELD_MODEL]);
-    // Deregistering the kept model's versions would drop its files out of the quarantine allowlist.
+    expect(await remainingModels()).toEqual(KEPT_MODELS);
+    // Deregistering a kept model's versions would drop its files out of the quarantine allowlist.
     expect(mockDeregisterBatch.mock.calls).toEqual([[[FREE_VERSION]]]);
-    const removed = loggingMock.logToAxiom.mock.calls
-      .map(([arg]) => arg as Record<string, unknown>)
-      .filter((arg) => arg.message === 'Removed old draft models');
-    expect(removed).toEqual([expect.objectContaining({ modelIds: [FREE_MODEL] })]);
+    expect(axiomEvents('Removed old draft models')).toEqual([
+      expect.objectContaining({ modelIds: [FREE_MODEL] }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+      expect.objectContaining({ modelIds: KEPT_MODELS }),
+    ]);
   });
 });

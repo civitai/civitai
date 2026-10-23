@@ -9,7 +9,9 @@ import {
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
+  accountHoldSql,
   assertOwnersNotUnderLegalHold,
+  HOLD_UNCONFIRMED,
   LEGAL_HOLD_REFUSAL,
   LegalHoldError,
   legalHoldMessage,
@@ -2273,15 +2275,25 @@ export const permaDeleteModelById = async ({
       });
 
       // A held owner's model is refused, and the rollback restores its posts and images. The hold is
-      // checked in the DELETE itself, so one placed during this transaction still stops it.
+      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
+      // account hold too: its image legs cover the images this deletes.
+      const owner = Prisma.raw('m."userId"');
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
         DELETE FROM "Model" m
-        WHERE m.id = ${id} AND NOT ${userUnderLegalHoldSql(Prisma.raw('m."userId"'))}
+        WHERE m.id = ${id}
+          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
         RETURNING m.id, m."userId", m."nsfwLevel"
-      `;
-      if (!deletedModel) throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      `.catch((e: unknown) => {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: HOLD_UNCONFIRMED, cause: e });
+      });
+      if (!deletedModel) {
+        // Gone already, by a concurrent delete, is not a hold.
+        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
+        if (!stillThere) return { deletedModel: null, imagesToDelete: [] };
+        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      }
       return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }

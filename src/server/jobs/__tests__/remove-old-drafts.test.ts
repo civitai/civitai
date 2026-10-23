@@ -89,15 +89,19 @@ function readPredicate() {
 }
 
 /**
- * The primary's two queries: the per-batch version lookup answers with `versions(batch)`, the model
- * DELETE with `deleteModels(batch)` (by default every model asked for, as no owner is held here).
+ * The primary's queries: the per-batch version lookup answers with `versions(batch)`, the model
+ * DELETE with `deleteModels(batch)` (by default every model asked for, as no owner is held here),
+ * and the lookup of models the DELETE left with `stillThere(ids)`.
  */
 const write = {
   versions: (_batch: number[]): unknown[] => [],
   deleteModels: async (batch: number[]): Promise<{ id: number }[]> => batch.map((id) => ({ id })),
+  stillThere: (ids: number[]): { id: number }[] => ids.map((id) => ({ id })),
 };
 const isModelDelete = (strings: readonly string[]) =>
   strings.join('?').includes('DELETE FROM "Model"');
+const isLeftLookup = (strings: readonly string[]) =>
+  strings.join('?').includes('SELECT id FROM "Model"');
 
 /** Model ids handed to a given `DELETE FROM "Model"` call. */
 function deleteBatches() {
@@ -117,9 +121,12 @@ beforeEach(() => {
   calls.length = 0;
   write.versions = () => [];
   write.deleteModels = async (batch) => batch.map((id) => ({ id }));
+  write.stillThere = (ids) => ids.map((id) => ({ id }));
   mockDbWrite.$queryRaw.mockImplementation((async (strings: string[], ...values: unknown[]) =>
     isModelDelete(strings)
       ? write.deleteModels(values[0] as number[])
+      : isLeftLookup(strings)
+      ? write.stillThere(values[0] as number[])
       : write.versions(values[0] as number[])) as never);
 });
 
@@ -340,6 +347,35 @@ describe('removeOldDrafts', () => {
       expect(axiomEvents('Skipped old draft models with recent version or file activity')).toEqual([
         expect.objectContaining({ type: 'warning', modelIds: [42], userIds: [7] }),
       ]);
+    });
+  });
+
+  // The DELETE itself keeps a held owner's model (behaviour on a real database:
+  // remove-old-drafts-legal-hold.behavior.test.ts); these pin what the job does with what it left.
+  describe('models the DELETE left', () => {
+    it('reports a kept model as held and neither logs nor deregisters it as removed', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
+      write.deleteModels = async () => [];
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+        expect.objectContaining({ modelIds: [42] }),
+      ]);
+      expect(axiomEvents('Removed old draft models')).toEqual([]);
+      expect(mockDeregisterBatch).not.toHaveBeenCalled();
+    });
+
+    it('does not report a model another delete removed first as held', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
+      write.deleteModels = async () => [];
+      write.stillThere = () => [];
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
     });
   });
 
