@@ -5607,6 +5607,9 @@ model CosmeticShopItem {
   // `cosmeticId` as a pack. A CHECK keeps it unlisted.
   itemDefinitionId  Int?
   itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
+  // Lowercase labels a moderator sets so a shop section with the same `meta.eventTag` picks the
+  // item up without being placed by hand.
+  eventTags         String[]  @default([])
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
@@ -5616,6 +5619,7 @@ model CosmeticShopItem {
 
   @@index([cosmeticId])
   @@index([itemDefinitionId])
+  @@index([eventTags], type: Gin)
 }
 
 // Cross-creator resale: another creator listing this item in their own shop.
