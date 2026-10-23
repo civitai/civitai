@@ -1662,7 +1662,7 @@ export async function ownerUnderSafetyReport(
       `) ?? [];
     return row?.held !== false;
   } catch (error) {
-    handleLogError(error, 'article-image-cleanup-hold-read', { ownerId });
+    handleLogError(error as Error, 'article-image-cleanup-hold-read', { ownerId });
     return true;
   }
 }
