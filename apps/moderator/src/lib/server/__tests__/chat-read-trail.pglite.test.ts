@@ -45,7 +45,7 @@ beforeEach(async () => {
     INSERT INTO "ChatMember" VALUES (1,10,true), (1,11,false), (2,10,true), (2,11,false);
     INSERT INTO "ChatMessage" ("id","chatId","userId","content") VALUES
       (1, 1, 10, 'join discord.gg/x'), (2, 1, 11, 'no thanks'),
-      (3, 2, 10, 'join discord.gg/x'), (4, 2, 11, 'who is this');
+      (3, 2, 10, 'join discord.gg/x'), (4, 2, 11, 'who is this'), (5, 1, 11, 'blocked');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -97,6 +97,12 @@ describe('read trail', () => {
   it('records messages loaded by id as reads of their chats', async () => {
     await recordChatMessageReads(READER, [1, 4]);
     expect(reads()).toEqual([read(1, 10), read(2, 11)]);
+  });
+
+  it('lets a read go ahead when the message lookup for its trail fails', async () => {
+    await db.exec(`DROP TABLE "ChatMessage"`);
+    await expect(recordChatMessageReads(READER, [1])).resolves.toBeUndefined();
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it('records nothing for a search that showed nothing', async () => {

@@ -10,15 +10,7 @@ import { usersByIds } from './users.service';
 export const chatAuditEventTypes = ['edit', 'delete', 'clear', 'read'] as const;
 export type ChatAuditEventType = (typeof chatAuditEventTypes)[number];
 
-/** Keyset position. `createdAt` alone is not unique, so the rest of the row breaks ties. */
-export type ChatAuditCursor = {
-  at: string;
-  chatId: number;
-  messageId: number;
-  actorId: number;
-  subjectId: number;
-  type: string;
-};
+import type { ChatAuditCursor } from '$lib/chat-audit-cursor';
 
 export type ChatAuditEvent = {
   /** ISO. */

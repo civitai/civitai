@@ -2,13 +2,13 @@ import { logAxiomError } from './axiom';
 import { getClickhouse } from './clickhouse';
 import { dbRead } from './db';
 
-/** One conversation a moderator was shown message bodies from. `subjectId` is whose messages they were
- *  when the read was of one account's messages, 0 when it was of the whole conversation. */
 /** The moderator doing the reading. Branded so a chat or account id cannot be passed in its place:
  *  every signature here takes both, and a swap would record the wrong person as the reader. */
 export type Reader = number & { readonly __reader: true };
 export const readerOf = (user: { id: number }) => user.id as Reader;
 
+/** One conversation a moderator was shown message bodies from. `subjectId` is whose messages they were
+ *  when the read was of one account's messages, 0 when it was of the whole conversation. */
 export type ChatRead = { chatId: number; subjectId?: number };
 
 const READ_AUDIT_TIMEOUT_MS = 2_000;
@@ -53,11 +53,18 @@ export async function recordChatReads(actorId: Reader, reads: ChatRead[]): Promi
 /** For a surface that loads messages by id alone: a read of each message's chat, attributed to its sender. */
 export async function recordChatMessageReads(actorId: Reader, messageIds: number[]): Promise<void> {
   if (!messageIds.length) return;
-  const rows = await dbRead
-    .selectFrom('ChatMessage')
-    .select(['chatId', 'userId'])
-    .where('id', 'in', messageIds)
-    .execute();
+  let rows: { chatId: number; userId: number }[];
+  try {
+    rows = await dbRead
+      .selectFrom('ChatMessage')
+      .select(['chatId', 'userId'])
+      .where('id', 'in', messageIds)
+      .execute();
+  } catch (error) {
+    // Fails open like the write itself: the lookup is only for the trail.
+    void logAxiomError(error, { event: 'chat-read-audit-failed', messageIds, actorId });
+    return;
+  }
   await recordChatReads(
     actorId,
     [...new Map(rows.map((r) => [`${r.chatId}:${r.userId}`, r])).values()].map((r) => ({

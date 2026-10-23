@@ -5,7 +5,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { chatAuditChatUrl, userLookupUrl } from '$lib/entity-url';
   import { dateTime, LINK_CLASS } from '$lib/format';
-  import type { ChatAuditCursor } from '$lib/server/chat-audit-log.service';
+  import { formatChatAuditCursor, type ChatAuditCursor } from '$lib/chat-audit-cursor';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -21,17 +21,7 @@
     if (f.actor) params.set('actor', String(f.actor));
     if (f.type) params.set('type', f.type);
     if (over.before)
-      params.set(
-        'before',
-        [
-          over.before.at,
-          over.before.chatId,
-          over.before.messageId,
-          over.before.actorId,
-          over.before.subjectId,
-          over.before.type,
-        ].join('_')
-      );
+      params.set('before', formatChatAuditCursor(over.before));
     return `/retool/chat-audit-log${params.size ? `?${params}` : ''}`;
   };
 </script>

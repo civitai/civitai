@@ -97,8 +97,8 @@ conversations.
 Moderator-app surfaces that return message bodies write a `read` row: the Chat
 Audit transcript, search excerpts, user-messages panel, newest feed and spam
 groups, the report queue's chat preview, User Lookup's sent messages, and Text
-Scan Lab lookups of chat messages. Some restricted review surfaces keep their own
-audit instead. One row per chat (and sender, where the surface shows several) per
+Scan Lab lookups of chat messages. Some restricted review surfaces are
+deliberately left out of this log. One row per chat (and sender, where the surface shows several) per
 read, no dedupe. A spam group spans chats it does not name, so it is recorded as a
 read of the sender with `chatId = 0`.
 
