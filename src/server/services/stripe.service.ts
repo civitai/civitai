@@ -989,8 +989,17 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const products = (await dbRead.product.findMany()).filter(
       (p) => !!(p.metadata as any)?.[env.TIER_METADATA_KEY]
     );
-    const billedProduct = products.find((p) =>
-      invoice.lines.data.some((l) => l.price?.product === p.id)
+    // A trial_end push bills the plan at $0, which sells no month. Line amounts are before
+    // discounts, so a gifted or comped month still counts. On a plan switch the renewed plan is the
+    // non-proration line; the old plan's credit and the new plan's prorations don't decide it.
+    // Not amount_paid: a balance-paid renewal has 0 there.
+    const tierLines = invoice.lines.data.filter((l) =>
+      products.some((p) => p.id === l.price?.product)
+    );
+    const billedLine = tierLines.find((l) => !l.proration && l.amount > 0);
+    const billedMonth = !!billedLine;
+    const billedProduct = products.find(
+      (p) => p.id === (billedLine ?? tierLines[0])?.price?.product
     );
 
     if (!billedProduct) {
@@ -1004,13 +1013,6 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       // Give you no buzz. You no pay.
       return;
     }
-
-    // A trial_end push bills the plan at $0, which sells no month. Line amounts are before
-    // discounts, so a gifted or comped month still counts, and a proration credit elsewhere on
-    // the invoice does not hide a renewal. Not amount_paid: a balance-paid renewal has 0 there.
-    const billedMonth = invoice.lines.data.some(
-      (l) => l.price?.product === billedProduct.id && !l.proration && l.amount > 0
-    );
 
     if (billedMonth)
       await withRetries(() =>
@@ -1137,7 +1139,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     // pending zero-everything rows that the confirm-pending cron promotes
     // forever. amount_paid is the correct basis (you only share new money).
     const grossUsdCents = invoice.amount_paid ?? invoice.total ?? 0;
-    if (isAttributableBillingReason && grossUsdCents > 0) {
+    if (isAttributableBillingReason && grossUsdCents > 0 && billedMonth) {
       try {
         const blockAttribution = extractAttribution(
           subscriptionMetadata as Record<string, string | number | null | undefined>

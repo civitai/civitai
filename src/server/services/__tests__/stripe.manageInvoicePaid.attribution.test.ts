@@ -337,4 +337,40 @@ describe('manageInvoicePaid — membership bonus needs a billed month', () => {
     );
     expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
   });
+
+  it('a plan switch invoice grants the renewed plan, whichever tier product sorts first', async () => {
+    mockDbRead.product.findMany.mockResolvedValue([
+      { id: 'prod_bronze', metadata: { tier: 'bronze', monthlyBuzz: 1000, buzzType: 'yellow' } },
+      { id: PRODUCT_ID, metadata: { tier: 'gold', monthlyBuzz: 5000, buzzType: 'yellow' } },
+    ]);
+    const bronzeCredit = {
+      price: { id: 'price_bronze', product: 'prod_bronze' },
+      amount: -500,
+      proration: true,
+    };
+    await manageInvoicePaid(
+      fakeInvoice({
+        total: 4700,
+        amount_paid: 4700,
+        lines: { data: [bronzeCredit, planLine(200, true), planLine(5000)] },
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockCreateBuzzTransaction.mock.calls[0][0].amount).toBe(5000);
+    expect(mockRecordMembershipPaymentReward.mock.calls[0][0].tier).toBe('gold');
+  });
+
+  // Support: a proration-only invoice (a mid-cycle plan change invoiced at once) used to grant a
+  // full month's bonus. It sells no month, so it grants nothing.
+  it('a proration-only invoice grants no bonus and writes no attribution', async () => {
+    await manageInvoicePaid(
+      fakeInvoice({
+        total: 700,
+        amount_paid: 700,
+        lines: { data: [planLine(700, true)] },
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(0);
+    expect(mockRecordSubscriptionAttribution).toHaveBeenCalledTimes(0);
+  });
 });
