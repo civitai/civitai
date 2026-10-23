@@ -166,11 +166,16 @@ async function getOwnedStoryline({
   return storyline;
 }
 
+/**
+ * `chapters` is the storyline's chapter-1 row, if any. A storyline started before its first post
+ * has none until that post is published, and until then it is its owner's draft.
+ */
 function isStorylineHidden(
   storyline: {
     userId: number;
     tosViolation: boolean;
     user: { bannedAt: Date | null; deletedAt: Date | null };
+    chapters: unknown[];
   },
   viewer: Viewer,
   blockedUserIds: ReadonlySet<number>
@@ -178,6 +183,7 @@ function isStorylineHidden(
   if (viewer?.isModerator) return false;
   if (viewer?.id === storyline.userId) return false;
   return (
+    !storyline.chapters.length ||
     storyline.tosViolation ||
     !!storyline.user.bannedAt ||
     !!storyline.user.deletedAt ||
@@ -464,6 +470,115 @@ export async function isOpenStorylineChapter(postId: number, placerId: number) {
 const isUniqueViolation = (error: unknown) =>
   typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
 
+/**
+ * Links a post draft, as `post.create` writes it, to the storyline it was started from: chapter 1
+ * of the author's own storyline (`storylineId` alone), or a continuation of `parentChapterId`
+ * (`storylineId`, if sent, must be that chapter's). Called inside the post's transaction, after the
+ * post row is written. No chapter is written here: that waits for the post to be published.
+ */
+export async function linkPendingChapter(
+  db: Prisma.TransactionClient,
+  {
+    postId,
+    userId,
+    storylineId,
+    parentChapterId,
+  }: { postId: number; userId: number; storylineId?: number; parentChapterId?: number }
+) {
+  let linkedStorylineId: number;
+  if (parentChapterId) {
+    const parent = await db.storylineChapter.findUnique({
+      where: { id: parentChapterId },
+      select: { storylineId: true, postId: true },
+    });
+    if (!parent || parent.postId == null)
+      throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+    if (storylineId && storylineId !== parent.storylineId)
+      throw throwBadRequestError('That chapter is not in this storyline');
+    await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
+    linkedStorylineId = parent.storylineId;
+  } else {
+    if (!storylineId) throw throwBadRequestError('Name the storyline this post starts');
+    const storyline = await db.storyline.findUnique({
+      where: { id: storylineId },
+      select: {
+        userId: true,
+        tosViolation: true,
+        chapters: { where: { depth: 0 }, select: { id: true } },
+      },
+    });
+    if (!storyline) throw throwNotFoundError('Storyline not found');
+    if (storyline.userId !== userId)
+      throw throwAuthorizationError("Only the storyline's creator can write its first chapter");
+    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+    if (storyline.chapters.length)
+      throw throwBadRequestError('This storyline already has its first chapter');
+    linkedStorylineId = storylineId;
+  }
+
+  try {
+    await db.storylinePendingChapter.create({
+      data: {
+        postId,
+        storylineId: linkedStorylineId,
+        parentChapterId: parentChapterId ?? null,
+        userId,
+      },
+    });
+  } catch (error) {
+    // The partial unique index: one chapter-1 draft per storyline.
+    if (isUniqueViolation(error))
+      throw throwBadRequestError('This storyline already has a draft of its first chapter');
+    throw error;
+  }
+}
+
+/**
+ * The storyline a post draft was started from, for the post editor: null when the post has no
+ * link, or the viewer is neither its author nor a moderator. From the primary, since the editor
+ * reads it straight after the first upload creates the draft.
+ */
+export async function getPendingChapterForPost({
+  postId,
+  userId,
+  isModerator,
+}: {
+  postId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const link = await dbWrite.storylinePendingChapter.findUnique({
+    where: { postId },
+    select: {
+      postId: true,
+      userId: true,
+      parentChapterId: true,
+      storyline: { select: { ...storylineSelect } },
+      // Ids only: the parent's post is read through the reading path, which tombstones it for
+      // this viewer where it must.
+      parentChapter: { select: { id: true, depth: true, postId: true } },
+    },
+  });
+  if (!link || (link.userId !== userId && !isModerator)) return null;
+  const { minorByScan, tosViolation, ...storyline } = link.storyline;
+  return {
+    postId: link.postId,
+    storyline: {
+      ...storyline,
+      // The ceiling the chapter is held to, as readers get it; never the minor finding itself.
+      maxNsfwLevel: storylineCeiling({ maxNsfwLevel: storyline.maxNsfwLevel, minorByScan }),
+      takenDown: tosViolation,
+    },
+    // Null for chapter 1. `depth` is the parent's first-parent depth; on a route that reaches the
+    // parent another way its number can differ (see `onRoute`).
+    parentChapter: link.parentChapter,
+  };
+}
+
+/**
+ * Without `postId` the storyline starts empty: its chapter 1 is a post written afterwards (see
+ * `linkPendingChapter`), and until that is written only its owner and moderators see it.
+ */
 export async function createStoryline({
   postId,
   title,
@@ -475,7 +590,7 @@ export async function createStoryline({
   userId,
   isModerator,
 }: {
-  postId: number;
+  postId?: number;
   title: string;
   maxNsfwLevel: number;
   whoCanContinue?: StorylineWhoCanContinue;
@@ -488,20 +603,22 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
 
-  let created: { id: number; rootChapterId: number };
+  let created: { id: number; rootChapterId: number | null };
   try {
     created = await dbWrite.$transaction(async (tx) => {
-      await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
+      if (postId) await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
         data: { userId, title, maxNsfwLevel, whoCanContinue },
         select: { id: true },
       });
-      const root = await tx.storylineChapter.create({
-        data: { storylineId: storyline.id, postId, userId, depth: 0 },
-        select: { id: true },
-      });
+      const root = postId
+        ? await tx.storylineChapter.create({
+            data: { storylineId: storyline.id, postId, userId, depth: 0 },
+            select: { id: true },
+          })
+        : null;
       // Checked once chapter 1 exists, by the same rule as later picks: at this point that means
-      // an image of the post the storyline starts from.
+      // an image of the post the storyline starts from, and with no post any pick is refused.
       const picks = { coverImageId, heroImageId, heroImagePosition };
       if (coverImageId || heroImageId || heroImagePosition !== undefined) {
         await assertStorylinePicks(tx, {
@@ -512,7 +629,7 @@ export async function createStoryline({
         });
         await tx.storyline.update({ where: { id: storyline.id }, data: picks });
       }
-      return { id: storyline.id, rootChapterId: root.id };
+      return { id: storyline.id, rootChapterId: root?.id ?? null };
     });
   } catch (error) {
     // Two requests starting a storyline from the same post: the loser hits the unique postId.
@@ -2464,7 +2581,8 @@ export async function getStorylinesInfinite({
   const isModerator = !!viewer?.isModerator;
 
   const where: Prisma.Sql[] = [
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // As `isStorylineHidden`, including a storyline with no chapter 1 yet.
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.
