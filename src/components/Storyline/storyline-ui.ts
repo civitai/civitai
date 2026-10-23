@@ -98,6 +98,52 @@ export function storylineSubmitInput({
   };
 }
 
+/**
+ * What the editor's publish button does for a draft linked to a storyline chapter. The label and
+ * the price sent come from this one value, so what the contributor is shown is what is charged.
+ */
+export type StorylineDraftPublish =
+  | { kind: 'owner'; label: string }
+  | { kind: 'contributor'; label: string; expectedPrice: number }
+  /** The terms no longer let them continue: it publishes as a post of its own. */
+  | { kind: 'closed'; reason: StorylineClosedReason | null }
+  /** The price is being read, or re-read after it changed. */
+  | { kind: 'pending' }
+  | { kind: 'unavailable' };
+
+export function storylineDraftPublish({
+  asOwner,
+  chapterNumber,
+  terms,
+  termsPending,
+}: {
+  asOwner: boolean;
+  chapterNumber: number;
+  terms: { open: boolean; price: number; closedReason: StorylineClosedReason | null } | null;
+  /** Terms are loading or re-reading: whatever they hold is not to be sent. */
+  termsPending: boolean;
+}): StorylineDraftPublish {
+  if (asOwner) return { kind: 'owner', label: `Publish chapter ${chapterNumber}` };
+  if (termsPending) return { kind: 'pending' };
+  if (!terms) return { kind: 'unavailable' };
+  if (!terms.open) return { kind: 'closed', reason: terms.closedReason };
+  return {
+    kind: 'contributor',
+    label: `Publish and submit · ${storylinePriceLabel(terms.price)}`,
+    expectedPrice: terms.price,
+  };
+}
+
+/** Sent only for a contributor's draft: it counts against their hourly submit quota. */
+export const storylineExpectedPrice = (plan: StorylineDraftPublish | null) =>
+  plan?.kind === 'contributor' ? plan.expectedPrice : undefined;
+
+/** The new price in a `priceChanged` refusal ("… deciding: now 60 Buzz"), if it names one. */
+export function storylineChangedPrice(message: string) {
+  const price = /now (\d+) Buzz/.exec(message)?.[1];
+  return price === undefined ? null : Number(price);
+}
+
 export type StorylineChapterLevels = { rootNsfwLevel: number | null; chapterLevels: number[] };
 
 /**
@@ -162,4 +208,28 @@ export function storylineSubmitVerdict({
   if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
     return { allowed: false, reason: 'aboveRating' };
   return { allowed: true, awaitingScan: false };
+}
+
+/** The line under the publish button, saying what publishing this draft will do. */
+export function storylineDraftPublishCaption(plan: StorylineDraftPublish) {
+  switch (plan.kind) {
+    case 'owner':
+      return 'Joins your storyline as soon as you publish.';
+    case 'contributor':
+      return `Goes to the creator for review. If they do not answer in ${STORYLINE_CONTINUATION_EXPIRY_DAYS} days it expires${
+        plan.expectedPrice > 0 ? ` and your ${storylinePriceLabel(plan.expectedPrice)} is refunded` : ''
+      }.`;
+    case 'closed':
+      return `${
+        plan.reason === 'collaboratorsOnly'
+          ? 'Only collaborators can continue this storyline'
+          : plan.reason === 'closed'
+          ? 'This storyline is closed to new chapters'
+          : 'This post cannot be added to the storyline'
+      }, so publishing posts it on its own.`;
+    case 'pending':
+      return 'Checking what this costs…';
+    case 'unavailable':
+      return "Couldn't read what this costs. Reload the page to try again.";
+  }
 }
