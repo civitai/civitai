@@ -129,11 +129,12 @@ export function withoutSentencesNaming(text: string, tools: readonly string[]): 
 }
 
 /**
- * What a reply on the server runner is told about the preview. The runner does the tunnel steps
- * inside `start_preview`; the user's page and `sandbox__preview_check` load the same dev server.
+ * What a reply on the server runner is told about the preview. The runner opens it by itself once
+ * `sandbox__dev_server_start` starts the dev server (and does the tunnel steps inside
+ * `start_preview`); the user's page and `sandbox__preview_check` load the same dev server.
  */
 export const REMOTE_PREVIEW =
-  'Live preview (it opens beside this chat in the user’s page, and you can see the same running app): 1) start the dev server with sandbox__dev_server_start and leave it running; 2) call start_preview with the blockId as block_id and the manifest’s scopes and auth as declared_scopes and declared_auth, which shows that dev server to the user; 3) to see what the user sees, call sandbox__preview_check, which loads the same dev server, with screenshot: true when how it looks matters (and viewport: mobile for a phone); if no image comes back, go by its text and never describe a picture you did not receive. sandbox__preview_check needs the dev server running: start it first, or it answers render: server_error. If the preview is gone when the user comes back (their app was paused), start the dev server and call start_preview again. When the user asks to stop the preview, call stop_preview.';
+  'Live preview (it opens beside this chat in the user’s page, and you can see the same running app): start the dev server with sandbox__dev_server_start (or sandbox__dev_server_restart when one is already running) and leave it running; the preview then opens for the user by itself, and the answer of that call says so (or why it could not). Do not call start_preview to open it. To see what the user sees, call sandbox__preview_check, which loads the same dev server, with screenshot: true when how it looks matters (and viewport: mobile for a phone); if no image comes back, go by its text and never describe a picture you did not receive. sandbox__preview_check needs the dev server running: start it first, or it answers render: server_error. Call start_preview only when the user asks to reopen the preview, and stop_preview when they ask to stop it.';
 
 /**
  * What a reply is told when the account has no live preview, wherever it runs: no preview for the

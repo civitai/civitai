@@ -124,6 +124,11 @@ type BountyEntryModActivity = {
   activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
+type SiteAlertModActivity = {
+  entityType: 'siteAlert';
+  activity: 'post' | 'edit' | 'extend' | 'end';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -139,6 +144,7 @@ type ModActivity = {
   | PlacementModActivity
   | FeedbackModActivity
   | BountyEntryModActivity
+  | SiteAlertModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

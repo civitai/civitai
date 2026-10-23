@@ -94,11 +94,14 @@ describe('usdToday', () => {
       model: 'm',
     });
     await store.recordTurnTokens(turnId, 1_000_000, 1_000_000);
-    await pg.query(
-      `UPDATE assistant_turn SET created_at = now() - interval '1 hour' WHERE id = $1`,
-      [turnId]
-    );
-    expect(await store.hasRunningTurn(1, 60_000)).toBe(false);
+    // Abandoned by moving the app's clock past the stale window, not by backdating the row: a backdated
+    // row falls into yesterday in the first UTC hours, and the day's sum then never sees it.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60 * 60_000 });
+    try {
+      expect(await store.hasRunningTurn(1, 60_000)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(await store.usdToday(1)).toBeCloseTo(3.7, 10);
   });
 
