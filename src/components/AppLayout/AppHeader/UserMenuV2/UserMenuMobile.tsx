@@ -119,7 +119,7 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
   };
   // After a swipe the level that is landing may not have committed yet, and the copy of it still
   // behind the panel is inert and cannot take focus.
-  const focusGroupRow = (id: string | undefined, attempts = 3) =>
+  const focusGroupRow = (id: string | undefined, attempts = 3): number =>
     window.requestAnimationFrame(() => {
       const row = [
         ...(container.current?.querySelectorAll<HTMLElement>(`[data-group-row="${id}"]`) ?? []),

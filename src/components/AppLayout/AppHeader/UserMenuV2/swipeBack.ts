@@ -90,13 +90,13 @@ export function useSwipeBack({ enabled, onBack }: { enabled: boolean; onBack: ()
     const panel = ref.current;
     const reduceMotion = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     let finished = false;
-    const stop = () => {
+    const stop = (): void => {
       finished = true;
       settling.current = null;
       panel?.removeEventListener('transitionend', onEnd);
       window.clearTimeout(timer);
     };
-    const finish = () => {
+    const finish = (): void => {
       if (finished) return;
       stop();
       // A panel going back is replaced by the next render; clearing it first would flash it home.
@@ -108,10 +108,10 @@ export function useSwipeBack({ enabled, onBack }: { enabled: boolean; onBack: ()
       // The panel is gone if something else already changed the level (Escape, a tap on the back row).
       if (goBack && panel?.isConnected) onBackRef.current();
     };
-    const onEnd = (event: TransitionEvent) => {
+    const onEnd = (event: TransitionEvent): void => {
       if (event.target === panel && event.propertyName === 'transform') finish();
     };
-    const timer = window.setTimeout(finish, SLIDE_MS + 100);
+    const timer: number = window.setTimeout(finish, SLIDE_MS + 100);
     settling.current = { cancel: stop };
 
     // Letting go where it began has nothing to slide, so no transition would end.
