@@ -99,7 +99,7 @@ export const UserMenuTrigger = forwardRef<
       ref={ref}
       aria-label={currentUser ? 'Account menu' : 'Menu'}
       className={clsx(
-        'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+        'flex items-center rounded-[var(--mantine-radius-default)] hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
         { ['bg-gray-1 dark:bg-dark-5']: open },
         className
       )}
@@ -596,7 +596,7 @@ export function BuzzMenuItem({
         onBuyBuzz({});
       }}
     >
-      Buy Buzz
+      {compact ? 'Buy' : 'Buy Buzz'}
     </Button>
   );
 
