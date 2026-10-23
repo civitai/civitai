@@ -64,8 +64,6 @@ type UserDrain = {
   blockedImages: number;
   budgetUsed: number;
   drained: boolean;
-  /** Drained, but a hold marker keeps what is left: logged apart from the accounts emptied. */
-  held?: boolean;
   canceled: boolean;
   error?: unknown;
 };
@@ -121,12 +119,6 @@ async function drainUser(
           SELECT 1 FROM "Image" f
           WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
         )
-        -- A held owner's delete is still attempted: the hold's trigger keeps the row and blocks it
-        -- instead. One it has already blocked is not attempted again.
-        AND NOT (
-          i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = ${userId})
-        )
       LIMIT ${budget}
     `;
 
@@ -149,18 +141,10 @@ async function drainUser(
       budgetUsed += batch.length;
     }
 
-    const [state] = await dbWrite.$queryRaw<
-      { stillDeleted: boolean; held: boolean; hasImages: boolean }[]
-    >`
+    const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
       SELECT
         EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
-        h.held,
-        EXISTS (
-          SELECT 1 FROM "Image" i
-          WHERE i."userId" = ${userId}
-            AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus")
-        ) AS "hasImages"
-      FROM (SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId}) AS held) h
+        EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
     `;
     if (!state.stillDeleted || state.hasImages)
       return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
@@ -194,14 +178,11 @@ async function drainUser(
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
-    // A held owner's posts are deleted too (the hold's delete trigger copies each one first), and
-    // what is left of the account is the images the hold kept.
     return {
       deletedImages,
       blockedImages: 0,
       budgetUsed,
       drained: deletedPosts === posts.length,
-      held: state.held,
       canceled: false,
     };
   } catch (error) {
@@ -330,7 +311,7 @@ async function blockUserImages(
       await propagateBlock(touched);
     }
 
-    const [state] = await dbWrite.$queryRaw<{ hasPending: boolean; held: boolean }[]>`
+    const [state] = await dbWrite.$queryRaw<{ hasPending: boolean }[]>`
       SELECT EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i."userId" = ${userId}
@@ -338,8 +319,7 @@ async function blockUserImages(
             i.ingestion <> 'Blocked'::"ImageIngestionStatus"
             OR i."blockedFor" = ${BlockedReason.AiNotVerified}
           )
-      ) AS "hasPending",
-      EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId}) AS held
+      ) AS "hasPending"
     `;
 
     if (!state.hasPending) await queueBlockedImagesForDelete(userId);
@@ -349,7 +329,6 @@ async function blockUserImages(
       blockedImages,
       budgetUsed,
       drained: !state.hasPending,
-      held: state.held,
       canceled: false,
     };
   } catch (error) {
@@ -365,7 +344,6 @@ async function drainPage(
   deletedImages: number;
   blockedImages: number;
   deletedUsers: number;
-  heldKeptUsers: number;
   remaining: number;
   canceled: boolean;
   drainedThrough?: Date;
@@ -374,7 +352,6 @@ async function drainPage(
   let deletedImages = 0;
   let blockedImages = 0;
   let deletedUsers = 0;
-  let heldKeptUsers = 0;
   let canceled = false;
   let drainedThrough: Date | undefined;
   // A user left half-drained (by the budget, a cancel, or an error) has to be reached again
@@ -410,23 +387,14 @@ async function drainPage(
       }).catch(() => undefined);
 
     if (result.drained) {
-      if (result.held) heldKeptUsers += 1;
-      else deletedUsers += 1;
+      deletedUsers += 1;
       if (!stalled) drainedThrough = user.deletedAt;
     } else stalled = true;
 
     if (canceled) break;
   }
 
-  return {
-    deletedImages,
-    blockedImages,
-    deletedUsers,
-    heldKeptUsers,
-    remaining,
-    canceled,
-    drainedThrough,
-  };
+  return { deletedImages, blockedImages, deletedUsers, remaining, canceled, drainedThrough };
 }
 
 export const removeDeletedUserImages = createJob(
@@ -436,14 +404,7 @@ export const removeDeletedUserImages = createJob(
   '*/10 * * * *',
   async (ctx) => {
     const budget = await getImagePurgeBudget();
-    if (budget <= 0)
-      return {
-        paused: true,
-        deletedImages: 0,
-        blockedImages: 0,
-        deletedUsers: 0,
-        heldKeptUsers: 0,
-      };
+    if (budget <= 0) return { paused: true, deletedImages: 0, blockedImages: 0, deletedUsers: 0 };
 
     // A cancel is a clean stop, not a failure; converting the throw keeps it out of both the
     // per-user error log and the job runner's error counter.
@@ -482,30 +443,23 @@ export const removeDeletedUserImages = createJob(
           THEN 'immediate' ELSE 'grace'
         END AS mode
       ) m
-      CROSS JOIN LATERAL (
-        SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" eh WHERE eh."userId" = u.id) AS held
-      ) h
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
         AND NOT ${userUnderLegalHoldSql(Prisma.raw('u.id'))}
         AND NOT EXISTS (
           SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
         )
-        -- A held owner's images are kept by the hold's delete trigger, blocked; once every one is,
-        -- the owner has nothing left here until the hold ends.
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
             WHERE i."userId" = u.id
               AND (
-                (m.mode = 'immediate' AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus"))
+                m.mode = 'immediate'
                 OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-                OR (i."blockedFor" = ${BlockedReason.AiNotVerified} AND NOT h.held)
+                OR i."blockedFor" = ${BlockedReason.AiNotVerified}
               )
           )
-          OR (
-            m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-          )
+          OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
         )
       ORDER BY u."deletedAt" ASC
       LIMIT ${USERS_PER_RUN}
@@ -520,7 +474,6 @@ export const removeDeletedUserImages = createJob(
     let deletedImages = freshRun.deletedImages;
     let blockedImages = freshRun.blockedImages;
     let deletedUsers = freshRun.deletedUsers;
-    let heldKeptUsers = freshRun.heldKeptUsers;
     let candidates = fresh.length;
     let wrapped = false;
 
@@ -534,9 +487,6 @@ export const removeDeletedUserImages = createJob(
             THEN 'immediate' ELSE 'grace'
           END AS mode
         ) m
-        CROSS JOIN LATERAL (
-          SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" eh WHERE eh."userId" = u.id) AS held
-        ) h
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
@@ -544,21 +494,17 @@ export const removeDeletedUserImages = createJob(
           AND NOT EXISTS (
             SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )
-          -- A held owner's images are kept by the hold's delete trigger, blocked; once every one is,
-          -- the owner has nothing left here until the hold ends.
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i
               WHERE i."userId" = u.id
                 AND (
-                  (m.mode = 'immediate' AND NOT (h.held AND i.ingestion = 'Blocked'::"ImageIngestionStatus"))
+                  m.mode = 'immediate'
                   OR i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-                  OR (i."blockedFor" = ${BlockedReason.AiNotVerified} AND NOT h.held)
+                  OR i."blockedFor" = ${BlockedReason.AiNotVerified}
                 )
             )
-            OR (
-              m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
-            )
+            OR (m.mode = 'immediate' AND EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id))
           )
         ORDER BY u."deletedAt" DESC
         LIMIT ${USERS_PER_RUN}
@@ -572,7 +518,6 @@ export const removeDeletedUserImages = createJob(
         deletedImages += backlogRun.deletedImages;
         blockedImages += backlogRun.blockedImages;
         deletedUsers += backlogRun.deletedUsers;
-        heldKeptUsers += backlogRun.heldKeptUsers;
         candidates += backlog.length;
         if (backlogRun.drainedThrough) await setBacklogCursor(backlogRun.drainedThrough);
       }
@@ -584,14 +529,13 @@ export const removeDeletedUserImages = createJob(
       deletedImages,
       blockedImages,
       deletedUsers,
-      heldKeptUsers,
       freshDeletedImages: freshRun.deletedImages,
       freshDeletedUsers: freshRun.deletedUsers,
       candidates,
       budget,
     }).catch(() => undefined);
 
-    return { deletedImages, blockedImages, deletedUsers, heldKeptUsers, wrapped };
+    return { deletedImages, blockedImages, deletedUsers, wrapped };
   },
   { lockExpiration: 30 * 60, dedicated: true }
 );

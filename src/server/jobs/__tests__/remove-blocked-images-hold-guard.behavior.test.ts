@@ -51,7 +51,7 @@ vi.mock('~/server/search-index', () => ({
 
 import * as imageService from '~/server/services/image.service';
 import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
-import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
+import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
@@ -206,9 +206,21 @@ beforeAll(async () => {
       `SELECT "userId" FROM "EvidenceHeldUser" ORDER BY "userId"`
     )
   ).rows.map((r) => r.userId);
-  // Off unless a case turns it on, so the guard is what the other cases exercise.
-  await holder.db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold"`);
+  // Off unless a case turns it on, so the guard is what the other cases exercise, and so the report
+  // fixtures below write no hold markers of their own.
+  await holder.db.exec(`
+    ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold";
+    ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
+  `);
 });
+
+// The hold tables refuse TRUNCATE, so the reset between cases runs with triggers off.
+const reset = (tables: string) =>
+  holder.db.exec(`
+    SET session_replication_role = replica;
+    TRUNCATE ${tables};
+    SET session_replication_role = DEFAULT;
+  `);
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -224,9 +236,10 @@ beforeEach(async () => {
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
 
+  await reset(
+    '"Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost"'
+  );
   await holder.db.exec(`
-    TRUNCATE "Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage",
-      "Post", "EvidenceHoldPost";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${PLAIN}, ${PLAIN_USER}, 'Blocked', NULL),
       (${APPEALED}, ${PLAIN_USER}, 'Blocked', 'appeal'),
@@ -255,6 +268,7 @@ beforeEach(async () => {
 
 const insertMarkedOwners = () =>
   holder.db.exec(`
+    ALTER TABLE "CsamReport" ENABLE TRIGGER "CsamReport_evidence_hold";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${RECENT_REPORTED}, ${RECENT_REPORT_USER}, 'Blocked', NULL),
       (${MARKED_SECONDARY}, ${MARKED_SECONDARY_USER}, 'Blocked', NULL),
@@ -265,6 +279,7 @@ const insertMarkedOwners = () =>
       (${RECENT_REPORT_USER}, now() - interval '10 days', now() - interval '10 days',
         '{"secondaryUserId": ${MARKED_SECONDARY_USER}}'),
       (${EXTENDED_USER}, now() - interval '400 days', now() - interval '400 days', '{}');
+    ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
     UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '90 days', "extensionRequestedBy" = 'agency', "extensionReference" = 'ref'
       WHERE "userId" = ${EXTENDED_USER};
     INSERT INTO "EvidenceHold" ("userId", role, reason, "releasedAt", "releasedById", "releaseReason") VALUES
@@ -403,6 +418,23 @@ describe('purgeHoldGuard on the delete', () => {
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, ...MARKED].sort((a, b) => a - b));
     });
 
+    // A guard that knows only the report holds lets the marker-held row through to the trigger.
+    it('takes a kept row out of search under a guard, and leaves a row the guard excluded', async () => {
+      await imageService.deleteImages([PLAIN, MANUAL, REPORTED], true, {
+        onlyWhere: Prisma.sql`NOT ${userNamedOnHoldingReportSql(Prisma.raw('"Image"."userId"'))}`,
+      });
+
+      expect(await remaining()).toEqual(expect.arrayContaining([MANUAL, REPORTED]));
+      const deindexed = vi
+        .mocked(imagesSearchIndex.queueUpdate)
+        .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
+      // REPORTED is the control: excluded by the guard, so still live and still indexed.
+      expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, MANUAL]);
+      expect(
+        vi.mocked(userImageVideoCountCaches.bust).mock.calls.flatMap(([ids]) => ids as number[])
+      ).toContain(MANUAL_USER);
+    });
+
     // Keyed on the rows the DELETE returned, never on the ids asked for: a kept image's file is
     // the evidence.
     it("deletes the stored file of each deleted image and never a kept one's", async () => {
@@ -506,20 +538,79 @@ describe('purgeHoldGuard on the delete', () => {
       });
     });
 
-    it("leaves a held owner's already removed image exactly as it was", async () => {
+    // AiNotVerified is a block its owner can lift, and one the blocked-image purge never deletes.
+    it("moves a held owner's AiNotVerified image to the moderated block", async () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "blockedFor")
-        VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', ${NsfwLevel.Blocked}, 'AiNotVerified');
+        VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', 4, '${BlockedReason.AiNotVerified}');
       `);
 
       await imageService.deleteImages([LIVE_HELD], true);
 
       const row = (
         await holder.db.query<Record<string, unknown>>(
-          `SELECT ingestion, "blockedFor", "updatedAt" FROM "Image" WHERE id = ${LIVE_HELD}`
+          `SELECT ingestion, "nsfwLevel", "blockedFor" FROM "Image" WHERE id = ${LIVE_HELD}`
         )
       ).rows[0];
-      expect(row).toEqual({ ingestion: 'Blocked', blockedFor: 'AiNotVerified', updatedAt: null });
+      expect(row).toEqual({
+        ingestion: 'Blocked',
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: BlockedReason.Moderated,
+      });
+    });
+
+    it.each([BlockedReason.TOS, BlockedReason.CSAM])(
+      "leaves a held owner's image under a moderator's %s block exactly as it was",
+      async (blockedFor) => {
+        await holder.db.exec(`
+          INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "blockedFor")
+          VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', ${NsfwLevel.Blocked}, '${blockedFor}');
+        `);
+
+        await imageService.deleteImages([LIVE_HELD], true);
+
+        const row = (
+          await holder.db.query<Record<string, unknown>>(
+            `SELECT ingestion, "blockedFor", "updatedAt" FROM "Image" WHERE id = ${LIVE_HELD}`
+          )
+        ).rows[0];
+        expect(row).toEqual({ ingestion: 'Blocked', blockedFor, updatedAt: null });
+      }
+    );
+
+    // A model transfer moves a held owner's images and posts to another account.
+    it("refuses to move a held owner's image or post to another owner", async () => {
+      await holder.db.exec(`
+        INSERT INTO "Post" (id, "userId") VALUES (${POST}, ${MANUAL_USER}), (${
+        POST + 1
+      }, ${PLAIN_USER});
+      `);
+
+      await expect(
+        holder.db.exec(`UPDATE "Image" SET "userId" = ${PLAIN_USER} WHERE id = ${MANUAL}`)
+      ).rejects.toThrow(/cannot change owner/);
+      await expect(
+        holder.db.exec(`UPDATE "Post" SET "userId" = ${PLAIN_USER} WHERE id = ${POST}`)
+      ).rejects.toThrow(/cannot change owner/);
+      // The control: an unheld owner's rows move.
+      await holder.db.exec(`
+        UPDATE "Image" SET "userId" = ${MANUAL_USER} WHERE id = ${PLAIN};
+        UPDATE "Post" SET "userId" = ${MANUAL_USER} WHERE id = ${POST + 1};
+      `);
+      expect(
+        (
+          await holder.db.query<{ userId: number }>(
+            `SELECT "userId" FROM "Image" WHERE id IN (${PLAIN}, ${MANUAL}) ORDER BY id`
+          )
+        ).rows.map((r) => r.userId)
+      ).toEqual([MANUAL_USER, MANUAL_USER]);
+      expect(
+        (
+          await holder.db.query<{ userId: number }>(
+            `SELECT "userId" FROM "Post" WHERE id IN (${POST}, ${POST + 1}) ORDER BY id`
+          )
+        ).rows.map((r) => r.userId)
+      ).toEqual([MANUAL_USER, MANUAL_USER]);
     });
 
     it("fails a cascading delete of a held owner's image rather than orphan it", async () => {
@@ -566,7 +657,16 @@ describe('purgeHoldGuard on the delete', () => {
         RECENT_REPORT_USER,
       ],
       ['clearing an extension that is still running', `"extendedUntil" = NULL`, EXTENDED_USER],
-      ['moving the hold to another owner', `"userId" = 999`, MANUAL_USER],
+      [
+        'bringing the end forward to just before it would run out',
+        `"releaseAt" = now() + interval '1 second'`,
+        RECENT_REPORT_USER,
+      ],
+      [
+        'giving an open-ended hold an end date',
+        `"releaseAt" = now() + interval '30 days'`,
+        MANUAL_USER,
+      ],
     ])('refuses %s without a recorded release', async (_name, set, userId) => {
       const id = await holdIdOf(userId);
       await expect(
@@ -574,21 +674,55 @@ describe('purgeHoldGuard on the delete', () => {
       ).rejects.toThrow(/recorded release/);
     });
 
-    it('refuses to delete a hold that was never released, and allows it once released', async () => {
+    it('refuses to move a hold to another owner', async () => {
       const id = await holdIdOf(MANUAL_USER);
-      await expect(holder.db.exec(`DELETE FROM "EvidenceHold" WHERE id = ${id}`)).rejects.toThrow(
-        /must be released/
-      );
+      await expect(
+        holder.db.exec(`UPDATE "EvidenceHold" SET "userId" = 999 WHERE id = ${id}`)
+      ).rejects.toThrow(/owner or source/);
+    });
 
+    it('ends a hold by a recorded release, which then never changes', async () => {
+      const id = await holdIdOf(MANUAL_USER);
       await holder.db.exec(`
         UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
-        WHERE id = ${id};
-        DELETE FROM "EvidenceHold" WHERE id = ${id};
+        WHERE id = ${id}
       `);
-      expect((await holder.db.query(`SELECT 1 FROM "EvidenceHold" WHERE id = ${id}`)).rows).toEqual(
-        []
-      );
+      expect(
+        (await holder.db.query(`SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${MANUAL_USER}`))
+          .rows
+      ).toEqual([]);
+
+      await expect(
+        holder.db.exec(`UPDATE "EvidenceHold" SET "releaseReason" = 'other' WHERE id = ${id}`)
+      ).rejects.toThrow(/released and cannot change/);
     });
+
+    it('refuses a release that also moves the dates', async () => {
+      const id = await holdIdOf(RECENT_REPORT_USER);
+      await expect(
+        holder.db.exec(`
+          UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r',
+            "releaseAt" = now() - interval '1 day'
+          WHERE id = ${id}
+        `)
+      ).rejects.toThrow(/dates in a release/);
+    });
+
+    it('refuses to delete a hold, released or not', async () => {
+      await expect(
+        holder.db.exec(`DELETE FROM "EvidenceHold" WHERE "userId" = ${MANUAL_USER}`)
+      ).rejects.toThrow(/cannot be deleted/);
+      await expect(
+        holder.db.exec(`DELETE FROM "EvidenceHold" WHERE "userId" = ${RELEASED_USER}`)
+      ).rejects.toThrow(/cannot be deleted/);
+    });
+
+    it.each(['EvidenceHold', 'EvidenceHoldImage', 'EvidenceHoldPost'])(
+      'refuses to truncate %s',
+      async (table) => {
+        await expect(holder.db.exec(`TRUNCATE "${table}"`)).rejects.toThrow(/cannot be truncated/);
+      }
+    );
 
     // The control: an edit that keeps the hold running is not refused.
     it('allows extending a running hold', async () => {
@@ -610,8 +744,8 @@ describe('purgeHoldGuard on the delete', () => {
     beforeEach(async () => {
       await insertMarkedOwners();
       // LAPSED_USER's only hold ended by its date; RELEASED_USER's was released.
+      await reset('"Post", "EvidenceHoldPost"');
       await holder.db.exec(`
-        TRUNCATE "Post", "EvidenceHoldPost";
         INSERT INTO "EvidenceHold" ("userId", role, reason, "releaseAt")
           VALUES (${LAPSED_USER}, 'manual', 'review', now() - interval '1 day');
         INSERT INTO "Post" (id, "userId", title, detail, "createdAt", "publishedAt", "modelVersionId", "collectionId", metadata) VALUES
@@ -698,13 +832,26 @@ describe('purgeHoldGuard on the delete', () => {
       expect(await keptImages()).toEqual([RECENT_REPORTED]);
     });
 
-    it("purges an owner's rows when their released hold row is deleted", async () => {
+    it.each([
+      ['EvidenceHoldImage', 'imageId'],
+      ['EvidenceHoldPost', 'postId'],
+    ])("refuses to edit %s, or to delete a held owner's row from it", async (table, key) => {
       await holder.db.exec(`
-        INSERT INTO "EvidenceHoldPost" ("postId", "userId") VALUES (9, ${RELEASED_USER});
-        DELETE FROM "EvidenceHold" WHERE "userId" = ${RELEASED_USER};
+        INSERT INTO "${table}" ("${key}", "userId") VALUES (90, ${MANUAL_USER}), (91, ${RELEASED_USER});
       `);
 
-      expect(await snapshots()).toEqual([]);
+      await expect(
+        holder.db.exec(`UPDATE "${table}" SET "userId" = ${PLAIN_USER} WHERE "${key}" = 90`)
+      ).rejects.toThrow(/cannot change/);
+      await expect(holder.db.exec(`DELETE FROM "${table}" WHERE "${key}" = 90`)).rejects.toThrow(
+        /while its owner is held/
+      );
+      // The control: the row of an owner no longer held is deleted.
+      await holder.db.exec(`DELETE FROM "${table}" WHERE "${key}" = 91`);
+      expect(
+        (await holder.db.query(`SELECT "${key}" AS id FROM "${table}" WHERE "${key}" IN (90, 91)`))
+          .rows
+      ).toEqual([{ id: 90 }]);
     });
 
     it('sweeps the rows of an owner whose hold ended by its date', async () => {
@@ -723,6 +870,13 @@ describe('purgeHoldGuard on the delete', () => {
   });
 
   describe('the report trigger', () => {
+    beforeEach(() =>
+      holder.db.exec(`ALTER TABLE "CsamReport" ENABLE TRIGGER "CsamReport_evidence_hold"`)
+    );
+    afterEach(() =>
+      holder.db.exec(`ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold"`)
+    );
+
     const holdsOf = async (reportId: number) =>
       (
         await holder.db.query<{ userId: number; role: string; releaseAt: Date }>(

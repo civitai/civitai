@@ -943,10 +943,10 @@ export async function deleteImages(
     `;
     const imageIds = results.map((x) => x.id);
     const returned = new Set(imageIds);
+    // A guarded caller's unreturned ids are either excluded by its guard (still live) or kept by a
+    // hold marker's delete trigger (now blocked): only the record of the latter tells them apart.
     const kept =
-      !onlyWhere && results.length < ids.length
-        ? await getKeptImages(ids.filter((id) => !returned.has(id)))
-        : [];
+      results.length < ids.length ? await getKeptImages(ids.filter((id) => !returned.has(id))) : [];
     const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
@@ -956,8 +956,8 @@ export async function deleteImages(
       queueImageSearchIndexUpdate({
         // Without a guard, every id the caller asked to delete leaves search, including a row a
         // hold marker kept (the delete trigger takes it off the site instead). A guarded caller
-        // keeps the rows its guard excluded, so only those deleted leave.
-        ids: onlyWhere ? imageIds : ids,
+        // keeps the rows its guard excluded, so only those deleted or kept leave.
+        ids: onlyWhere ? [...imageIds, ...kept.map((x) => x.imageId)] : ids,
         action: SearchIndexUpdateQueueAction.Delete,
       }),
       updatePostNsfwLevel(idsForPostUpdate),

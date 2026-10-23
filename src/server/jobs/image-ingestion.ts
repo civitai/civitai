@@ -524,7 +524,6 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = "Image"."userId")
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
     ${
       holdForTrainingCopy

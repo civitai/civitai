@@ -3,13 +3,19 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ReportService from '~/server/services/report.service';
 
-const { mockGetImageById, mockGetLatestAppeal, mockCreateEntityAppeal, mockReopenAppeal } =
-  vi.hoisted(() => ({
-    mockGetImageById: vi.fn(),
-    mockGetLatestAppeal: vi.fn(),
-    mockCreateEntityAppeal: vi.fn(),
-    mockReopenAppeal: vi.fn(),
-  }));
+const {
+  mockGetImageById,
+  mockGetLatestAppeal,
+  mockCreateEntityAppeal,
+  mockReopenAppeal,
+  mockGetAppealExcludedIds,
+} = vi.hoisted(() => ({
+  mockGetImageById: vi.fn(),
+  mockGetLatestAppeal: vi.fn(),
+  mockCreateEntityAppeal: vi.fn(),
+  mockReopenAppeal: vi.fn(),
+  mockGetAppealExcludedIds: vi.fn(),
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -23,10 +29,12 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   getLatestAppeal: mockGetLatestAppeal,
   createEntityAppeal: mockCreateEntityAppeal,
   reopenAppeal: mockReopenAppeal,
+  getAppealExcludedIds: mockGetAppealExcludedIds,
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockModelFindUnique = dbMock.dbRead.model.findUnique;
 const mockModel3DFindUnique = dbMock.dbRead.model3D.findUnique;
@@ -48,6 +56,7 @@ beforeEach(() => {
   mockGetLatestAppeal.mockResolvedValue(null);
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
+  mockGetAppealExcludedIds.mockResolvedValue({ images: new Set(), users: new Set() });
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -376,6 +385,34 @@ describe('createEntityAppealHandler — Storyline', () => {
       expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, userId: 602767 })
     );
     expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 8, message: storylineInput.message });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+});
+
+// A hold marker's kept image reads as a moderator block. The image cases above are the control.
+describe('createEntityAppealHandler — an image the appeal flow excludes', () => {
+  beforeEach(() =>
+    mockGetImageById.mockResolvedValue({
+      id: 99,
+      userId: 602767,
+      blockedFor: 'moderated',
+      needsReview: null,
+    })
+  );
+
+  it.each([
+    ['its owner', { images: new Set<number>(), users: new Set([602767]) }],
+    ['the image', { images: new Set([99]), users: new Set<number>() }],
+  ])('refuses, before any charge, when %s is excluded', async (_name, excluded) => {
+    mockGetAppealExcludedIds.mockResolvedValue(excluded);
+
+    await expect(
+      createEntityAppealHandler({
+        input: { entityId: 99, entityType: EntityType.Image, message: 'Please review again.' },
+        ctx: ctxUser(602767),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: IMAGE_NOT_APPEALABLE });
+    expect(mockGetAppealExcludedIds).toHaveBeenCalledWith({ imageIds: [99], userIds: [602767] });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

@@ -260,8 +260,10 @@ describe('deleteImagesByIds on an image a hold marker keeps', () => {
   it('busts the post the image was taken out of, and the image leaves search', async () => {
     await deleteImagesByIds([PLAIN_IMAGE_ID]);
 
-    const row = await db.query(`SELECT "postId" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`);
-    expect(row.rows).toEqual([{ postId: null }]);
+    const row = await db.query(
+      `SELECT "postId", "ingestion" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`
+    );
+    expect(row.rows).toEqual([{ postId: null, ingestion: 'Blocked' }]);
     expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
     // The existence cache is what takes a blocked image off the site; meta and metadata go with it.
     expect(sysSet.mock.calls.map(([k, v]) => [k, v])).toContainEqual([

@@ -13,6 +13,7 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
+  getAppealExcludedIds,
   getLatestAppeal,
   reopenAppeal,
 } from '~/server/services/report.service';
@@ -108,6 +109,11 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
+        // The removals the appeal flow excludes, a hold marker's kept image among them. Refused in
+        // the same words, so the refusal says no more than that.
+        const excluded = await getAppealExcludedIds({ imageIds: [image.id], userIds: [userId] });
+        if (excluded.users.has(userId) || excluded.images.has(image.id))
+          throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
       case EntityType.Model3D:

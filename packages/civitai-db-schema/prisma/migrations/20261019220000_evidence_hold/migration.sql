@@ -93,7 +93,7 @@ BEGIN
   ON CONFLICT ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 CREATE TRIGGER "CsamReport_evidence_hold"
 AFTER INSERT OR UPDATE OF "reportSentAt", "details" ON "CsamReport"
@@ -106,6 +106,8 @@ FOR EACH ROW EXECUTE FUNCTION evidence_hold_from_csam_report();
 -- back there; "EvidenceHoldImage" records which post. A delete reached from another trigger, which
 -- includes a cascade from a parent row, raises instead: skipping a cascaded row would leave it
 -- pointing at a deleted parent.
+-- A row already blocked by a moderator ('moderated', 'tos', 'CSAM') keeps that block; any other row,
+-- an owner-reversible 'AiNotVerified' block included, gets the moderated block.
 -- The block's values are the app's own (`NsfwLevel.Blocked`, `BlockedReason.Moderated`), pinned by
 -- remove-blocked-images-hold-guard.behavior.test.ts.
 CREATE OR REPLACE FUNCTION evidence_hold_keep_image() RETURNS trigger AS $$
@@ -120,7 +122,9 @@ BEGIN
     ON CONFLICT ("imageId") DO NOTHING;
     UPDATE "Image"
     SET "ingestion" = 'Blocked', "nsfwLevel" = 32, "blockedFor" = 'moderated', "updatedAt" = now()
-    WHERE "id" = OLD."id" AND "ingestion" <> 'Blocked';
+    WHERE "id" = OLD."id" AND NOT (
+      "ingestion" = 'Blocked' AND "blockedFor" IN ('moderated', 'tos', 'CSAM')
+    );
     UPDATE "Image" SET "postId" = NULL, "updatedAt" = now()
     WHERE "id" = OLD."id" AND "postId" IS NOT NULL;
     -- Kept counts as moderated, so the account-deletion markers go even on a row already blocked:
@@ -132,42 +136,114 @@ BEGIN
   END IF;
   RETURN OLD;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 CREATE TRIGGER "Image_evidence_hold"
 BEFORE DELETE ON "Image"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_image();
 
--- A hold only ends by date or by a recorded release. An edit that would end an active hold without
--- one (a date moved into the past, an extension cleared, the owner changed) and the deletion of an
--- unreleased row both raise.
+-- A held owner's images and posts keep their owner: the hold, and every trigger here, is keyed on
+-- it, so moving a row to another account (a model transfer) would take it out of the hold.
+CREATE OR REPLACE FUNCTION evidence_hold_keep_owner() RETURNS trigger AS $$
+BEGIN
+  IF NEW."userId" IS DISTINCT FROM OLD."userId"
+    AND EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN
+    RAISE EXCEPTION '% % cannot change owner', TG_TABLE_NAME, OLD."id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
+
+CREATE TRIGGER "Image_evidence_hold_owner"
+BEFORE UPDATE OF "userId" ON "Image"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_owner();
+
+CREATE TRIGGER "Post_evidence_hold_owner"
+BEFORE UPDATE OF "userId" ON "Post"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_owner();
+
+-- A hold only ends by date or by a recorded release, and its row is a record that stays: it is never
+-- deleted, a released row never changes, and a release changes nothing but the release itself.
+-- While unreleased, its owner and source never change and its end only stays or moves later.
 CREATE OR REPLACE FUNCTION evidence_hold_guard_end() RETURNS trigger AS $$
 DECLARE
-  -- COALESCE: a NULL "extendedUntil" compares to NULL, which would make the whole test NULL and skip
-  -- the raise.
-  was_active boolean := OLD."releasedAt" IS NULL AND (OLD."releaseAt" IS NULL
-    OR OLD."releaseAt" > now() OR COALESCE(OLD."extendedUntil" > now(), false));
+  -- A NULL "releaseAt" holds until released, so it is the latest end there is.
+  old_end timestamp := CASE WHEN OLD."releaseAt" IS NULL THEN 'infinity'::timestamp
+    ELSE GREATEST(OLD."releaseAt", COALESCE(OLD."extendedUntil", OLD."releaseAt")) END;
+  new_end timestamp;
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    IF OLD."releasedAt" IS NULL THEN
-      RAISE EXCEPTION 'EvidenceHold % must be released before it is deleted', OLD."id";
-    END IF;
-    RETURN OLD;
+    RAISE EXCEPTION 'EvidenceHold % cannot be deleted', OLD."id";
   END IF;
-  IF was_active AND NEW."releasedAt" IS NULL AND (
-    NEW."userId" <> OLD."userId"
-    OR NOT (NEW."releaseAt" IS NULL OR NEW."releaseAt" > now()
-      OR COALESCE(NEW."extendedUntil" > now(), false))
-  ) THEN
+  IF OLD."releasedAt" IS NOT NULL THEN
+    RAISE EXCEPTION 'EvidenceHold % is released and cannot change', OLD."id";
+  END IF;
+  IF NEW."userId" IS DISTINCT FROM OLD."userId"
+    OR NEW."csamReportId" IS DISTINCT FROM OLD."csamReportId"
+    OR NEW."role" IS DISTINCT FROM OLD."role"
+    OR NEW."reportSentAt" IS DISTINCT FROM OLD."reportSentAt" THEN
+    RAISE EXCEPTION 'EvidenceHold % cannot change its owner or source', OLD."id";
+  END IF;
+  IF NEW."releasedAt" IS NOT NULL THEN
+    IF NEW."releaseAt" IS DISTINCT FROM OLD."releaseAt"
+      OR NEW."extendedUntil" IS DISTINCT FROM OLD."extendedUntil" THEN
+      RAISE EXCEPTION 'EvidenceHold % cannot change its dates in a release', OLD."id";
+    END IF;
+    RETURN NEW;
+  END IF;
+  new_end := CASE WHEN NEW."releaseAt" IS NULL THEN 'infinity'::timestamp
+    ELSE GREATEST(NEW."releaseAt", COALESCE(NEW."extendedUntil", NEW."releaseAt")) END;
+  IF new_end < old_end THEN
     RAISE EXCEPTION 'EvidenceHold % can only end by a recorded release', OLD."id";
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 CREATE TRIGGER "EvidenceHold_guard_end"
 BEFORE UPDATE OR DELETE ON "EvidenceHold"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_guard_end();
+
+-- What a hold kept is never edited, and leaves only once its owner is no longer held
+-- (evidence_hold_purge_unheld).
+CREATE OR REPLACE FUNCTION evidence_hold_guard_kept() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION '% % cannot change', TG_TABLE_NAME, OLD."userId";
+  END IF;
+  IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN
+    RAISE EXCEPTION '% row cannot be deleted while its owner is held', TG_TABLE_NAME;
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
+
+CREATE TRIGGER "EvidenceHoldImage_guard"
+BEFORE UPDATE OR DELETE ON "EvidenceHoldImage"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_guard_kept();
+
+CREATE TRIGGER "EvidenceHoldPost_guard"
+BEFORE UPDATE OR DELETE ON "EvidenceHoldPost"
+FOR EACH ROW EXECUTE FUNCTION evidence_hold_guard_kept();
+
+-- TRUNCATE skips row triggers, so it is refused outright on all three tables.
+CREATE OR REPLACE FUNCTION evidence_hold_refuse_truncate() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION '% cannot be truncated', TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
+
+CREATE TRIGGER "EvidenceHold_refuse_truncate"
+BEFORE TRUNCATE ON "EvidenceHold"
+FOR EACH STATEMENT EXECUTE FUNCTION evidence_hold_refuse_truncate();
+
+CREATE TRIGGER "EvidenceHoldImage_refuse_truncate"
+BEFORE TRUNCATE ON "EvidenceHoldImage"
+FOR EACH STATEMENT EXECUTE FUNCTION evidence_hold_refuse_truncate();
+
+CREATE TRIGGER "EvidenceHoldPost_refuse_truncate"
+BEFORE TRUNCATE ON "EvidenceHoldPost"
+FOR EACH STATEMENT EXECUTE FUNCTION evidence_hold_refuse_truncate();
 
 -- Every deletion path of a held owner's post, the owner's own included, copies it first. The delete
 -- itself goes ahead.
@@ -186,7 +262,7 @@ BEGIN
   END IF;
   RETURN OLD;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 CREATE TRIGGER "Post_evidence_hold"
 BEFORE DELETE ON "Post"
@@ -201,17 +277,17 @@ CREATE OR REPLACE FUNCTION evidence_hold_purge_unheld(target_user INTEGER DEFAUL
   DELETE FROM "EvidenceHoldImage" i
   WHERE (target_user IS NULL OR i."userId" = target_user)
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = i."userId");
-$$ LANGUAGE sql;
+$$ LANGUAGE sql SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION evidence_hold_purge_on_release() RETURNS trigger AS $$
 BEGIN
   PERFORM evidence_hold_purge_unheld(OLD."userId");
   RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 CREATE TRIGGER "EvidenceHold_purge_on_release"
-AFTER UPDATE OR DELETE ON "EvidenceHold"
+AFTER UPDATE ON "EvidenceHold"
 FOR EACH ROW EXECUTE FUNCTION evidence_hold_purge_on_release();
 
 -- Existing sent reports. One whose year has already passed is recorded as released by the system

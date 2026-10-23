@@ -1127,6 +1127,8 @@ export async function getAppealExcludedIds({
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
+        -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
+        OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
