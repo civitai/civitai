@@ -25,7 +25,11 @@
  * missing), or the scopes to grant when the consent modal should open.
  */
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
-import type { BlockHostSurface } from './blockInitFragmentGate';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
+import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from './blockInitFragmentGate';
 import type { HostStatus } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 
@@ -147,9 +151,29 @@ export type UngrantableConsentNotice = {
    * refusal is the signal, the names are advisory.
    */
   scopes: string[];
-  /** Whether the viewer is prompted. Inert in this commit: always equal to `notify`. */
+  /**
+   * Whether the VIEWER is prompted (the toast, or sign-in when signed out). Equal
+   * to `notify` on every surface except one whose document store is served
+   * locally (`BLOCK_HOST_LOCAL_PREVIEW_STORAGE`), where it is false when every
+   * refused scope is in {@link LOCAL_PREVIEW_STORAGE_SCOPES}. The block's
+   * `CONSENT_UNAVAILABLE` push still follows `notify`.
+   */
   promptViewer: boolean;
 };
+
+/**
+ * The document-store scopes the SDK's in-tab local store serves on a surface
+ * whose BLOCK_INIT carries `storageMode: 'local-preview'`. The tunnel mint never
+ * signs them, so on that surface they always arrive here as un-grantable, which is
+ * expected and not something to tell the viewer about. The same pair `@civitai/sdk`
+ * treats as held in a local preview. Shared storage (`apps:storage:shared:*`) and
+ * the key/value scopes are NOT here: the local store does not serve them, so a
+ * refusal of one is still worth showing.
+ */
+export const LOCAL_PREVIEW_STORAGE_SCOPES: ReadonlySet<string> = new Set([
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+]);
 
 /**
  * Issue B (defensive UX): decide whether a REQUEST_CONSENT whose grantable set is
@@ -198,17 +222,25 @@ export type UngrantableConsentNotice = {
  * that could never resolve `false`. `IframeHost` deliberately does not import
  * `pageBlockHostLogic` (the page host is a sibling surface, not a dependency), so
  * the shared gate is the only honest home for this.
+ *
+ * 🔴 `surface` — the host's own mounted surface, REQUIRED so no caller can forget
+ * it. It is read ONLY through `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`, the record that
+ * already decides BLOCK_INIT's `storageMode`: one predicate for "storage is local
+ * here". Where it is, a refusal made only of document-store scopes does not prompt
+ * the viewer. `notify` and the `CONSENT_UNAVAILABLE` push are unchanged, because an
+ * SDK that predates local-preview grants waits on that push, and the host cannot
+ * put a storage scope on the token to settle it any other way. Nothing is granted,
+ * advertised or minted differently.
  */
 export function resolveUngrantableConsentNotice(
   rawScopesHint: unknown,
   grantedScopes: string[],
   missingScopes: string[] | undefined,
-  // Inert in this commit: the tests that pin it land first and go red.
-  _surface?: BlockHostSurface
+  surface: BlockHostSurface
 ): UngrantableConsentNotice {
-  if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
+  if (!Array.isArray(rawScopesHint)) return { notify: false, promptViewer: false, scopes: [] };
   const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
-  if (requested.length === 0) return { notify: false, scopes: [] };
+  if (requested.length === 0) return { notify: false, promptViewer: false, scopes: [] };
   const granted = new Set<string>(grantedScopes);
   const missing = new Set<string>(missingScopes ?? []);
   const ungrantable = Array.from(
@@ -216,9 +248,14 @@ export function resolveUngrantableConsentNotice(
   ).sort();
   // Decision on the UNFILTERED set — see above.
   if (ungrantable.length === 0) return { notify: false, promptViewer: false, scopes: [] };
+  // Also on the unfiltered set: an unknown scope beside a document-store one must
+  // still prompt, for the unknown one.
+  const promptViewer = BLOCK_HOST_LOCAL_PREVIEW_STORAGE[surface]
+    ? ungrantable.some((s) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(s))
+    : true;
   return {
     notify: true,
-    promptViewer: true,
+    promptViewer,
     scopes: ungrantable.filter((s) => isKnownBlockScope(s)),
   };
 }

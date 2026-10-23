@@ -2059,7 +2059,9 @@ export function IframeHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview.
+        'model-slot'
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
@@ -2074,6 +2076,8 @@ export function IframeHost({
       // still sends, with `scopes: []`. The refusal is the signal; the names are
       // advisory. Delivered solely to the frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      // Read for parity with PageBlockHost; on 'model-slot' it always equals `notify`.
+      if (!ungrantable.promptViewer) return;
       // Signed out → offer sign-in, not "unavailable" — see the shared gate.
       const prompt = resolveUngrantableConsentPrompt(readGateStatus(), currentUser?.id != null);
       if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
