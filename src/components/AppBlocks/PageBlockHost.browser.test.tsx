@@ -117,6 +117,8 @@ import {
 } from '~/components/AppBlocks/PageBlockHost';
 // eslint-disable-next-line import/first
 import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
+// eslint-disable-next-line import/first
+import { UNGRANTABLE_CONSENT_TOAST } from '~/components/AppBlocks/requestConsentGate';
 
 /**
  * W10 lazy-consent gap regression (page surface).
@@ -836,6 +838,182 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
       expect(showNotificationSpy).toHaveBeenCalledTimes(1);
     });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+});
+
+/**
+ * The dev-tunnel preview (`surface: 'dev-tunnel'`, BLOCK_INIT `storageMode:
+ * 'local-preview'`): the document store is served by the in-tab local store, and
+ * the tunnel mint never signs `apps:storage` / `apps:storage:publish`.
+ *
+ * The prod defect: an app asked for `['ai:write:budgeted', 'apps:storage',
+ * 'apps:storage:publish']` before quoting. The storage scopes were neither
+ * granted nor missing, so the host toasted "isn't available here" and the whole
+ * request was refused — even though the spend scope was granted.
+ *
+ * On this surface the host no longer prompts the VIEWER for a refused
+ * document-store scope. It still answers the BLOCK with CONSENT_UNAVAILABLE: an
+ * SDK that predates local-preview grants waits on that push, and with no answer
+ * its `requestGrants` promise would never settle. A current SDK never sends these
+ * scopes here at all. Off this surface nothing changes.
+ *
+ * Every test uses its own declared/signed set and hint, pairwise distinct.
+ */
+describe('PageBlockHost REQUEST_CONSENT — dev-tunnel local-preview storage', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+  });
+
+  const tunnelProps = { ...baseProps, surface: 'dev-tunnel' as const, needsConsent: false };
+
+  test('spend granted + document-store scopes: the block gets its answer, the viewer gets no toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['ai:write:budgeted', 'user:read:self']}
+        signedScopes={['ai:write:budgeted', 'user:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish'],
+      });
+      // The arrival is the positive control: the handler ran on this mount, so the
+      // zero toast below is a measurement and not a dropped message.
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      expect(openLoginPopupSpy).not.toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('spend MISSING + document-store scopes: the consent modal opens for the spend scope only, no toast', async () => {
+    // Invariant guard, not regression coverage: `missingScopes` non-empty took the
+    // modal path before this change too. Pinned so the storage handling cannot
+    // start refusing a request the consent path can serve.
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['ai:write:budgeted', 'collections:read:self']}
+        signedScopes={['collections:read:self']}
+        missingScopes={['ai:write:budgeted']}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['apps:storage:publish', 'ai:write:budgeted', 'apps:storage'],
+      });
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialogProps = useDialogStore.getState().dialogs[0].props as { missingScopes: string[] };
+    expect(dialogProps.missingScopes).toEqual(['ai:write:budgeted']);
+    expect(showNotificationSpy).not.toHaveBeenCalled();
+  });
+
+  test('a document-store-only request gets a definite answer (CONSENT_UNAVAILABLE), never silence, and no toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['models:read:self']}
+        signedScopes={['models:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage'],
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('a document-store scope next to an unknown scope still toasts (for the unknown one)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['buzz:read:self']}
+        signedScopes={['buzz:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage', 'some:unknown:scope'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage'],
+      });
+      await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+      expect(showNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining(UNGRANTABLE_CONSENT_TOAST)
+      );
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('the LIVE page (page-run) with the same document-store request still toasts, as before', async () => {
+    // The surface condition's own regression guard: apply the local-preview
+    // handling on every surface and THIS test goes red on the toast assertion.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="page-run"
+        needsConsent={false}
+        declaredScopes={['goods:read:self']}
+        signedScopes={['goods:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish', 'apps:storage'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+      expect(showNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining(UNGRANTABLE_CONSENT_TOAST)
+      );
+    } finally {
+      posts.stop();
+    }
   });
 });
 

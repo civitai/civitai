@@ -122,7 +122,7 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
     // a scope the tunnel allowlist withheld → not granted, not addable via consent.
     expect(
       resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [])
-    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
   it('does NOT notify for the BENIGN already-granted case (block re-requests a held scope)', () => {
@@ -132,7 +132,7 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
         ['buzz:read:self', 'models:read:self'],
         []
       )
-    ).toEqual({ notify: false, scopes: [] });
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
   it('does NOT notify when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
@@ -142,11 +142,11 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
         ['models:read:self'],
         ['ai:write:budgeted']
       )
-    ).toEqual({ notify: false, scopes: [] });
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
   it('does NOT notify when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
-    const silent = { notify: false, scopes: [] };
+    const silent = { notify: false, promptViewer: false, scopes: [] };
     expect(resolveUngrantableConsentNotice(undefined, ['models:read:self'], [])).toEqual(silent);
     expect(resolveUngrantableConsentNotice([], ['models:read:self'], [])).toEqual(silent);
     expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [])).toEqual(silent);
@@ -168,13 +168,17 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
         ['buzz:read:self'], // already granted
         ['ai:write:budgeted'] // grantable via consent
       )
-    ).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
+    ).toEqual({
+      notify: true,
+      promptViewer: true,
+      scopes: ['apps:storage:read', 'apps:storage:write'],
+    });
   });
 
   it('tolerates an undefined missingScopes', () => {
     expect(
       resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], undefined)
-    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
   /**
@@ -203,7 +207,11 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
         ['models:read:self'],
         []
       );
-      expect(out).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
+      expect(out).toEqual({
+        notify: true,
+        promptViewer: true,
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
     });
 
     it('does not treat inherited Object.prototype keys as known scopes (own-property test)', () => {
@@ -223,6 +231,93 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       expect(out.notify).toBe(true);
       expect(out.scopes).toEqual([]);
     });
+  });
+});
+
+// ===========================================================================
+// The dev-tunnel LOCAL-PREVIEW surface: the document store is served by the
+// in-tab local store, so `apps:storage` / `apps:storage:publish` being absent
+// from the token is not something to tell the viewer about. The block still gets
+// its definite answer (an SDK that predates local-preview grants waits on it);
+// only the viewer prompt is withheld, and only when NOTHING else was refused.
+//
+// Every case below uses its own granted set and hint, pairwise distinct.
+// ===========================================================================
+describe('resolveUngrantableConsentNotice — local-preview storage', () => {
+  const LOCAL = { localPreviewStorage: true };
+
+  it('spend + document-store request with spend already granted: answers the block, no viewer prompt', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish'],
+        ['ai:write:budgeted', 'user:read:self'],
+        [],
+        LOCAL
+      )
+    ).toEqual({
+      notify: true,
+      promptViewer: false,
+      scopes: ['apps:storage', 'apps:storage:publish'],
+    });
+  });
+
+  it('a document-store-only request: a definite answer for the block, no viewer prompt', () => {
+    expect(
+      resolveUngrantableConsentNotice(['apps:storage'], ['models:read:self'], [], LOCAL)
+    ).toEqual({ notify: true, promptViewer: false, scopes: ['apps:storage'] });
+  });
+
+  it('a document-store scope next to an UNKNOWN scope still prompts the viewer (for the unknown one)', () => {
+    // The unknown scope is dropped from the NAMES (untrusted echo) but must still
+    // drive the prompt, exactly as the decision is taken on the unfiltered set.
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:publish', 'some:unknown:scope'],
+        ['collections:read:self'],
+        [],
+        LOCAL
+      )
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:publish'] });
+  });
+
+  it('storage the local store does NOT serve (shared, key/value) still prompts the viewer', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:shared:write', 'apps:storage'],
+        ['goods:read:self'],
+        [],
+        LOCAL
+      )
+    ).toEqual({
+      notify: true,
+      promptViewer: true,
+      scopes: ['apps:storage', 'apps:storage:shared:write'],
+    });
+  });
+
+  it('a document-store scope the consent path CAN grant is left to the consent modal (not ungrantable)', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:publish'],
+        ['social:react:self'],
+        ['apps:storage:publish'],
+        LOCAL
+      )
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
+  });
+
+  it('OFF the local-preview surface the same document-store request prompts exactly as before', () => {
+    const hint = ['apps:storage', 'apps:storage:publish', 'ai:write:budgeted'];
+    const granted = ['ai:write:budgeted', 'buzz:read:self'];
+    const before = {
+      notify: true,
+      promptViewer: true,
+      scopes: ['apps:storage', 'apps:storage:publish'],
+    };
+    expect(resolveUngrantableConsentNotice(hint, granted, [])).toEqual(before);
+    expect(
+      resolveUngrantableConsentNotice(hint, granted, [], { localPreviewStorage: false })
+    ).toEqual(before);
   });
 });
 

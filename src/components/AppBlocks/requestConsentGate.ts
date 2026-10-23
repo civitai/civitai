@@ -199,7 +199,9 @@ export type UngrantableConsentNotice = {
 export function resolveUngrantableConsentNotice(
   rawScopesHint: unknown,
   grantedScopes: string[],
-  missingScopes: string[] | undefined
+  missingScopes: string[] | undefined,
+  // Inert in this commit: the tests that pin it land first and go red.
+  _options: { localPreviewStorage?: boolean } = {}
 ): UngrantableConsentNotice {
   if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
   const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);

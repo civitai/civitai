@@ -735,6 +735,33 @@ describe('IframeHost consent backstop — the surface', () => {
     }
   });
 
+  test('the model slot is NOT a local preview: a document-store REQUEST_CONSENT still toasts, as before', async () => {
+    // Only the dev-tunnel surface serves the document store locally. Here the same
+    // request the preview stops toasting about must keep both channels, so the
+    // surface condition cannot leak onto the model slot.
+    renderWithProviders(
+      <IframeHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage', 'apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('the BENIGN already-granted REQUEST_CONSENT stays silent in BOTH channels', async () => {
     // A block re-requesting a scope its token already carries is not a refusal. The
     // positive case above proves the push CAN fire on this mount, so this zero is a
