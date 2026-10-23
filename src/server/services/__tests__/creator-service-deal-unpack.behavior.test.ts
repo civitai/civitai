@@ -1298,7 +1298,20 @@ describe('the finals malware scan flag', () => {
 });
 
 describe('the finals malware scan', () => {
-  const CLEAN = { $type: 'modelClamScan', output: { status: 'clean', infected: false } };
+  /** What the orchestrator returned for a clean file: the count is only in the scanner's summary. */
+  const CLEAN = {
+    $type: 'modelClamScan',
+    output: {
+      status: 'clean',
+      infected: false,
+      output: [
+        'blob: OK',
+        '----------- SCAN SUMMARY -----------',
+        'Scanned files: 1',
+        'Infected files: 0',
+      ].join('\n'),
+    },
+  };
   const NOT_PICKLE = {
     $type: 'modelPickleScan',
     output: { status: 'skipped', skipped: true, skipReason: 'unknown-format' },
@@ -1470,9 +1483,33 @@ describe('the finals malware scan', () => {
       ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Retry'],
       ['pickle step missing', workflow('succeeded', [CLEAN]), 'Retry'],
       [
-        'clean but nothing was read',
+        'clean, counted in the step output',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Passed',
+      ],
+      [
+        'clean but its count says nothing was read',
         workflow('succeeded', [
           { $type: 'modelClamScan', output: { status: 'clean', scannedFileCount: 0 } },
+          NOT_PICKLE,
+        ]),
+        'Retry',
+      ],
+      [
+        'clean but its summary says nothing was read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', output: 'Scanned files: 0' } },
+          NOT_PICKLE,
+        ]),
+        'Retry',
+      ],
+      [
+        'clean but it does not say what it read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean' } },
           NOT_PICKLE,
         ]),
         'Retry',

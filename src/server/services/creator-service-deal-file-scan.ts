@@ -113,6 +113,7 @@ type ScanStep = {
   $type?: string;
   output?: {
     status?: string | null;
+    output?: string | null;
     infected?: boolean | null;
     scannedFileCount?: number | null;
     dangerousImportsFound?: boolean | null;
@@ -120,6 +121,16 @@ type ScanStep = {
 };
 
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
+
+/**
+ * How many files the virus scan says it read: its count when it reports one, else the count in the
+ * scanner's own summary, which is what the orchestrator returns today. Zero when it says neither.
+ */
+function filesScanned(clam: NonNullable<ScanStep['output']>) {
+  if (typeof clam.scannedFileCount === 'number') return clam.scannedFileCount;
+  const summary = /^Scanned files:\s*(\d+)\s*$/m.exec(clam.output ?? '');
+  return summary ? Number(summary[1]) : 0;
+}
 
 /**
  * Reads a scan workflow. The verdict is in each step's output, never the workflow's status: a
@@ -139,9 +150,9 @@ export function readFinalScan(workflow: { status?: string | null; steps?: unknow
   if (!TERMINAL.has(workflow.status ?? '')) return 'Running';
   if (workflow.status !== 'succeeded') return 'Retry';
   const pickleClean = pickle?.status === 'clean' || !!pickle?.status?.startsWith('skipped');
-  // A virus scan that reports reading nothing has not cleared the file.
-  const clamRead = clam?.scannedFileCount !== 0;
-  return clam?.status === 'clean' && clamRead && pickleClean ? 'Passed' : 'Retry';
+  // A virus scan that does not say it read the file has not cleared it.
+  const clamClean = clam?.status === 'clean' && filesScanned(clam) > 0;
+  return clamClean && pickleClean ? 'Passed' : 'Retry';
 }
 
 /** Fetches and reads a scan workflow; null when the orchestrator did not answer. */
