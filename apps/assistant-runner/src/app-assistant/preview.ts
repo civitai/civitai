@@ -46,6 +46,9 @@ interface OpenTunnel {
   app: string;
   blockId: string;
   host: string;
+  /** What it was opened with: a start asking for other scopes or auth opens it again. */
+  declaredScopes: string[];
+  declaredAuth: 'block-token' | 'oauth' | undefined;
   /** What the start that opened it answered: a start of the same preview answers it again. */
   result: StartedPreview;
 }
@@ -142,7 +145,7 @@ export class RunnerPreview {
   }
 
   /**
-   * After `sandbox__dev_server_start` started the dev server: opens the preview for the open app,
+   * After `sandbox__dev_server_start` (or `_restart`) started the dev server: opens the preview for the open app,
    * once per app in this run, with no decision of the assistant's (it was seen building, checking
    * and reporting ready without ever opening it). The block id, scopes and auth come from the
    * project's `block.manifest.json` (the directory the start command `cd`s into, else the app's
@@ -202,20 +205,6 @@ export class RunnerPreview {
       throw new Error(
         'Your app is not running, so there is nothing to preview. Its tools arrive with your next reply.'
       );
-    // Already open for this app in this run (by itself after the dev server started, or by an
-    // earlier call): the same answer, and nothing is opened twice. Another block id is a new start.
-    const open = this.#open;
-    if (
-      open &&
-      open.app === app.name &&
-      (typeof input.block_id !== 'string' || input.block_id === open.blockId)
-    )
-      return open.result;
-    const blockId = typeof input.block_id === 'string' ? input.block_id : app.app;
-    if (!isAppBlockId(blockId))
-      throw new Error(
-        'Pass block_id: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.'
-      );
     const declaredScopes = Array.isArray(input.declared_scopes)
       ? input.declared_scopes
           // The bounds civitai's endpoint enforces (`devTunnelStartFields`).
@@ -226,6 +215,23 @@ export class RunnerPreview {
       input.declared_auth === 'oauth' || input.declared_auth === 'block-token'
         ? input.declared_auth
         : undefined;
+    // Already open for this app in this run (by itself after the dev server started, or by an
+    // earlier call) and asked for again as it is: the same answer, and nothing is opened twice.
+    // Another block id, or other scopes or auth than it was opened with, is a new start.
+    const open = this.#open;
+    if (
+      open &&
+      open.app === app.name &&
+      (typeof input.block_id !== 'string' || input.block_id === open.blockId) &&
+      (declaredScopes === undefined || sameScopes(declaredScopes, open.declaredScopes)) &&
+      (declaredAuth === undefined || declaredAuth === open.declaredAuth)
+    )
+      return open.result;
+    const blockId = typeof input.block_id === 'string' ? input.block_id : app.app;
+    if (!isAppBlockId(blockId))
+      throw new Error(
+        'Pass block_id: 3-40 characters, lowercase letters, digits and dashes, starting with a letter.'
+      );
 
     // 1. A fresh single-use key, made in the sandbox: only its public half leaves it.
     const key = await sandbox.call('tunnel_key', {}, signal);
@@ -292,6 +298,8 @@ export class RunnerPreview {
       app: app.name,
       blockId,
       host: started.host,
+      declaredScopes: declaredScopes ?? [],
+      declaredAuth,
       result,
     };
     this.#keepAlive();
@@ -373,18 +381,26 @@ export function projectDirOf(input: unknown): string | null {
   return dir && dir !== '.' && dir !== '..' ? dir : null;
 }
 
-/** A `block.manifest.json` as `sandbox__read_file` answers it (its text, or `{ content }`). */
-function manifestOf(text: string): Record<string, unknown> | null {
+/**
+ * A `block.manifest.json` as `sandbox__read_file` answers it: `{ path, size, …, content }`, the
+ * file's text in `content`. Anything else is no manifest.
+ */
+export function manifestOf(text: string): Record<string, unknown> | null {
   try {
-    let value: unknown = JSON.parse(text);
-    const content = (value as { content?: unknown } | null)?.content;
-    if (typeof content === 'string') value = JSON.parse(content);
+    const content = (JSON.parse(text) as { content?: unknown } | null)?.content;
+    if (typeof content !== 'string') return null;
+    const value: unknown = JSON.parse(content);
     return value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
+}
+
+/** The same scopes, in any order. */
+function sameScopes(a: string[], b: string[]): boolean {
+  return a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n');
 }
 
 /** `sandbox__tunnel_key`'s answer (`{ publicKey }`): one OpenSSH public key line, else `null`. */

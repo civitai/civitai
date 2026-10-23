@@ -469,9 +469,19 @@ describe('the preview opens by itself once the dev server starts', () => {
 
   it('takes the block id, scopes and auth from the project’s manifest', async () => {
     fake.add('my-app');
+    // As sandbox-mcp's read_file answers: an envelope with the file's text in `content`.
     fake.tools.set('read_file', (args) =>
       args.path === 'tip-calc/block.manifest.json'
-        ? JSON.stringify({ blockId: 'tip-calc', scopes: ['models:read:self'], auth: 'block-token' })
+        ? JSON.stringify({
+            path: args.path,
+            size: 90,
+            truncated: false,
+            content: JSON.stringify({
+              blockId: 'tip-calc',
+              scopes: ['models:read:self'],
+              auth: 'block-token',
+            }),
+          })
         : 'export {}'
     );
     const { tools } = await open();
@@ -484,6 +494,39 @@ describe('the preview opens by itself once the dev server starts', () => {
         declaredAuth: 'block-token',
       },
     ]);
+  });
+
+  it('a manifest answered as bare text (not read_file’s envelope) is not read: the app’s own key', async () => {
+    fake.add('my-app');
+    fake.tools.set('read_file', () =>
+      JSON.stringify({ blockId: 'other-block', scopes: ['models:read:self'] })
+    );
+    const { tools } = await open();
+    await startDevServer(tools.tools);
+    expect(tunnels.started).toEqual([{ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY }]);
+  });
+
+  it('a restart opens it too (a later reply finds the dev server still running), once', async () => {
+    fake.add('my-app');
+    fake.tools.set('dev_server_restart', () => RUNNING);
+    const { tools, reported } = await open();
+    const result = await call(tools.tools, 'sandbox__dev_server_restart', {});
+    expect(result).toBe(`${RUNNING}\n\n${AUTO_PREVIEW_SHOWN}`);
+    await startDevServer(tools.tools);
+    expect(tunnels.started).toHaveLength(1);
+    expect(shownReports(reported)).toHaveLength(1);
+  });
+
+  it('a start_preview asking for other scopes than it opened with opens it again with them', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    await startDevServer(tools.tools);
+    await call(tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.started).toHaveLength(2);
+    expect(tunnels.started[1]).toMatchObject({ declaredScopes: ['ai:write:budgeted'] });
+    // …and asking again for those same scopes opens nothing new.
+    await call(tools.tools, 'start_preview', { declared_scopes: ['ai:write:budgeted'] });
+    expect(tunnels.started).toHaveLength(2);
   });
 
   it('opens nothing again on a second dev server start in the same run', async () => {

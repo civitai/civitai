@@ -285,8 +285,11 @@ export class AppAssistantTools implements ToolProvider {
   }
 }
 
-/** The sandbox tool whose success opens the preview by itself. */
-const DEV_SERVER_START = 'sandbox__dev_server_start';
+/**
+ * The sandbox tools whose success opens the preview by itself: a start, and a restart (a later
+ * reply finds the dev server still running, so it restarts rather than starts it).
+ */
+const DEV_SERVER_STARTS = ['sandbox__dev_server_start', 'sandbox__dev_server_restart'] as const;
 
 /** What the assistant reads after the dev server's own answer when the preview opened by itself. */
 export const AUTO_PREVIEW_SHOWN =
@@ -296,7 +299,7 @@ export const autoPreviewFailed = (why: string) =>
   `The live preview did not open by itself: ${why} The dev server did start.`;
 
 /**
- * Makes a successful `sandbox__dev_server_start` open the preview (once per app in the run, see
+ * Makes a successful `sandbox__dev_server_start` (or `_restart`) open the preview (once per app in the run, see
  * `RunnerPreview.openAfterDevServer`): the page is told as it is of a `start_preview` call (a
  * `tool-reported` result carrying only the block and the host), and the assistant reads what
  * happened after the dev server's own answer. A refusal never fails the dev server's start.
@@ -306,10 +309,19 @@ function openPreviewAfterDevServer(
   preview: RunnerPreview,
   context: ToolContext
 ): void {
-  const tool = sandboxTools[DEV_SERVER_START];
+  for (const name of DEV_SERVER_STARTS) wrapDevServerStart(sandboxTools, name, preview, context);
+}
+
+function wrapDevServerStart(
+  sandboxTools: ToolSet,
+  name: string,
+  preview: RunnerPreview,
+  context: ToolContext
+): void {
+  const tool = sandboxTools[name];
   const execute = tool?.execute;
   if (!tool || !execute) return;
-  sandboxTools[DEV_SERVER_START] = {
+  sandboxTools[name] = {
     ...tool,
     execute: async (input: unknown, options: { abortSignal?: AbortSignal }) => {
       const output = await (execute as (input: unknown, options: unknown) => Promise<unknown>)(
@@ -326,7 +338,7 @@ function openPreviewAfterDevServer(
   } as typeof tool;
 }
 
-/** `sandbox__dev_server_start`'s status says the server runs (an unreadable answer counts as yes). */
+/** A dev server start's status says the server runs (an unreadable answer counts as yes). */
 function devServerRuns(output: string): boolean {
   try {
     return (JSON.parse(output) as { running?: unknown } | null)?.running !== false;
