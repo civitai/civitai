@@ -404,3 +404,50 @@ export async function sAddWithExpireGe(
   });
   return typeof reply === 'number' ? reply : Number(reply) || 0;
 }
+
+/**
+ * `sAddWithExpireGe` with a size cap. Below `cap` it adds and floors the TTL exactly as that does.
+ * At the cap it writes nothing, not even a TTL floor for a member already present, so a full set
+ * always expires within `ttlSeconds` and recording resumes; a full set with no expiry gets one. One key, so it runs on the cache
+ * cluster client.
+ *
+ * @returns the set's remaining life in seconds when `member` is in it afterwards, else 0. Anything
+ *   recorded must not be cached for longer than this, or a later purge could no longer find it.
+ */
+export async function sAddCappedWithExpireGe(
+  client: EvalCapableClient,
+  key: string,
+  member: string,
+  ttlSeconds: number,
+  cap: number
+): Promise<number> {
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    throw new Error(
+      `sAddCappedWithExpireGe: ttlSeconds must be a positive finite number, got ${ttlSeconds}`
+    );
+  }
+  // KEYS[1]=tag set  ARGV[1]=member  ARGV[2]=ttlSeconds  ARGV[3]=cap
+  const script = `
+    if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[3]) then
+      local left = redis.call('TTL', KEYS[1])
+      if left < 0 then
+        redis.call('EXPIRE', KEYS[1], ARGV[2])
+        return 0
+      end
+      if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return 0 end
+      return left
+    end
+    redis.call('SADD', KEYS[1], ARGV[1])
+    local left = redis.call('TTL', KEYS[1])
+    if left < tonumber(ARGV[2]) then
+      redis.call('EXPIRE', KEYS[1], ARGV[2])
+      left = tonumber(ARGV[2])
+    end
+    return left
+  `;
+  const reply = await client.eval(script, {
+    keys: [key],
+    arguments: [member, String(ttlSeconds), String(cap)],
+  });
+  return Math.max(Number(reply) || 0, 0);
+}

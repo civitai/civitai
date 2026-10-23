@@ -3,9 +3,7 @@
  *
  * The report-row → action-set + status → chip logic for the mod report queue +
  * the per-listing moderation-history view, extracted so the correctness gate lives
- * in the node `unit` project (the civitai browser-mode component suites are
- * REPORT-ONLY / non-blocking — so the real, blocking coverage for this logic lives
- * here, mirroring `appListingReportView` / `appListingCardView`).
+ * in the node `unit` project, mirroring `appListingReportView` / `appListingCardView`.
  *
  * No React, no Mantine imports — the color strings are plain Mantine color names
  * the component maps onto <Badge color=…>. This keeps the module pure + trivially

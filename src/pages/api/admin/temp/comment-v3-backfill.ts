@@ -100,6 +100,7 @@ const ENTITY_TYPES = [
   'model3dReview',
   'appListing',
   'crucible',
+  'storyline',
 ] as const;
 
 const STEPS = [

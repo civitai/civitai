@@ -6,8 +6,8 @@ import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import type * as NotificationsModule from '~/utils/notifications';
 
 /**
- * On-site (App Block) review modal — browser-mode render test (report-only in
- * Tekton). The modal was extracted from `src/pages/apps/review.tsx` to
+ * On-site (App Block) review modal — browser-mode render test (`Component tests`
+ * in CI). The modal was extracted from `src/pages/apps/review.tsx` to
  * `OnsiteReviewModal.tsx` (mirrors #3154) so it is importable WITHOUT the page's
  * `getServerSideProps` server graph — this suite is the coverage that extraction
  * unlocks. Asserts:

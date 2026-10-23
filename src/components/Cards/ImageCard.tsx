@@ -60,7 +60,11 @@ export function ImageCard({ data }: Props) {
           {safe && <RemixedCardFlyout imageId={data.id} />}
           <UserAvatarSimple
             {...data.user}
-            classNames={{ avatar: cardClasses.creatorAvatar, namePill: cardClasses.creatorPill }}
+            classNames={{
+              avatar: cardClasses.creatorAvatar,
+              namePill: cardClasses.creatorPill,
+              namePillPlate: cardClasses.creatorPillPlate,
+            }}
           />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions

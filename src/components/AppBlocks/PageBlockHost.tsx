@@ -405,8 +405,8 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  * population that sees two scrollbars, so the value is bounded on BOTH sides —
  * in `__tests__/pageRunScrollContract.test.ts` (the node `unit` suite, which
  * renders a real verdict on a push to `main`) and again in
- * `PageBlockHostScrollFit.browser.test.tsx` (the report-only browser tier, which
- * is why it is not the only one). NEITHER TIER BLOCKS A MERGE: `main` requires
+ * `PageBlockHostScrollFit.browser.test.tsx` (the browser tier, `Component tests`
+ * in CI). NEITHER TIER BLOCKS A MERGE: `main` requires
  * no status check at all in this repo, so both are signals a reviewer must read,
  * not doors that stay shut. The NUMBERS deliberately live in those tests, not here: a band
  * declared beside the value it bounds can be moved in the same edit. What lives

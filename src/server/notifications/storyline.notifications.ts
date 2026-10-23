@@ -5,6 +5,7 @@ import {
 } from '~/server/notifications/base.notifications';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Continuations are placements on the `storyline` surface: the target is the chapter post being
@@ -142,5 +143,22 @@ export const storylineNotifications = createNotificationProcessor({
     }),
     prepareQuery: async ({ lastSent }) =>
       resolvedQuery({ type: 'storyline-continuation-declined', status: 'declined', lastSent }),
+  },
+});
+
+/**
+ * Sent where it happens (`storyline-publish.service`), not by a query. About the owner's own
+ * storyline, so it names nobody and stays out of the placement avatar fetcher.
+ */
+export const storylineOwnerNotifications = createNotificationProcessor({
+  'storyline-ceiling-raised': {
+    displayName: 'Your storyline rating was raised to fit its first chapter',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `"${details.storylineTitle}" now allows up to ${
+        browsingLevelLabels[details.maxNsfwLevel as keyof typeof browsingLevelLabels] ?? '?'
+      }, the rating of its first chapter`,
+      url: storylineUrl(details.storylineId as number),
+    }),
   },
 });

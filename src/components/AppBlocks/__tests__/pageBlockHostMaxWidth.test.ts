@@ -92,9 +92,9 @@ import { stripComments as stripTsComments } from '../../../../test/strip-comment
  *
  * 🔴 WHY A SOURCE GUARD AS WELL AS A RENDERED ONE. The measurement lives in
  * `PageBlockHostMaxWidth.browser.test.tsx`, which is the only tier that can see a
- * width at all — but the browser `component` project runs in CI as the
- * REPORT-ONLY `preview / component-tests` status. This file is in the node
- * `unit` project, which is report-only on a pull request too (`continue-on-error`)
+ * width at all — and the browser `component` project runs in CI as the
+ * `Component tests` check. This file is in the node
+ * `unit` project, which is report-only on a pull request (`continue-on-error`)
  * and renders a real verdict on a push to `main` or a `workflow_dispatch`.
  * 🔴 NEITHER TIER BLOCKS A MERGE — `main` requires no status check at all in this
  * repo — so what a source guard buys is a verdict that is honest on `main` and an
@@ -426,7 +426,7 @@ describe('the full-page App Block host declares no width bound', () => {
         'deliberate (the chrome spans the page like every other site-level bar); this pins that ' +
         'the split is a nesting rather than a separation. This node tier renders nothing, so a ' +
         'source-level containment check is its only view of the relationship; the only tier ' +
-        'that can observe it at runtime is the report-only browser tier.'
+        'that can observe it at runtime is the browser tier.'
     ).toBe(true);
 
     // 🔴 FIVE ROUTES PER ELEMENT, ALL SIX FAMILIES RUN OVER BOTH. Each was found by a review
@@ -853,11 +853,10 @@ describe('the full-page App Block host declares no width bound', () => {
    *
    * What survives, and is the actual reason this pin is whole-object rather than a `flex`
    * presence check: the two guards see different things. This one is a claim about the
-   * TEXT of one file and catches the mutation the moment the text changes, on `main`,
-   * where the browser tiers are report-only. The geometry file asserts the CONSEQUENCE and
-   * catches collapses this pin structurally cannot — a parent losing its height, a
-   * `min-height` arriving from the cascade, an ancestor turning `display: block`. Neither
-   * replaces the other; the false part was only ever the word "only".
+   * TEXT of one file and catches the mutation the moment the text changes. The geometry file
+   * asserts the CONSEQUENCE and catches collapses this pin structurally cannot — a parent losing
+   * its height, a `min-height` arriving from the cascade, an ancestor turning `display: block`.
+   * Neither replaces the other; the false part was only ever the word "only".
    *
    * 🔴 THE EXPECTED VALUE IS COMPARED AGAINST THE PARSED `style` ATTRIBUTE, AND THE
    * PIN CONTAINS NO ANCHOR REGEX — that is a correctness property, not tidiness.

@@ -18,6 +18,9 @@ type ModelModActivity = {
     | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch'
+    | 'setPoiAutoHash'
+    | 'revertPoiAutoHash'
+    | 'dismissPoiHashMatch'
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -95,7 +98,10 @@ type UserModActivity = {
     | `revokeCreatorScore:${string}`
     // A moderator set or cleared the Creator Program ban
     // (`creatorProgramBan:<set|clear>:<before>:<after>:<{reason,gateRef} JSON>`).
-    | `creatorProgramBan:${string}`;
+    | `creatorProgramBan:${string}`
+    // A lost payment dispute on a payment this account made
+    // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
+    | `chargeback:${string}`;
 };
 
 type ComicProjectModActivity = {

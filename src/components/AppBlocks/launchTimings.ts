@@ -4,9 +4,8 @@
 // WHY THIS IS A SEPARATE MODULE AND NOT INLINE IN PageBlockHost:
 // every rule below (never-emit-a-zero, drop-don't-clamp, the hidden-tab drop,
 // the host-reuse reset) is a correctness rule whose failure mode is a *plausible
-// wrong number* rather than a crash. Those need node-runnable tests, and the
-// browser (`component`) Vitest project is not run in CI — only the `unit`
-// project is. So the math lives here, and the host only records marks.
+// wrong number* rather than a crash. Those need fast, exhaustive node-runnable tests,
+// so the math lives here, and the host only records marks.
 //
 // ─── The launch chain this measures ───────────────────────────────────────────
 // Design: datapacket-talos

@@ -5,8 +5,8 @@ import type { OffsitePendingRow } from './OffsiteReviewQueue';
 import type { OffsiteReviewRequest, OnsiteReviewRequest } from './unifiedReviewRow';
 
 /**
- * The unified moderator review LIST — browser-mode render test (report-only in
- * Tekton; the pure adapters/merge in `unifiedReviewRow.test.ts` are the blocking
+ * The unified moderator review LIST — browser-mode render test (`Component tests`
+ * in CI; the pure adapters/merge in `unifiedReviewRow.test.ts` are the node-tier
  * gate). Asserts a list built from ONE on-site + ONE off-site row:
  *  - renders BOTH rows with the correct kind badge (App / External);
  *  - orders oldest-first for `direction="asc"` (pending);

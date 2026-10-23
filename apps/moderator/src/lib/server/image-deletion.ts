@@ -11,9 +11,10 @@ import { syncSearchIndexBulk } from './search-index';
 
 export async function deleteImagesByIds(ids: number[]): Promise<void> {
   const affectedPostIds = new Set<number>();
-  // Only ids whose row was actually deleted — the loop `continue`s past a missing one, and de-indexing
-  // an image that still exists would hide it from search while it is live on the site.
   const deleted: number[] = [];
+  // No row came back: already gone, or kept by a hold marker, whose delete trigger blocks the image
+  // instead. Neither is live, so both leave search with the deleted ones.
+  const notReturned: number[] = [];
   const parentIds: (number | null)[] = [];
   const avatarUserIds = await profilePictureUserIds(ids).catch(() => []);
   for (const id of ids) {
@@ -25,7 +26,10 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
         .where('id', '=', id)
         .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
         .executeTakeFirst();
-      if (!image) continue;
+      if (!image) {
+        notReturned.push(id);
+        continue;
+      }
       // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
       // check lands in the catch with the row already gone, and the id would never be de-indexed —
       // leaving a deleted image in Meilisearch.
@@ -70,7 +74,12 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
     }
   }
 
-  void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
+  void syncSearchIndexBulk({
+    entityType: 'image',
+    entityIds: [...deleted, ...notReturned],
+    action: 'delete',
+  });
+  await bustKeptImages(notReturned, affectedPostIds);
   await invalidateThumbnails(deleted, parentIds);
   await bustProfilePictures({ userIds: avatarUserIds });
 
@@ -84,6 +93,33 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
     } catch (err) {
       console.error('[image-deletion] post recompute failed', postIds, err);
     }
+  }
+}
+
+// A kept image is now blocked and out of its post (`EvidenceHoldImage` names the post), so its
+// caches and that post's are as stale as a deleted image's.
+async function bustKeptImages(ids: number[], affectedPostIds: Set<number>): Promise<void> {
+  if (!ids.length) return;
+  try {
+    const kept = await dbWrite
+      .selectFrom('EvidenceHoldImage')
+      .select(['imageId', 'postId'])
+      .where('imageId', 'in', ids)
+      .execute();
+    for (const { imageId, postId } of kept) {
+      if (postId != null) affectedPostIds.add(postId);
+      await getSysRedis()
+        .packed.set(
+          `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${imageId}` as RedisKeyTemplateSys,
+          'false',
+          { EX: 60 * 5 }
+        )
+        .catch(() => undefined);
+      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_META, imageId);
+      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, imageId);
+    }
+  } catch (err) {
+    console.error('[image-deletion] kept image bust failed', ids, err);
   }
 }
 

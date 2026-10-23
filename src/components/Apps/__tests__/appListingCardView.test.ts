@@ -26,9 +26,8 @@ import type {
 
 /**
  * App Store Listings (W13) — P2b card view-model unit tests (node `unit`
- * project → the BLOCKING correctness gate; the browser component suites are
- * report-only). Pin the kind matrix, the recommend label (incl. null pct), the
- * https guard, and the CTA target policy so a regression in the kind-aware
+ * project → the node-tier correctness gate). Pin the kind matrix, the recommend label (incl. null
+ * pct), the https guard, and the CTA target policy so a regression in the kind-aware
  * routing/badging FAILS here.
  */
 
@@ -160,14 +159,14 @@ describe('getRecommendLabel', () => {
  * was only ever a claim about the DATA, not about what a browsing grid should
  * print. The inverted assertion below is what the operator asked for.
  *
- * 🔴 IT IS TESTED HERE RATHER THAN ONLY IN THE BROWSER TIER BECAUSE OF WHICH TIER
- * GOES RED. `AppListingCard.browser.test.tsx` renders the real card and asserts the
- * omission end-to-end, but the browser `component` project never blocks anything;
- * the node `unit` project at least reddens a `main` push. Expressing the rule as a
+ * 🔴 IT IS TESTED HERE AS WELL AS IN THE BROWSER TIER. `AppListingCard.browser.test.tsx`
+ * renders the real card and asserts the omission end-to-end (`Component tests` in CI);
+ * the node `unit` project checks the rule without a browser. Expressing the rule as a
  * pure function is what makes it visible to this tier at all — as JSX
- * (`card.openCount ? … : null`) it would be invisible here. (Neither tier gates a
- * PR: `lint.yml` marks both `continue-on-error` for `pull_request`. Canonical
- * statement: `appListingCardGeometry.ts`'s header.)
+ * (`card.openCount ? … : null`) it would be invisible here. (Neither tier blocks a
+ * merge: `unit` is `continue-on-error` on a pull request, and `Component tests` goes red
+ * but `main` requires no checks. Canonical statement: `appListingCardGeometry.ts`'s
+ * header.)
  *
  * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND SHARE NOTHING WITH THE STRINGS
  * ASSERTED. 4821 → "4.8k" and 1_234_567 → "1.2m" are values whose rendered form
@@ -402,7 +401,7 @@ describe('isEditableListingStatus / canOwnerEditListing (owner Edit gating)', ()
  * 🔴 WHAT THIS TIER CAN AND CANNOT CLAIM. It cannot measure anything — that a
  * 36px control plus 10px of padding really renders a 46px row is a claim about a
  * browser and a stylesheet, and it lives in `AppListingCard.browser.test.tsx`,
- * which never blocks anything. What this file CAN catch — on the next `main` push,
+ * which runs as `Component tests`. What this file CAN catch — on the next `main` push,
  * NOT on the PR; see the canonical tier note in `appListingCardGeometry.ts` — is
  * (a) the arithmetic between the constants and (b) whether the component still
  * READS them instead of re-spelling the numbers. Both are checked below.
@@ -522,9 +521,8 @@ describe('the card geometry module', () => {
    *
    * 🔴 THIS EXISTS BECAUSE THE OBVIOUS GUARD IS BLIND. Row height is 46px, derived
    * as `PT + CONTROL`, and MEASURED at three container widths — in the browser
-   * project, which never blocks. So the only tier that ever blocks anything cannot
-   * measure the row, and until this test existed a change that moved the row's
-   * height reached `main` unremarked. The worked case, produced by an audit rather than
+   * project. The node tier cannot measure the row, and until this test existed a change that moved
+   * the row's height reached `main` unremarked. The worked case, produced by an audit rather than
    * imagined: adding `pb={10}` beside the `pt` renders a 56px row while
    * `LISTING_ACTION_ROW_HEIGHT_PX` still says 46; every node assertion stayed green,
    * and PR3's skeleton would have imported 46, reserved 10px too little, and
@@ -671,10 +669,8 @@ describe('the card geometry module', () => {
    * written in that order, not that they RENDER in it — a `position: absolute` or an
    * `order:` property would defeat it, and neither is used here. The RENDERED claim
    * (the rollup's `top` is at or below the row's `bottom`, measured against the real
-   * cascade) lives in `AppListingCard.browser.test.tsx`. This exists because that
-   * tier never blocks anything, while this one at least reddens a `main` push, and
-   * because "the rollup went back into the meta block" is precisely the regression a
-   * source-order check CAN see.
+   * cascade) lives in `AppListingCard.browser.test.tsx`. This exists because "the rollup went back
+   * into the meta block" is precisely the regression a source-order check CAN see.
    *
    * 🔴 THE ANCHOR IS `mt="auto"`, THE SAME DISCRIMINATOR the prop-ledger test above
    * and the browser suite's `actionRow()` use — the only bottom-pinned element on

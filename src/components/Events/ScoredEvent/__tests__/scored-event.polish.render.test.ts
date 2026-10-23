@@ -368,8 +368,8 @@ describe('PlaceHatModal tiles', () => {
   });
 
   // A browser drops real clicks inside a disabled button, so the wearing tile is no button at all
-  // and its hat bursts. The real-click check is PlaceHatModal.wearing-hat.browser.test.tsx, which
-  // no CI job runs; this pins the structure in the unit suite.
+  // and its hat bursts. The real-click check is PlaceHatModal.wearing-hat.browser.test.tsx; this
+  // pins the structure in the unit suite.
   it('keeps the hat on the wearing tile out of any button', () => {
     placeable = [
       { entityType: 'Image', entityId: 500, title: null, image: null },

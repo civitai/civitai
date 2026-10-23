@@ -9,7 +9,7 @@ import {
  * The owner-facing COPY and OPTION-ENABLEMENT for the per-listing visibility level.
  *
  * 🔴 WHY THIS IS A PURE MODULE AND NOT TERNARIES IN THE PANEL. The browser-mode component
- * suites are REPORT-ONLY in CI (`preview / component-tests`), and on this workstation they
+ * suites run in CI as `Component tests`, but on this workstation they
  * cannot run at all — `browserType.launch` fails because the nix
  * `playwright-browsers` derivation's layout does not match the revision the npm package
  * expects, and CLAUDE.md is explicit that bumping that pin is not self-contained. So any

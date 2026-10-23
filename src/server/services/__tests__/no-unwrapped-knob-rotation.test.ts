@@ -20,8 +20,8 @@ import { knobRotation } from '~/components/Sticker/draft-gesture';
  * reaches the store, and it can be defeated by computing an unwrapped angle some
  * other way. The honest fix is a rendered test that drives a pointer over the
  * knob and reads the draft's rotation back; that needs the layer's whole mock
- * surface and would land in the `component` project, which no CI job runs. This
- * is cheaper and runs in the unit job. If someone writes the rendered test,
+ * surface and would land in the `component` project. This is cheaper and runs
+ * in the unit job. If someone writes the rendered test,
  * delete this.
  */
 const LAYER = path.resolve(

@@ -54,19 +54,36 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
   if (!stripe) throw throwBadRequestError('Stripe is not available');
 
   const user = await dbWrite.user.findUnique({ where: { id }, select: { customerId: true } });
-  if (!user?.customerId) {
-    const customer = await stripe.customers.create({ email });
+  if (user?.customerId) return user.customerId;
 
-    await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
+  const customer = await stripe.customers.create({ email, metadata: { userId: String(id) } });
 
-    userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
-
-    await refreshSession(id, { caller: 'subscription' });
-
-    return customer.id;
-  } else {
-    return user.customerId;
+  // Only the first checkout to get here records its customer; any other one charges that customer.
+  const { count } = await dbWrite.user.updateMany({
+    where: { id, customerId: null },
+    data: { customerId: customer.id },
+  });
+  if (count === 0) {
+    const winner = await dbWrite.user.findUnique({ where: { id }, select: { customerId: true } });
+    await stripe.customers.del(customer.id).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'stripe-unused-customer-delete',
+        userId: id,
+        customerId: winner?.customerId,
+        unusedCustomerId: customer.id,
+        message: (error as Error).message,
+      })
+    );
+    if (!winner?.customerId) throw throwNotFoundError(`No user with id ${id}`);
+    return winner.customerId;
   }
+
+  userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
+
+  await refreshSession(id, { caller: 'subscription' });
+
+  return customer.id;
 };
 
 /**

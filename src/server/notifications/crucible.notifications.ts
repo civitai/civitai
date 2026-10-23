@@ -169,6 +169,16 @@ export const crucibleNotifications = createNotificationProcessor({
         AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
     `,
   },
+  // Sent once to followers other than the host when a scheduled crucible opens
+  'crucible-starting': {
+    displayName: 'Crucible you follow is starting',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(details.crucibleName)} has started. Enter or vote now!`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
+  },
   // Sent to followers who are neither the host nor a placed entrant when a crucible finalizes
   'crucible-results': {
     displayName: 'Results for a crucible you follow',
