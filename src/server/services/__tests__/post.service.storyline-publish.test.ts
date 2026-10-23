@@ -139,6 +139,7 @@ describe('publishing a post with no storyline link', () => {
     const post = await publish({ linked: false });
 
     expect(post).toEqual({ ...STORED, publishedAt: NOW });
+    expect(post).not.toHaveProperty('storyline');
     expect(tx.post.update).toHaveBeenCalledTimes(1);
     expect(prepareStorylinePublish).not.toHaveBeenCalled();
     expect(finishStorylinePublish).not.toHaveBeenCalled();

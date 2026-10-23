@@ -269,18 +269,26 @@ describe("the owner's chapter 1", () => {
     expect(db.row('storyline', { id: EMPTY_STORY })).toMatchObject({ maxNsfwLevel: PG13 });
   });
 
-  it('is dropped, with the reason, when the storyline was taken down before the publish', async () => {
-    db.update('storyline', { id: EMPTY_STORY }, { tosViolation: true });
-    draft(OWNER, { storylineId: EMPTY_STORY });
+  // Before the post is ready too: the readiness pass leaves a taken-down storyline's drafts alone,
+  // so a link kept here would never be written or dropped.
+  it.each([
+    ['ready', {}],
+    ['still scanning', { image: { ingestion: 'Pending' } }],
+  ])(
+    'is dropped, with the reason, when the storyline was taken down (post %s)',
+    async (_n, options) => {
+      db.update('storyline', { id: EMPTY_STORY }, { tosViolation: true });
+      draft(OWNER, { storylineId: EMPTY_STORY }, options);
 
-    await expect(publish(OWNER)).resolves.toEqual({
-      storylineId: EMPTY_STORY,
-      status: 'dropped',
-      reason: 'This storyline was taken down',
-    });
-    expect(chapterOf(DRAFT)).toBeUndefined();
-    expect(link()).toBeUndefined();
-  });
+      await expect(publish(OWNER)).resolves.toEqual({
+        storylineId: EMPTY_STORY,
+        status: 'dropped',
+        reason: 'This storyline was taken down',
+      });
+      expect(chapterOf(DRAFT)).toBeUndefined();
+      expect(link()).toBeUndefined();
+    }
+  );
 });
 
 describe('the owner continuing their own story', () => {
@@ -305,9 +313,12 @@ describe('the owner continuing their own story', () => {
     expect(chapterOf(DRAFT)).toBeUndefined();
   });
 
-  it('is dropped, with the reason, when the parent was removed', async () => {
+  it.each([
+    ['ready', {}],
+    ['still scanning', { image: { ingestion: 'Pending' } }],
+  ])('is dropped, with the reason, when the parent was removed (post %s)', async (_n, options) => {
     db.update('storylineChapter', { id: ROOT_CHAPTER }, { removedAt: new Date() });
-    draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
+    draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, options);
 
     await expect(publish(OWNER)).resolves.toEqual({
       storylineId: STORY,
