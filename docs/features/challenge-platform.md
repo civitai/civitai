@@ -243,7 +243,7 @@ Creators can **view / edit their own `User` challenges only while `Scheduled` wi
 
 ## 8. Configuration & flags
 
-**Config** (sysRedis `DAILY_CHALLENGE.CONFIG`, code-default fallback): `challengeType`, `userCooldown`, `resourceCooldown`, `prizes[]`, `entryPrizeRequirement`, `entryPrize`, `reviewAmount {min,max}`, `maxScoredPerUser`, `finalReviewAmount`. LLM prompt text is per-type in `ChallengeType`.
+**Config** (sysRedis `DAILY_CHALLENGE.CONFIG`, code-default fallback): `challengeType`, `userCooldown`, `resourceCooldown`, `prizes[]`, `entryPrizeRequirement`, `entryPrize`, `reviewAmount {min,max}`, `maxScoredPerUser`, `finalReviewAmount`, `reviewShadow` (`{model, sampleRate} | null`; shadow-reviews a sample of entries on a candidate model and logs both to Axiom, see `civitai-llm-client.md`). LLM prompt text is per-type in `ChallengeType`.
 
 **Flipt flags**
 

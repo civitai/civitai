@@ -104,6 +104,8 @@ hold that replaced it (`meta.supersededBy`) is dismissed too, 30 days after the 
 decisions; while that hold is pending, confirmed or missing, the superseded text is kept. A cleared
 superseded hold keeps its `superseded` marker, so it is still not read as a ruling.
 
+Only `csam` holds are swept; holds with other labels keep their text.
+
 ## Decisions
 
 A moderator picks one of five actions on a Pending hold, with an optional moderator-only note (up to
