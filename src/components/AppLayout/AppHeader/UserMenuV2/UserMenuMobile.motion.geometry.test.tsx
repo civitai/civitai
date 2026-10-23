@@ -131,7 +131,7 @@ const groupRow = () => document.querySelector<HTMLElement>('[data-group-row="you
 const downloads = () => document.querySelector('a[href="/downloads"]');
 const backRow = () =>
   document.querySelector<HTMLElement>('.mantine-Popover-dropdown button[data-panel-row]');
-const scrollPanel = (el: Element | null) => el!.closest('.overflow-y-auto')!;
+const scrollPanel = (el: Element | null) => el!.closest<HTMLElement>('.overflow-y-auto')!;
 const finishAnimations = (panel: Element) => panel.getAnimations().forEach((a) => a.finish());
 
 /** Freezes the panel's slide at `ms` in, so the pixel position does not depend on frame timing. */
