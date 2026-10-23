@@ -27,6 +27,7 @@ import {
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
@@ -281,6 +282,10 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
  * windows instead of from a hard-coded literal in a comment. Importing them from
  * this file would drag the whole component graph into the `unit` project.
+ *
+ * `BLOCK_READY_TIMEOUT_MS` is the window for every surface EXCEPT the dev tunnel,
+ * which waits `DEV_TUNNEL_READY_TIMEOUT_MS` — the host reads the window for its
+ * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
@@ -1202,6 +1207,9 @@ export function PageBlockHost({
   // `canRemint` is whether a token re-mint is even wired: without it an auth
   // terminal can never be recovered, so we must not burn an attempt on it.
   const canRemint = onRetryToken != null;
+  // The surface's BLOCK_READY wait (window, timeout retry, timeout copy). The ONE
+  // surface check for it lives in `readyWaitPolicyFor`; only the dev tunnel differs.
+  const readyWait = readyWaitPolicyFor(surface);
   const autoRetry = useMemo(
     () =>
       decideAutoRetry({
@@ -1209,8 +1217,15 @@ export function PageBlockHost({
         attempts: autoRetryBudget.attempts,
         reminted: autoRetryBudget.reminted,
         canRemint,
+        autoRetryOnTimeout: readyWait.autoRetryOnTimeout,
       }),
-    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+    [
+      status,
+      autoRetryBudget.attempts,
+      autoRetryBudget.reminted,
+      canRemint,
+      readyWait.autoRetryOnTimeout,
+    ]
   );
   /** True once the host has stopped auto-recovering: this terminal state is final. */
   const autoRetrySettled = autoRetry.kind === 'none';
@@ -1474,7 +1489,10 @@ export function PageBlockHost({
     if (controllerRef.current) return;
     const controller = new IframeInitController({
       sendInit: sendInitOnce,
-      readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+      // 10 s everywhere except the dev tunnel (30 s) — see `readyWaitPolicyFor`.
+      // The controller keeps re-posting BLOCK_INIT to the SAME frame for the
+      // whole window; nothing reloads the frame until it elapses.
+      readyTimeoutMs: readyWait.readyTimeoutMs,
       onReadyTimeout: () => {
         setStatus((current) => (current === 'loading' ? 'timeout' : current));
       },
@@ -1485,7 +1503,7 @@ export function PageBlockHost({
       controller.dispose();
       controllerRef.current = null;
     };
-  }, [token, status, sendInitOnce]);
+  }, [token, status, sendInitOnce, readyWait.readyTimeoutMs]);
 
   // #3/#6: the mint errored (no token will arrive). Surface an `error` state
   // immediately rather than waiting out the no_token timeout — a hard mint
@@ -6030,6 +6048,7 @@ export function PageBlockHost({
               // Automatic recovery has settled (exhausted, or never applicable):
               // the button is now the only path forward, so make it unmissable.
               prominentRetry={autoRetrySettled}
+              timeoutCopy={readyWait.timeoutCopy}
             />
           </Box>
         ) : null}
