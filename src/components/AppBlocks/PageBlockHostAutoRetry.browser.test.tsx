@@ -930,14 +930,22 @@ function listenForHostPosts(frame: HTMLIFrameElement) {
   };
 }
 
-/** Like `pollFor`, but reports instead of throwing — so the CALLER's `expect` is the failure. */
+/**
+ * Like `pollFor`, but REPORTS instead of throwing, so the caller's own `expect` is
+ * the failure — and on a much smaller budget (100 iterations: ≤100 ms virtual,
+ * ~1–3 s real). `pollFor`'s 500-iteration budget can outlast the 15 s test
+ * timeout on a loaded runner, and then a "the limit moved" regression surfaces as
+ * a generic "Test timed out" instead of this test's assertion (seen in CI under a
+ * 30-s-for-every-surface mutant). Used only where the awaited thing is a React
+ * commit already triggered by an explicit `advance()`.
+ */
 async function reaches(ready: () => boolean): Promise<boolean> {
-  try {
-    await pollFor('condition', ready);
-    return true;
-  } catch {
-    return false;
+  for (let i = 0; i < 100; i++) {
+    if (ready()) return true;
+    await advance(1);
+    await realSleep(10);
   }
+  return ready();
 }
 
 describe('PageBlockHost dev-tunnel ready window — 30 s, wait in place, dev-server copy', () => {
