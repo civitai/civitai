@@ -6,17 +6,24 @@ import { GENERATION_TIP_TRANSACTION_START } from '~/server/jobs/deliver-creator-
 import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { mockClickhouse } = vi.hoisted(() => ({
+const { mockClickhouse, mockDbRead } = vi.hoisted(() => ({
   mockClickhouse: { $query: vi.fn() },
+  mockDbRead: { $queryRaw: vi.fn() },
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
+vi.mock('~/server/db/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  dbRead: mockDbRead,
+}));
 
 import {
   BANKABLE_EARNING_PREDICATE_SQL,
   getBankableAmount,
+  getBountyFunders,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
   RECEIVED_FROM_USER_SQL,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 
@@ -25,32 +32,48 @@ const sysRedis = redisMock.sysRedis;
 const afterSettle = new Date('2026-12-15T12:00:00Z');
 
 function sqlOf(callIndex: number) {
-  const [parts, ...values] = mockClickhouse.$query.mock.calls[callIndex] as [string[], ...any[]];
+  const [parts, ...values] = mockClickhouse.$query.mock.calls[callIndex] as [
+    string[] | string,
+    ...any[]
+  ];
+  if (typeof parts === 'string') return parts;
   return parts.reduce(
     (acc, part, i) => acc + part + (i < values.length ? String(values[i]) : ''),
     ''
   );
 }
 
-/** ClickHouse returns UInt64 sums as strings, so the fixtures do too. */
+/**
+ * ClickHouse returns UInt64 sums as strings, so the fixtures do too. `returned` answers the netting
+ * read; `returnedWithBounties` answers it once bounty supporters are part of it.
+ */
 function mockLedger({
   snapshot,
   earned,
   returned = 0,
+  returnedWithBounties = returned,
+  awardedBounties = [],
   consumed,
   ingestSettled = true,
 }: {
   snapshot?: number;
   earned: number;
   returned?: number;
+  returnedWithBounties?: number;
+  awardedBounties?: number[];
   consumed: number;
   ingestSettled?: boolean;
 }) {
-  mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-    const sql = parts.join('');
+  mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+    const sql = typeof parts === 'string' ? parts : parts.join('');
     if (sql.includes('AS balance')) return [{ balance: String(snapshot ?? 0) }];
     if (sql.includes('AS settled')) return ingestSettled ? [{ settled: 1 }] : [];
-    return [{ earned: String(earned), returned: String(returned), consumed: String(consumed) }];
+    if (sql.includes('AS consumed'))
+      return [{ earned: String(earned), consumed: String(consumed) }];
+    if (sql.includes('AS returned'))
+      return [{ returned: String(sql.includes('values(') ? returnedWithBounties : returned) }];
+    if (sql.includes('AS bountyId')) return awardedBounties.map((bountyId) => ({ bountyId }));
+    throw new Error(`unexpected query: ${sql}`);
   });
 }
 
@@ -174,8 +197,9 @@ describe('getBankableAmount', () => {
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
       String(userId)
     );
-    expect(mockClickhouse.$query).toHaveBeenCalledTimes(1);
-    expect(sqlOf(0)).not.toContain('AS balance');
+    expect(mockClickhouse.$query.mock.calls.map((_, i) => sqlOf(i))).not.toContainEqual(
+      expect.stringContaining('AS balance')
+    );
   });
 
   it('stores a computed snapshot once the ledger has settled', async () => {
@@ -264,19 +288,6 @@ describe('getBankableAmount', () => {
           WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
             AND date >= ${cutover}
             AND ${BANKABLE_EARNING_PREDICATE_SQL} ) AS earned,
-        ( SELECT sum(least(received.amount, sent.amount)) FROM (
-            SELECT fromAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
-            WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
-              AND date >= ${cutover}
-              AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-            GROUP BY counterparty
-          ) AS received
-          INNER JOIN (
-            SELECT toAccountId AS counterparty, sum(amount) AS amount FROM buzzTransactions
-            WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
-              AND date >= ${cutover}
-            GROUP BY counterparty
-          ) AS sent ON sent.counterparty = received.counterparty ) AS returned,
         ( SELECT sumIf(amount, type = 'bank')
             + sumIf(amount, type = 'fee' AND description = 'Extraction fee')
           FROM buzzTransactions
@@ -287,6 +298,42 @@ describe('getBankableAmount', () => {
             AND type = 'extract'
             AND date >= ${cutover} AND date < ${monthStart} ) AS consumed`)
     );
+  });
+
+  // Pinned whole: a wrong join key still returns a plausible number.
+  it('nets what each user paid against what the creator sent that user', async () => {
+    mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
+
+    await getBankableAmount(userId, 0, afterSettle);
+
+    const since = `toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00'`;
+    expect(issuedSql('AS returned')).toBe(
+      squash(`SELECT sum(least(received.amount, sent.amount)) AS returned FROM (
+          ${receivedFromUsersSql(since, [])}
+        ) AS received
+        INNER JOIN (
+          SELECT toInt64(toAccountId) AS counterparty, toInt64(sum(amount)) AS amount
+          FROM buzzTransactions
+          WHERE fromAccountId = ${userId} AND ${SENT_TO_USER_SQL}
+            AND date >= '2026-11-01 00:00:00'
+          GROUP BY counterparty
+        ) AS sent ON sent.counterparty = received.payer`)
+    );
+  });
+
+  it('nets a bounty award against the supporters who funded it', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ bountyId: 7, userId: 99, unitAmount: 100_000 }]);
+    mockLedger({
+      snapshot: 0,
+      earned: 100_000,
+      returned: 0,
+      returnedWithBounties: 100_000,
+      awardedBounties: [7],
+      consumed: 0,
+    });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(0);
+    expect(issuedSql('values(')).toContain('(7, 99, 100000, 100000)');
   });
 
   it('reads closed months only for what was consumed, leaving this month to the bank account', async () => {
@@ -372,6 +419,54 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
       .map((d) => `'${d}'`)
       .join(', ');
     expect(feeClause).toBe(expected);
+  });
+});
+
+describe('getBountyFunders', () => {
+  it('gives each supporter of a bounty their part of what all its supporters put in', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { bountyId: 7, userId: 1, unitAmount: 60 },
+      { bountyId: 7, userId: 2, unitAmount: 40 },
+      { bountyId: 8, userId: 3, unitAmount: 5 },
+    ]);
+
+    expect(await getBountyFunders([7, 8])).toEqual([
+      { bountyId: 7, userId: 1, unitAmount: 60, total: 100 },
+      { bountyId: 7, userId: 2, unitAmount: 40, total: 100 },
+      { bountyId: 8, userId: 3, unitAmount: 5, total: 5 },
+    ]);
+  });
+});
+
+describe('receivedFromUsersSql', () => {
+  // Pinned whole: a wrong payer column or split still returns plausible pairs.
+  it('attributes user payments, platform-paid sales to their buyer and bounty awards to their supporters', () => {
+    const sql = receivedFromUsersSql('toAccountId = 1', [
+      { bountyId: 7, userId: 2, unitAmount: 60, total: 100 },
+    ]);
+    expect(squash(sql)).toBe(
+      squash(`SELECT recipient, payer, sum(amount) AS amount FROM (SELECT toInt64(toAccountId) AS recipient,
+          toInt64(if(fromAccountId = 0, JSONExtractInt(details, 'purchasedBy'), fromAccountId)) AS payer,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE toAccountId = 1 AND ${BANKABLE_EARNING_PREDICATE_SQL}
+          AND (${RECEIVED_FROM_USER_SQL} OR (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0))
+        UNION ALL
+        SELECT award.recipient, funder.userId, intDiv(award.amount * funder.unitAmount, funder.total)
+        FROM (
+          SELECT toInt64(toAccountId) AS recipient, JSONExtractInt(details, 'entityId') AS bountyId,
+            toInt64(amount) AS amount
+          FROM buzzTransactions
+          WHERE toAccountId = 1 AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
+        ) AS award
+        INNER JOIN (
+          SELECT * FROM values('bountyId Int64, userId Int64, unitAmount Int64, total Int64', (7, 2, 60, 100))
+        ) AS funder ON funder.bountyId = award.bountyId) GROUP BY recipient, payer`)
+    );
+  });
+
+  it('leaves the bounty arm out when no supporter is known, as ClickHouse rejects an empty values()', () => {
+    expect(receivedFromUsersSql('toAccountId = 1', [])).not.toContain('UNION ALL');
   });
 });
 

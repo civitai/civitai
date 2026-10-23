@@ -2,9 +2,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  BANKABLE_EARNING_PREDICATE_SQL,
-  RECEIVED_FROM_USER_SQL,
+  awardedBountiesSql,
+  clickhouseDateTime,
+  getBountyFunders,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
+  type BountyFunder,
 } from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 
@@ -39,22 +42,27 @@ export type Member = { id: number; username: string | null };
 /** `$query` is the only method used, so a test substitutes this port rather than the client. */
 export type ReviewClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
-const clickhouseDateTime = (at: Date) => `'${at.toISOString().slice(0, 19).replace('T', ' ')}'`;
+const earnedSince = (since: Date) =>
+  `date >= ${clickhouseDateTime(
+    since
+  )} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
 
-export function counterpartyPairsSql({ since, min }: { since: Date; min: number }) {
+export function counterpartyPairsSql({
+  since,
+  min,
+  funders = [],
+}: {
+  since: Date;
+  min: number;
+  funders?: BountyFunder[];
+}) {
   return `
     SELECT received.recipient AS userId, received.payer AS counterpartyId,
       received.amount AS received, sent.amount AS sent
-    FROM (
-      SELECT toAccountId AS recipient, fromAccountId AS payer, sum(amount) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)}
-        AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})
-        AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-      GROUP BY recipient, payer
-    ) AS received
+    FROM (${receivedFromUsersSql(earnedSince(since), funders)}) AS received
     INNER JOIN (
-      SELECT fromAccountId AS sender, toAccountId AS payee, sum(amount) AS amount
+      SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+        toInt64(sum(amount)) AS amount
       FROM buzzTransactions
       WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
       GROUP BY sender, payee
@@ -68,14 +76,28 @@ export function counterpartyPairsSql({ since, min }: { since: Date; min: number 
 
 export async function findCounterpartyPairs(
   ch: ReviewClickhouse,
-  { since, min }: { since: Date; min: number }
+  {
+    since,
+    min,
+    findBountyFunders = getBountyFunders,
+  }: {
+    since: Date;
+    min: number;
+    findBountyFunders?: (bountyIds: number[]) => Promise<BountyFunder[]>;
+  }
 ): Promise<CounterpartyPair[]> {
+  const awarded = await ch.$query<{ bountyId: string | number }>(
+    awardedBountiesSql(earnedSince(since))
+  );
+  const funders = await findBountyFunders(
+    awarded.map((r) => Number(r.bountyId)).filter((id) => Number.isInteger(id) && id > 0)
+  );
   const rows = await ch.$query<{
     userId: string | number;
     counterpartyId: string | number;
     received: string | number;
     sent: string | number;
-  }>(counterpartyPairsSql({ since, min }));
+  }>(counterpartyPairsSql({ since, min, funders }));
 
   return rows.map((r) => ({
     userId: Number(r.userId),

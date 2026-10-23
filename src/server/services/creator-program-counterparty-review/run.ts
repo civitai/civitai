@@ -1,4 +1,5 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
+import type { BountyFunder } from '~/server/services/creator-program-bankable';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
@@ -22,6 +23,8 @@ export type ReviewDeps = {
   /** The smallest two-way amount to file, or null when ops has not set one. */
   readMinimum: () => Promise<number | null>;
   findMembers: (ids: number[]) => Promise<Member[]>;
+  /** Supporters of awarded bounties; Postgres when not given. */
+  findBountyFunders?: (bountyIds: number[]) => Promise<BountyFunder[]>;
   warnings: {
     get: (userId: number) => Promise<WarningRecord | null>;
     set: (userId: number, record: WarningRecord) => Promise<void>;
@@ -62,7 +65,11 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     return { ...empty, skipped: 'clickhouse-unavailable' };
   }
 
-  const pairs = await findCounterpartyPairs(deps.ch, { since: BANKABLE_CUTOVER, min });
+  const pairs = await findCounterpartyPairs(deps.ch, {
+    since: BANKABLE_CUTOVER,
+    min,
+    findBountyFunders: deps.findBountyFunders,
+  });
   if (pairs.length >= PAIR_CEILING)
     deps.log?.('creator-program-counterparty-review-ceiling', { pairs: pairs.length });
   const byUser = new Map<number, CounterpartyPair[]>();
