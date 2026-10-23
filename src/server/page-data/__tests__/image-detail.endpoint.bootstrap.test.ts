@@ -5,6 +5,7 @@ import type * as AnnouncementService from '~/server/services/announcement.servic
 import type * as ContentService from '~/server/services/content.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as NavBannerService from '~/server/services/nav-banner.service';
+import type * as SiteAlertService from '~/server/services/site-alert.service';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ServerDomain from '~/server/utils/server-domain';
 import type * as SystemCache from '~/server/services/system-cache';
@@ -81,6 +82,10 @@ vi.mock('~/server/services/nav-banner.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NavBannerService>()),
   getNavBanners: vi.fn(async () => undefined),
 }));
+vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SiteAlertService>()),
+  getActiveSiteAlerts: vi.fn(async () => ({ version: 2, alerts: [] })),
+}));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
   getUserFollows: vi.fn(async () => []),
@@ -92,7 +97,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 }));
 
 const handler = (await import('~/pages/api/page-data/images/[imageId]')).default;
-const { resolveSettingsBootstrapForRender } = await import(
+const { resolveSettingsBootstrapForRender, resolveSettingsBootstrapSeeds } = await import(
   '~/server/services/settings-bootstrap.service'
 );
 
@@ -177,6 +182,20 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
     expect(token).toBe(OWNER_TOKEN);
     expect(rollRes).toBe(res);
     expect(host).toBe(PUBLIC_HOST);
+  });
+
+  // The keys come from the real bootstrap, so a seed it gains later fails here until the
+  // endpoint sends it too.
+  it('answers with every seed the settings bootstrap gives a server render', async () => {
+    const seeds = await resolveSettingsBootstrapSeeds(
+      { headers: { host: PUBLIC_HOST }, cookies: cookies(), url: '/images/101' } as never,
+      { user: USERS.owner } as never
+    );
+    const { res, body } = await fetchPageData();
+    expect(res.statusCode).toBe(200);
+    // Control: the bootstrap really produced its seeds, so an empty difference means something.
+    expect(Object.keys(seeds)).toEqual(expect.arrayContaining(['session', 'settings', 'tosMeta']));
+    expect(Object.keys(seeds).filter((key) => !(key in (body as object)))).toEqual([]);
   });
 
   it('with the flag off, reads the session and nothing else of the bootstrap', async () => {

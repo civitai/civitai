@@ -1291,6 +1291,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     throw err;
   }
 
+  // FORK PROVENANCE — copy the app's own server-written fork pair (if any) from its block row
+  // onto this request, so the approve can link the store listing. Never from `manifest`. A first
+  // version has no block yet and carries nothing here; the fork flow records it on the request
+  // itself (`setPublishRequestForkProvenance`). Best-effort and never throws — see the helper.
+  {
+    const { carryForkProvenanceToPublishRequest } = await import('./app-fork.service');
+    await carryForkProvenanceToPublishRequest(dbWrite, { publishRequestId, slug });
+  }
+
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
   // `AppListing` now that the pending request exists. Ordered AFTER the request create
   // so there is never a draft orphaned without a request: a request without a draft
@@ -1990,6 +1999,16 @@ export async function recordPendingFromPush(args: {
       }));
     if (!winner) throw err; // index fired but no pending row visible — re-throw
     return { publishRequestId: winner.id };
+  }
+
+  // FORK PROVENANCE — same carry as `submitVersion`: the block's own server-written pair onto the
+  // new request. Best-effort, never throws, never reads the manifest.
+  {
+    const { carryForkProvenanceToPublishRequest } = await import('./app-fork.service');
+    await carryForkProvenanceToPublishRequest(dbWrite, {
+      publishRequestId,
+      slug: args.slug,
+    });
   }
 
   // Fire-and-forget: fill in the real diff + bundle size. enrichPushRequestRow
@@ -3551,6 +3570,27 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appBlockId,
     },
   });
+
+  // (6b) FORK PROVENANCE — if this request carries a parent (server-written onto the REQUEST at
+  // creation; 🔴 never read from `manifest`), stamp it onto the block and link this app's store
+  // listing to the parent's (`AppListing.forkOfListingId`). Runs after the listing writes in (3b),
+  // so a first version's freshly minted listing is there to link.
+  //
+  // LOG-AND-CONTINUE, like (3b) and (3c): attribution must never fail an approve whose code is
+  // already committed. A missed link converges on the next approve (every write is guarded on
+  // "not yet set").
+  try {
+    const { applyForkProvenanceOnApprove } = await import('./app-fork.service');
+    await applyForkProvenanceOnApprove(dbWrite, { publishRequestId: request.id, appBlockId });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] fork provenance not applied (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+        `approve/deploy CONTINUES — the listing shows no "Forked from" until the next approve: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
 
   // Review document-store data of this request, started the moment the decision is durable:
   // the supersede below and the build trigger after it can each throw past every later teardown

@@ -981,6 +981,42 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
 }
 
 /**
+ * FORKABLE APPS rollout flag. Gates the fork surfaces a VIEWER reaches — the fork count and list
+ * on a parent's store page, the author's "Let others fork this app's source" setting, and (with
+ * `canAccessAppAssistant`) the Fork action. Fork ATTRIBUTION ("Forked from …") is provenance and
+ * is shown regardless of this flag.
+ *
+ * Mirrors `appBlocksFork` in `feature-flags.service.ts`, which is what carries it to the client.
+ */
+export const APP_BLOCKS_FORK_FLAG = 'app-blocks-fork';
+
+/**
+ * Whether the fork surfaces are on for `user`.
+ *
+ * 🔴 FAIL-CLOSED FOR EVERYONE, MODERATORS INCLUDED: there is deliberately no moderator floor. An
+ * absent flag and an unreachable Flipt both evaluate `false`, so the feature is inert until the
+ * flag is created (mods first, via its segment).
+ *
+ * 🔴 NO SUBJECT → `false`, ANSWERED HERE rather than by a no-user eval, which would return the
+ * flag's BASE value (see GLOBAL-EVAL SEMANTICS at the top of this file) — so a future base-`true`
+ * flip could not open it to anonymous callers by accident.
+ *
+ * The eval is wrapped so that even a throwing client reads as `false`; `isFlipt` already returns
+ * `false` on its own failure paths, so this only matters if that ever changes.
+ */
+export async function isAppBlocksForkEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_BLOCKS_FORK_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
  * storage — the FIRST surface that opens the per-app datastore to PUBLIC
  * cross-user writes (previously mod + app-dev-tester only). Mirrors

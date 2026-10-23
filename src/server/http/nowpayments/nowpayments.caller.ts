@@ -3,6 +3,7 @@ import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
+import { logToAxiom } from '~/server/logging/client';
 
 // DOCUMENTATION
 // https://documenter.getpostman.com/view/7907941/2s93JusNJt#api-documentation
@@ -149,14 +150,27 @@ class NOWPaymentsCaller extends HttpCaller {
   async getPaymentStatus(
     payment_id: string | number
   ): Promise<NOWPayments.CreatePaymentResponse | null> {
+    return (await this.lookupPayment(payment_id)).payment;
+  }
+
+  /** getPaymentStatus, keeping the HTTP status of a failed lookup. */
+  async lookupPayment(payment_id: string | number) {
     const response = await this.getRaw(`/payment/${payment_id}`);
-    if (response.status === 404) return null;
     if (!response.ok) {
-      console.error('Failed to get payment status', response.statusText);
-      return null;
+      logToAxiom({
+        name: 'nowpayments-caller',
+        type: 'error',
+        stage: 'payment-status-failed',
+        paymentId: payment_id,
+        status: response.status,
+      }).catch(() => null);
+      return { payment: null, status: response.status };
     }
     const data = await response.json();
-    return NOWPayments.createPaymentResponseSchema.parse(data);
+    return {
+      payment: NOWPayments.createPaymentResponseSchema.parse(data),
+      status: response.status,
+    };
   }
 
   async getListPayments(params: {

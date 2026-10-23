@@ -412,6 +412,34 @@ describe('vote slots', () => {
     expect((await claimNext(2, {}, later(LEASE_MS + 1)))!.itemId).toBe(last);
   });
 
+  it('does not hand an expired holder back a card someone else took the slot on', async () => {
+    const last = await seedItem(1, { votes: 2 });
+    await claimNext(1, {}, NOW);
+    expect((await claimNext(2, {}, later(LEASE_MS + 1)))!.itemId).toBe(last);
+    expect(await claimNext(1, {}, later(LEASE_MS + 2))).toBeNull();
+  });
+
+  it('tells a repeat vote it already landed, even once the item is full or decided', async () => {
+    const full = await seedItem(1);
+    await claimNext(1, {}, NOW);
+    await claimNext(2, {}, NOW);
+    await claimNext(3, {}, NOW);
+    await castVote({ itemId: full, userId: 1, choice: KEEP, msOnItem: 1 }, later(10));
+    expect(
+      await castVote({ itemId: full, userId: 4, choice: KEEP, msOnItem: 1 }, later(10))
+    ).toEqual({ ok: false, reason: 'full' });
+    const decided = await seedItem(2, { votes: 2 });
+    await castVote({ itemId: decided, userId: 1, choice: KEEP, msOnItem: 1 }, later(20));
+    expect(await item(decided)).toMatchObject({ status: 'decided' });
+    for (const itemId of [full, decided])
+      expect(await castVote({ itemId, userId: 1, choice: KEEP, msOnItem: 1 }, later(30))).toEqual({
+        ok: false,
+        reason: 'already-voted',
+      });
+    const { rows } = await pg.query(`SELECT * FROM "ScanLabelVote" WHERE "userId" = 1`);
+    expect(rows).toHaveLength(2);
+  });
+
   it('refuses a vote on an expired lease when the others hold every slot', async () => {
     const it1 = await seedItem(1, { votes: 1 });
     await claimNext(1, {}, NOW);
