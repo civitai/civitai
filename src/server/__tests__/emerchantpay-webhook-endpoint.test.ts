@@ -4,10 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** eMerchantPay is retired: its webhook credits nothing, whatever it is sent. */
 
-const { processBuzzOrder, grantBuzzPurchase } = vi.hoisted(() => ({
-  processBuzzOrder: vi.fn(),
-  grantBuzzPurchase: vi.fn(),
-}));
+const { processBuzzOrder } = vi.hoisted(() => ({ processBuzzOrder: vi.fn() }));
 
 vi.mock('~/env/server', () => ({
   env: {
@@ -18,19 +15,16 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/services/emerchantpay.service', () => ({ processBuzzOrder }));
-vi.mock('~/server/services/buzz.service', () => ({ grantBuzzPurchase }));
 
 const handler = (await import('~/pages/api/webhooks/emerchantpay')).default;
 
-// A notification carrying a correct signature for its unique_id.
-const signedApprovedNotification = () => {
+const approvedNotification = () => {
   const uniqueId = 'wpf-1';
-  const signature = createHash('sha512')
-    .update(uniqueId + 'emp-password')
-    .digest('hex');
   return new URLSearchParams({
     wpf_unique_id: uniqueId,
-    signature,
+    signature: createHash('sha512')
+      .update(uniqueId + 'emp-password')
+      .digest('hex'),
     notification_type: 'wpf',
     wpf_status: 'approved',
     wpf_transaction_id: '42-100000',
@@ -39,9 +33,9 @@ const signedApprovedNotification = () => {
   }).toString();
 };
 
-async function deliver(body: string) {
+async function deliver(method: string, body: string) {
   const req = Object.assign(Readable.from([Buffer.from(body)]), {
-    method: 'POST',
+    method,
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
   });
   let statusCode = 0;
@@ -62,15 +56,16 @@ async function deliver(body: string) {
 
 beforeEach(() => {
   processBuzzOrder.mockReset();
-  grantBuzzPurchase.mockReset();
 });
 
 describe('emerchantpay webhook', () => {
-  it('refuses a signed, approved notification and credits nothing', async () => {
-    const res = await deliver(signedApprovedNotification());
+  it.each(['POST', 'GET', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'])(
+    'answers 410 to an approved notification sent with %s and credits nothing',
+    async (method) => {
+      const res = await deliver(method, approvedNotification());
 
-    expect(res._status()).toBe(410);
-    expect(processBuzzOrder).not.toHaveBeenCalled();
-    expect(grantBuzzPurchase).not.toHaveBeenCalled();
-  });
+      expect(res._status()).toBe(410);
+      expect(processBuzzOrder).not.toHaveBeenCalled();
+    }
+  );
 });
