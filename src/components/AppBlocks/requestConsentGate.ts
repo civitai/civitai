@@ -25,6 +25,7 @@
  * missing), or the scopes to grant when the consent modal should open.
  */
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 import type { HostStatus } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 
@@ -146,6 +147,8 @@ export type UngrantableConsentNotice = {
    * refusal is the signal, the names are advisory.
    */
   scopes: string[];
+  /** Whether the viewer is prompted. Inert in this commit: always equal to `notify`. */
+  promptViewer: boolean;
 };
 
 /**
@@ -201,7 +204,7 @@ export function resolveUngrantableConsentNotice(
   grantedScopes: string[],
   missingScopes: string[] | undefined,
   // Inert in this commit: the tests that pin it land first and go red.
-  _options: { localPreviewStorage?: boolean } = {}
+  _surface?: BlockHostSurface
 ): UngrantableConsentNotice {
   if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
   const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
@@ -212,8 +215,12 @@ export function resolveUngrantableConsentNotice(
     new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
   ).sort();
   // Decision on the UNFILTERED set — see above.
-  if (ungrantable.length === 0) return { notify: false, scopes: [] };
-  return { notify: true, scopes: ungrantable.filter((s) => isKnownBlockScope(s)) };
+  if (ungrantable.length === 0) return { notify: false, promptViewer: false, scopes: [] };
+  return {
+    notify: true,
+    promptViewer: true,
+    scopes: ungrantable.filter((s) => isKnownBlockScope(s)),
+  };
 }
 
 /**

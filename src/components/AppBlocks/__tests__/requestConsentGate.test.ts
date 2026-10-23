@@ -8,6 +8,7 @@ import {
   UNGRANTABLE_CONSENT_TOAST,
   type HostConsentNoticeInput,
 } from '../requestConsentGate';
+import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from '../blockInitFragmentGate';
 
 // ===========================================================================
 // resolveAdvertisedScopes — what BLOCK_INIT / TOKEN_REFRESH tell the block it
@@ -121,7 +122,7 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
     // dev-tunnel preview: the token carries models:read:self; the block asks for
     // a scope the tunnel allowlist withheld → not granted, not addable via consent.
     expect(
-      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [])
+      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [], 'page-run')
     ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
@@ -130,7 +131,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       resolveUngrantableConsentNotice(
         ['buzz:read:self'],
         ['buzz:read:self', 'models:read:self'],
-        []
+        [],
+        'page-run'
       )
     ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
@@ -140,19 +142,26 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       resolveUngrantableConsentNotice(
         ['ai:write:budgeted'],
         ['models:read:self'],
-        ['ai:write:budgeted']
+        ['ai:write:budgeted'],
+        'page-run'
       )
     ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
   it('does NOT notify when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
     const silent = { notify: false, promptViewer: false, scopes: [] };
-    expect(resolveUngrantableConsentNotice(undefined, ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice([], ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice([1, null, ''], ['models:read:self'], [])).toEqual(
+    expect(
+      resolveUngrantableConsentNotice(undefined, ['models:read:self'], [], 'page-run')
+    ).toEqual(silent);
+    expect(resolveUngrantableConsentNotice([], ['models:read:self'], [], 'page-run')).toEqual(
       silent
     );
+    expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [], 'page-run')).toEqual(
+      silent
+    );
+    expect(
+      resolveUngrantableConsentNotice([1, null, ''], ['models:read:self'], [], 'page-run')
+    ).toEqual(silent);
   });
 
   it('reports ONLY the un-grantable scopes from a mixed hint (drops granted + missing), sorted+deduped', () => {
@@ -166,7 +175,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
           'ai:write:budgeted',
         ],
         ['buzz:read:self'], // already granted
-        ['ai:write:budgeted'] // grantable via consent
+        ['ai:write:budgeted'], // grantable via consent
+        'page-run'
       )
     ).toEqual({
       notify: true,
@@ -177,7 +187,12 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
 
   it('tolerates an undefined missingScopes', () => {
     expect(
-      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], undefined)
+      resolveUngrantableConsentNotice(
+        ['apps:storage:read'],
+        ['models:read:self'],
+        undefined,
+        'page-run'
+      )
     ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
@@ -193,7 +208,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       const out = resolveUngrantableConsentNotice(
         ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
         ['models:read:self'],
-        []
+        [],
+        'page-run'
       );
       // The refusal survives — this is the toast + bridge-push trigger.
       expect(out.notify).toBe(true);
@@ -205,7 +221,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       const out = resolveUngrantableConsentNotice(
         ['apps:storage:write', 'not:a:real:scope', 'apps:storage:read', '<script>x</script>'],
         ['models:read:self'],
-        []
+        [],
+        'page-run'
       );
       expect(out).toEqual({
         notify: true,
@@ -218,7 +235,7 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       // `isKnownBlockScope` is `Object.prototype.hasOwnProperty.call(...)`, not
       // `in` — `in` walked the prototype chain and let these through as "known".
       const inherited = ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty'];
-      const out = resolveUngrantableConsentNotice(inherited, ['models:read:self'], []);
+      const out = resolveUngrantableConsentNotice(inherited, ['models:read:self'], [], 'page-run');
       expect(out.notify).toBe(true);
       expect(out.scopes).toEqual([]);
     });
@@ -227,7 +244,12 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       // The regression guard for the obvious-but-wrong fix: filtering the
       // DECISION by `isKnownBlockScope` would make this silent, removing an
       // existing user-visible behaviour.
-      const out = resolveUngrantableConsentNotice(['totally:made:up'], ['models:read:self'], []);
+      const out = resolveUngrantableConsentNotice(
+        ['totally:made:up'],
+        ['models:read:self'],
+        [],
+        'page-run'
+      );
       expect(out.notify).toBe(true);
       expect(out.scopes).toEqual([]);
     });
@@ -244,15 +266,13 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
 // Every case below uses its own granted set and hint, pairwise distinct.
 // ===========================================================================
 describe('resolveUngrantableConsentNotice — local-preview storage', () => {
-  const LOCAL = { localPreviewStorage: true };
-
   it('spend + document-store request with spend already granted: answers the block, no viewer prompt', () => {
     expect(
       resolveUngrantableConsentNotice(
         ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish'],
         ['ai:write:budgeted', 'user:read:self'],
         [],
-        LOCAL
+        'dev-tunnel'
       )
     ).toEqual({
       notify: true,
@@ -263,7 +283,7 @@ describe('resolveUngrantableConsentNotice — local-preview storage', () => {
 
   it('a document-store-only request: a definite answer for the block, no viewer prompt', () => {
     expect(
-      resolveUngrantableConsentNotice(['apps:storage'], ['models:read:self'], [], LOCAL)
+      resolveUngrantableConsentNotice(['apps:storage'], ['models:read:self'], [], 'dev-tunnel')
     ).toEqual({ notify: true, promptViewer: false, scopes: ['apps:storage'] });
   });
 
@@ -275,7 +295,7 @@ describe('resolveUngrantableConsentNotice — local-preview storage', () => {
         ['apps:storage:publish', 'some:unknown:scope'],
         ['collections:read:self'],
         [],
-        LOCAL
+        'dev-tunnel'
       )
     ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:publish'] });
   });
@@ -286,7 +306,7 @@ describe('resolveUngrantableConsentNotice — local-preview storage', () => {
         ['apps:storage:shared:write', 'apps:storage'],
         ['goods:read:self'],
         [],
-        LOCAL
+        'dev-tunnel'
       )
     ).toEqual({
       notify: true,
@@ -301,23 +321,37 @@ describe('resolveUngrantableConsentNotice — local-preview storage', () => {
         ['apps:storage:publish'],
         ['social:react:self'],
         ['apps:storage:publish'],
-        LOCAL
+        'dev-tunnel'
       )
     ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
-  it('OFF the local-preview surface the same document-store request prompts exactly as before', () => {
+  it('every OTHER surface prompts for the same document-store request exactly as before', () => {
     const hint = ['apps:storage', 'apps:storage:publish', 'ai:write:budgeted'];
     const granted = ['ai:write:budgeted', 'buzz:read:self'];
-    const before = {
-      notify: true,
-      promptViewer: true,
-      scopes: ['apps:storage', 'apps:storage:publish'],
-    };
-    expect(resolveUngrantableConsentNotice(hint, granted, [])).toEqual(before);
-    expect(
-      resolveUngrantableConsentNotice(hint, granted, [], { localPreviewStorage: false })
-    ).toEqual(before);
+    for (const surface of ['page-run', 'model-slot', 'review-preview', 'private-run'] as const) {
+      expect(resolveUngrantableConsentNotice(hint, granted, [], surface)).toEqual({
+        notify: true,
+        promptViewer: true,
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+    }
+  });
+
+  it('LEDGER: the viewer prompt is withheld on exactly one surface, the dev-tunnel preview', () => {
+    // Over EVERY surface the host knows (the record is total), so a surface added
+    // to, or dropped from, the local-preview set fails here by name.
+    const surfaces = Object.keys(BLOCK_HOST_LOCAL_PREVIEW_STORAGE) as BlockHostSurface[];
+    const quiet = surfaces
+      .filter(
+        (surface) =>
+          !resolveUngrantableConsentNotice(['apps:storage'], ['posts:write:self'], [], surface)
+            .promptViewer
+      )
+      .sort();
+    expect(quiet).toEqual(['dev-tunnel']);
+    // Control for the filter: it ran over more than the one surface it kept.
+    expect(surfaces.length).toBeGreaterThan(1);
   });
 });
 
