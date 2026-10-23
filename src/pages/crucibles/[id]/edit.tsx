@@ -17,7 +17,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
-import { getCrucibleUrl } from '~/utils/crucible-helpers';
+import { getCrucibleUrl, isCrucibleAwaitingReviewToStart } from '~/utils/crucible-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -92,9 +92,14 @@ function CrucibleEditForm({ crucible }: { crucible: CrucibleEditTarget }) {
   const form = useCrucibleWizardForm(crucibleToFormValues(crucible));
 
   const updateMutation = trpc.crucible.update.useMutation({
-    onSuccess: async (_, { name }) => {
+    onSuccess: async (updated, { name }) => {
       await queryUtils.crucible.getById.invalidate({ id: crucible.id });
-      showSuccessNotification({ title: 'Crucible updated', message: 'Your changes are live.' });
+      showSuccessNotification({
+        title: 'Crucible updated',
+        message: isCrucibleAwaitingReviewToStart(updated)
+          ? 'Your crucible will start once its review finishes.'
+          : 'Your changes are live.',
+      });
       router.push(getCrucibleUrl(crucible.id, name ?? crucible.name));
     },
     onError: (error) => {
