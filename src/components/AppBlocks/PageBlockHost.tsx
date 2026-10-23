@@ -10,6 +10,7 @@ import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { isDevTunnelGuestReload } from './devTunnelGuestReload';
+import type { GuestFrameEvent } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
   blockInitStorageMode,
@@ -1664,6 +1665,53 @@ export function PageBlockHost({
     return off;
   }, [token, expiresAt, tokenKind, grantedScopes, send, onMessage, reportNoToken]);
 
+  // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
+  // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
+  // only feeds it: `load` events on the frame ELEMENT since the guest's last BLOCK_HELLO
+  // (a hello starts a new document; a Retry re-keys the <iframe>, and the new element
+  // starts from zero), and the hello itself. It reports once per mount, so a burst of
+  // reloads is one request; a parent whose fresh mint fails unmounts this host into its
+  // own error state, so there is nothing here to loop. The callback is read through a ref
+  // so a parent's inline arrow cannot change these handlers' identity.
+  const guestFrameRef = useRef<{ frame: HTMLIFrameElement | null; loadsSinceHello: number }>({
+    frame: null,
+    loadsSinceHello: 0,
+  });
+  const guestReloadReportedRef = useRef(false);
+  const onGuestReloadedRef = useRef(onGuestReloaded);
+  onGuestReloadedRef.current = onGuestReloaded;
+  const reportIfGuestReload = useCallback(
+    (event: GuestFrameEvent) => {
+      if (guestReloadReportedRef.current) return;
+      const reload = isDevTunnelGuestReload({
+        surface,
+        event,
+        loadsSinceHello: guestFrameRef.current.loadsSinceHello,
+        status: statusRef.current,
+      });
+      if (!reload) return;
+      guestReloadReportedRef.current = true;
+      onGuestReloadedRef.current?.();
+    },
+    [surface]
+  );
+  const handleFrameLoad = useCallback(
+    (event: SyntheticEvent<HTMLIFrameElement>) => {
+      const guest = guestFrameRef.current;
+      if (guest.frame !== event.currentTarget) {
+        guest.frame = event.currentTarget;
+        guest.loadsSinceHello = 0;
+      }
+      guest.loadsSinceHello += 1;
+      reportIfGuestReload('load');
+    },
+    [reportIfGuestReload]
+  );
+  const noteGuestHello = useCallback(() => {
+    reportIfGuestReload('hello');
+    guestFrameRef.current.loadsSinceHello = 0;
+  }, [reportIfGuestReload]);
+
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
   // waiting out the current retry tick.
@@ -1699,42 +1747,10 @@ export function PageBlockHost({
       const marks = launchMarksRef.current;
       if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
+      noteGuestHello();
     });
     return off;
-  }, [onMessage]);
-
-  // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
-  // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
-  // only counts `load` events per frame ELEMENT — a Retry re-keys the <iframe>, and the
-  // new element starts from zero — and reports once per mount, so a burst of reloads is
-  // one request. A parent whose fresh mint fails unmounts this host into its own error
-  // state, so there is nothing here to loop. The callback is read through a ref so a
-  // parent's inline arrow cannot change this handler's identity.
-  const frameLoadsRef = useRef<{ frame: HTMLIFrameElement | null; count: number }>({
-    frame: null,
-    count: 0,
-  });
-  const guestReloadReportedRef = useRef(false);
-  const onGuestReloadedRef = useRef(onGuestReloaded);
-  onGuestReloadedRef.current = onGuestReloaded;
-  const handleFrameLoad = useCallback(
-    (event: SyntheticEvent<HTMLIFrameElement>) => {
-      const loads = frameLoadsRef.current;
-      if (loads.frame !== event.currentTarget) {
-        loads.frame = event.currentTarget;
-        loads.count = 0;
-      }
-      loads.count += 1;
-      if (guestReloadReportedRef.current) return;
-      if (
-        !isDevTunnelGuestReload({ surface, loadsOnFrame: loads.count, status: statusRef.current })
-      )
-        return;
-      guestReloadReportedRef.current = true;
-      onGuestReloadedRef.current?.();
-    },
-    [surface]
-  );
+  }, [onMessage, noteGuestHello]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
