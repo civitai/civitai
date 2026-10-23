@@ -4,7 +4,11 @@ import { getWorkflow, submitWorkflow } from '@civitai/orchestration-client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { ensureFliptInitialized, getFliptClientSync } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  getFliptClientSync,
+  getFliptLocalOverride,
+} from '~/server/flipt/client';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getBucket, getS3Client } from '~/utils/s3-utils';
@@ -184,11 +188,13 @@ export async function getFinalScanReading(workflowId: string): Promise<FinalScan
  * Skipped only on an answer from Flipt: the flag set off, or not created yet. When Flipt cannot be
  * reached the scan stays on, so an outage never lets a Final through unscanned. `isFlipt` turns both
  * cases into false, so this asks the client directly. Read through one synthetic entity, so launch it
- * by setting the flag's `enabled`, not by percentage.
+ * by setting the flag's `enabled`, not by percentage. A local override (development only) wins.
  */
 export async function isFinalsMalwareScanOn() {
   const flagKey = getFeatureFliptKey('creatorServicesFinalsMalwareScan');
   if (!flagKey) return true;
+  const override = getFliptLocalOverride(flagKey);
+  if (override !== undefined) return override === 'on';
   try {
     await ensureFliptInitialized();
   } catch {
