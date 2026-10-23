@@ -2,6 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as PgDb from '~/server/db/pgDb';
 import type * as ModelService from '~/server/services/model.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 
@@ -22,6 +24,29 @@ const { setModelPoi } = vi.hoisted(() => ({
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   setModelPoi,
+}));
+// The sweep reads through queryWithTimeout on the replica pg pool: route that pool's client to PGlite and keep
+// what it was sent. `failOn` makes a statement throw, as a timeout would.
+const pool = vi.hoisted(() => ({
+  sent: [] as string[],
+  failOn: null as RegExp | null,
+}));
+vi.mock('~/server/db/pgDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof PgDb>()),
+  pgDbRead: {
+    connect: async () => ({
+      query: async (q: string | { text: string; values: unknown[] }, values?: unknown[]) => {
+        const text = typeof q === 'string' ? q : q.text;
+        pool.sent.push(text);
+        if (pool.failOn?.test(text))
+          throw Object.assign(new Error('canceling statement due to statement timeout'), {
+            code: '57014',
+          });
+        return holder.db.query(text, typeof q === 'string' ? values : q.values);
+      },
+      release: () => undefined,
+    }),
+  },
 }));
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
@@ -99,6 +124,8 @@ const scan = (modelId: number, userId: number, fileId: number, sha256: string) =
 
 beforeEach(async () => {
   setModelPoi.mockClear();
+  pool.sent = [];
+  pool.failOn = null;
   await pg.exec(
     `TRUNCATE "Model", "ModelVersion", "ModelFile", "ModelFileHash", "ModActivity", "KeyValue"`
   );
@@ -287,5 +314,65 @@ describe('sweepPoiHashMatches', () => {
     expect(setModelPoi).toHaveBeenCalledWith(expect.objectContaining({ id: 17 }));
     expect(await meta(18)).toMatchObject({ poiHashMatch: { hash: 'MOD' } });
     expect(await meta(19)).toEqual({});
+  });
+});
+
+describe('sweepPoiHashMatches — the read', () => {
+  it('counts every candidate even when the batch is smaller, from the same single read', async () => {
+    for (const id of [61, 62, 63]) {
+      await addModel(id, 1);
+      await addFile(id, 'MOD', '5 minutes');
+    }
+
+    const report = await sweepPoiHashMatches({ limit: 1 });
+
+    expect(report).toMatchObject({ candidates: 3, flagged: 1, backlog: 0 });
+    expect(pool.sent.filter((text) => text.includes('seed_models'))).toHaveLength(1);
+  });
+
+  // The counts are the queue-volume figure moderation reads; a model nothing seeds is not a candidate.
+  it('counts no copy of a model whose flag does not seed', async () => {
+    await addModel(66, 4);
+    await addFile(66, 'SELF', '5 minutes');
+    await addModel(67, 5);
+    await addFile(67, 'AUTO', '5 minutes');
+
+    expect(await sweepPoiHashMatches({ limit: 50 })).toMatchObject({ candidates: 0, backlog: 0 });
+  });
+
+  it('with only pre-cutoff copies, reports the backlog and acts on nothing', async () => {
+    await addModel(64, 1);
+    await addFile(64, 'MOD', '2 hours');
+
+    const report = await sweepPoiHashMatches({ limit: 50 });
+
+    expect(report).toMatchObject({ candidates: 0, flagged: 0, queued: 0, failed: 0, backlog: 1 });
+    expect(setModelPoi).not.toHaveBeenCalled();
+  });
+
+  it('runs read-only under its own 120s ceiling', async () => {
+    await sweepPoiHashMatches({ limit: 50 });
+    const at = pool.sent.findIndex((text) => text.includes('seed_models'));
+    expect(pool.sent.slice(0, at)).toEqual([
+      'BEGIN READ ONLY',
+      'SET LOCAL statement_timeout = 120000',
+    ]);
+  });
+
+  // A swallowed timeout would read as "nothing to do" every night while copies go unmatched.
+  it('a timeout fails the run loudly and writes nothing', async () => {
+    await addModel(65, 1);
+    await addFile(65, 'MOD', '5 minutes');
+    pool.failOn = /seed_models/;
+    loggingMock.logToAxiom.mockClear();
+
+    await expect(sweepPoiHashMatches({ limit: 50 })).rejects.toMatchObject({ code: '57014' });
+
+    expect(setModelPoi).not.toHaveBeenCalled();
+    expect(await meta(65)).toEqual({});
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'poi-hash-sweep' }),
+      'webhooks'
+    );
   });
 });
