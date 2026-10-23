@@ -233,11 +233,7 @@
       <HighlightedFields fields={row.fields} matches={row.matches} />
     </TriageCard>
 
-    <PreviewImagesCard
-      images={row.coverImages}
-      allHref={modelUrl(civitaiUrl, row.modelId)}
-      {detail}
-    />
+    <PreviewImagesCard images={row.coverImages} allHref={modelUrl(civitaiUrl, row.modelId)} />
 
     <div class="grid gap-4 md:grid-cols-2">
       <ModelFactsCard
