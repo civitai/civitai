@@ -4,6 +4,7 @@ import {
   navBadge,
   navCount,
   navHref,
+  isQuietRow,
   navPartial,
   sectionTotal,
   switcherEntries,
@@ -197,6 +198,13 @@ describe('the Models section', () => {
       partial: true,
     });
     expect(sectionTotal([row(400), row(7, true, true)])).toEqual({ total: 400, partial: false });
+  });
+
+  it('files a row as empty only when nothing in it went uncounted', () => {
+    expect(isQuietRow({ count: 0, partial: false })).toBe(true);
+    // Model Flags with Auto-flagged unreadable and the other tabs at 0: not "All clear".
+    expect(isQuietRow({ count: 0, partial: true })).toBe(false);
+    expect(isQuietRow({ count: null, partial: false })).toBe(false);
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {

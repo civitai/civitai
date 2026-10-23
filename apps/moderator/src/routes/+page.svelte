@@ -2,7 +2,14 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
-  import { navBadge, navCount, navHref, navPartial, sectionTotal } from '$lib/nav-links';
+  import {
+    isQuietRow,
+    navBadge,
+    navCount,
+    navHref,
+    navPartial,
+    sectionTotal,
+  } from '$lib/nav-links';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
@@ -294,9 +301,9 @@
   });
 
   let expanded = $state<Record<string, boolean>>({});
-  const quietCount = (section: Section) => section.items.filter((i) => i.count === 0).length;
+  const quietCount = (section: Section) => section.items.filter(isQuietRow).length;
   const visibleItems = (section: Section) =>
-    expanded[section.label] ? section.items : section.items.filter((i) => i.count !== 0);
+    expanded[section.label] ? section.items : section.items.filter((i) => !isQuietRow(i));
 
   const format = (n: number) => n.toLocaleString();
   const PARTIAL_TITLE = 'Some counts are unavailable';

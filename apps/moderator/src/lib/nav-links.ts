@@ -66,6 +66,10 @@ export function navBadge(
   return count === null ? null : { text: format(count), partial };
 }
 
+/** An empty queue: counted at 0, with nothing it sums left uncounted. */
+export const isQuietRow = (row: { count: number | null; partial: boolean }) =>
+  row.count === 0 && !row.partial;
+
 /** A section's total over its non-informational rows, partial when one of those rows is. */
 export function sectionTotal(
   items: { count: number | null; partial: boolean; informational?: boolean }[]
