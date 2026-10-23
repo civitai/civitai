@@ -215,9 +215,9 @@ describe('civitai_app_block_doc_store_enabled', () => {
       db: roleDb({ rolname: 'r', rolsuper: true, rolbypassrls: false }),
     });
     expect(await store.isUsable()).toBe(false);
-    await expect(
-      store.usage({ appId: 'app_1', ns: 'prod', viewerUid: 1 })
-    ).rejects.toMatchObject({ code: 'storage_disabled' });
+    await expect(store.usage({ appId: 'app_1', ns: 'prod', viewerUid: 1 })).rejects.toMatchObject({
+      code: 'storage_disabled',
+    });
   });
 });
 

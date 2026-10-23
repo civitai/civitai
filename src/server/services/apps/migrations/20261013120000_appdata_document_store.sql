@@ -10,16 +10,12 @@
 --   app (an `app_id` column, not a schema per app), their indexes, row-level
 --   security policies, and one NOLOGIN role `appdata_rw` holding the DML grants.
 --
--- AFTER APPLYING (also manual): the document store uses its OWN connection,
---   `APPDATA_DATABASE_URL`, never the existing apps connection. Create a LOGIN
---   role for it that holds only `appdata_rw`, and confirm row-level security
---   binds it before setting the env var:
---     CREATE ROLE <login role> LOGIN PASSWORD '<secret>' NOSUPERUSER NOBYPASSRLS;
---     GRANT appdata_rw TO <login role>;
---     SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = '<login role>';
---       -- both must be false
---   The store checks the same two attributes on first use and refuses every
---   call (`storage_disabled`) if either is true; with the env var unset it is
+-- CONNECTION: the document store uses its OWN connection, `APPDATA_DATABASE_URL`,
+--   never the existing apps connection. Its login role is provisioned outside
+--   this migration (see the operations runbook); it must hold only `appdata_rw`
+--   and be neither superuser nor BYPASSRLS, so row-level security binds it.
+--   The store checks those two attributes on first use and refuses every call
+--   (`storage_disabled`) if either is true; with the env var unset it is
 --   disabled outright.
 --
 -- ISOLATION: the only code that touches these tables is

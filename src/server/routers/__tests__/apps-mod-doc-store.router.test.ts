@@ -830,6 +830,7 @@ describe('the moderation operations are reachable from the moderator service onl
         'get',
         'getMany',
         'increment',
+        'isUsable',
         'limits',
         'list',
         'mark',
