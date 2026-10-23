@@ -5,7 +5,7 @@ import { FIXTURE, migration, statementsOf } from './comment-v3-fixture';
 
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
-const STORYLINE_THREAD = '20261126120000_storyline_thread';
+const STORYLINE_THREAD = '20261127120000_storyline_thread';
 
 const db = { pg: null as unknown as PGlite };
 const rows = async <T = Record<string, unknown>>(sql: string) => (await db.pg.query<T>(sql)).rows;
