@@ -314,6 +314,9 @@ export const processDeposit = async (
     });
   }
 
+  // A redelivered status changes nothing, so it must not tell the user again.
+  let statusAdvanced = true;
+
   // Upsert the CryptoDeposit record on every webhook status
   if (event.payment_id) {
     try {
@@ -354,6 +357,7 @@ export const processDeposit = async (
       // Only advance status forward; finished is immutable.
       const shouldUpdateStatus = !existing || (existing.status !== 'finished' && nextRank > existingRank)
         || (existing.status === 'buzz_failed' && depositStatus === 'finished');
+      statusAdvanced = shouldUpdateStatus;
 
       await dbWrite.cryptoDeposit.upsert({
         where: { paymentId: BigInt(event.payment_id) },
@@ -377,22 +381,23 @@ export const processDeposit = async (
     }
   }
 
-  // Send signal for ALL statuses (confirming, finished)
   const normalizedStatus = isDepositComplete(webhookStatus) ? 'finished' : webhookStatus;
-  await signalClient.send({
-    userId,
-    target: SignalMessages.CryptoDepositUpdate,
-    data: {
-      paymentId: event.payment_id,
-      status: normalizedStatus,
-      amount: event.actually_paid,
-      currency: event.pay_currency,
-      outcomeAmount: event.outcome_amount,
-    },
-  });
+  if (statusAdvanced) {
+    await signalClient.send({
+      userId,
+      target: SignalMessages.CryptoDepositUpdate,
+      data: {
+        paymentId: event.payment_id,
+        status: normalizedStatus,
+        amount: event.actually_paid,
+        currency: event.pay_currency,
+        outcomeAmount: event.outcome_amount,
+      },
+    });
+  }
 
   // Send persistent notification for completed deposits
-  if (isDepositComplete(webhookStatus) && buzzAmount > 0) {
+  if (statusAdvanced && isDepositComplete(webhookStatus) && buzzAmount > 0) {
     const notificationType =
       webhookStatus === 'partially_paid' ? 'partially-paid' : 'deposit-confirmed';
 

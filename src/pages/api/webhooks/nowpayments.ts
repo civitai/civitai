@@ -17,6 +17,25 @@ const log = (data: MixedObject) => {
   logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch(() => null);
 };
 
+const ACTIONABLE_STATUSES = ['confirming', 'finished', 'partially_paid', 'failed'];
+
+const eventFromPayment = (
+  payment: NOWPayments.CreatePaymentResponse
+): NOWPayments.WebhookEvent => ({
+  payment_id:
+    typeof payment.payment_id === 'string' ? parseInt(payment.payment_id, 10) : payment.payment_id,
+  payment_status: payment.payment_status,
+  order_id: payment.order_id,
+  outcome_amount: payment.outcome_amount,
+  actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+  pay_currency: payment.pay_currency,
+  pay_address: payment.pay_address,
+  parent_payment_id: payment.parent_payment_id,
+  payin_hash: payment.payin_hash,
+});
+
+const VERIFIED_FIELDS = ['payment_status', 'order_id', 'outcome_amount'] as const;
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Count any 5xx this webhook emits into civitai_app_http_errors_total — these
   // handlers bypass the endpoint wrappers, so their 500s were counter-blind.
@@ -62,11 +81,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send({ error: 'Missing payment_status or payment_id' });
     }
 
-    // Process actionable statuses (partially_paid treated like finished for buzz grant).
-    // `failed` advances an in-flight row to the terminal status; isDepositComplete gates
-    // the buzz grant, so a failed event records the status without crediting buzz.
-    if (['confirming', 'finished', 'partially_paid', 'failed'].includes(paymentStatus)) {
-      await processDeposit(event.payment_id, paymentStatus, event);
+    // The IPN only says which payment to look at; what is recorded and credited comes from
+    // NOWPayments' own record of it. partially_paid is credited like finished; failed records the
+    // status and credits nothing.
+    if (ACTIONABLE_STATUSES.includes(paymentStatus)) {
+      const payment = await client.getPaymentStatus(event.payment_id);
+      if (!payment) throw new Error(`Payment ${event.payment_id} not found on NOWPayments`);
+
+      const verified = eventFromPayment(payment);
+      const mismatched = VERIFIED_FIELDS.filter(
+        (field) => (event[field] ?? null) !== (verified[field] ?? null)
+      );
+      if (mismatched.length) {
+        log({
+          type: 'warning',
+          stage: 'payment-mismatch',
+          paymentId: event.payment_id,
+          fields: mismatched,
+        });
+      } else {
+        // Display-only amounts the status lookup does not return.
+        verified.fee = event.fee;
+        verified.actually_paid_at_fiat = event.actually_paid_at_fiat;
+      }
+
+      const status = verified.payment_status;
+      if (verified.payment_id && status && ACTIONABLE_STATUSES.includes(status)) {
+        await processDeposit(verified.payment_id, status, verified);
+      }
     }
   } catch (error: any) {
     const body = req.body ?? {};
