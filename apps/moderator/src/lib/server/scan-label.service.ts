@@ -17,6 +17,8 @@ import {
 export type ScanLabelCard = {
   itemId: number;
   imageId: number;
+  /** The claim's opaque token: what the page carries instead of either id. */
+  token: string;
   url: string;
   type: string;
   name: string | null;
@@ -81,13 +83,22 @@ const hasVoted = (db: Db, itemId: number, userId: number) =>
     .executeTakeFirst()
     .then((r) => !!r);
 
-async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<ScanLabelCard | null> {
+async function toCard(
+  db: Db,
+  itemId: number,
+  userId: number,
+  leaseExpiresAt: Date
+): Promise<ScanLabelCard | null> {
   const row = await db
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .innerJoin('ScanLabelClaim as c', (j) =>
+      j.onRef('c.itemId', '=', 'i.id').on('c.userId', '=', userId)
+    )
     .select([
       'i.id as itemId',
       'i.imageId',
+      'c.token',
       'img.url',
       'img.type',
       'img.name',
@@ -96,7 +107,31 @@ async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<Sca
     ])
     .where('i.id', '=', itemId)
     .executeTakeFirst();
-  return row ? { ...row, type: String(row.type), leaseExpiresAt } : null;
+  // Every claim has a token (column default, backfilled); a row without one has no card to vote on.
+  if (!row?.token) return null;
+  return { ...row, token: row.token, type: String(row.type), leaseExpiresAt };
+}
+
+/**
+ * The item a card's token stands for, for the moderator it was minted for: through their claim, or
+ * once the claim is gone, through the vote they cast with it, so a repeat is told it already landed.
+ * Null for anyone else's token.
+ */
+export async function itemForToken(token: string, userId: number): Promise<number | null> {
+  const claim = await dbWrite
+    .selectFrom('ScanLabelClaim')
+    .select('itemId')
+    .where('token', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  if (claim) return claim.itemId;
+  const vote = await dbWrite
+    .selectFrom('ScanLabelVote')
+    .select('itemId')
+    .where('claimToken', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return vote?.itemId ?? null;
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;
@@ -163,13 +198,15 @@ export async function claimNext(
       .where('c.expiresAt', '>', now)
       .orderBy('c.expiresAt', 'desc')
       .execute();
+    // 🔴 Unlocked: it only hands back a lease the moderator already holds. Renewing or rewriting
+    // the lease here would need the row lock the claim path below takes.
     for (const lease of held) {
       const open = await openItems(trx, {})
         .select('i.id')
         .where('i.id', '=', lease.itemId)
         .where(notVotedBy(userId))
         .executeTakeFirst();
-      if (open) return toCard(trx, lease.itemId, lease.expiresAt);
+      if (open) return toCard(trx, lease.itemId, userId, lease.expiresAt);
     }
 
     const tried: number[] = [];
@@ -233,7 +270,7 @@ export async function claimNext(
           .values({ itemId: candidate.id, userId, expiresAt })
           .onConflict((oc) => oc.columns(['itemId', 'userId']).doUpdateSet({ expiresAt }))
           .execute();
-        const card = await toCard(trx, candidate.id, expiresAt);
+        const card = await toCard(trx, candidate.id, userId, expiresAt);
         if (card) return card;
         tried.push(candidate.id);
       }
@@ -252,7 +289,15 @@ export async function castVote(
     userId,
     choice,
     msOnItem,
-  }: { itemId: number; userId: number; choice: VoteChoice; msOnItem: number | null },
+    claimToken = null,
+  }: {
+    itemId: number;
+    userId: number;
+    choice: VoteChoice;
+    msOnItem: number | null;
+    /** The card's token, kept on the vote so a repeat from another tab still finds the card. */
+    claimToken?: string | null;
+  },
   now: Date = new Date()
 ): Promise<VoteResult> {
   const { block } = choice;
@@ -290,6 +335,7 @@ export async function castVote(
         reason: choice.block ? choice.reason : null,
         reasonComment: choice.block ? choice.reasonComment : null,
         msOnItem,
+        claimToken,
         createdAt: now,
       })
       .onConflict((oc) => oc.columns(['itemId', 'userId']).doNothing())
