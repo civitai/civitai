@@ -553,6 +553,18 @@ describe('real-person hash state on a save', () => {
     expect(wroteKey('poiHashCleared')).toBe(false);
   });
 
+  it('an owner turning a self-declared poi off does not clear the model for the match', async () => {
+    mockStored({ poi: true, lockedProperties: [] });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false });
+    expect(wroteKey('poiHashCleared')).toBe(false);
+  });
+
+  it('an owner ticking poi does not take the model off the match queue', async () => {
+    mockStored({ poi: false, lockedProperties: [] });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true });
+    expect(wroteKey('poiHashMatch')).toBe(false);
+  });
+
   it('a save that leaves poi alone touches neither', async () => {
     mockStored({ poi: true });
     await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });

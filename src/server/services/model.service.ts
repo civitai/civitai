@@ -2862,6 +2862,18 @@ export async function clearPoiHashMeta(modelId: number) {
   `;
 }
 
+/** A flag set by hand takes the model off the match queue. On a model that was not flagged, any
+ *  snapshot is left by an automated attempt that never applied, and is not this flag's. */
+async function dropPoiHashLead(modelId: number, { staleSnapshot }: { staleSnapshot: boolean }) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text${
+    staleSnapshot ? Prisma.sql` - ${POI_FLAG_SNAPSHOT_KEY}::text` : Prisma.empty
+  }
+    WHERE m.id = ${modelId}
+  `;
+}
+
 // Unlike the minor snapshot this is not best-effort: without it the automated flag could neither be
 // reverted nor appealed, so the caller does not apply the flag.
 async function capturePoiFlagSnapshot(modelId: number) {
@@ -2982,10 +2994,7 @@ export async function setModelPoi({
   });
 
   if (poi)
-    await dbWrite.$executeRaw`
-      UPDATE "Model" m SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text
-      WHERE m.id = ${id}
-    `;
+    await dropPoiHashLead(id, { staleSnapshot: !before.poi && activity !== 'setPoiAutoHash' });
   else if (lifting) await clearPoiHashMeta(id);
 
   await preventReplicationLag('model', id);
@@ -3654,12 +3663,11 @@ export const upsertModel = async (
     const liftedLabels = (['minor', 'poi'] as const).filter(
       (label) => beforeUpdate[label] && data[label] === false
     );
-    if (liftedLabels.includes('poi')) await clearPoiHashMeta(result.id);
-    else if (data.poi === true && !beforeUpdate.poi)
-      await dbWrite.$executeRaw`
-        UPDATE "Model" m SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text
-        WHERE m.id = ${result.id}
-      `;
+    // A moderator's decision only: an owner toggling a self-declared flag off would otherwise clear
+    // the model for the hash match before its upload is scanned.
+    if (isModerator && liftedLabels.includes('poi')) await clearPoiHashMeta(result.id);
+    else if (isModerator && data.poi === true && !beforeUpdate.poi)
+      await dropPoiHashLead(result.id, { staleSnapshot: true });
     if (isModerator && liftedLabels.length) {
       const { settleFlagAppealsAfterModeratorLift } = await import(
         '~/server/services/text-scan/actions/appeal-text-hash'

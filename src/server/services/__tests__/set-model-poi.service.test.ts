@@ -265,10 +265,16 @@ describe('setModelPoi — the real-person hash match', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
-  it('a moderator set takes no snapshot', async () => {
+  // A snapshot left by an automated attempt that never applied would make this flag read as automated.
+  it('a moderator set drops any snapshot rather than taking one', async () => {
     mockBefore({});
     await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID });
-    expect(wroteKey('poiFlagSnapshot')).toBe(false);
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const sql = Prisma.sql(
+      ...(mockDbWrite.$executeRaw.mock.calls[0] as [TemplateStringsArray, ...never[]])
+    );
+    expect(sql.text).not.toContain('jsonb_build_object');
+    expect(sql.values).toEqual(expect.arrayContaining(['poiHashMatch', 'poiFlagSnapshot']));
   });
 
   it('a lift stamps the model cleared, so the hash match does not put the flag back', async () => {
