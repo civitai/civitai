@@ -3,7 +3,7 @@ import { uniq } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { queryWithTimeout } from '~/server/db/db-helpers';
-import { pgDbReadLong } from '~/server/db/pgDb';
+import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import {
@@ -212,8 +212,8 @@ type SweepResultRow = { candidates: number; backlog: number } & {
   [K in keyof SweepRow]: SweepRow[K] | null;
 };
 
-/** The sweep's one read, against the replica. Set here rather than left to the connection's
- *  default, which differs by role. */
+/** The sweep's one read, on the replica pool `dbRead` uses (the long-read pool can fall back to the
+ *  primary). Set here rather than left to the connection's default, which differs by role. */
 const SWEEP_TIMEOUT_MS = 120_000;
 
 export type PoiHashSweepReport = {
@@ -285,11 +285,7 @@ export async function sweepPoiHashMatches({
   // A timeout throws: logged and rethrown so the job fails, rather than reading as nothing to do.
   let result: SweepResultRow[];
   try {
-    ({ rows: result } = await queryWithTimeout<SweepResultRow>(
-      pgDbReadLong,
-      SWEEP_TIMEOUT_MS,
-      sweep
-    ));
+    ({ rows: result } = await queryWithTimeout<SweepResultRow>(pgDbRead, SWEEP_TIMEOUT_MS, sweep));
   } catch (error) {
     await logToAxiom(
       {

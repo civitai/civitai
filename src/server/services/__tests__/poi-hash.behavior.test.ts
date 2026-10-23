@@ -25,7 +25,7 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   setModelPoi,
 }));
-// The sweep reads through queryWithTimeout on a pg pool: route that pool's client to PGlite and keep
+// The sweep reads through queryWithTimeout on the replica pg pool: route that pool's client to PGlite and keep
 // what it was sent. `failOn` makes a statement throw, as a timeout would.
 const pool = vi.hoisted(() => ({
   sent: [] as string[],
@@ -33,7 +33,7 @@ const pool = vi.hoisted(() => ({
 }));
 vi.mock('~/server/db/pgDb', async (importOriginal) => ({
   ...(await importOriginal<typeof PgDb>()),
-  pgDbReadLong: {
+  pgDbRead: {
     connect: async () => ({
       query: async (q: string | { text: string; values: unknown[] }, values?: unknown[]) => {
         const text = typeof q === 'string' ? q : q.text;
