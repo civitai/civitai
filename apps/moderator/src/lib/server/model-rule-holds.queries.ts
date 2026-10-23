@@ -41,6 +41,10 @@ export type ModelRuleHoldRow = {
   modelName: string | null;
   modelStatus: string | null;
   modelType: string | null;
+  /** `Trained` when the model was trained on Civitai. */
+  uploadType: string | null;
+  /** `training` when a training run, not a publish or an edit, raised the hold. */
+  source: 'training' | null;
   poi: boolean;
   minor: boolean;
   textHash: string;
@@ -143,6 +147,7 @@ export async function listModelRuleHolds({
       'm.name as modelName',
       sql<string | null>`m.status::text`.as('modelStatus'),
       sql<string | null>`m.type::text`.as('modelType'),
+      sql<string | null>`m."uploadType"::text`.as('uploadType'),
       sql<boolean>`coalesce(m.poi, false)`.as('poi'),
       sql<boolean>`coalesce(m.minor, false)`.as('minor'),
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
@@ -185,6 +190,7 @@ export async function listModelRuleHolds({
       rules: parsed.rules,
       redetected: parsed.kind === 'redetected' && parsed.priorHoldId !== undefined,
       priorHoldId: parsed.priorHoldId ?? null,
+      source: parsed.source ?? null,
     };
   });
   return { items, hasMore: rows.length > limit };

@@ -200,6 +200,8 @@
           <MetaChip>{modelStatusLabel(row.modelStatus)}</MetaChip>
         {/if}
         {#if row.redetected}<MetaChip tone="amber">re-detected</MetaChip>{/if}
+        {#if row.source === 'training'}<MetaChip tone="amber">Training</MetaChip>{/if}
+        {#if row.uploadType === 'Trained'}<MetaChip>Trained on Civitai</MetaChip>{/if}
         {#if row.editedSince}<MetaChip tone="green">edited since</MetaChip>{/if}
         {#if row.poi}<FlagBadge label="poi" />{/if}
         {#if row.minor}<FlagBadge label="minor" />{/if}
@@ -278,7 +280,9 @@
         <input type="hidden" name="decision" value={decision} />
         {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
         <TriageDecisionBar
-          hint={row.mode === 'active'
+          hint={row.source === 'training'
+            ? `A training run matched ${subjects || 'the rule'}${row.mode === 'active' ? ' and was refused' : ' and went ahead'}. Confirm records it as a violation; a dismissal lets the same text through next time. J/K to move.`
+            : row.mode === 'active'
             ? `The model was taken down when ${subjects || 'the rule'} matched. Confirm keeps it down; a dismissal republishes it.`
             : 'The model is still live. Confirm unpublishes it; a dismissal changes nothing on the model. J/K to move.'}
         >
