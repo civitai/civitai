@@ -23,6 +23,7 @@ import {
   StorylineStatusChip,
   storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
+import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
@@ -189,6 +190,17 @@ function StorylineHeader({
               leftSection={<IconPlayerPlayFilled size={18} />}
             >
               Start reading
+            </Button>
+          )}
+          {!startLink && storyline.chapterCount === 0 && storyline.viewerRole === 'owner' && (
+            <Button
+              component={Link}
+              href={storylineWriteChapterUrl(storyline.id)}
+              size="lg"
+              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
+              leftSection={<IconPlus size={18} />}
+            >
+              Write chapter 1
             </Button>
           )}
           {lastPostId && terms?.open && storyline.status !== 'Complete' && (

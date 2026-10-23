@@ -6982,8 +6982,23 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+  edits              ChatMessageEdit[]
 
   @@index([chatId, id])
+}
+
+/// The text one edit replaced, written in the same statement that overwrites `ChatMessage.content`.
+/// The text it left behind is the next row's `previousContent`, or the message's current content.
+model ChatMessageEdit {
+  id              Int         @id @default(autoincrement())
+  messageId       Int
+  /// No relation: a deleted editor must neither block nor erase the history.
+  editorId        Int
+  previousContent String
+  createdAt       DateTime    @default(now())
+  message         ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, id])
 }
 
 model BuildGuide {

@@ -2172,6 +2172,16 @@ export type ChatMessage = {
   editedAt: Timestamp | null;
   deletedAt: Timestamp | null;
 };
+export type ChatMessageEdit = {
+  id: Generated<number>;
+  messageId: number;
+  /**
+   * No relation: a deleted editor must neither block nor erase the history.
+   */
+  editorId: number;
+  previousContent: string;
+  createdAt: Generated<Timestamp>;
+};
 export type ChatReport = {
   chatId: number;
   reportId: number;
@@ -6127,6 +6137,7 @@ export type DB = {
   Chat: Chat;
   ChatMember: ChatMember;
   ChatMessage: ChatMessage;
+  ChatMessageEdit: ChatMessageEdit;
   ChatReport: ChatReport;
   Club: Club;
   ClubAdmin: ClubAdmin;

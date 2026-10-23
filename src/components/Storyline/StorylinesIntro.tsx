@@ -1,8 +1,6 @@
 import { Button, Card, CloseButton, Group, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconBook2, IconBrush, IconGitFork, IconPlus, IconRoute } from '@tabler/icons-react';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { IconBook2, IconBrush, IconGitFork, IconRoute } from '@tabler/icons-react';
+import { StartStorylineButton } from '~/components/Storyline/StartStorylineButton';
 import { useIntroDismissed } from '~/hooks/useIntroDismissed';
 
 export const STORYLINES_INTRO_DISMISSED_KEY = 'storylines-intro-dismissed';
@@ -29,18 +27,8 @@ const steps = [
 ] as const;
 
 export function StorylinesIntro() {
-  const currentUser = useCurrentUser();
   const [dismissed, dismiss] = useIntroDismissed(STORYLINES_INTRO_DISMISSED_KEY);
   if (dismissed) return null;
-
-  const startProps = {
-    color: 'violet',
-    radius: 'xl',
-    leftSection: <IconPlus size={16} />,
-    children: 'Start a storyline',
-    'aria-describedby': 'storylines-intro-start-hint',
-    className: 'flex-1 sm:flex-none',
-  } as const;
 
   return (
     <Card
@@ -88,23 +76,11 @@ export function StorylinesIntro() {
       </div>
 
       <Group mt="lg" gap="sm" wrap="nowrap">
-        {currentUser?.username ? (
-          // A storyline starts from a post's menu, so this goes to the viewer's own posts.
-          <Button component={Link} href={`/user/${currentUser.username}/posts`} {...startProps} />
-        ) : (
-          <LoginRedirect reason="perform-action">
-            <Button {...startProps} />
-          </LoginRedirect>
-        )}
+        <StartStorylineButton className="flex-1 sm:flex-none" />
         <Button variant="default" radius="xl" onClick={dismiss}>
           Got it
         </Button>
       </Group>
-      <Text size="xs" c="dimmed" mt="xs" id="storylines-intro-start-hint">
-        Start a storyline opens your posts. Open a published post of yours, then use its three-dot
-        menu and choose &ldquo;Make this chapter 1 of a storyline&rdquo;, or use the switch on the
-        post&rsquo;s edit page.
-      </Text>
     </Card>
   );
 }

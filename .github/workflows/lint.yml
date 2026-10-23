@@ -346,7 +346,9 @@ jobs:
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
     # on purpose: they need Chromium, which this job does not install. That is
-    # the whole reason. This comment used to add "and carry the cold-optimizeDeps
+    # the whole reason. They run in the `component` job below.
+    #
+    # This comment used to add "and carry the cold-optimizeDeps
     # flake documented at vitest.config.mts:98-124", which was wrong: those lines
     # document the FIX for that flake, not an open one. vitest.config.mts:109-127
     # dedupes React and pre-bundles `vitest-browser-react` + the JSX runtimes so
@@ -862,17 +864,7 @@ jobs:
     # the canonical fix for it. So a job that DOES install Chromium satisfies the
     # stated condition instead of overriding a decision.
     #
-    # 🔴 GEOMETRY ONLY; `component` IS STILL UNGATED, AND THAT IS NOW VISIBLE
-    # RATHER THAN FIXED. No project selector in this workflow matches it
-    # (`unit*`, `@civitai/*`, `app:*`), and its only CI home is the preview
-    # pipeline's report-only `preview / component-tests`. Adding it here is a
-    # much larger change than this harness and belongs in its own PR, on measured
-    # cost: locally, on a 16-core box, `geometry` runs in well under a minute while
-    # `component` is an order of magnitude larger in files, tests and wall time — and most of
-    # that is test time spread across workers, so a 2-core runner (browser pool
-    # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
-    # of magnitude more expensive, with hundreds of files of pass/fail history nobody
-    # has ever seen in this workflow. Do it deliberately, not as a rider.
+    # The `component` project has its own job, `component`, at the end of this file.
     #
     # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same expression
     # `unit` uses, and NOT a literal `true`. Both halves matter:
@@ -1032,3 +1024,42 @@ jobs:
             process.exit(1);
           }
           JS
+
+  component:
+    name: Component tests
+    runs-on: ubuntu-latest
+    # The browser-mode `component` project (`*.browser.test.tsx`), on the same
+    # Chromium setup as `geometry` above. See that job for why Playwright is
+    # installed from the workspace pin rather than a version written here.
+    #
+    # Blocking on PRs: `main` was 380/380 files green when this was added, so a
+    # red here is the PR's. (`main` has no required checks; this cannot block a
+    # merge, only show red on it.)
+    #
+    # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
+    # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
+    # which fails a run that executed nothing, fell under the test floor, or left
+    # any `*.browser.test.tsx` on disk out of the report. Any argument (`--shard`,
+    # `--max-workers`) marks the run narrowed and switches the floor and the file
+    # ledger off. Shard only together with a per-shard ledger.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Component tests
+        run: pnpm run test:component

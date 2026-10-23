@@ -9,8 +9,8 @@ import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * `AppListingDetailBody` component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gates are `__tests__/appListingDetailView.test.ts`,
+ * `AppListingDetailBody` component tests (`Component tests` in CI; the node-tier
+ * gates are `__tests__/appListingDetailView.test.ts`,
  * `__tests__/appListingDetailRows.test.ts` and `__tests__/appsPageWidths.test.ts`).
  *
  * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE — read before treating any result here
@@ -1825,8 +1825,8 @@ describe('AppListingDetailBody — store-scope review seam', () => {
  * fix — which is precisely the defect class here.
  *
  * 🔴 NOT A MERGE GATE: this file is in the browser-mode `component` project, which CI
- * runs only as the preview pipeline's report-only `preview / component-tests` (the
- * same caveat `.gallery.browser.test.tsx` carries). The blocking half of this change
+ * runs as `Component tests`, and no check in this repo blocks a merge (the same
+ * caveat `.gallery.browser.test.tsx` carries). The node-tier half of this change
  * is `__tests__/appListingDescription.test.ts` in the node project — it gates the
  * renderer rule but cannot see a node's position. Both are needed; neither substitutes.
  *

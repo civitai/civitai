@@ -1,3 +1,4 @@
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
@@ -45,11 +46,7 @@ class NOWPaymentsCaller extends HttpCaller {
     const hash = createHmac('sha512', env.NOW_PAYMENTS_IPN_KEY)
       .update(JSON.stringify(sortedPayload))
       .digest('hex');
-    return {
-      isValid: hash.toString().toLowerCase() === signature,
-      hash: hash.toString().toLowerCase(),
-      signature,
-    };
+    return { isValid: timingSafeEqualStrings(hash.toLowerCase(), signature) };
   }
 
   static getInstance(): NOWPaymentsCaller {

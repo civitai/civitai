@@ -7,6 +7,7 @@ import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
+import { StorylineEditorHeader } from '~/components/Storyline/editor/StorylineEditorHeader';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -36,6 +37,7 @@ export function PostEdit() {
             className="flex min-w-0 flex-1 flex-col gap-3"
             style={showPreview ? { maxWidth: 700 } : undefined}
           >
+            <StorylineEditorHeader post={post} />
             <PostEditForm />
             {!isReordering ? (
               <>

@@ -4,6 +4,10 @@ import {
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
+import {
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
+  RESTRICTED_ACCOUNT_MESSAGE,
+} from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
 import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
@@ -350,7 +354,7 @@ const isMuted = middleware(async ({ ctx, next }) => {
       : false;
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You cannot perform this action because your account has been restricted',
+      message: RESTRICTED_ACCOUNT_MESSAGE,
       ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
     });
   }
@@ -369,7 +373,7 @@ const isEmailVerified = middleware(({ ctx, next }) => {
       // No `cause` flag: `errorFormatter` forwards only `softBlock` and `tosReacceptRequired` onto
       // `shape.data`, so anything else set here reaches no client. The banner is the way out, and it
       // reads the session rather than the error.
-      message: 'Verify your email address to do this',
+      message: EMAIL_VERIFICATION_REQUIRED_MESSAGE,
     });
 
   return next({

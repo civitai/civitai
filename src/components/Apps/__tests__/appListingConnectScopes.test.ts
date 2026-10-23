@@ -6,8 +6,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * `ListingDetail.connectScopes` — the PUBLIC disclosure of the OAuth permissions an
  * off-site connect listing will request (clawgate #555).
  *
- * NODE tier on purpose. The browser tier is report-only in CI and therefore cannot
- * gate a merge, and what is being pinned here is a PUBLIC DTO's contents — the one
+ * NODE tier on purpose: what is being pinned here is a PUBLIC DTO's contents — the one
  * thing that must not regress silently, since it crosses the unauthenticated
  * `GET /api/v1/apps/{slug}` boundary.
  *

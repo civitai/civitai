@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as MiddlewareTrpc from '~/server/middleware.trpc';
+import { STORYLINE_SUBMIT_RATE_LIMIT } from '~/shared/utils/storyline-placement';
 
 /**
  * 🔴 The submit rate limit is the only spam control a zero-priced storyline
@@ -30,9 +31,7 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
   };
 });
 
-const { placementRouter, STORYLINE_SUBMIT_RATE_LIMIT } = await import(
-  '~/server/routers/placement.router'
-);
+const { placementRouter } = await import('~/server/routers/placement.router');
 
 type ProcedureDef = { _def: { middlewares: unknown[] } };
 const procedure = (name: string) =>
@@ -41,8 +40,13 @@ const procedure = (name: string) =>
 
 describe('submitStorylineContinuation is rate-limited', () => {
   it('is built with the storyline submit limit', () => {
-    expect(STORYLINE_SUBMIT_RATE_LIMIT).toEqual({ limit: 30, period: 3600 });
-    expect(rateLimitCalls).toContainEqual([expect.objectContaining({ limit: 30, period: 3600 })]);
+    expect(STORYLINE_SUBMIT_RATE_LIMIT).toMatchObject({ limit: 30, period: 3600 });
+    // On the quota `post.update` shares for the continuations a publish submits.
+    expect(rateLimitCalls).toContainEqual([
+      expect.objectContaining({ limit: 30, period: 3600 }),
+      undefined,
+      { sharedKey: 'storyline:submitContinuation' },
+    ]);
   });
 
   it('carries that limiter in its own middleware chain', () => {

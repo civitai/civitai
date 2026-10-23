@@ -75,29 +75,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const rawPayload = buf.toString('utf8');
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('tipalti', rawPayload).catch(() => {});
+    trackWebhookEvent('tipalti', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
         return res.status(400).send({
           error: 'Invalid Request. Signature or Secret not found',
-          sig,
         });
       }
 
       const client = await tipaltiCaller();
-      const { isValid, ...data } = client.validateWebhookEvent(sig as string, rawPayload);
-      const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
-        sig as string,
-        req.body as string
-      );
+      const { isValid } = client.validateWebhookEvent(sig as string, rawPayload);
+      const { isValid: isValid2 } = client.validateWebhookEvent(sig as string, req.body as string);
       if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
           error: 'Invalid Request. Could not validate Webhook signature',
-          data,
-          data2,
         });
       }
 
@@ -156,7 +150,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send('Webhook Error');
     }
 
     return res.status(200).json({ received: true });

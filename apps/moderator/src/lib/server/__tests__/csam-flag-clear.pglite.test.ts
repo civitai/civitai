@@ -60,6 +60,12 @@ const USERS: Record<string, { id: number; bannedAt?: boolean; meta?: string }> =
   otherBanNotedExternally: { id: 126, bannedAt: true, meta: ban('Other', undefined, 'zzfixture') },
   otherBanPlain: { id: 124, bannedAt: true, meta: ban('Other', 'spam') },
   harassmentBan: { id: 125, bannedAt: true, meta: ban('Harassment') },
+  chargebackBan: {
+    id: 127,
+    bannedAt: true,
+    meta: ban('Chargeback', 'Lost payment dispute', 'A payment on this account was reversed.'),
+  },
+  chargebackBanNoNotes: { id: 128, bannedAt: true, meta: ban('Chargeback') },
   held: { id: 130 },
   heldReleased: { id: 131 },
   heldExpired: { id: 132 },
@@ -236,6 +242,14 @@ describe('the ban-notes pattern', () => {
     expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
     expect(await flagged(id)).toHaveLength(3);
   });
+
+  it.each(['chargebackBan', 'chargebackBanNoNotes'])(
+    'handles an account banned for a lost payment dispute (%s)',
+    async (key) => {
+      delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
+      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
+    }
+  );
 
   it('is read from the deployment', async () => {
     const id = USERS.notedByPattern.id;
