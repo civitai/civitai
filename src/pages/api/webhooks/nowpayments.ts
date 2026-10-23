@@ -111,8 +111,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         verified.actually_paid_at_fiat = event.actually_paid_at_fiat;
       }
 
-      // NOWPayments' record can trail its own IPN. A 400 has it redeliver once the record catches
-      // up, where a 200 would leave the deposit to the reconcile job.
+      // NOWPayments' record can trail its own IPN. A 400 asks for redelivery once the record
+      // catches up; a 200 would leave the deposit to the reconcile job alone.
       const status = payment.payment_status;
       if (isDepositComplete(status) && !((verified.outcome_amount ?? 0) > 0)) {
         throw new Error(`Payment ${event.payment_id} is complete on NOWPayments without an amount`);

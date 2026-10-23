@@ -168,13 +168,28 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
   });
 
   it.each([
-    ['NOWPayments does not report it as paid yet', { payment_status: 'confirming' }],
-    ['NOWPayments reports it as paid without an amount', { outcome_amount: null }],
-    ['NOWPayments returns a different payment', { payment_id: 54321 }],
-  ])('asks for redelivery, and credits nothing, when %s', async (_case, over) => {
-    caller.getPaymentStatus.mockResolvedValue(apiPayment(over));
+    ['NOWPayments does not report it as paid yet', {}, { payment_status: 'confirming' }],
+    [
+      'NOWPayments does not report a partial payment as paid yet',
+      { payment_status: 'partially_paid' },
+      { payment_status: 'confirming' },
+    ],
+    ['NOWPayments reports it as paid without an amount', {}, { outcome_amount: null }],
+    [
+      'NOWPayments reports a partial payment without an amount',
+      { payment_status: 'partially_paid' },
+      { payment_status: 'partially_paid', outcome_amount: null },
+    ],
+    [
+      'a confirming request meets a paid payment without an amount',
+      { payment_status: 'confirming' },
+      { outcome_amount: null },
+    ],
+    ['NOWPayments returns a different payment', {}, { payment_id: 54321 }],
+  ])('asks for redelivery, and credits nothing, when %s', async (_case, ipnOver, apiOver) => {
+    caller.getPaymentStatus.mockResolvedValue(apiPayment(apiOver));
 
-    const res = await deliver(ipn());
+    const res = await deliver(ipn(ipnOver));
 
     expect(res._status()).toBe(400);
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
