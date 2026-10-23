@@ -7,7 +7,10 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NAV_KEYS } from '~/shared/constants/nav.constants';
-import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_BADGE_ITEM_IDS,
+  USER_MENU_ITEM_IDS,
+} from '~/shared/constants/user-menu.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -328,10 +331,19 @@ export const navigationSettingsSchema = z
  * the defaults.
  */
 export const userMenuSettingsSchema = z.object({
+  // Absent until the viewer edits their pins, so a viewer who only muted a count keeps following
+  // the default pins.
   pinned: z
     .array(z.enum(USER_MENU_ITEM_IDS))
     .max(USER_MENU_ITEM_IDS.length)
-    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice'),
+    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice')
+    .optional(),
+  // Absent for everyone who never muted a count: every count counts.
+  mutedBadges: z
+    .array(z.enum(USER_MENU_BADGE_ITEM_IDS))
+    .max(USER_MENU_BADGE_ITEM_IDS.length)
+    .refine((ids) => new Set(ids).size === ids.length, 'A count cannot be muted twice')
+    .optional(),
 });
 
 export const userSettingsSchema = z.object({
@@ -466,7 +478,7 @@ export const setUserSettingsInput = z.object({
   // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
   // outright. The modal must send every zone, not a delta.
   navigation: navigationSettingsSchema.optional(),
-  // Whole-object writes, like `navigation`: the menu always sends the full pin order.
+  // Whole-object writes, like `navigation`: the menu always sends the full pin order and muted counts.
   userMenu: userMenuSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),

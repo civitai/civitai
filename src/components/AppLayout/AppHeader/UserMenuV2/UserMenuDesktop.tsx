@@ -21,8 +21,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  BadgeMuteCtx,
+  canMuteBadge,
+  isMuteKey,
   isPinKey,
   MenuItemLabel,
+  MuteGlyph,
   PinGlyph,
   PROFILE_PIN,
   pinMoveDirection,
@@ -77,27 +81,30 @@ function DesktopBody({ pins }: { pins: Pins }) {
   const { signedIn, events, pinned, nodes } = useResolvedUserMenu({
     opened: true,
     pins: pins.pins,
+    muted: pins.mutedBadges,
   });
-  const { toggle, announce, region } = usePinActions(pins);
+  const { toggle, toggleMute, announce, region } = usePinActions(pins);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
-      {region}
-      {currentUser && (
-        <DesktopHeaderRows
-          pinned={pins.pins.includes(PROFILE_PIN.id)}
-          onTogglePin={signedIn ? () => toggle(PROFILE_PIN) : undefined}
-        />
-      )}
-      {events.map((item, i) => (
-        <DesktopItem key={`event-${i}`} item={item} />
-      ))}
-      {currentUser && (
-        <PinnedList pinned={pinned} pins={pins} onToggle={toggle} announce={announce} />
-      )}
-      <Menu.Divider />
-      <DesktopNodes nodes={nodes} pins={pins} onToggle={signedIn ? toggle : undefined} />
-    </div>
+    <BadgeMuteCtx.Provider value={signedIn ? toggleMute : undefined}>
+      <div className="min-h-0 flex-1 overflow-y-auto p-1 scrollbar-thin">
+        {region}
+        {currentUser && (
+          <DesktopHeaderRows
+            pinned={pins.pins.includes(PROFILE_PIN.id)}
+            onTogglePin={signedIn ? () => toggle(PROFILE_PIN) : undefined}
+          />
+        )}
+        {events.map((item, i) => (
+          <DesktopItem key={`event-${i}`} item={item} />
+        ))}
+        {currentUser && (
+          <PinnedList pinned={pinned} pins={pins} onToggle={toggle} announce={announce} />
+        )}
+        <Menu.Divider />
+        <DesktopNodes nodes={nodes} pins={pins} onToggle={signedIn ? toggle : undefined} />
+      </div>
+    </BadgeMuteCtx.Provider>
   );
 }
 
@@ -376,35 +383,60 @@ export function DesktopItem({
   const { handleClose } = useContext(UserMenuCtx);
   const flyout = useContext(FlyoutCtx);
   const trackOpen = useTrackMenuOpen('desktop');
+  const toggleMute = useContext(BadgeMuteCtx);
   const id = item.id;
   const canPin = !!onToggle && !!id && isPinnable(id);
+  const canMute = canMuteBadge(item, toggleMute);
   const toggle = () => canPin && onToggle({ ...item, id });
+  const mute = () => canMute && id && toggleMute?.({ ...item, id });
 
   const common = {
     ref: rowRef,
     ...rowProps,
     className: 'group',
     leftSection: <item.icon size={18} stroke={1.5} color={item.color} />,
-    rightSection: canPin ? (
-      <span
-        // Not its own tab stop: the row is the menu item, and `P` pins it from the keyboard.
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          toggle();
-        }}
-        className="flex cursor-pointer items-center p-0.5"
-        title={pinned ? 'Unpin' : 'Pin'}
-      >
-        <PinGlyph pinned={pinned} />
-      </span>
-    ) : undefined,
-    'aria-keyshortcuts': canPin ? 'P' : undefined,
+    rightSection:
+      canPin || canMute ? (
+        <span className="flex items-center">
+          {canMute && (
+            <span
+              // Not its own tab stop either: `M` mutes the count from the keyboard.
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                mute();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={item.badgeMuted ? 'Unmute count' : 'Mute count'}
+            >
+              <MuteGlyph muted={!!item.badgeMuted} />
+            </span>
+          )}
+          {canPin && (
+            <span
+              // Not its own tab stop: the row is the menu item, and `P` pins it from the keyboard.
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggle();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title={pinned ? 'Unpin' : 'Pin'}
+            >
+              <PinGlyph pinned={pinned} />
+            </span>
+          )}
+        </span>
+      ) : undefined,
+    'aria-keyshortcuts': [canPin && 'P', canMute && 'M'].filter(Boolean).join(' ') || undefined,
     onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
       rowProps?.onKeyDown?.(event);
       if (canPin && isPinKey(event)) {
         event.preventDefault();
         toggle();
+      } else if (canMute && isMuteKey(event)) {
+        event.preventDefault();
+        mute();
       } else if (flyout && event.key === 'ArrowLeft') {
         event.preventDefault();
         event.stopPropagation();
