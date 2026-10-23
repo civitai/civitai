@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PendingStorylineDraft } from '~/components/Storyline/editor/useStorylineDraftPublish';
 import { useStorylineDraftPublish } from '~/components/Storyline/editor/useStorylineDraftPublish';
+import type * as NotificationsMod from '~/utils/notifications';
 import type * as TrpcMod from '~/utils/trpc';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
@@ -47,7 +48,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ),
   };
 });
-vi.mock('~/utils/notifications', () => ({ showWarningNotification: mocks.warn }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showWarningNotification: mocks.warn,
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
