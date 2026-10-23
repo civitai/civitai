@@ -184,3 +184,26 @@ describe('isClickupTaskUrl', () => {
     expect(isClickupTaskUrl('https://app.clickup.com/t/8459928')).toBe(true);
   });
 });
+
+describe('isClickupTaskUrl, HQ links', () => {
+  it.each([
+    ['the task URL', 'https://hq.civitai.com/t/868kfwm3j'],
+    ['a query string and trailing slash', 'https://hq.civitai.com/t/868kfwm3j/?tab=comments'],
+    ['a mixed-case host', 'https://HQ.Civitai.com/t/868kfwm3j'],
+  ])('accepts %s, and the matcher reads the same id back', (_label, input) => {
+    expect(isClickupTaskUrl(input)).toBe(true);
+    expect(clickupTaskIdFromUrl(input)).toBe('868kfwm3j');
+  });
+
+  it.each([
+    ['a task sub-path, whose last segment is not the task', 'https://hq.civitai.com/t/868kfwm3j/x'],
+    ['an HQ page that is not a task', 'https://hq.civitai.com/868kfwm3j'],
+    ['a team-style ClickUp path on the HQ host', 'https://hq.civitai.com/t/8459928/868kfwm3j'],
+    ['a hyphenated id', 'https://hq.civitai.com/t/DEV-1234'],
+    ['another civitai host', 'https://civitai.com/t/868kfwm3j'],
+    ['a host merely ending in the HQ one', 'https://hq.civitai.com.attacker.test/t/868kfwm3j'],
+    ['a non-http scheme on the HQ host', 'ftp://hq.civitai.com/t/868kfwm3j'],
+  ])('refuses %s', (_label, input) => {
+    expect(isClickupTaskUrl(input)).toBe(false);
+  });
+});

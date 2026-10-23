@@ -24,9 +24,11 @@ export const clickupTaskIdFromUrl = (url?: string | null): string | null => {
 
 /** Hosts a ClickUp task link is actually served from. */
 const CLICKUP_HOSTS = new Set(['app.clickup.com', 'clickup.com', 'www.clickup.com']);
+/** HQ replaced ClickUp and kept its task ids, so `https://hq.civitai.com/t/<id>` matches the same way. */
+const HQ_HOST = 'hq.civitai.com';
 
 /**
- * Whether a string is a ClickUp task URL that may be STORED as a new link.
+ * Whether a string is a ClickUp or HQ task URL that may be STORED as a new link.
  *
  * 🔴 DELIBERATELY STRICTER THAN THE MATCHER ABOVE, AND THE ASYMMETRY IS THE DESIGN.
  * `clickupTaskIdFromUrl` READS values that already exist — including rows written years ago by
@@ -40,10 +42,9 @@ const CLICKUP_HOSTS = new Set(['app.clickup.com', 'clickup.com', 'www.clickup.co
  * one it is modelled on — and this is the first path that can write this column from the
  * moderator queue.
  *
- * ⚠️ WHAT THIS CANNOT CHECK, stated so the caller does not over-claim on it: the completion
- * webhook is subscribed to ONE ClickUp list, so a well-formed task URL from any other list stores
- * fine and still never auto-closes. That is a scope fact the app cannot verify without a ClickUp
- * API token, which it does not have. Say it in the copy; do not imply this function covers it.
+ * ⚠️ WHAT THIS CANNOT CHECK, stated so the caller does not over-claim on it: a private HQ task
+ * does not announce its completion, so its link stores fine and never auto-closes. Say it in the
+ * copy; do not imply this function covers it.
  */
 export const isClickupTaskUrl = (url?: string | null): boolean => {
   if (!url) return false;
@@ -54,7 +55,13 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
     return false;
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
-  if (!CLICKUP_HOSTS.has(parsed.hostname.toLowerCase())) return false;
+  const host = parsed.hostname.toLowerCase();
+  if (host === HQ_HOST) {
+    // HQ serves a task at `/t/<id>` only, so there is no team segment or sub-tab to disambiguate.
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    return segments.length === 2 && segments[0] === 't' && /^[a-z0-9]+$/i.test(segments[1]);
+  }
+  if (!CLICKUP_HOSTS.has(host)) return false;
 
   /**
    * 🔴 POSITIONAL, NOT "CONTAINS A `t` SOMEWHERE". An `includes('t')` test plus "the last segment
