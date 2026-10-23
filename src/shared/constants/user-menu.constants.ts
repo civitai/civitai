@@ -20,6 +20,8 @@ export const USER_MENU_ITEM_IDS = [
   'bookmarked-articles',
   'bounties',
   'challenges',
+  'browse-challenges',
+  'crucibles',
   'buzz-dashboard',
   'creator-studio',
   'creator-journey',

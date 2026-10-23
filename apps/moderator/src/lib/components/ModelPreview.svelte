@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { getBrowsingLevelLabel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { IconDownload } from '@tabler/icons-svelte';
@@ -13,9 +14,10 @@
 
   /**
    * What the model page shows a visitor first — its showcase images and description — with the files
-   * it ships, the uploader and the model's report history, so most reports can be judged without
-   * leaving the queue. Where the model stands now is beside the actions, not here.
-   * The "View model" link above stays for everything this leaves out.
+   * it ships, the uploader and the model's report history, so a model can be judged without leaving
+   * the queue. The middle column of the model report queue and of every Model Flags tab; where the
+   * model stands now is beside the actions, not here. The page's link to the model stays for
+   * everything this leaves out.
    */
   let {
     modelId,
@@ -24,6 +26,7 @@
     canViewTrainingData,
   }: {
     modelId: number;
+    /** The report being read, left out of "other reports on this model"; null outside a report queue. */
     reportId: number | null;
     civitaiUrl: string;
     /** Holds a training page grant — the same test `/api/training-data` applies to the viewer's fetch. */
@@ -35,7 +38,7 @@
   // previous report's preview stayed stuck above every later one (see that file).
   const preview = $derived(
     browser
-      ? fetch(`/api/model-preview/${modelId}?report=${reportId}`).then(
+      ? fetch(`/api/model-preview/${modelId}${reportId != null ? `?report=${reportId}` : ''}`).then(
           (r): Promise<ModelPreview> => {
             if (!r.ok) throw new Error(String(r.status));
             return r.json();
@@ -102,9 +105,10 @@
       </div>
 
       {#if p.images.length}
-        <div class="grid grid-cols-3 gap-1.5 2xl:grid-cols-4">
+        <!-- One row that scrolls sideways, so the versions and description stay in view. -->
+        <div class="flex gap-1.5 overflow-x-auto pb-1">
           {#each p.images as image, i (image.id)}
-            <div class="relative aspect-square overflow-hidden rounded-md border bg-muted/40">
+            <div class="relative size-40 shrink-0 overflow-hidden rounded-md border bg-muted/40">
               <!-- `anim={false}`: a still frame. On a video `EdgeVideo` then never plays by itself —
                    poster and play icon, nothing fetched until hovered, no loop — and leaves the click to
                    this button. Its default autoplays what is in view and loops it, and a grid of those
@@ -124,6 +128,18 @@
                   class="h-full w-full object-cover"
                 />
               </button>
+              <span
+                class="pointer-events-none absolute top-1 left-1 flex flex-wrap gap-1 text-[10px] font-semibold text-white"
+              >
+                <span class="rounded bg-black/60 px-1.5 py-px">{getBrowsingLevelLabel(image.nsfwLevel)}</span>
+                {#if image.minor}
+                  <span class="rounded bg-destructive px-1.5 py-px">minor</span>
+                {:else if image.acceptableMinor}
+                  <span class="rounded bg-secondary px-1.5 py-px text-secondary-foreground">
+                    acceptable minor
+                  </span>
+                {/if}
+              </span>
               {#if image.blocked}
                 <span class="absolute inset-x-0 bottom-0 bg-black/70 px-1 text-center text-[10px]">
                   Removed
@@ -222,10 +238,10 @@
 
       <p class="text-xs text-muted-foreground">
         {#if p.otherReports.total}
-          {p.otherReports.total} other report{p.otherReports.total === 1 ? '' : 's'} on this model{#if Object.keys(p.otherReports.byStatus).length}:
+          {p.otherReports.total}{reportId != null ? ' other' : ''} report{p.otherReports.total === 1 ? '' : 's'} on this model{#if Object.keys(p.otherReports.byStatus).length}:
             {reportSummary(p.otherReports.byStatus)}{/if}.
         {:else}
-          No other reports on this model.
+          No {reportId != null ? 'other ' : ''}reports on this model.
         {/if}
       </p>
     </div>

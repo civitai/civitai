@@ -1261,6 +1261,11 @@ export type MinorHashMatchDetail = {
   minorModelCoverUrl: string | null;
   minorModelCoverType: string | null;
   minorModelStatus: string | null;
+  /** `TakenDown` sits on top of `status`, so a taken-down seed can still read Published. */
+  minorModelMode: string | null;
+  /** From the seed's `meta`, as the model page writes them on a moderator's unpublish. */
+  minorModelUnpublishedAt: string | null;
+  minorModelUnpublishedReason: string | null;
   minorModelDeletedAt: Date | null;
   minorUsername: string | null;
   minorFlaggedAt: Date | null;
@@ -1302,6 +1307,9 @@ export async function getMinorHashMatchDetail({
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
       mm.status::text AS "minorModelStatus",
+      mm.mode::text AS "minorModelMode",
+      mm.meta->>'unpublishedAt' AS "minorModelUnpublishedAt",
+      mm.meta->>'unpublishedReason' AS "minorModelUnpublishedReason",
       mm."deletedAt" AS "minorModelDeletedAt",
       mu.username AS "minorUsername",
       ma."createdAt" AS "minorFlaggedAt",
@@ -1492,12 +1500,6 @@ export async function getModelFlagDetail({
              CASE WHEN f.name IS NOT NULL THEN jsonb_build_object(
                'name', f.name, 'sizeKB', f."sizeKB", 'scansOk', f."scansOk", 'otherFiles', f."otherFiles"
              ) END AS "mainFile",
-             -- The same set the cover images come from: images on the owner's posts of the model.
-             (SELECT count(*)::int
-              FROM "ModelVersion" pv
-              JOIN "Post" p ON p."modelVersionId" = pv.id AND p."userId" = m."userId"
-              JOIN "Image" i ON i."postId" = p.id AND i.type::text = 'image'
-              WHERE pv."modelId" = m.id) AS "previewCount",
              (SELECT count(*)::int
               FROM "ModelReport" mr
               JOIN "Report" r ON r.id = mr."reportId"

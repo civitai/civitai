@@ -76,7 +76,7 @@ What `/reports/user` and `/reports/model` now share:
 | **Layout load** | The queue's rows, status counts and permissions. Reads the URL one parameter at a time, never the path, so moving between items doesn't rerun it. A test checks this. |
 | **Page load** | Only the open item's own data. The bare path opens the queue's first item. |
 | **URL** | Path: which item and which tab. Query string: only what was changed from the defaults — filters, the queue page, the item's own filters. Defaults are never written in. An empty `?status=` means every status. `?report=<id>` opens one report with the filters off. |
-| **Screen** | Queue column (`ReportFilters`, striped list, Prev/Next), then the item across the rest. Every scrolling column is `relative`. |
+| **Screen** | Page header with the queue's title, then the queue column (`ReportFilters`, listbox, a range footer with Prev/Next) flush against the item: header and evidence in the middle, actions in a right sidebar. Every scrolling column is `relative`. |
 | **Actions** | Exported by both pages, the bare one and `[id]`. |
 
 What the parent session settled since this was first written (committed in 45a3e3ca87):

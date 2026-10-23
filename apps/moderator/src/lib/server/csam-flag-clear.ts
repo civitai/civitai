@@ -120,8 +120,15 @@ export async function holdMarkerState(db: Kysely<DB>): Promise<HoldMarkerState> 
   return row?.view === false && row?.table === false ? 'none' : 'drift';
 }
 
-function anyHold(userId: RawBuilder<number>, marker: HoldMarkerState) {
-  return sql<boolean>`(${sql.join(Object.values(flagClearHoldLegs(userId, marker)), sql` OR `)})`;
+function anyHold(
+  userId: RawBuilder<number>,
+  marker: HoldMarkerState,
+  overriding: readonly FlagClearHoldLeg[] = []
+) {
+  const legs = Object.entries(flagClearHoldLegs(userId, marker))
+    .filter(([name]) => !overriding.includes(name as FlagClearHoldLeg))
+    .map(([, leg]) => leg);
+  return sql<boolean>`(${sql.join(legs, sql` OR `)})`;
 }
 
 /** Which of `userIds` are held, and by what. Absent from the map = not held. */
@@ -149,12 +156,13 @@ export async function getFlagClearHolds(
 }
 
 /** Clears the review flag from every one of `userId`'s removed images whose flag `dismissReviewFlag`
- *  would clear, unless the user is held. The hold is repeated in the UPDATE so the check and the
- *  write are one statement. Returns the cleared image ids. */
+ *  would clear, unless the user is held by a leg other than `overriding`. The hold is repeated in the
+ *  UPDATE so the check and the write are one statement. Returns the cleared image ids. */
 export async function clearRemovedFlagsUnlessHeld(
   db: Kysely<DB>,
   userId: number,
-  marker: HoldMarkerState
+  marker: HoldMarkerState,
+  overriding: readonly FlagClearHoldLeg[] = []
 ): Promise<number[]> {
   const rows = await db
     .updateTable('Image')
@@ -162,7 +170,7 @@ export async function clearRemovedFlagsUnlessHeld(
     .where('userId', '=', userId)
     .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
-    .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, marker)}`)
+    .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, marker, overriding)}`)
     .returning('id')
     .execute();
   return rows.map((r) => r.id);
@@ -173,6 +181,16 @@ export type ClearUserFlagsResult =
   | { ok: false; reason: 'held' | 'changed' };
 
 class QueueChanged extends Error {}
+
+async function flaggedCount(db: Kysely<DB>, userId: number): Promise<number> {
+  const row = await db
+    .selectFrom('Image')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('userId', '=', userId)
+    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .executeTakeFirstOrThrow();
+  return Number(row.count);
+}
 
 /**
  * `dismissReviewFlag` for all of one user's removed, flagged images, in one transaction: the same
@@ -204,16 +222,98 @@ export async function clearUserCsamFlags({
         entityIds: cleared,
         activity: 'dismissReviewFlag',
       });
-      const remaining = await trx
-        .selectFrom('Image')
-        .select((eb) => eb.fn.countAll<number>().as('count'))
-        .where('userId', '=', userId)
-        .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
-        .executeTakeFirstOrThrow();
-      return { ok: true, cleared: cleared.length, remaining: Number(remaining.count) } as const;
+      const remaining = await flaggedCount(trx, userId);
+      return { ok: true, cleared: cleared.length, remaining } as const;
     });
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
+    throw e;
+  }
+}
+
+/** The only leg an admin release may override. A report or an evidence hold is Legal's, never ours. */
+export const RELEASABLE_LEGS: readonly FlagClearHoldLeg[] = ['ban'];
+
+export const RELEASE_TABLE = 'CsamFlagRelease';
+
+/** The shape of an approval reference: `YYYY-MM-DD-HHMMSS-` and eight hex digits. */
+export const APPROVAL_REF_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{8}$/;
+
+export type ReleaseHeldFlagsResult =
+  | { ok: true; dryRun: boolean; count: number; remaining: number; legs: FlagClearHoldLeg[] }
+  | {
+      ok: false;
+      reason: 'not-held' | 'held' | 'changed' | 'unavailable';
+      legs: FlagClearHoldLeg[];
+    };
+
+class DryRun extends Error {
+  constructor(readonly count: number, readonly remaining: number) {
+    super('dry run');
+  }
+}
+
+/**
+ * `clearUserCsamFlags` for a user held ONLY by `RELEASABLE_LEGS`, under an approval. Every other leg
+ * still refuses, in the pre-check and again in the UPDATE. Writes one `CsamFlagRelease` row and a
+ * `releaseHeldReviewFlag` ModActivity row per image, in the same transaction. A dry run makes the same
+ * update and rolls it back, so its count is exactly what the release would clear.
+ */
+export async function releaseHeldUserCsamFlags(
+  input: {
+    userId: number;
+    approvalRef: string;
+    reason: string;
+    moderatorId: number;
+  } & ({ dryRun: true } | { dryRun?: false; expectedCount: number })
+): Promise<ReleaseHeldFlagsResult> {
+  const { userId, approvalRef, moderatorId } = input;
+  const reason = input.reason.trim();
+  if (!APPROVAL_REF_PATTERN.test(approvalRef)) throw new Error('Not an approval reference.');
+  if (!reason) throw new Error('A release needs a reason.');
+  let legs: FlagClearHoldLeg[] = [];
+  try {
+    return await dbWrite.transaction().execute(async (trx) => {
+      const { rows } = await sql<{ present: unknown }>`
+        SELECT to_regclass(${`"${RELEASE_TABLE}"`}) IS NOT NULL AS present`.execute(trx);
+      if (rows[0]?.present !== true) return { ok: false, reason: 'unavailable', legs } as const;
+
+      const marker = await holdMarkerState(trx);
+      legs = (await getFlagClearHolds([userId], trx)).get(userId) ?? [];
+      if (!legs.length) return { ok: false, reason: 'not-held', legs } as const;
+      if (legs.some((leg) => !RELEASABLE_LEGS.includes(leg))) {
+        console.warn('[csam-flag-clear] release refused', { userId, moderatorId, legs });
+        return { ok: false, reason: 'held', legs } as const;
+      }
+
+      const released = await clearRemovedFlagsUnlessHeld(trx, userId, marker, RELEASABLE_LEGS);
+      const remaining = await flaggedCount(trx, userId);
+      if (input.dryRun) throw new DryRun(released.length, remaining);
+      if (released.length !== input.expectedCount) throw new QueueChanged();
+
+      await trx
+        .insertInto('CsamFlagRelease')
+        .values({
+          userId,
+          moderatorId,
+          approvalRef,
+          reason,
+          overriddenLegs: JSON.stringify(legs),
+          imageCount: released.length,
+        })
+        .execute();
+      await insertModActivityBatch(trx, {
+        userId: moderatorId,
+        entityType: 'image',
+        entityIds: released,
+        activity: 'releaseHeldReviewFlag',
+      });
+      return { ok: true, dryRun: false, count: released.length, remaining, legs } as const;
+    });
+  } catch (e) {
+    if (e instanceof DryRun)
+      return { ok: true, dryRun: true, count: e.count, remaining: e.remaining, legs };
+    if (e instanceof QueueChanged) return { ok: false, reason: 'changed', legs };
     throw e;
   }
 }

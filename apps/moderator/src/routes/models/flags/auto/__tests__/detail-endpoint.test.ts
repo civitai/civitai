@@ -19,10 +19,10 @@ beforeEach(() => getModelFlagDetail.mockReset());
 
 describe('GET /models/flags/auto/detail/[modelId]', () => {
   it('returns the detail for the model, with the asked-for prompt ids', async () => {
-    getModelFlagDetail.mockResolvedValue({ previewCount: 3 });
+    getModelFlagDetail.mockResolvedValue({ openReports: 3 });
     const res = await get('42', '?prompts=7,x,8,7,-1');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ previewCount: 3 });
+    expect(await res.json()).toEqual({ openReports: 3 });
     expect(getModelFlagDetail).toHaveBeenCalledWith({ modelId: 42, promptIds: [7, 8] });
   });
 

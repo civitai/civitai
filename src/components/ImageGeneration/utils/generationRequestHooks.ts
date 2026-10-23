@@ -45,7 +45,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
-import { scheduleUnratedRefetch } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
+import { watchUnratedOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows2>
@@ -148,10 +148,10 @@ export function useGetTextToImageRequests(
     [data, nsfwEnabled, domain, markerTags]
   );
 
-  // Unconditional: the scheduler reads the raw cache, which includes outputs `flatData` hides
+  // Unconditional: the watcher reads the raw cache, which includes outputs `flatData` hides
   // (a 3D workflow's suppressed preview render, whose rating its mesh inherits).
   useEffect(() => {
-    scheduleUnratedRefetch();
+    watchUnratedOutputs();
   }, [flatData]);
 
   return { data: flatData, markerTags, ...rest };
