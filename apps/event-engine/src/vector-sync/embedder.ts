@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import pLimit from 'p-limit';
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
@@ -114,7 +114,25 @@ export type EmbedResult = {
   /** Ids that failed on their own after bisection. */
   failed: number[];
   stamp: ModelStamp | null;
+  /**
+   * Set when a batch failed in a way that is not the inputs' fault (retries exhausted, auth, a
+   * model mismatch). The vectors of the batches that did succeed are still returned, so the
+   * caller can store what it paid for before surfacing the error.
+   */
+  error?: unknown;
 };
+
+export class MixedStampError extends Error {
+  constructor(a: ModelStamp, b: ModelStamp) {
+    super(
+      `one embed call returned two models: ${a.modelRevision}/${a.profile} and ${b.modelRevision}/${b.profile}`
+    );
+    this.name = 'MixedStampError';
+  }
+}
+
+/** A batch that keeps failing is split at most this many times (128 down to groups of 8). */
+const MAX_SPLIT_DEPTH = 4;
 
 export type EmbedderOptions = {
   endpoint: string;
@@ -126,6 +144,12 @@ export type EmbedderOptions = {
   sleep?: (ms: number) => Promise<void>;
   /** Wait passed to the orchestrator on submit and poll, seconds. */
   waitSeconds?: number;
+};
+
+type EmbedCall = {
+  result: EmbedResult;
+  /** Checked for every batch before its vectors are accepted; throwing rejects that batch. */
+  acceptStamp?: (stamp: ModelStamp) => Promise<void>;
 };
 
 export class Embedder {
@@ -140,10 +164,14 @@ export class Embedder {
   }
 
   static fromConfig(priority: 'low' | 'normal') {
-    const { orchestratorEndpoint, embedToken, embedMaxInFlight, embedMaxRetries } =
+    const { orchestratorEndpoint, embedToken, embedMaxInFlight, embedMaxRetries, imageLocation } =
       config.vectorSync;
     if (!orchestratorEndpoint || !embedToken) {
       throw new Error('ORCHESTRATOR_ENDPOINT and VECTOR_EMBED_TOKEN are required to embed');
+    }
+    // Without it every input is a relative URL and every batch fails.
+    if (!/^https?:\/\/[^/]/.test(imageLocation)) {
+      throw new Error('VECTOR_IMAGE_LOCATION must be an absolute http(s) URL to embed');
     }
     return new Embedder({
       endpoint: orchestratorEndpoint,
@@ -154,43 +182,77 @@ export class Embedder {
     });
   }
 
-  async embed(inputs: EmbedInput[]): Promise<EmbedResult> {
-    const result: EmbedResult = { vectors: new Map(), failed: [], stamp: null };
-    await Promise.all(
-      chunkInputs(inputs).map((batch) => this.limit(() => this.embedBisecting(batch, result)))
+  async embed(
+    inputs: EmbedInput[],
+    { acceptStamp }: { acceptStamp?: (stamp: ModelStamp) => Promise<void> } = {}
+  ): Promise<EmbedResult> {
+    const call: EmbedCall = {
+      result: { vectors: new Map(), failed: [], stamp: null },
+      acceptStamp,
+    };
+    // allSettled, not all: one failing batch must not discard the vectors others paid for.
+    await Promise.allSettled(
+      chunkInputs(inputs).map((batch) =>
+        this.limit(async () => {
+          // After one systemic failure, batches still queued are not submitted.
+          if (call.result.error) return;
+          try {
+            await this.embedBisecting(batch, call, 0);
+          } catch (err) {
+            call.result.error ??= err;
+          }
+        })
+      )
     );
-    return result;
+    return call.result;
   }
 
-  private async embedBisecting(batch: EmbedInput[], result: EmbedResult): Promise<void> {
+  private async embedBisecting(batch: EmbedInput[], call: EmbedCall, depth: number): Promise<void> {
+    let output: EmbedOutput;
     try {
-      const output = await this.runWithRetry(batch);
-      result.stamp ??= {
-        model: output.model,
-        modelRevision: output.modelRevision,
-        profile: output.profile,
-        videoProfile: output.videoProfile,
-        dimensions: output.dimensions,
-      };
-      for (const item of output.data) result.vectors.set(Number(item.id), item.embedding);
+      output = await this.runWithRetry(batch);
     } catch (err) {
       if (!(err instanceof BatchFailedError)) throw err;
-      if (batch.length === 1) {
-        logger.warn({ id: batch[0].id, err: err.message }, 'vector-sync: input failed to embed');
-        result.failed.push(Number(batch[0].id));
+      if (batch.length === 1 || depth >= MAX_SPLIT_DEPTH) {
+        logger.warn(
+          { ids: batch.map((b) => b.id), err: err.message },
+          'vector-sync: inputs failed to embed'
+        );
+        call.result.failed.push(...batch.map((b) => Number(b.id)));
         return;
       }
       const mid = Math.ceil(batch.length / 2);
       // Sequential: the halves already hold this slot of the in-flight limit.
-      await this.embedBisecting(batch.slice(0, mid), result);
-      await this.embedBisecting(batch.slice(mid), result);
+      await this.embedBisecting(batch.slice(0, mid), call, depth + 1);
+      await this.embedBisecting(batch.slice(mid), call, depth + 1);
+      return;
     }
+
+    const stamp: ModelStamp = {
+      model: output.model,
+      modelRevision: output.modelRevision,
+      profile: output.profile,
+      videoProfile: output.videoProfile,
+      dimensions: output.dimensions,
+    };
+    const first = call.result.stamp;
+    if (first && (first.modelRevision !== stamp.modelRevision || first.profile !== stamp.profile)) {
+      throw new MixedStampError(first, stamp);
+    }
+    await call.acceptStamp?.(stamp);
+    call.result.stamp ??= stamp;
+    for (const item of output.data) call.result.vectors.set(Number(item.id), item.embedding);
   }
 
   private async runWithRetry(batch: EmbedInput[]): Promise<EmbedOutput> {
-    // One key per batch, reused across its retries, so a submit that succeeded server-side but
-    // failed on our side returns the existing workflow instead of paying twice.
-    const externalId = `vs-${randomUUID()}`;
+    // Derived from the inputs and the day, so retries of this batch, and the same batch after a
+    // restart, return the existing workflow instead of paying twice. The day lets a batch that
+    // failed be tried again tomorrow.
+    const day = new Date().toISOString().slice(0, 10);
+    const externalId = `vs-${createHash('sha256')
+      .update(`${day}:${this.opts.priority}:${batch.map((b) => b.id).join(',')}`)
+      .digest('hex')
+      .slice(0, 48)}`;
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.run(batch, externalId);

@@ -131,8 +131,9 @@ export const config = {
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
     pgPoolMax: Math.max(1, parseInt(process.env.VECTOR_PG_POOL_MAX ?? '4', 10)),
-    // Off: the consumer only deletes and updates payloads, never embeds; backfill and
-    // reconcile refuse to write. Embedding is a paid call, so it is switched on per rollout.
+    // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
+    // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
+    // embedBlockedReason in vector-sync/sync.ts.
     embedEnabled: process.env.VECTOR_SYNC_EMBED_ENABLED === 'true',
     // Events for one image arriving within this window collapse into one re-read.
     debounceMs: parseInt(process.env.VECTOR_SYNC_DEBOUNCE_MS ?? '5000', 10),

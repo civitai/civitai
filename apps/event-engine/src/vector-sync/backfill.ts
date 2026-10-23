@@ -3,6 +3,7 @@
  *
  *   node dist/vector-sync/backfill.js run --watermark <id> [--limit N] [--dry-run] [--confirm]
  *        [--floor <id>] [--span 5000] [--pages 2] [--name images] [--cursor-file path]
+ *        [--without-image-cdc]
  *   node dist/vector-sync/backfill.js pause|resume|status|reset [--name images]
  *
  * Pages are id windows, not LIMIT queries, so a page's cost is bounded by its span however
@@ -18,7 +19,7 @@ import { fileRunState, redisRunState, type RunState } from './cursor';
 import { Embedder } from './embedder';
 import { VectorStore } from './qdrant';
 import { getImageRowsInRange } from './source';
-import { addStats, emptyStats, syncRows, type SyncDeps } from './sync';
+import { addStats, embedBlockedReason, emptyStats, syncRows, type SyncDeps } from './sync';
 
 export type BackfillOptions = {
   watermark: number;
@@ -70,6 +71,14 @@ export async function runBackfill(
   const inFlight = new Map<number, Promise<void>>();
   let failure: unknown = null;
 
+  const advance = async () => {
+    while (finished.has(committed)) {
+      finished.delete(committed);
+      committed = Math.max(opts.floor, committed - opts.span);
+      if (!deps.dryRun) await deps.state.setCursor(committed);
+    }
+  };
+
   const runPage = async (hi: number) => {
     const lo = Math.max(opts.floor, hi - opts.span);
     for (let attempt = 0; ; attempt++) {
@@ -117,17 +126,15 @@ export async function runBackfill(
     }
     await Promise.race(inFlight.values());
 
-    while (finished.has(committed)) {
-      finished.delete(committed);
-      committed = Math.max(opts.floor, committed - opts.span);
-      if (!deps.dryRun) await deps.state.setCursor(committed);
-    }
+    await advance();
     if (Date.now() - lastLog > (opts.logEveryMs ?? 30_000)) {
       log('vector-backfill: progress');
       lastLog = Date.now();
     }
   }
   await Promise.allSettled(inFlight.values());
+  // Pages above a failure that finished meanwhile still count.
+  await advance();
   if (failure) throw failure;
 
   total.cursor = committed;
@@ -162,7 +169,8 @@ async function main() {
   const state =
     typeof flags['cursor-file'] === 'string'
       ? fileRunState(flags['cursor-file'])
-      : await redisRunState(`backfill:${name}`);
+      : // Keyed by collection too: a new collection (a model change) starts from its own watermark.
+        await redisRunState(`backfill:${config.vectorSync.collection}:${name}`);
   try {
     if (command === 'pause' || command === 'resume') {
       await state.setPaused(command === 'pause');
@@ -186,10 +194,10 @@ async function main() {
     const watermark = int('watermark');
     if (watermark === undefined) throw new Error('--watermark <id> is required');
     const dryRun = flags['dry-run'] === true;
-    if (!dryRun && (flags.confirm !== true || !config.vectorSync.embedEnabled)) {
-      throw new Error(
-        'Writing needs --confirm and VECTOR_SYNC_EMBED_ENABLED=true (or pass --dry-run)'
-      );
+    if (!dryRun) {
+      if (flags.confirm !== true) throw new Error('Writing needs --confirm (or pass --dry-run)');
+      const blocked = embedBlockedReason({ withoutImageCdc: flags['without-image-cdc'] === true });
+      if (blocked) throw new Error(`Not embedding: ${blocked}`);
     }
 
     const pg = createGuardedPgPool(
@@ -215,8 +223,8 @@ async function main() {
         {
           watermark,
           floor: int('floor', 0)!,
-          span: int('span', 5000)!,
-          pages: int('pages', 2)!,
+          span: Math.max(1, int('span', 5000)!),
+          pages: Math.max(1, int('pages', 2)!),
           limit: int('limit'),
         },
         {

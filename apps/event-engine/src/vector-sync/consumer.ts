@@ -9,8 +9,8 @@ import { config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { Embedder } from './embedder';
-import { VectorStore } from './qdrant';
-import { syncImageIds, type SyncDeps } from './sync';
+import { ModelMismatchError, VectorStore } from './qdrant';
+import { embedBlockedReason, syncImageIds, type SyncDeps } from './sync';
 
 /** Image ids a CDC message touches. Deletes carry the key columns in `before`. */
 export function imageIdFromEvent(topic: string, value: unknown): number | null {
@@ -29,7 +29,7 @@ export function imageIdFromEvent(topic: string, value: unknown): number | null {
 export const VECTOR_SYNC_TOPICS = ['postgres.TagsOnImageNew', 'postgres.ImageResourceNew'];
 const IMAGE_TOPIC = 'postgres.Image';
 /** Above this many pending ids, consumption waits for a flush. */
-const MAX_PENDING = 20_000;
+const MAX_PENDING = 5_000;
 
 type Offset = { topic: string; partition: number; offset: string };
 
@@ -43,6 +43,7 @@ export class VectorSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
+  flushStartedAt: number | null = null;
 
   constructor(
     private readonly deps: SyncDeps,
@@ -65,6 +66,7 @@ export class VectorSyncQueue {
   flush(): Promise<void> {
     this.flushing ??= this.doFlush().finally(() => {
       this.flushing = null;
+      this.flushStartedAt = null;
     });
     return this.flushing;
   }
@@ -74,6 +76,7 @@ export class VectorSyncQueue {
       this.lastFlushOk = Date.now();
       return;
     }
+    this.flushStartedAt = Date.now();
     const ids = [...this.pending];
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
@@ -89,6 +92,12 @@ export class VectorSyncQueue {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
       }
+      if (err instanceof ModelMismatchError && this.deps.embedder) {
+        // Retrying would pay for the same rejected vectors every tick. Stop embedding until a
+        // new collection is set up; deletes and payload updates carry on.
+        logger.error({ err }, 'vector-sync: embedder model changed; embedding stopped');
+        this.deps.embedder = null;
+      }
       throw err;
     }
     try {
@@ -101,6 +110,19 @@ export class VectorSyncQueue {
   }
 }
 
+/** The live-sync embedder, or null when embedding may not run (see embedBlockedReason). */
+export function consumerEmbedder(): Embedder | null {
+  const blocked = embedBlockedReason();
+  if (blocked) {
+    logger.warn(
+      { reason: blocked },
+      'vector-sync: not embedding; only deletes and payload updates run'
+    );
+    return null;
+  }
+  return Embedder.fromConfig('normal');
+}
+
 async function main() {
   const vs = config.vectorSync;
   const pg = createGuardedPgPool(
@@ -110,11 +132,7 @@ async function main() {
   );
   const store = VectorStore.fromConfig();
   await store.bootstrap();
-  const embedder = vs.embedEnabled ? Embedder.fromConfig('normal') : null;
-  if (!embedder)
-    logger.warn(
-      'vector-sync: VECTOR_SYNC_EMBED_ENABLED is off; only deletes and payload updates run'
-    );
+  const embedder = consumerEmbedder();
 
   const topics = [
     ...VECTOR_SYNC_TOPICS,
@@ -137,10 +155,14 @@ async function main() {
       .catch((err) => logger.error({ err }, 'vector-sync: flush failed; retrying next tick'));
   }, vs.debounceMs);
 
-  // Live while flushes keep succeeding; a flush stuck failing for 10 minutes restarts the pod.
+  // Unhealthy when flushes have kept failing for 10 minutes, not while one is slow: a flush
+  // killed mid-embed would redeliver and pay again.
   http
     .createServer((_req, res) => {
-      const healthy = Date.now() - queue.lastFlushOk < 10 * 60_000;
+      const now = Date.now();
+      const healthy =
+        now - queue.lastFlushOk < 10 * 60_000 ||
+        (queue.flushStartedAt !== null && now - queue.flushStartedAt < 2 * 60 * 60_000);
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ healthy, pending: queue.size }));
     })
@@ -153,28 +175,34 @@ async function main() {
     autoCommit: false,
     eachBatchAutoResolve: false,
     eachBatch: async ({ batch, resolveOffset, heartbeat, isRunning, isStale }) => {
-      for (const message of batch.messages) {
-        if (!isRunning() || isStale() || stopping) break;
-        let id: number | null = null;
-        try {
-          id = imageIdFromEvent(batch.topic, JSON.parse(message.value?.toString() ?? 'null'));
-        } catch (err) {
-          logger.error(
-            { err, topic: batch.topic, offset: message.offset },
-            'vector-sync: unparseable message; skipping'
-          );
+      // A flush under backpressure can outlast the session timeout.
+      const beat = setInterval(() => heartbeat().catch(() => undefined), 5000);
+      try {
+        for (const message of batch.messages) {
+          if (!isRunning() || isStale() || stopping) break;
+          let id: number | null = null;
+          try {
+            id = imageIdFromEvent(batch.topic, JSON.parse(message.value?.toString() ?? 'null'));
+          } catch (err) {
+            logger.error(
+              { err, topic: batch.topic, offset: message.offset },
+              'vector-sync: unparseable message; skipping'
+            );
+          }
+          queue.add(id, { topic: batch.topic, partition: batch.partition, offset: message.offset });
+          resolveOffset(message.offset);
+          while (queue.isFull) {
+            await queue.flush().catch(async (err) => {
+              logger.error({ err }, 'vector-sync: flush failed under backpressure');
+              await new Promise((r) => setTimeout(r, 5000));
+            });
+            await heartbeat();
+          }
         }
-        queue.add(id, { topic: batch.topic, partition: batch.partition, offset: message.offset });
-        resolveOffset(message.offset);
-        while (queue.isFull) {
-          await queue.flush().catch(async (err) => {
-            logger.error({ err }, 'vector-sync: flush failed under backpressure');
-            await new Promise((r) => setTimeout(r, 5000));
-          });
-          await heartbeat();
-        }
+        await heartbeat();
+      } finally {
+        clearInterval(beat);
       }
-      await heartbeat();
     },
   });
 

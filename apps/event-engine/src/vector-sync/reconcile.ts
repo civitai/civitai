@@ -12,7 +12,7 @@ import { logger } from '@/utils/logger';
 import { eligibleSql } from './eligibility';
 import { Embedder } from './embedder';
 import { VectorStore } from './qdrant';
-import { addStats, emptyStats, syncImageIds, type SyncDeps } from './sync';
+import { addStats, embedBlockedReason, emptyStats, syncImageIds, type SyncDeps } from './sync';
 
 export type BucketDiff = {
   lo: number;
@@ -111,7 +111,7 @@ async function main() {
         pg,
         store,
         // With embedding off, drift is still deleted and the missing ids are counted.
-        embedder: !dryRun && config.vectorSync.embedEnabled ? Embedder.fromConfig('low') : null,
+        embedder: !dryRun && !embedBlockedReason() ? Embedder.fromConfig('low') : null,
         dryRun,
       }
     );

@@ -34,11 +34,19 @@ export class ModelMismatchError extends Error {
   }
 }
 
+function stampConflicts(stored: Partial<ModelStamp>, got: ModelStamp) {
+  return !!(
+    (stored.model && stored.model !== got.model) ||
+    (stored.dimensions && stored.dimensions !== got.dimensions) ||
+    (stored.modelRevision && stored.modelRevision !== got.modelRevision) ||
+    (stored.profile && stored.profile !== got.profile) ||
+    (stored.videoProfile && got.videoProfile && stored.videoProfile !== got.videoProfile)
+  );
+}
+
 export type VectorPoint = { id: number; vector: number[]; payload: ImagePayload };
 
 export class VectorStore {
-  private stamp: Partial<ModelStamp> | null = null;
-
   constructor(readonly client: QdrantClient, readonly collection: string) {}
 
   static fromConfig() {
@@ -88,30 +96,27 @@ export class VectorStore {
 
   /**
    * Refuses vectors from a model other than the one the collection was filled with. The first
-   * successful embed records the revision and profiles.
+   * successful embed records the revision and profiles. Read on every call rather than cached,
+   * because another process may have recorded them; after recording, read back so that of two
+   * writers claiming different revisions at once, the one that lost finds out.
    */
   async assertModel(got: ModelStamp) {
-    if (!this.stamp) {
-      const info = await this.client.getCollection(this.collection);
-      this.stamp = (info.config.metadata ?? {}) as Partial<ModelStamp>;
-    }
-    const stored = this.stamp;
-    const conflicts =
-      (stored.model && stored.model !== got.model) ||
-      (stored.dimensions && stored.dimensions !== got.dimensions) ||
-      (stored.modelRevision && stored.modelRevision !== got.modelRevision) ||
-      (stored.profile && stored.profile !== got.profile) ||
-      (stored.videoProfile && got.videoProfile && stored.videoProfile !== got.videoProfile);
-    if (conflicts) throw new ModelMismatchError(stored, got);
+    const stored = await this.readStamp();
+    if (stampConflicts(stored, got)) throw new ModelMismatchError(stored, got);
 
     const missing: Partial<ModelStamp> = {};
     if (!stored.modelRevision) missing.modelRevision = got.modelRevision;
     if (!stored.profile) missing.profile = got.profile;
     if (!stored.videoProfile && got.videoProfile) missing.videoProfile = got.videoProfile;
-    if (Object.keys(missing).length) {
-      await this.client.updateCollection(this.collection, { metadata: missing });
-      Object.assign(stored, missing);
-    }
+    if (!Object.keys(missing).length) return;
+    await this.client.updateCollection(this.collection, { metadata: missing });
+    const after = await this.readStamp();
+    if (stampConflicts(after, got)) throw new ModelMismatchError(after, got);
+  }
+
+  private async readStamp(): Promise<Partial<ModelStamp>> {
+    const info = await this.client.getCollection(this.collection);
+    return (info.config.metadata ?? {}) as Partial<ModelStamp>;
   }
 
   async upsert(points: VectorPoint[]) {

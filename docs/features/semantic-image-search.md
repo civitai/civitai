@@ -62,10 +62,17 @@ each, tier `paid`. The step type is typed locally until the orchestration client
 
 - At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process.
 - A 429 or 5xx backs off exponentially with jitter, never sooner than `Retry-After`. It gives up
-  after `VECTOR_EMBED_MAX_RETRIES`. Each batch keeps one `externalId` across its retries, so a
-  submit that succeeded server-side is not paid for twice.
-- A batch the orchestrator rejects (400, or a failed workflow) is split in half until the bad
-  input is isolated. That input is counted as `failed` and the rest are embedded.
+  after `VECTOR_EMBED_MAX_RETRIES`. A batch's `externalId` is derived from its inputs and the
+  day. Its retries, and the same batch submitted again after a restart, get the existing workflow
+  back instead of paying twice.
+- A batch the orchestrator rejects (400, or a failed workflow) is split in half, at most four
+  times (down to groups of 8), to isolate the bad input. What is still failing then is counted
+  as `failed`, and the rest are embedded.
+- When a batch fails for another reason (retries exhausted, auth, a model mismatch), batches not
+  yet submitted are skipped. The vectors already returned are stored before the error is raised,
+  so a retry pays only for what is missing.
+- Every batch's model stamp is checked against the collection before its vectors are accepted.
+  Two batches of one call that disagree are not both stored.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync
@@ -80,8 +87,9 @@ the current row, then:
 | not eligible, or row gone | yes          | delete            |
 
 This needs no before-image (REPLICA IDENTITY FULL), and a redelivered or reordered event is
-harmless. After an upsert the rows are read once more and anything no longer eligible is
-deleted. That closes the window where a block lands while its embed is in flight.
+harmless. After an upsert the rows are read once more. Anything no longer eligible is deleted,
+and a payload that changed meanwhile (nsfwLevel, tags) is rewritten. That closes the window
+where another worker applies a change while this one's embed is in flight.
 
 ### The consumer
 
@@ -94,9 +102,18 @@ the metrics watcher and never configures the Debezium connector.
 - Image ids collect for `VECTOR_SYNC_DEBOUNCE_MS`, so a burst of tag rows for one image becomes
   one re-read. Offsets are committed only after the Qdrant writes for everything before them
   succeed.
-- With `VECTOR_SYNC_EMBED_ENABLED` off (the default), it deletes and updates payloads but embeds
-  nothing. It counts what it would have embedded as `embedOff`.
-- `GET` on the health port answers 503 when flushes have failed for 10 minutes.
+- It embeds only when `VECTOR_SYNC_EMBED_ENABLED` and `CDC_IMAGE_ENABLED` are both on. Block,
+  review and scan changes touch only the Image row, so without Image events a blocked image would
+  keep its vector. Otherwise it deletes and updates payloads, and counts what it would have
+  embedded as `embedOff`.
+- It writes to Qdrant even with embedding off: it creates the collection, payload indexes and
+  alias on startup, and applies deletes and payload updates. Deploy it only once its Qdrant is
+  provisioned.
+- If the embedder starts returning a different model than the collection holds, it stops
+  embedding (deletes and payload updates continue) rather than paying for rejected vectors.
+- `GET` on the health port answers 503 when flushes have kept failing for 10 minutes. A single
+  slow flush still in progress (under 2 hours) is healthy, so a liveness probe does not kill a
+  pod mid-embed.
 
 ### Streaming the Image table
 
@@ -106,14 +123,17 @@ connector's `table.include.list` and to nothing the metrics watcher consumes. Se
 vector-sync consumer, which then subscribes to the topic. When it is flipped on the watcher:
 
 - The watcher sees the include list differ on startup and **deletes and recreates the
-  connector** under the same name, slot and publication. With `publication.autocreate.mode:
-filtered`, Debezium then alters the publication to add `Image`.
+  connector** under the same name, slot and publication. With
+  `publication.autocreate.mode: filtered`, Debezium then alters the publication to add `Image`.
 - Kafka Connect keeps a deleted connector's stored offsets, and the slot retains WAL from its
   last confirmed position. So the recreated connector resumes where it stopped. For tables
   already streamed, nothing is lost. Changes since the last offset flush are delivered again,
   which every consumer here treats idempotently. `snapshot.mode: never` means Image's existing
   rows are not snapshotted; the backfill covers them. Image changes from before the publication
   included the table are not streamed; the reconciler covers those.
+- Image's whole write volume then goes through the one connector and slot that also feed the
+  metrics watcher, which can add replication lag on the metrics topics. Each Image change also
+  costs vector-sync three primary-key reads and a Qdrant read, batched per flush.
 
 ## Backfill
 
@@ -123,7 +143,8 @@ filtered`, Debezium then alters the publication to add `Image`.
 - Pages are id windows (`--span`, default 5000), not `LIMIT` queries. A page's cost is bounded by
   its span however sparse eligibility is, and each log line reports rows `scanned`.
   `--pages` (default 2) pages run at once.
-- The cursor is kept in Redis (`vector-sync:{backfill:<name>}:cursor`), so it survives restarts,
+- The cursor is kept in Redis (`vector-sync:{backfill:<collection>:<name>}:cursor`), so it
+  survives restarts,
   deploys and reschedules. It moves past a page only once every page above it is written.
   Points that already exist are not re-embedded, so resuming over a page costs payload writes
   only. `--cursor-file` keeps it in a local file instead, for runs without Redis.
@@ -131,7 +152,9 @@ filtered`, Debezium then alters the publication to add `Image`.
   stops after about N eligible images (it can overshoot by up to `--pages × --span` ids).
 - `pause` / `resume` set a flag the run checks before each page. `status` prints the cursor.
   `reset` clears it. SIGTERM finishes in-flight pages and stops.
-- Writing needs both `--confirm` and `VECTOR_SYNC_EMBED_ENABLED=true`.
+- Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
+  so that live sync is already removing blocked images. `--without-image-cdc` lifts the last
+  condition for a canary; run the reconciler over the same range afterwards.
 
 ## Reconciler
 
@@ -140,7 +163,8 @@ buckets newest first. In each one it compares the eligible ids in Postgres with 
 Qdrant (an ordered scroll) and re-syncs the difference: missing ids embed, extra ids are re-read
 and deleted if still ineligible. It checks presence only, not payload freshness. Eligible media it
 cannot embed (videos while video is off, external URLs) shows as missing on every run and is
-reported under `skipped`. With embedding switched off it still deletes and counts the rest.
+reported under `skipped`. Embedding follows the same conditions as the consumer. When they are
+not met, it still deletes and counts the rest.
 `--dry-run` only reports.
 
 ## Configuration

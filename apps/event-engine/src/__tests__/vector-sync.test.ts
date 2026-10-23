@@ -5,7 +5,8 @@ import { describe, expect, test, vi } from 'vitest';
 import { runBackfill } from '@/vector-sync/backfill';
 import type { RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
-import { buildEmbedInput, chunkInputs, Embedder } from '@/vector-sync/embedder';
+import { ModelMismatchError } from '@/vector-sync/qdrant';
+import { buildEmbedInput, chunkInputs, Embedder, MixedStampError } from '@/vector-sync/embedder';
 import { eligibleSql, isEligible, type ImageRow } from '@/vector-sync/eligibility';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
 import type { ImagePayload } from '@/vector-sync/source';
@@ -113,12 +114,20 @@ const STAMP: ModelStamp = { model: 'wemm-2b', modelRevision: 'r1', profile: 'p1'
 
 class FakeEmbedder {
   calls: string[][] = [];
-  embed = async (inputs: { id: string }[]) => {
+  /** Ids this embedder fails to return, reporting a systemic error, as a batch out of retries would. */
+  dropIds = new Set<number>();
+  embed = async (
+    inputs: { id: string }[],
+    { acceptStamp }: { acceptStamp?: (stamp: ModelStamp) => Promise<void> } = {}
+  ) => {
     this.calls.push(inputs.map((i) => i.id));
+    await acceptStamp?.(STAMP);
+    const kept = inputs.filter((i) => !this.dropIds.has(Number(i.id)));
     return {
-      vectors: new Map(inputs.map((i) => [Number(i.id), [Number(i.id)]])),
+      vectors: new Map(kept.map((i) => [Number(i.id), [Number(i.id)]])),
       failed: [],
       stamp: STAMP,
+      error: kept.length < inputs.length ? new Error('503 out of retries') : undefined,
     };
   };
 }
@@ -337,7 +346,8 @@ describe('embedder', () => {
   test('gives up after maxRetries rather than retrying forever', async () => {
     const fetchImpl = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
     const { e, sleeps } = embedder(fetchImpl, 2);
-    await expect(e.embed([{ id: '1', imageUrl: 'u' }])).rejects.toThrow(/gave up after 3 attempts/);
+    const result = await e.embed([{ id: '1', imageUrl: 'u' }]);
+    expect(String(result.error)).toMatch(/gave up after 3 attempts/);
     expect(sleeps).toHaveLength(2);
   });
 
@@ -358,7 +368,8 @@ describe('embedder', () => {
       async () => new Response('', { status: 401 })
     ) as unknown as typeof fetch;
     const { e } = embedder(fetchImpl);
-    await expect(e.embed(['1', '2'].map((id) => ({ id, imageUrl: 'u' })))).rejects.toThrow(/401/);
+    const result = await e.embed(['1', '2'].map((id) => ({ id, imageUrl: 'u' })));
+    expect(String(result.error)).toMatch(/401/);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });
@@ -562,5 +573,198 @@ describe('Image CDC gate', () => {
     const { connector, watcher } = await load({ CDC_IMAGE_ENABLED: 'true' });
     expect(connector).toContain('public.Image');
     expect(watcher).not.toContain('postgres.Image');
+  });
+});
+
+describe('review round: paid-path failure modes', () => {
+  test('an nsfwLevel change during an in-flight embed ends up in the payload, not the stale value', async () => {
+    const pg = new FakePg().put(imageRow(1, { nsfwLevel: 1 }));
+    const store = new FakeStore();
+    store.afterUpsert = () => {
+      pg.put(imageRow(1, { nsfwLevel: 16 }));
+      pg.tags.set(1, [99]);
+    };
+    await syncImageIds([1], deps(pg, store));
+    expect(store.points.get(1)?.payload).toMatchObject({ nsfwLevel: 16, tagIds: [99] });
+  });
+
+  test('when one batch fails, the vectors that succeeded are stored, and the retry pays only for the rest', async () => {
+    const pg = new FakePg().put(imageRow(1), imageRow(2));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    embedder.dropIds.add(2);
+    await expect(syncImageIds([1, 2], deps(pg, store, embedder))).rejects.toThrow('503');
+    expect(store.points.has(1)).toBe(true);
+
+    embedder.dropIds.clear();
+    await syncImageIds([1, 2], deps(pg, store, embedder));
+    expect(embedder.calls).toEqual([['1', '2'], ['2']]);
+  });
+
+  test('a model mismatch stops the consumer embedding instead of paying for it every tick', async () => {
+    const pg = new FakePg().put(imageRow(1));
+    const store = new FakeStore();
+    store.assertModel = async () => {
+      throw new ModelMismatchError(STAMP, { ...STAMP, modelRevision: 'r2' });
+    };
+    const embedder = new FakeEmbedder();
+    const commits: unknown[] = [];
+    const queue = new VectorSyncQueue(deps(pg, store, embedder), async (o) => void commits.push(o));
+    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '0' });
+    await expect(queue.flush()).rejects.toThrow(ModelMismatchError);
+    await queue.flush();
+    await queue.flush();
+    expect(embedder.calls).toHaveLength(1);
+    expect(store.points.has(1)).toBe(false);
+    expect(commits).toHaveLength(1);
+  });
+
+  const okBody = (ids: string[], modelRevision = 'r1') =>
+    JSON.stringify({
+      id: 'wf',
+      status: 'succeeded',
+      steps: [
+        {
+          output: {
+            ...STAMP,
+            modelRevision,
+            data: ids.map((id, index) => ({ id, index, embedding: [index] })),
+          },
+        },
+      ],
+    });
+  const inputIds = (init?: RequestInit) =>
+    (JSON.parse(String(init?.body)).steps[0].input.inputs as { id: string }[]).map((i) => i.id);
+  const makeEmbedder = (fetchImpl: typeof fetch) =>
+    new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 1,
+      maxRetries: 0,
+      priority: 'low',
+      fetch: fetchImpl,
+      sleep: async () => undefined,
+    });
+
+  test('batches that come back under different model revisions in one call are not mixed', async () => {
+    let n = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) =>
+      new Response(okBody(inputIds(init), ++n === 1 ? 'r1' : 'r2'), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    const inputs = Array.from({ length: 200 }, (_, i) => ({ id: String(i), imageUrl: 'u' }));
+    const result = await makeEmbedder(fetchImpl).embed(inputs);
+    expect(result.error).toBeInstanceOf(MixedStampError);
+    expect(result.vectors.size).toBe(128);
+  });
+
+  test('a batch where every input is rejected is split a bounded number of times', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response('schema rejected', { status: 400 })
+    ) as unknown as typeof fetch;
+    const inputs = Array.from({ length: 128 }, (_, i) => ({ id: String(i), imageUrl: 'u' }));
+    const result = await makeEmbedder(fetchImpl).embed(inputs);
+    expect(result.failed).toHaveLength(128);
+    // Depth 4: 1 + 2 + 4 + 8 + 16 submissions, against 255 if split down to single inputs.
+    expect(fetchImpl).toHaveBeenCalledTimes(31);
+  });
+
+  test('a backfill page that keeps failing stops the run with the cursor above it', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 40 }, (_, i) => imageRow(i + 1)));
+    const base = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      // The page [21, 31) always fails; the page above it finishes later than its neighbour.
+      if (sql.includes('i.id >= $1 AND i.id < $2') && params[0] === 21) throw new Error('pg down');
+      if (sql.includes('i.id >= $1 AND i.id < $2') && params[0] === 31) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return base(sql, params);
+    }) as FakePg['query'];
+    const store = new FakeStore();
+    let cursor: number | null = null;
+    const state: RunState = {
+      getCursor: async () => cursor,
+      setCursor: async (id) => void (cursor = id),
+      isPaused: async () => false,
+      setPaused: async () => undefined,
+      reset: async () => undefined,
+      close: async () => undefined,
+    };
+    await expect(
+      runBackfill(
+        { watermark: 40, floor: 0, span: 10, pages: 2 },
+        { ...deps(pg, store), state, sleep: async () => undefined }
+      )
+    ).rejects.toThrow('pg down');
+    expect(cursor).toBe(31);
+  });
+});
+
+describe('embedding gate', () => {
+  async function reason(
+    env: Record<string, string | undefined>,
+    opts?: { withoutImageCdc?: boolean }
+  ) {
+    vi.resetModules();
+    const saved = { ...process.env };
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      const { embedBlockedReason } = await import('@/vector-sync/sync');
+      return embedBlockedReason(opts);
+    } finally {
+      process.env = saved;
+    }
+  }
+
+  test('the consumer builds no embedder unless both are on', async () => {
+    const env = {
+      VECTOR_SYNC_EMBED_ENABLED: 'true',
+      ORCHESTRATOR_ENDPOINT: 'http://orch',
+      VECTOR_EMBED_TOKEN: 't',
+      VECTOR_IMAGE_LOCATION: 'https://cdn.example',
+    };
+    const build = async (extra: Record<string, string | undefined>) => {
+      vi.resetModules();
+      const saved = { ...process.env };
+      Object.assign(process.env, env);
+      for (const [k, v] of Object.entries(extra)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      try {
+        return (await import('@/vector-sync/consumer')).consumerEmbedder();
+      } finally {
+        process.env = saved;
+      }
+    };
+    expect(await build({ CDC_IMAGE_ENABLED: undefined })).toBeNull();
+    expect(
+      await build({ CDC_IMAGE_ENABLED: 'true', VECTOR_SYNC_EMBED_ENABLED: undefined })
+    ).toBeNull();
+    expect(await build({ CDC_IMAGE_ENABLED: 'true' })).not.toBeNull();
+    await expect(build({ CDC_IMAGE_ENABLED: 'true', VECTOR_IMAGE_LOCATION: '' })).rejects.toThrow(
+      /VECTOR_IMAGE_LOCATION/
+    );
+  });
+
+  test('embedding needs both its switch and Image change events', async () => {
+    expect(
+      await reason({ VECTOR_SYNC_EMBED_ENABLED: undefined, CDC_IMAGE_ENABLED: 'true' })
+    ).toMatch(/EMBED/);
+    expect(
+      await reason({ VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: undefined })
+    ).toMatch(/CDC_IMAGE/);
+    expect(
+      await reason({ VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: 'true' })
+    ).toBeNull();
+    expect(
+      await reason(
+        { VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: undefined },
+        { withoutImageCdc: true }
+      )
+    ).toBeNull();
   });
 });
