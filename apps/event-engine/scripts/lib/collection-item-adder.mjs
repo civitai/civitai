@@ -1,4 +1,14 @@
-// Pure helpers for backfill-collection-item-adder.mjs, split out so they can be tested without a
+import {
+  readFileSync,
+  existsSync,
+  openSync,
+  writeSync,
+  fsyncSync,
+  closeSync,
+  truncateSync,
+} from 'fs';
+
+// Helpers for backfill-collection-item-adder.mjs, split out so they can be tested without a
 // database. See that script's header for why each rule exists.
 
 // What collectionItemHandler (src/handlers/collection-items.ts) emits for one created row, minus
@@ -87,6 +97,32 @@ export function readLedger(lines) {
     open: open[0] ?? null,
     resumeFrom: done.length ? Math.max(...done.map((b) => b.hi)) : null,
     lastStampMs,
+  };
+}
+
+// Settles an unterminated final line the way readLedger read it: finished if it parses, cut if
+// torn. Appending after a torn fragment would glue the next line onto it and lose it on a later
+// read, which can hide a restamp and insert the batch twice.
+export function openLedger(path) {
+  const text = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+  const cut = text.lastIndexOf('\n') + 1;
+  let tail = text.slice(cut);
+  if (tail) {
+    try {
+      JSON.parse(tail);
+    } catch {
+      truncateSync(path, Buffer.byteLength(text.slice(0, cut)));
+      tail = '';
+    }
+  }
+  const fd = openSync(path, 'a');
+  if (tail) writeSync(fd, '\n');
+  return {
+    write(entry) {
+      writeSync(fd, `${JSON.stringify(entry)}\n`);
+      fsyncSync(fd);
+    },
+    close: () => closeSync(fd),
   };
 }
 

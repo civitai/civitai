@@ -53,7 +53,7 @@
 
 import { createClient } from '@clickhouse/client';
 import pg from 'pg';
-import { readFileSync, existsSync, openSync, writeSync, fsyncSync, closeSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -61,6 +61,7 @@ import {
   buildEvents,
   landedState,
   nextStampMs,
+  openLedger,
   readLedger,
 } from './lib/collection-item-adder.mjs';
 
@@ -117,17 +118,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fail(...lines) {
   for (const line of lines) console.error(line);
   process.exit(1);
-}
-
-function openLedger(path) {
-  const fd = openSync(path, 'a');
-  return {
-    write(entry) {
-      writeSync(fd, `${JSON.stringify(entry)}\n`);
-      fsyncSync(fd);
-    },
-    close: () => closeSync(fd),
-  };
 }
 
 async function main() {
@@ -225,6 +215,8 @@ async function main() {
     [LOCK_KEY]
   );
   if (!lockRows[0].ok) fail('Error: another run of this backfill holds the lock.');
+  // A dropped connection releases the lock silently; stop rather than run unguarded.
+  lockClient.on('error', (err) => fail(`Error: lost the lock connection: ${err.message}`));
 
   const ledgerState = existsSync(LEDGER)
     ? readLedger(readFileSync(LEDGER, 'utf-8').split('\n'))

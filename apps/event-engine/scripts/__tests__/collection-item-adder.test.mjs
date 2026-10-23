@@ -1,8 +1,12 @@
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   buildEvents,
   landedState,
   nextStampMs,
+  openLedger,
   readLedger,
 } from '../lib/collection-item-adder.mjs';
 
@@ -109,6 +113,41 @@ describe('readLedger', () => {
     expect(() => readLedger([pending(0, 100, 1000), pending(100, 200, 2000)])).toThrow(
       /2 unfinished batches/
     );
+  });
+});
+
+describe('openLedger', () => {
+  it('cuts a torn tail so the next line survives a later read', () => {
+    // Otherwise a restamp line glued onto the fragment is dropped as torn, the next resume checks
+    // the old stamp, finds nothing, and inserts the batch a second time.
+    const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
+    const pending = { lo: 0, hi: 100, phase: 'pending', xid: '1', stampMs: 1000, events: [] };
+    writeFileSync(path, `${JSON.stringify(pending)}\n{"lo":0,"pha`);
+    const ledger = openLedger(path);
+    ledger.write({ lo: 0, phase: 'restamped', stampMs: 9000, events: [] });
+    ledger.close();
+    expect(readLedger(readFileSync(path, 'utf-8').split('\n')).open).toMatchObject({
+      phase: 'restamped',
+      stampMs: 9000,
+    });
+  });
+
+  it('keeps a complete final line that only lacks its newline', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
+    const pending = { lo: 0, hi: 100, phase: 'pending', xid: '1', stampMs: 1000, events: [] };
+    writeFileSync(
+      path,
+      `${JSON.stringify(pending)}\n${JSON.stringify({ lo: 0, phase: 'committed' })}`
+    );
+    const ledger = openLedger(path);
+    ledger.write({ lo: 0, phase: 'inserted' });
+    ledger.close();
+    const lines = readFileSync(path, 'utf-8').split('\n');
+    expect(lines.filter(Boolean).map((l) => JSON.parse(l).phase)).toEqual([
+      'pending',
+      'committed',
+      'inserted',
+    ]);
   });
 });
 
