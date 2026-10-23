@@ -100,7 +100,8 @@ const activeEntry = {
     entryFee: 0,
     seededPrizePool: 0,
     endAt: null,
-    image: null,
+    ingestion: 'Scanned',
+    image: { url: null, ingestion: 'Scanned' },
   },
 };
 
@@ -277,5 +278,40 @@ describe('a moderator, at the service', () => {
     await expect(
       getCrucibleJudgesCount({ crucibleId: CRUCIBLE_ID, viewer: { blockedCreatorIds: [HOST_ID] } })
     ).rejects.toThrow(NOT_FOUND);
+  });
+});
+
+describe('active crucibles while a mid-run edit is under review', () => {
+  // A name edit on a running crucible puts its text back under review.
+  const underReview = {
+    ...activeEntry,
+    crucible: { ...activeEntry.crucible, name: 'Renamed', ingestion: 'Pending' },
+  };
+
+  it('leaves it out for an entrant until the review passes, then shows it again', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([underReview]);
+    await expect(caller().getUserActiveCrucibles({})).resolves.toEqual([]);
+
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([activeEntry]);
+    await expect(caller().getUserActiveCrucibles({})).resolves.toHaveLength(1);
+  });
+
+  it('leaves it out while a new cover is under review', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      {
+        ...activeEntry,
+        crucible: { ...activeEntry.crucible, image: { url: 'x', ingestion: 'Pending' } },
+      },
+    ]);
+
+    await expect(caller().getUserActiveCrucibles({})).resolves.toEqual([]);
+  });
+
+  it('keeps showing it to the host throughout', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([underReview]);
+
+    await expect(caller(signedIn(HOST_ID)).getUserActiveCrucibles({})).resolves.toMatchObject([
+      { id: CRUCIBLE_ID, name: 'Renamed' },
+    ]);
   });
 });

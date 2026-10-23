@@ -754,6 +754,8 @@ export const updateCrucible = async ({
       seededPrizePool: true,
       buzzTransactionId: true,
       seedTransactionId: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
     },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
@@ -914,12 +916,23 @@ export const updateCrucible = async ({
       const startAt =
         changes.startAt === undefined ? crucible.startAt ?? now : changes.startAt ?? now;
       const startsNow = startAt <= now;
+      // As activateScheduledCrucibles: it opens only once both scans pass, so one still under
+      // review stays Pending with its start passed and the job opens it then.
+      const coverIngestion =
+        imageId && imageId !== crucible.imageId
+          ? (await dbRead.image.findUnique({ where: { id: imageId }, select: { ingestion: true } }))
+              ?.ingestion
+          : crucible.image?.ingestion;
+      const reviewed =
+        !textChanged &&
+        crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+        coverIngestion === ImageIngestionStatus.Scanned;
       Object.assign(data, {
         startAt: startsNow ? now : startAt,
         endAt: dayjs(startsNow ? now : startAt)
           .add(next.duration, 'hours')
           .toDate(),
-        status: startsNow ? CrucibleStatus.Active : CrucibleStatus.Pending,
+        status: startsNow && reviewed ? CrucibleStatus.Active : CrucibleStatus.Pending,
       });
     }
 
@@ -950,18 +963,34 @@ export const updateCrucible = async ({
   }
 
   let updated: Omit<Awaited<ReturnType<typeof dbWrite.crucible.update>>, 'eventTags'>;
-  try {
-    // On the status read above: a cancel since then has already refunded the creator, and writing
-    // the status back would revive a crucible whose seed is gone.
-    // The row goes back to the creator, and event tags are moderator data.
-    updated = await dbWrite.crucible.update({
-      where: { id, status: crucible.status },
+  // On the status read above: a cancel since then has already refunded the creator, and writing
+  // the status back would revive a crucible whose seed is gone.
+  // The row goes back to the creator, and event tags are moderator data.
+  const write = (where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {}) =>
+    dbWrite.crucible.update({
+      where: { id, status: crucible.status, ...where },
       data,
       omit: { eventTags: true },
     });
+  const isNotFound = (error: unknown) =>
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+  try {
+    // The scans are re-checked in the write: an edit since the read may have reset one, and then
+    // it waits for the job like any other crucible still under review.
+    updated =
+      data.status === CrucibleStatus.Active
+        ? await write({
+            ingestion: CrucibleIngestionStatus.Scanned,
+            image: { ingestion: ImageIngestionStatus.Scanned },
+          }).catch((error) => {
+            if (!isNotFound(error)) throw error;
+            data.status = CrucibleStatus.Pending;
+            return write();
+          })
+        : await write();
   } catch (error) {
     await settlement?.rollback();
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+    if (isNotFound(error))
       throw throwBadRequestError(
         'This crucible changed while you were editing it. Reload the page and try again.'
       );
@@ -4910,9 +4939,11 @@ export const getUserActiveCrucibles = async ({
           entryFee: true,
           seededPrizePool: true,
           endAt: true,
+          ingestion: true,
           image: {
             select: {
               url: true,
+              ingestion: true,
             },
           },
           _count: {
@@ -4953,7 +4984,11 @@ export const getUserActiveCrucibles = async ({
   >();
 
   for (const entry of entries) {
-    if (isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds })) continue;
+    if (
+      isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds }) ||
+      isCrucibleHiddenByScan(entry.crucible, { viewerId: userId })
+    )
+      continue;
     const crucibleId = entry.crucibleId;
     const existing = crucibleMap.get(crucibleId);
 
