@@ -169,25 +169,26 @@ on:
 permissions:
   contents: read
 
-# On a PR this is unchanged: `github.ref` is `refs/pull/N/merge`, so a new push
-# to the branch cancels the in-flight run.
+# One group per ref, for pull requests AND pushes. On a PR `github.ref` is
+# `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
+# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
+# cancels the run for the older one that is still going.
 #
-# On a push to `main` it MUST NOT be `github.ref` — that is the same string for
-# every commit on the branch, so a busy `main` would cancel its own runs and the
-# only commit with a verdict would be whichever one happened to be last. Worse,
-# the losers would render as `cancelled`, a status this repo already has an open
-# complaint about being indistinguishable from a real failure. Grouping by
-# `github.sha` gives each commit its own group, so nothing cancels anything and
-# every commit on `main` gets its own answer.
+# That last part is a deliberate trade, not an oversight. Until 2026-10 a push
+# grouped by `github.sha`, so every commit on `main` kept its own full run (10+
+# jobs) alive. On a busy day that queued dozens of `main` runs behind the PR
+# runs on a plan with a fixed concurrent-job limit. The newest commit's run
+# checks a tree that contains every older commit, so `main` still gets a
+# verdict; what is given up is a per-commit verdict for intermediate commits,
+# which show as `cancelled`. To pin a break to one of them, push a branch at
+# that commit and dispatch this workflow on it (`only` narrows it to one suite).
 #
 # A workflow_dispatch run groups by ref AND by the `only` input, so a new
-# dispatch of the same suite on the same branch cancels the stale one (a branch
-# that is re-dispatched per commit used to keep every run alive, because sha
-# grouping never collides), while dispatches of DIFFERENT suites on one branch
-# still run side by side. The `dispatch-` prefix keeps these groups disjoint
-# from the PR and push ones.
+# dispatch of the same suite on the same branch cancels the stale one, while
+# dispatches of DIFFERENT suites on one branch still run side by side. The
+# `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
 concurrency:
-  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: true
 
 jobs:
