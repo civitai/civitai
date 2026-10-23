@@ -26,7 +26,7 @@
  * tier defers to it. The node `unit` project **is REPORT-ONLY on a pull request and
  * gives a real verdict (a red `main` build) on a push to `main`**: `.github/workflows/lint.yml`
  * puts `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
- * `unit` (line 405) and on `geometry` (line 830). The browser `component` project
+ * the `unit` and `geometry` jobs. The browser `component` project
  * runs as `Component tests` and, like every check here, blocks no merge.
  *
  * Neither tier blocks a merge, but they do not report the same way. On a PR, `Component
@@ -34,10 +34,10 @@
  * step underneath; on a push to `main` both give a real verdict. Three
  * comments in this arc, and a severity call in the PR body, were written on the
  * premise that node gates a PR and browser does not. Neither gates a merge. The guards built
- * on that premise are still worth having, but do not price them as merge gates. `lint.yml:377`
- * warns about the same trap from the other side: with `continue-on-error` the JOB conclusion is
- * `success` while the step underneath is `failure`, so a branch-protection rule naming "Unit tests
- * (N)" would be inert.
+ * on that premise are still worth having, but do not price them as merge gates. The `unit` job's
+ * comment in `lint.yml` ("Two things to know before re-measuring") warns about the same trap from
+ * the other side: with `continue-on-error` the JOB conclusion is `success` while the step
+ * underneath is `failure`, so a branch-protection rule naming "Unit tests (N)" would be inert.
  *
  * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the one that can
  * run without a DOM, so a module with no DOM dependency is one it can assert about. The values that

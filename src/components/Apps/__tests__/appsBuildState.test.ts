@@ -198,10 +198,10 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
  * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a
  * regression", two lines under the criterion "a guard that can only report is not a guard
  * against the next PR" — which this suite then failed. `unit` is `continue-on-error` on a
- * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
- * this repository prevents a merge. What these rows buy is that `unit` DOES run on
- * `push: [main]` without that flag, so the regression reds the `main` build after it lands
- * rather than going unobserved. Weaker than blocking, and
+ * pull request (the `unit` job's `continue-on-error` in `lint.yml`) and `main` requires no status
+ * checks at all, so no check in this repository prevents a merge. What these rows buy is that
+ * `unit` DOES run on `push: [main]` without that flag, so the regression reds the `main` build
+ * after it lands rather than going unobserved. Weaker than blocking, and
  * worth having on those terms — not on the ones first written here.
  *
  * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an
