@@ -7,10 +7,12 @@ import {
   linkStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
+  setStorylineImageCaptionSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
+  storylinePendingForPostSchema,
   storylineChapterReadSchema,
   storylineCollaboratorSchema,
   storylineIdSchema,
@@ -31,6 +33,7 @@ import {
   getStorylineEarlyAccessStatus,
   getStorylineForkShares,
   getStorylineGraph,
+  getPendingChapterForPost,
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
@@ -44,6 +47,7 @@ import {
   setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
+import { setStorylineImageCaption } from '~/server/services/storyline-caption.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -164,6 +168,16 @@ export const storylineRouter = router({
       joinStorylineEarlyAccess({ storylineId: input.storylineId, userId: ctx.user.id })
     ),
 
+  getPendingForPost: storylineMemberProcedure
+    .input(storylinePendingForPostSchema)
+    .query(({ input, ctx }) =>
+      getPendingChapterForPost({
+        postId: input.postId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
+
   getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>
     getStorylineEarlyAccessStatus(ctx.user.id)
   ),
@@ -188,6 +202,12 @@ export const storylineRouter = router({
     .input(updateStorylineSchema)
     .mutation(({ input, ctx }) =>
       updateStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  setImageCaption: storylineWriteProcedure
+    .input(setStorylineImageCaptionSchema)
+    .mutation(({ input, ctx }) =>
+      setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   addChapter: storylineWriteProcedure

@@ -183,6 +183,11 @@ export const postCreateSchema = z.object({
   // so the Post is bound to the draft Model3D on create. Validated server-side
   // (must be owner or moderator) inside `createPost`.
   model3dId: z.number().int().positive().nullish(),
+  // Set by the storyline flow so the draft is linked to its storyline on create: `storylineId`
+  // alone starts the owner's storyline, `parentChapterId` continues that chapter. Validated in
+  // `createPost`'s transaction (`linkPendingChapter`).
+  storylineId: z.number().int().positive().optional(),
+  parentChapterId: z.number().int().positive().optional(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
@@ -199,6 +204,11 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   collectionTagId: z.number().nullish(),
+  /**
+   * Publishing a post drafted as a continuation of someone else's storyline submits it: the price
+   * the contributor was shown, refused if it has changed (`createStorylinePlacement`).
+   */
+  expectedPrice: z.number().int().min(0).optional(),
 });
 
 // Composite create-with-images input for headless/agent (MCP) use. Each image

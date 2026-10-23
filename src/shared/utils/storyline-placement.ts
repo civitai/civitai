@@ -102,6 +102,18 @@ export type MyStorylineContinuation = {
 export type StorylineContinuationPage<T> = { items: T[]; nextCursor: string | null };
 
 /**
+ * Continuations one contributor may submit an hour, through the submit procedure and through
+ * publishing a drafted continuation together: a zero-priced one costs nothing, so this is its
+ * spam bound. `rateLimitKey` makes the two procedures one quota.
+ */
+export const STORYLINE_SUBMIT_RATE_LIMIT = {
+  limit: 30,
+  period: 3600,
+  errorMessage: 'storyline: too many continuations, try again later',
+  rateLimitKey: 'storyline:submitContinuation',
+} as const;
+
+/**
  * The refusals a submission can meet, so the UI can match them and say them up front. All but
  * `notAvailable` are the message of a 400; `notAvailable` is an authorization error.
  *

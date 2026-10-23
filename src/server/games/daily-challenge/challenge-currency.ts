@@ -16,10 +16,7 @@ export function deriveDomainCurrency(isGreen: boolean): ChallengeBuzzType {
 // Green (safe-site) challenges must be SFW. Returns true when the pairing is INVALID — green with
 // any non-SFW bit set — so the caller rejects. Yellow always passes. Defense-in-depth: the green
 // site's rating selector is already SFW-only.
-export function isNonSfwForGreen(
-  buzzType: ChallengeBuzzType,
-  allowedNsfwLevel: number
-): boolean {
+export function isNonSfwForGreen(buzzType: ChallengeBuzzType, allowedNsfwLevel: number): boolean {
   return buzzType === 'green' && Flags.intersects(allowedNsfwLevel, nsfwBrowsingLevelsFlag);
 }
 
@@ -44,15 +41,28 @@ export type NsfwEscalation = {
   cancel: boolean;
 };
 
+const escalationRungs = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+
+// The bits an NSFW verdict at `level` adds: every rung from R up to it, so the mask stays contiguous.
+// Without a usable level it adds R alone; Blocked adds up to XXX.
+export function nsfwEscalationBits(level?: number | null): number {
+  const top =
+    level === NsfwLevel.Blocked
+      ? NsfwLevel.XXX
+      : escalationRungs.find((rung) => rung === level) ?? NsfwLevel.R;
+  return Flags.arrayToInstance(escalationRungs.filter((rung) => rung <= top));
+}
+
 // Decide how a scanned challenge escalates. A clean scan just recomputes the display level from the
 // (unchanged) allowed mask. An NSFW verdict on a green USER challenge cancels it (green must be SFW —
-// the caller voids + refunds). An NSFW verdict on a yellow/non-user challenge raises the rating to R so
-// it drops out of safe feeds while staying live.
+// the caller voids + refunds). An NSFW verdict on a yellow/non-user challenge raises the rating to the
+// detected level so it drops out of feeds below it while staying live.
 export function computeNsfwEscalation(input: {
   allowedNsfwLevel: number;
   buzzType: ChallengeBuzzType;
   source: ChallengeSource;
   isNsfw: boolean;
+  level?: number | null;
 }): NsfwEscalation {
   const cancel =
     input.isNsfw && input.source === ChallengeSource.User && input.buzzType === 'green';
@@ -63,7 +73,7 @@ export function computeNsfwEscalation(input: {
       cancel,
     };
   }
-  const allowedNsfwLevel = Flags.addFlag(input.allowedNsfwLevel, NsfwLevel.R);
+  const allowedNsfwLevel = input.allowedNsfwLevel | nsfwEscalationBits(input.level);
   return {
     allowedNsfwLevel,
     nsfwLevel: deriveChallengeNsfwLevel(allowedNsfwLevel),

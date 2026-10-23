@@ -1623,6 +1623,7 @@ export interface Post {
   reports?: PostReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
+  storylinePendingChapter?: StorylinePendingChapter | null;
 }
 
 export interface PostMetric {
@@ -1729,6 +1730,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  caption?: ImageCaption | null;
 }
 
 export interface ImageTagForReview {
@@ -3440,6 +3442,7 @@ export interface CosmeticShopItem {
   listed: boolean;
   itemDefinitionId: number | null;
   itemDefinition?: ItemDefinition | null;
+  eventTags: string[];
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
@@ -4341,6 +4344,16 @@ export interface ChatMessage {
   referenceMessage?: ChatMessage | null;
   referenceMessages?: ChatMessage[];
   lastViewedMessages?: ChatMember[];
+  edits?: ChatMessageEdit[];
+}
+
+export interface ChatMessageEdit {
+  id: number;
+  messageId: number;
+  editorId: number;
+  previousContent: string;
+  createdAt: Date;
+  message?: ChatMessage;
 }
 
 export interface BuildGuide {
@@ -6445,6 +6458,7 @@ export interface Storyline {
   heroImage?: Image | null;
   heroImagePosition: number;
   chapters?: StorylineChapter[];
+  pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
 }
@@ -6465,6 +6479,18 @@ export interface StorylineChapter {
   branchChoicesFrom?: StorylineBranchChoice[];
   branchChoicesTo?: StorylineBranchChoice[];
   createClicks?: StorylineCreateClick[];
+  pendingContinuations?: StorylinePendingChapter[];
+}
+
+export interface StorylinePendingChapter {
+  postId: number;
+  post?: Post;
+  storylineId: number;
+  storyline?: Storyline;
+  parentChapterId: number | null;
+  parentChapter?: StorylineChapter | null;
+  userId: number;
+  createdAt: Date;
 }
 
 export interface StorylineChapterEdge {
@@ -6475,6 +6501,17 @@ export interface StorylineChapterEdge {
   parentChapter?: StorylineChapter;
   canon: boolean;
   createdAt: Date;
+}
+
+export interface ImageCaption {
+  imageId: number;
+  image?: Image;
+  userId: number;
+  content: string;
+  refused: boolean;
+  nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface StorylineCollaborator {

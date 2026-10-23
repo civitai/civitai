@@ -131,6 +131,8 @@ export const PERMISSIONS = [
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Submits a real scan with the site's system account; the page shows signals only.
+  { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
   // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
   // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
   // rename the two together. Reading the queue is the page grant.
