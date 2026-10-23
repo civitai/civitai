@@ -169,6 +169,18 @@ describe('claimNext order', () => {
     expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
   });
 
+  it('moves on from a held card the moderator already voted on', async () => {
+    const a = await seedItem(1, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const b = await seedItem(2, { flaggedAt: '2026-10-13T09:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    // A vote from another tab that committed while this tab was claiming, so the lease survived it.
+    await pg.query(
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, 1, false)`,
+      [a]
+    );
+    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
+  });
+
   it('never serves an item the moderator already voted on', async () => {
     const a = await seedItem(1, { votes: 1 });
     const b = await seedItem(2);
