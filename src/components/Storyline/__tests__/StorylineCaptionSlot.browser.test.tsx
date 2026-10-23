@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   setCaption: vi.fn(),
   invalidate: vi.fn(),
   captions: [] as { imageId: number; content: string }[],
+  captionsLoading: false,
   fail: false,
 }));
 
@@ -39,7 +40,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           }),
         },
         'storyline.getPostImageCaptions': {
-          useQuery: () => ({ data: mocks.captions, isLoading: false }),
+          useQuery: () => ({
+            data: mocks.captionsLoading ? undefined : mocks.captions,
+            isLoading: mocks.captionsLoading,
+          }),
         },
         'storyline.setImageCaption': {
           useMutation: (options: MutationOptions & { onError?: (e: Error) => void }) => {
@@ -101,6 +105,7 @@ beforeEach(() => {
   mocks.setCaption.mockReset();
   mocks.invalidate.mockReset();
   mocks.captions = [];
+  mocks.captionsLoading = false;
 });
 
 describe('StorylineCaptionSlot: where the box appears', () => {
@@ -197,6 +202,20 @@ describe('StorylineCaptionSlot: writing', () => {
     (box().element() as HTMLTextAreaElement).blur();
     await vi.waitFor(() => expect(mocks.setCaption).toHaveBeenCalledTimes(1));
     expect(mocks.setCaption).toHaveBeenCalledWith({ imageId: 7, content: '' });
+  });
+
+  test('typing before the saved captions arrive cannot overwrite the saved one', async () => {
+    mocks.captions = [{ imageId: 7, content: 'Saved earlier' }];
+    mocks.captionsLoading = true;
+    renderWithProviders(<StorylineCaptionSlot post={draft} image={image} />);
+
+    await expect.element(box()).toBeVisible();
+    await box().click();
+    await userEvent.keyboard('too early');
+    (box().element() as HTMLTextAreaElement).blur();
+
+    await expect.element(box()).toHaveValue('');
+    expect(mocks.setCaption).not.toHaveBeenCalled();
   });
 
   test('a save refreshes the saved captions of its post', async () => {
