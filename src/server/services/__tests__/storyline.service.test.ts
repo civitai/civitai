@@ -85,6 +85,7 @@ import {
   moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
+  removePendingChapter,
   removeStorylineCollaborator,
   setCanonChapter,
   updateStoryline,
@@ -612,6 +613,87 @@ describe('getPendingChapterForPost', () => {
     ).resolves.not.toBeNull();
     w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
     await expect(getPendingChapterForPost({ postId: 900, userId: STRANGER })).resolves.toBeNull();
+  });
+});
+
+describe('removePendingChapter', () => {
+  type DeleteWhere = {
+    postId?: number;
+    userId?: number;
+    post?: { userId?: number; publishedAt?: Date | null };
+  };
+  const link = (overrides: { userId?: number; publishedAt?: Date | null } = {}) => ({
+    userId: overrides.userId ?? STRANGER,
+    post: { userId: STRANGER, publishedAt: overrides.publishedAt ?? null },
+  });
+  /** Rows the conditional delete would match, so a missing condition deletes what it must not. */
+  const deletes = (row: ReturnType<typeof link>) =>
+    w.storylinePendingChapter.deleteMany.mockImplementation((({ where }: { where: DeleteWhere }) =>
+      Promise.resolve({
+        count:
+          where.postId === 900 &&
+          where.userId === row.userId &&
+          where.post?.userId === row.post.userId &&
+          where.post?.publishedAt === null &&
+          row.post.publishedAt === null
+            ? 1
+            : 0,
+      })) as never);
+
+  it("unlinks the author's unpublished draft, touching nothing else", async () => {
+    w.storylinePendingChapter.findUnique.mockResolvedValue(link() as never);
+    deletes(link());
+    await expect(removePendingChapter({ postId: 900, userId: STRANGER })).resolves.toEqual({
+      removed: true,
+    });
+    expect(w.storylinePendingChapter.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: 900 } })
+    );
+    expect(r.storylinePendingChapter.findUnique).not.toHaveBeenCalled();
+    expect(w.storylinePendingChapter.deleteMany).toHaveBeenCalledTimes(1);
+    expect(w.storylinePendingChapter.delete).not.toHaveBeenCalled();
+    expect(w.post.update).not.toHaveBeenCalled();
+    expect(w.post.updateMany).not.toHaveBeenCalled();
+    expect(w.post.delete).not.toHaveBeenCalled();
+    expect(w.storylineChapter.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses anyone but the draft's author, moderators included", async () => {
+    w.storylinePendingChapter.findUnique.mockResolvedValue(link() as never);
+    await expect(removePendingChapter({ postId: 900, userId: OWNER })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(removePendingChapter({ postId: 900, userId: MODERATOR })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(w.storylinePendingChapter.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a published post, scheduled ones included', async () => {
+    for (const publishedAt of [new Date('2026-10-01'), new Date('2099-01-01')]) {
+      w.storylinePendingChapter.findUnique.mockResolvedValue(link({ publishedAt }) as never);
+      await expect(removePendingChapter({ postId: 900, userId: STRANGER })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'This post is already published',
+      });
+    }
+    expect(w.storylinePendingChapter.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a post with no link', async () => {
+    w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
+    await expect(removePendingChapter({ postId: 900, userId: STRANGER })).resolves.toEqual({
+      removed: false,
+    });
+    expect(w.storylinePendingChapter.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps the link when the post is published between the read and the delete', async () => {
+    w.storylinePendingChapter.findUnique.mockResolvedValue(link() as never);
+    deletes(link({ publishedAt: new Date('2026-10-01') }));
+    await expect(removePendingChapter({ postId: 900, userId: STRANGER })).resolves.toEqual({
+      removed: false,
+    });
   });
 });
 
