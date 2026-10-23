@@ -66,16 +66,12 @@ export function createReactionHandler<T = any>(config: ReactionConfig<T>) {
       // so an un-like in the same second as its like ties and the like wins. A removal is stamped
       // one second later so it sorts after; the milliseconds stay so the Redis dedupe key (ms)
       // keeps two removals apart, and it derives from the commit time, so a replay still dedupes.
-      // Shortcut: a re-like in the second after an un-like now ties the other way. Remove this
+      // Shortcut: a re-like in the second after an un-like now ties the other way, and one
+      // committed at exactly the stamped millisecond shares its Redis dedupe key. Remove this
       // once `entityMetricEvents_month.createdAt` is DateTime64.
       const timestamp = value < 0 ? new Date(+eventTimestamp + 1000) : undefined;
-      const forMetric: HandlerActions['forMetric'] = (entityType, entityId) => ({
-        as: (userId) => {
-          const emit = (metricType: string, metricValue: number) =>
-            actions.addMetricEvent({ entityType, entityId, userId, metricType, metricValue, timestamp });
-          return { add: (m, v = 1) => emit(m, v), remove: (m, v = 1) => emit(m, -v) };
-        },
-      });
+      const forMetric: HandlerActions['forMetric'] = (entityType, entityId) =>
+        actions.forMetric(entityType, entityId, timestamp);
       forMetric(config.entityType, (record as any)[config.entityIdField])
         .as((record as any)[config.userIdField ?? 'userId'])
         .add((record as any).reaction, value);

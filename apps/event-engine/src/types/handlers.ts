@@ -26,7 +26,7 @@ export type FeedUpdateType = 'update' | 'delete' | 'metricUpdate'
 export interface HandlerActions {
   addMetricEvent: (event: MetricEvent) => void
   incMetricCache: (update: CacheUpdate | CacheUpdate[]) => Promise<void>
-  forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId']) => MetricBuilder
+  forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId'], timestamp?: Date) => MetricBuilder
   feedUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId'], type?: FeedUpdateType) => void
   feedDelete: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void
   feedMetricUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void

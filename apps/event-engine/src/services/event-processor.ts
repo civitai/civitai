@@ -437,11 +437,11 @@ export class EventProcessor {
       outboxRemove: async (id: number) => {
         await this.outboxService.delete(id)
       },
-      forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId']) => ({
+      forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId'], timestamp?: Date) => ({
         as: (userId: MetricEvent['userId']) => {
           const safeMetricAdd = (metricType: MetricEvent['metricType'], metricValue: number) => {
             if (entityId == null || !userId) return
-            actions.addMetricEvent({ entityId, entityType, userId, metricType, metricValue })
+            actions.addMetricEvent({ entityId, entityType, userId, metricType, metricValue, timestamp })
           }
 
           return {

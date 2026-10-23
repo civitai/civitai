@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { imageReactionHandler } from '@/handlers/image-reactions';
 import { EventProcessor } from '@/services/event-processor';
+import { eventProcessorMetrics } from '@/metrics';
 import { metricSignals } from '@/services/metric-signals';
 import type { MetricEvent } from '@/types/events';
 
@@ -29,7 +30,7 @@ afterEach(() => {
 
 // The real context builder and actions, so the stamp is asserted where it reaches the batcher
 // (what becomes `createdAt`), not on whatever the handler hands its helpers.
-async function run(payloads: object[]) {
+async function run(payloads: object[], image: object = { postId: POST_ID, userId: OWNER_ID }) {
   const original = metricSignals.sendDelta;
   metricSignals.sendDelta = (async () => undefined) as typeof metricSignals.sendDelta;
   restoreSignals = () => {
@@ -42,7 +43,7 @@ async function run(payloads: object[]) {
     excludedUsers: { has: () => false },
     redisCache: { incrementOnce: async () => undefined },
     metricBatcher: { add: (ev: MetricEvent) => batched.push(ev) },
-    pgQueryOneMemoized: async () => ({ postId: POST_ID, userId: OWNER_ID }),
+    pgQueryOneMemoized: async () => image,
   });
   const build = (
     proc as unknown as { createHandlerContext(p: object, meta: object): never }
@@ -79,6 +80,21 @@ describe('reaction removal stamp', () => {
         `User.reactionCount=${BASE + 1716}`,
       ].sort()
     );
+  });
+
+  // The stamped builder must keep forMetric's guard: an image with no post or owner emits nothing
+  // for them, rather than reaching addMetricEvent and counting as a dropped event.
+  test('a removal on an image with no post or owner emits only the image metric', async () => {
+    const dropped = async () =>
+      ((await eventProcessorMetrics.eventsDropped.get()).values ?? []).reduce(
+        (n, v) => n + v.value,
+        0
+      );
+    const before = await dropped();
+    const events = await run([deleted(BASE + 716)], { postId: null, userId: null });
+
+    expect(events.map((e) => `${e.entityType}.${e.metricType}`)).toEqual(['Image.Like']);
+    expect(await dropped()).toBe(before);
   });
 
   // The Redis dedupe marker keys on the millisecond stamp and not the value, so two removals in
