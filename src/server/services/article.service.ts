@@ -1701,29 +1701,34 @@ export const deleteArticleById = async ({
       ]),
     ];
 
-    if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
-      const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
-        select: { id: true },
-      });
-
-      const deletable = await withoutOfferingCovers(
-        dbWrite,
-        trulyOrphanedImages.map((img) => img.id)
-      );
-      // Each delete is caught: a rejection would skip the articles-index `Delete` below, and the
-      // deleted article would stay in that index indefinitely.
-      for (const imageId of deletable) {
-        await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(
-            error,
-            imageId === deleted.coverId
-              ? 'article-cover-image-cleanup'
-              : 'article-content-image-cleanup',
-            { articleId: id, imageId }
-          );
+    // The article is already gone, so a failed cleanup is logged rather than reported as a failed
+    // delete, and it must not skip the articles-index `Delete` below.
+    try {
+      if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
+        const trulyOrphanedImages = await dbWrite.image.findMany({
+          where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
+          select: { id: true },
         });
+
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          trulyOrphanedImages.map((img) => img.id)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(
+              error,
+              imageId === deleted.coverId
+                ? 'article-cover-image-cleanup'
+                : 'article-content-image-cleanup',
+              { articleId: id, imageId }
+            );
+          });
+        }
       }
+    } catch (error) {
+      handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);

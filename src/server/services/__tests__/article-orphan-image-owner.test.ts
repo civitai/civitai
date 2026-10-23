@@ -46,6 +46,8 @@ import {
   upsertArticle,
 } from '~/server/services/article.service';
 import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { articlesSearchIndex } from '~/server/search-index';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -267,6 +269,23 @@ describe('deleteArticleById', () => {
     await deleteWithCover(cover);
 
     expect(deletedIds()).toEqual([UNUSED_OWN.id]);
+  });
+
+  it('reports the delete and drops it from the index when the cleanup fails', async () => {
+    const queueUpdate = vi
+      .spyOn(articlesSearchIndex, 'queueUpdate')
+      .mockResolvedValue(undefined as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    dbMock.dbWrite.csamReport.count.mockRejectedValue(new Error('db down'));
+    deleteArticleWithCover(OWN_COVER);
+
+    await expect(deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR })).resolves.toEqual({
+      coverId: OWN_COVER.id,
+    });
+    expect(queueUpdate).toHaveBeenCalledWith([
+      { id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(deletedIds()).toEqual([]);
   });
 });
 
