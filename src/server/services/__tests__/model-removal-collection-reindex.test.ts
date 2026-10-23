@@ -132,7 +132,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { deleteModelById, permaDeleteModelById } from '~/server/services/model.service';
+import {
+  deleteModelById,
+  MODEL_KEPT_FOR_HOLD,
+  permaDeleteModelById,
+} from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -337,6 +341,7 @@ describe('permaDeleteModelById — legal hold', () => {
     '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
   );
   let db: PGlite;
+  let refusal: string | undefined;
 
   beforeAll(async () => {
     db = new PGlite();
@@ -403,7 +408,10 @@ describe('permaDeleteModelById — legal hold', () => {
     }) as never);
     const result = await permaDeleteModelById({ id: MODEL_ID, userId: 1 } as any).then(
       (model) => (model ? 'deleted' : 'not found'),
-      (e: { code?: string }) => e.code
+      (e: { code?: string; message?: string }) => {
+        refusal = e.message;
+        return e.code;
+      }
     );
     const left = (await db.query(`SELECT id FROM "Model"`)).rows.length;
     return { result, left, rolledBack };
@@ -423,6 +431,8 @@ describe('permaDeleteModelById — legal hold', () => {
         rolledBack: true,
       });
       expect(vi.mocked(deleteModelFileObjects)).not.toHaveBeenCalled();
+      // Kept on purpose, so a moderator does not read it as a failure; never which hold.
+      expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
     }
   );
 

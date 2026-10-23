@@ -12,7 +12,6 @@ import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
   HOLD_UNCONFIRMED,
-  LEGAL_HOLD_REFUSAL,
   LegalHoldError,
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
@@ -2202,6 +2201,9 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   return { id, userId: result.userId };
 };
 
+/** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
+export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
@@ -2294,7 +2296,7 @@ export const permaDeleteModelById = async ({
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
       }
       return { deletedModel, imagesToDelete };
     },

@@ -31,16 +31,18 @@ const HOLD_MIGRATION = path.resolve(
 // One owner per way of being held, and one who is not.
 const MARKED_OWNER = 1; // a hold marker
 const REPORTED_OWNER = 3; // named on a report not yet sent: no marker row exists for them
+const REVIEW_OWNER = 4; // an image awaiting CSAM review: the account hold's image leg
 const FREE_OWNER = 2;
 const MODELS = [
   { id: 10, userId: MARKED_OWNER, versionId: 100 },
   { id: 30, userId: REPORTED_OWNER, versionId: 300 },
   { id: 40, userId: PLACEHOLDER_OWNER_ID, versionId: 400 },
+  { id: 50, userId: REVIEW_OWNER, versionId: 500 },
   { id: 20, userId: FREE_OWNER, versionId: 200 },
 ];
 const FREE_MODEL = 20;
 const FREE_VERSION = 200;
-const KEPT_MODELS = [10, 30, 40];
+const KEPT_MODELS = [10, 30, 40, 50];
 
 let db: PGlite;
 
@@ -50,7 +52,8 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 0,
-      ingestion "ImageIngestionStatus" NOT NULL, "blockedFor" text, metadata jsonb, "updatedAt" timestamp(3)
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
+      "blockedFor" text, metadata jsonb, "updatedAt" timestamp(3)
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, title text, detail text,
@@ -76,6 +79,7 @@ beforeAll(async () => {
   await db.exec(`
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEW_OWNER}, 'csam');
   `);
 });
 afterAll(() => db.close());
