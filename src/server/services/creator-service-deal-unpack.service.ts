@@ -393,7 +393,7 @@ const WAITING_FOR_MALWARE_SCAN = Prisma.sql`
  */
 export async function settleMalwareScans({
   shouldStop = () => false,
-  submitLimit = 2,
+  submitLimit = 1,
 }: { shouldStop?: () => boolean; submitLimit?: number } = {}) {
   const counts = {
     scansPassed: 0,
@@ -484,8 +484,9 @@ export async function settleMalwareScans({
 /**
  * Step 4: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
  * It passes only when it is unpacked and every image and the malware scan passed; while the scan is
- * off, a skipped one counts. Once it is on, a Final still waiting whose scan was skipped is handed
- * to it again. One already Passed on a skipped scan stays Passed.
+ * off, a skipped one counts. Once it is on, a Final still waiting whose scan was skipped goes back
+ * to waiting for it, on a fresh give-up clock, and `settleMalwareScans` submits it. One already
+ * Passed on a skipped scan stays Passed.
  */
 export async function settleFinals() {
   const malwareScanOn = await isFinalsMalwareScanOn();
@@ -501,19 +502,7 @@ export async function settleFinals() {
           AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
         ORDER BY "id" LIMIT 50)
       RETURNING "id"`;
-    for (const { id } of skipped)
-      await handOffToScan(id).catch(async (error) => {
-        // Back to skipped, so the next run hands it over again instead of leaving it waiting.
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
-          WHERE "id" = ${id}::int AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
-        logUnpack(
-          'malware scan resubmit failed; it will be retried',
-          { fileId: id, error: (error as Error)?.message },
-          'error'
-        );
-      });
-    if (skipped.length) logUnpack('skipped malware scans resubmitted', { count: skipped.length });
+    if (skipped.length) logUnpack('skipped malware scans queued', { count: skipped.length });
   }
 
   const failing = await dbWrite.$queryRaw<{ id: number }[]>`

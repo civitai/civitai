@@ -1262,7 +1262,7 @@ describe('the finals malware scan flag', () => {
     });
   });
 
-  it('turned on, stops passing a Final whose scan was skipped and hands it to the scan', async () => {
+  it('turned on, stops passing a Final whose scan was skipped and queues it for the scan', async () => {
     malwareScan.on.mockResolvedValue(false);
     const { fileId } = await deliveredImageFinal();
     await verdict('Scanned');
@@ -1272,23 +1272,10 @@ describe('the finals malware scan flag', () => {
       scanStatus: 'Pending',
       malwareScanStatus: 'Pending',
     });
+    // Nothing is uploaded while settling; the scan step submits it.
+    expect(malwareScan.submitted).toEqual([]);
+    await unpack.settleMalwareScans();
     expect(malwareScan.submitted).toEqual([fileId]);
-  });
-
-  it('turned on, puts a Final back to skipped when handing it to the scan fails, and goes on', async () => {
-    malwareScan.on.mockResolvedValue(false);
-    const first = await deliveredImageFinal();
-    const second = await deliveredImageFinal();
-    malwareScan.on.mockResolvedValue(true);
-    malwareScan.refuse.add(first.fileId);
-    await settle();
-    expect((await fileRow(first.fileId)).malwareScanStatus).toBe('NotScanned');
-    expect((await fileRow(second.fileId)).malwareScanStatus).toBe('Pending');
-    expect(malwareScan.submitted).toEqual([second.fileId]);
-    // The next run hands it over again.
-    malwareScan.refuse.clear();
-    await settle();
-    expect(malwareScan.submitted).toEqual([second.fileId, first.fileId]);
   });
 
   it('takes a pass on a skipped scan at the verdict entry point only while it is off', async () => {
@@ -1438,6 +1425,32 @@ describe('the finals malware scan', () => {
       ['EICAR, workflow succeeded', workflow('succeeded', [EICAR, NOT_PICKLE]), 'Failed'],
       ['EICAR, workflow still running', workflow('processing', [EICAR]), 'Failed'],
       [
+        'infected by flag alone',
+        workflow('succeeded', [{ $type: 'modelClamScan', output: { infected: true } }, NOT_PICKLE]),
+        'Failed',
+      ],
+      [
+        'infected by status alone',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'infected' } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'dangerous imports by flag alone',
+        workflow('succeeded', [
+          CLEAN,
+          { $type: 'modelPickleScan', output: { dangerousImportsFound: true } },
+        ]),
+        'Failed',
+      ],
+      [
+        'dangerous imports by status alone',
+        workflow('succeeded', [CLEAN, pickle('dangerousImportsFound')]),
+        'Failed',
+      ],
+      [
         'dangerous pickle imports',
         workflow('succeeded', [
           CLEAN,
@@ -1456,6 +1469,14 @@ describe('the finals malware scan', () => {
       ],
       ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Retry'],
       ['pickle step missing', workflow('succeeded', [CLEAN]), 'Retry'],
+      [
+        'clean but nothing was read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', scannedFileCount: 0 } },
+          NOT_PICKLE,
+        ]),
+        'Retry',
+      ],
       ['clean but the workflow failed', workflow('failed', [CLEAN, NOT_PICKLE]), 'Retry'],
       ['expired', workflow('expired', []), 'Retry'],
       ['canceled', workflow('canceled', []), 'Retry'],
@@ -1465,6 +1486,7 @@ describe('the finals malware scan', () => {
         'Retry',
       ],
       ['still running', workflow('processing', [CLEAN]), 'Running'],
+      ['an unknown workflow status', workflow('somethingNew', [CLEAN, NOT_PICKLE]), 'Running'],
     ])('%s reads as %s', (_name, wf, expected) => {
       expect(scan.readFinalScan(wf)).toBe(expected);
     });
@@ -1524,20 +1546,78 @@ describe('the finals malware scan', () => {
     expect((await fileRow(fileId)).malwareScanStatus).toBe('Failed');
   });
 
+  it('submits a Final at most once while it waits on a workflow', async () => {
+    const { dealId, fileId } = await delivered();
+    const row = await scanRow(fileId);
+    await scan.submitFinalScan({
+      id: fileId,
+      dealId,
+      s3Key: row.s3Key,
+      mimeType: 'image/png',
+      size: 1,
+    });
+    expect(orchestrator.submitWorkflow).toHaveBeenCalledTimes(1);
+    expect(await scanRow(fileId)).toMatchObject({
+      malwareScanWorkflowId: 'wf-1',
+      malwareScanAttempts: 1,
+    });
+  });
+
+  it('does not attach a workflow to a Final settled while it was being submitted', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'a.png', IMAGE_A);
+    serveBucket();
+    vi.mocked(orchestrator.submitWorkflow).mockImplementation((async () => {
+      await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = $1`, [
+        fileId,
+      ]);
+      return { data: { id: 'wf-late' } };
+    }) as never);
+    await unpack.unpackFinals();
+    expect(await scanRow(fileId)).toMatchObject({
+      malwareScanStatus: 'Failed',
+      malwareScanWorkflowId: null,
+    });
+  });
+
+  it('does not attach a workflow from a superseded attempt', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'a.png', IMAGE_A);
+    serveBucket();
+    vi.mocked(orchestrator.submitWorkflow).mockImplementation((async () => {
+      // Another attempt was counted while this one was in flight.
+      await q(
+        `UPDATE "ServiceDealFile" SET "malwareScanAttempts" = "malwareScanAttempts" + 1 WHERE id = $1`,
+        [fileId]
+      );
+      return { data: { id: 'wf-old' } };
+    }) as never);
+    await unpack.unpackFinals();
+    expect((await scanRow(fileId)).malwareScanWorkflowId).toBeNull();
+  });
+
   it('scans every Final, a model file included', async () => {
     await delivered('weights.safetensors', Buffer.from('not really weights'));
     expect(orchestrator.submitWorkflow).toHaveBeenCalledTimes(1);
   });
 
   describe('the sweep', () => {
-    it('submits a Final whose hand-off was lost', async () => {
+    it('submits a Final whose hand-off was lost, uploading what the buyer would download', async () => {
       const { fileId } = await lostHandOff();
       expect(await scanRow(fileId)).toMatchObject({
         malwareScanWorkflowId: null,
         malwareScanAttempts: 0,
         unpackedAt: expect.any(Date),
       });
+      // As a repacked zip has: the buyer's download is the server-built archive, not the upload.
+      await q(
+        `UPDATE "ServiceDealFile" SET "deliveryKey" = 'service-deals/delivery/built', "deliverySize" = 4321 WHERE id = $1`,
+        [fileId]
+      );
       expect(await unpack.settleMalwareScans()).toMatchObject({ scansSubmitted: 1 });
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.body).toEqual({ streamOf: 'service-deals/delivery/built' });
+      expect(init.headers['Content-Length']).toBe('4321');
       expect(await scanRow(fileId)).toMatchObject({
         malwareScanWorkflowId: 'wf-1',
         malwareScanAttempts: 1,
@@ -1608,6 +1688,35 @@ describe('the finals malware scan', () => {
       expect((await dealStatus(dealId)).status).toBe('Disputed');
     });
 
+    it('does not give up on the last attempt while its workflow is still running', async () => {
+      const { fileId } = await delivered();
+      await q(`UPDATE "ServiceDealFile" SET "malwareScanAttempts" = $2 WHERE id = $1`, [
+        fileId,
+        SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
+      ]);
+      expect(await run()).toMatchObject({ scansGivenUp: 0, finalsFailed: 0 });
+      expect(await scanRow(fileId)).toMatchObject({
+        malwareScanStatus: 'Pending',
+        malwareScanWorkflowId: 'wf-1',
+      });
+    });
+
+    it('leaves a scan alone when the orchestrator cannot be read', async () => {
+      const { fileId } = await delivered();
+      vi.mocked(orchestrator.getWorkflow).mockImplementation((async () => {
+        throw new Error('orchestrator down');
+      }) as never);
+      expect(await run()).toMatchObject({ scansRetried: 0, scansGivenUp: 0, finalsFailed: 0 });
+      vi.mocked(orchestrator.getWorkflow).mockImplementation((async () => ({
+        data: undefined,
+      })) as never);
+      expect(await run()).toMatchObject({ scansRetried: 0, scansGivenUp: 0, finalsFailed: 0 });
+      expect(await scanRow(fileId)).toMatchObject({
+        malwareScanStatus: 'Pending',
+        malwareScanWorkflowId: 'wf-1',
+      });
+    });
+
     it('fails the malware scan past the give-up window, even with a workflow still running', async () => {
       const { fileId } = await delivered();
       await age(fileId, 'malwareScanStartedAt', SERVICE_FINAL_SCAN_GIVE_UP_MS + 60_000);
@@ -1627,19 +1736,47 @@ describe('the finals malware scan', () => {
       expect(orchestrator.submitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('turned on, scans a Final it skipped long ago instead of giving up on it', async () => {
-      malwareScan.on.mockResolvedValue(false);
+    it('turned back on, scans a Final it skipped on a fresh clock instead of giving up on it', async () => {
+      // Submitted long ago with its attempts used, then the scan was turned off and it was skipped.
       const { fileId } = await delivered();
-      expect((await fileRow(fileId)).malwareScanStatus).toBe('NotScanned');
-      await age(fileId, 'repackedAt', SERVICE_FINAL_SCAN_GIVE_UP_MS + 60_000);
-      malwareScan.on.mockResolvedValue(true);
-      await run(); // settleFinals hands it to the scan
-      expect(await run()).toMatchObject({ scansGivenUp: 0 });
+      await q(
+        `UPDATE "ServiceDealFile" SET "malwareScanAttempts" = $2, "malwareScanStatus" = 'NotScanned' WHERE id = $1`,
+        [fileId, SERVICE_FINAL_SCAN_MAX_ATTEMPTS]
+      );
+      for (const column of ['malwareScanStartedAt', 'malwareScanSubmittedAt', 'repackedAt'])
+        await age(fileId, column, SERVICE_FINAL_SCAN_GIVE_UP_MS + 60_000);
+
+      await run(); // settleFinals queues it for the scan
+      const queued = await scanRow(fileId);
+      expect(queued).toMatchObject({
+        malwareScanStatus: 'Pending',
+        malwareScanWorkflowId: null,
+        malwareScanAttempts: 0,
+        malwareScanSubmittedAt: null,
+      });
+      expect(Date.now() - queued.malwareScanStartedAt!.getTime()).toBeLessThan(
+        SERVICE_FINAL_SCAN_GIVE_UP_MS
+      );
+      expect(await run()).toMatchObject({ scansGivenUp: 0, scansSubmitted: 1 });
       expect(await scanRow(fileId)).toMatchObject({
         malwareScanStatus: 'Pending',
-        malwareScanWorkflowId: 'wf-1',
+        malwareScanWorkflowId: 'wf-2',
         malwareScanAttempts: 1,
       });
+    });
+
+    it('turned on, submits the Finals it skipped one per run', async () => {
+      malwareScan.on.mockResolvedValue(false);
+      const first = await delivered();
+      const second = await delivered();
+      malwareScan.on.mockResolvedValue(true);
+      await run(); // queues both; nothing is uploaded while settling
+      expect(fetchMock).not.toHaveBeenCalled();
+      await run();
+      expect((await scanRow(first.fileId)).malwareScanWorkflowId).toBe('wf-1');
+      expect((await scanRow(second.fileId)).malwareScanWorkflowId).toBeNull();
+      await run();
+      expect((await scanRow(second.fileId)).malwareScanWorkflowId).toBe('wf-2');
     });
   });
 
@@ -1685,7 +1822,7 @@ describe('the finals malware scan', () => {
       expect(await listedForBuyer(dealId, fileId)).toMatchObject({ canDownload: true });
     });
 
-    it('never unlocks a Final left Pending past the give-up window, before or after the sweep', async () => {
+    it('fails a Final left Pending past the give-up window, so it never unlocks for its owner', async () => {
       const { dealId, fileId } = await delivered();
       // Owned, so nothing but the scan stands between the buyer and the file.
       await q(

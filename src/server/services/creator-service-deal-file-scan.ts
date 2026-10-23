@@ -28,9 +28,11 @@ export type FinalScanTarget = {
   size: number;
 };
 
-// Three uploads can run in one unpack job run, which must finish inside its 40 minute lock.
+// One unpack job run uploads at most three Finals (the unpack and repack hand-offs and one sweep
+// submission), and must finish inside its 40 minute lock.
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const SUBMIT_TIMEOUT_MS = 60_000;
+const READ_TIMEOUT_MS = 10_000;
 
 const blobAir = (blobId: string) => `urn:air:other:other:orchestrator:blob@${blobId}`;
 
@@ -112,6 +114,7 @@ type ScanStep = {
   output?: {
     status?: string | null;
     infected?: boolean | null;
+    scannedFileCount?: number | null;
     dangerousImportsFound?: boolean | null;
   } | null;
 };
@@ -121,8 +124,9 @@ const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 /**
  * Reads a scan workflow. The verdict is in each step's output, never the workflow's status: a
  * workflow that found a virus still succeeds. Anything found fails the file even if the other step
- * did not finish; a pass needs both steps to have run and reported clean. Every other outcome,
- * including a status this code does not know, is a scan to run again.
+ * did not finish; a pass needs both steps to have run and reported clean. Every other outcome of a
+ * finished workflow, including a step status this code does not know, is a scan to run again. A
+ * workflow not finished is Running whatever its status, and is abandoned once stale.
  */
 export function readFinalScan(workflow: { status?: string | null; steps?: unknown[] | null }) {
   const steps = (workflow.steps ?? []) as ScanStep[];
@@ -135,13 +139,16 @@ export function readFinalScan(workflow: { status?: string | null; steps?: unknow
   if (!TERMINAL.has(workflow.status ?? '')) return 'Running';
   if (workflow.status !== 'succeeded') return 'Retry';
   const pickleClean = pickle?.status === 'clean' || !!pickle?.status?.startsWith('skipped');
-  return clam?.status === 'clean' && pickleClean ? 'Passed' : 'Retry';
+  // A virus scan that reports reading nothing has not cleared the file.
+  const clamRead = clam?.scannedFileCount !== 0;
+  return clam?.status === 'clean' && clamRead && pickleClean ? 'Passed' : 'Retry';
 }
 
 /** Fetches and reads a scan workflow; null when the orchestrator did not answer. */
 export async function getFinalScanReading(workflowId: string): Promise<FinalScanReading | null> {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
+    signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     path: { workflowId },
   });
   if (!data) return null;
