@@ -148,9 +148,8 @@ import type {
  * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because the
- * browser `component` suite runs only in the PR preview pipeline — report-only, and not a
- * required check — so a guard pinned only there is not reliably exercised.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), as well as in
+ * the browser `component` suite (`Component tests` in CI).
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
@@ -311,8 +310,7 @@ function HeroCover({
  * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
  * tier. That this component hands the view-model the REAL `preview` value, rather than
  * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
- * which runs solely as `preview / component-tests` in the PR preview pipeline — report-only,
- * not a required check, and not reported at all when the preview build fails. Mutating the
+ * which runs in CI as `Component tests`. Mutating the
  * call site to `{ preview: false }` leaves the whole node suite green. Rule and wiring are
  * separate claims; only the first one is gated.
  *

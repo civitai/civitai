@@ -16,7 +16,6 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 export const stripeRouter = router({
   createCustomer: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
-    .input(Schema.createCustomerSchema)
     .mutation(createCustomerHandler),
   createSubscriptionSession: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })

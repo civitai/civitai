@@ -35,6 +35,7 @@ const THREAD_COLUMN: Record<string, string> = {
   model3dReview: 'model3dReviewId',
   appListing: 'appListingId',
   crucible: 'crucibleId',
+  storyline: 'storylineId',
 };
 
 /** The old column holds milliseconds; compare and write at that precision. */

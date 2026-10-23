@@ -50,6 +50,8 @@ export const setStorylineImageCaptionSchema = z.object({
   content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
 });
 
+export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
+
 export const storylineCollaboratorSchema = z.object({
   storylineId: z.number().int().positive(),
   userId: z.number().int().positive(),

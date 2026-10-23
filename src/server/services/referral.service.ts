@@ -6,13 +6,18 @@ import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  getTransactionByExternalId,
+  getUserBuzzAccount,
+} from '~/server/services/buzz.service';
 // Eager, and shared by every importer of this module: subscriptions.service statically
 // pulls clickhouse, redis and freshdesk, so anything added to its graph is added to theirs.
 import { deliverMonthlyCosmetics } from '~/server/services/subscriptions.service';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 
 // Central bank account. Referral rewards must mint from the bank (id 0), which
 // the Buzz service's insufficient-funds check bypasses (`fromAccountId !== 0`),
@@ -310,9 +315,9 @@ export async function recordMembershipPaymentReward(params: {
         const bonus = Math.floor(monthlyBuzzAmount * constants.referrals.refereeBonusBuzzPct);
         if (bonus > 0) {
           // Created Pending with settledAt=now so settleRewardRow below picks
-          // it up immediately. The RefereeBonus is a one-way platform welcome
-          // gift — there's no chargeback path that could claw it back, so
-          // there's no reason to make the referee wait the 7-day window.
+          // it up immediately: the referee gets the welcome bonus without the
+          // 7-day window. A refund or chargeback of this invoice still revokes
+          // it and debits it back (revokeForChargeback).
           refereeBonusReward = await tx.referralReward.create({
             data: {
               userId: refereeId,
@@ -563,6 +568,53 @@ async function settleRewardRow(reward: SettleableReward) {
   }
 }
 
+// Takes what the blue balance covers, since the ledger refuses a debit larger than the balance, and
+// logs the shortfall for support. Any other failure throws, before the reward is revoked, so the
+// caller's retry tries again.
+async function clawBackSettledReward(
+  reward: { id: number; userId: number; buzzAmount: number },
+  reason: string
+) {
+  const debitId = `referral-clawback:${reward.id}`;
+  // A retry after this debit went through would read the balance it left and log a false shortfall.
+  if (await getTransactionByExternalId(debitId)) return;
+  const [account] = await getUserBuzzAccount({ accountId: reward.userId, accountType: 'blue' });
+  const taken = Math.min(Math.max(account?.balance ?? 0, 0), reward.buzzAmount);
+  if (taken > 0) {
+    try {
+      await createBuzzTransaction({
+        // Debit the referrer's blue ledger; return to the central bank (id 0)
+        // untyped, matching the payout + every other "send to bank" call in the
+        // repo (cosmetic-shop/report/purchasable-reward all omit the bank-side
+        // toAccountType).
+        fromAccountId: reward.userId,
+        fromAccountType: 'blue',
+        toAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
+        amount: taken,
+        type: TransactionType.ChargeBack,
+        description: `Referral reward clawback (${reason})`,
+        externalTransactionId: debitId,
+      });
+    } catch (err) {
+      // 409: an earlier attempt already took it, and its balance was read before that debit.
+      if (getBuzzApiStatus(err) === 409) return;
+      throw err;
+    }
+  }
+  if (taken < reward.buzzAmount) {
+    logToAxiom({
+      name: 'referral-clawback-shortfall',
+      type: 'error',
+      rewardId: reward.id,
+      userId: reward.userId,
+      owed: reward.buzzAmount,
+      taken,
+    }).catch(() => undefined);
+  }
+}
+
+// Safe to run again after a failure part way, and alongside a duplicate delivery: each reward is
+// revoked only if still unrevoked, in the same transaction as its referee's paid-month decrement.
 export async function revokeForChargeback(params: { sourceEventId: string; reason: string }) {
   const { sourceEventId, reason } = params;
   const affected = await dbWrite.referralReward.findMany({
@@ -572,68 +624,41 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
     },
     select: { id: true, userId: true, kind: true, refereeId: true, status: true, buzzAmount: true },
   });
-  if (!affected.length) return { revoked: 0 };
 
-  // Track referees whose paidMonthCount needs to drop. A refunded membership
-  // payment must clear its credit on the UserReferral row so the referee can't
-  // refund-and-keep-Buzz-kickbacks: BuzzKickback eligibility checks
-  // `firstPaidAt`, so leaving that set after a refunded first month would let
-  // the referrer keep collecting kickbacks on a free account.
-  const refereeDecrements = new Map<number, number>();
-
+  let revoked = 0;
   for (const reward of affected) {
     if (reward.status === ReferralRewardStatus.Settled && reward.buzzAmount > 0) {
-      await createBuzzTransaction({
-        // Debit the referrer's blue ledger; return to the central bank (id 0)
-        // untyped, matching the payout + every other "send to bank" call in the
-        // repo (cosmetic-shop/report/purchasable-reward all omit the bank-side
-        // toAccountType).
-        fromAccountId: reward.userId,
-        fromAccountType: 'blue',
-        toAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
-        amount: reward.buzzAmount,
-        type: TransactionType.ChargeBack,
-        description: `Referral reward clawback (${reason})`,
-        externalTransactionId: `referral-clawback:${reward.id}`,
-      }).catch((err) =>
-        logToAxiom({
-          name: 'referral-clawback',
-          type: 'error',
-          rewardId: reward.id,
-          err: String(err),
-        }).catch(() => undefined)
-      );
+      await clawBackSettledReward(reward, reason);
     }
-    await dbWrite.referralReward.update({
-      where: { id: reward.id },
-      data: {
-        status: ReferralRewardStatus.Revoked,
-        revokedAt: new Date(),
-        revokedReason: reason,
-      },
-    });
-    if (reward.kind === ReferralRewardKind.MembershipToken && reward.refereeId) {
-      refereeDecrements.set(reward.refereeId, (refereeDecrements.get(reward.refereeId) ?? 0) + 1);
-    }
-    emitSignal(reward.userId, SignalMessages.ReferralClawback, {
-      rewardId: reward.id,
-      reason,
-    });
-  }
-
-  for (const [refereeId, decrement] of refereeDecrements) {
-    await dbWrite.$transaction(async (tx) => {
+    const won = await dbWrite.$transaction(async (tx) => {
+      const { count } = await tx.referralReward.updateMany({
+        where: {
+          id: reward.id,
+          status: { in: [ReferralRewardStatus.Pending, ReferralRewardStatus.Settled] },
+        },
+        data: {
+          status: ReferralRewardStatus.Revoked,
+          revokedAt: new Date(),
+          revokedReason: reason,
+        },
+      });
+      if (!count) return false;
+      // A refunded membership payment must clear its credit on the UserReferral row so the
+      // referee can't refund-and-keep-Buzz-kickbacks: BuzzKickback eligibility checks
+      // `firstPaidAt`, so leaving that set after a refunded first month would let the referrer
+      // keep collecting kickbacks on a free account.
+      if (reward.kind !== ReferralRewardKind.MembershipToken || !reward.refereeId) return true;
       // Lock the row so two concurrent chargebacks for the same referee don't
       // both read the same paidMonthCount and lose one of the decrements.
       const locked = await tx.$queryRaw<{ id: number; paidMonthCount: number }[]>(Prisma.sql`
         SELECT id, "paidMonthCount"
         FROM "UserReferral"
-        WHERE "userId" = ${refereeId}
+        WHERE "userId" = ${reward.refereeId}
         FOR UPDATE
       `);
       const ref = locked[0];
-      if (!ref) return;
-      const next = Math.max(0, ref.paidMonthCount - decrement);
+      if (!ref) return true;
+      const next = Math.max(0, ref.paidMonthCount - 1);
       await tx.userReferral.update({
         where: { id: ref.id },
         data: {
@@ -644,10 +669,17 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
           firstPaidAt: next === 0 ? null : undefined,
         },
       });
+      return true;
+    });
+    if (!won) continue;
+    revoked += 1;
+    emitSignal(reward.userId, SignalMessages.ReferralClawback, {
+      rewardId: reward.id,
+      reason,
     });
   }
 
-  return { revoked: affected.length };
+  return { revoked };
 }
 
 export async function awardMilestones(userId: number) {

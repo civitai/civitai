@@ -20,13 +20,12 @@
  * no viewport-dependent defect is reachable — but the viewport coverage genuinely
  * narrowed and that is the trade. (b) 🔴 THE FILENAME LIES ABOUT THE TIER: this file ends
  * `.browser.test.tsx`, so it is collected by the `component` project, NOT by the
- * `geometry` one, despite "geometry" being in its name. `component` matches no project
- * selector in `.github/workflows/lint.yml`, so nothing here is run by CI outside the
- * preview pipeline's report-only status. Do not read the name as a tier.
+ * `geometry` one, despite "geometry" being in its name, and runs in CI as
+ * `Component tests`. Do not read the name as a tier.
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
- * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY and non-blocking. ⚠️ AND THE
+ * Vitest browser-mode `component` project (`Component tests` in CI), and no check in
+ * this repo blocks a merge. ⚠️ AND THE
  * SENTENCE THAT FOLLOWED USED TO SAY "the enforceable half lives as source guards in the
  * BLOCKING `unit` project", WHICH IS FALSE: verified 2026-10-03 against the GitHub API,
  * `civitai/civitai` `main` carries `required_status_checks: null`, so no project in this

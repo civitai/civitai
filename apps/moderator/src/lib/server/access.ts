@@ -149,7 +149,10 @@ export const NAVIGATION: NavLink[] = [
   {
     label: 'Storylines',
     path: '/storylines',
-    children: [{ path: '/storylines/title-appeals', label: 'Title Appeals' }],
+    children: [
+      { path: '/storylines/title-appeals', label: 'Title Appeals' },
+      { path: '/storylines/early-access', label: 'Early Access Sign-ups' },
+    ],
   },
   {
     label: 'Articles',

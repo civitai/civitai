@@ -92,9 +92,9 @@ export function ReasonGatedField({
 }) {
   const len = value.trim().length;
   // Both strings come from the pure `reasonGatedFieldCopy` module rather than being
-  // built inline. Built here they were pinned ONLY by the report-only browser tier, so
-  // dropping the ceiling from the counter — the one thing this prop was added for —
-  // left every blocking suite green. See that module's header.
+  // built inline. Built here they were pinned ONLY by the browser tier, which was
+  // report-only then, so dropping the ceiling from the counter — the one thing this
+  // prop was added for — left every node suite green. See that module's header.
   const copy = { length: len, minLength, maxLength, required };
   return (
     <Textarea

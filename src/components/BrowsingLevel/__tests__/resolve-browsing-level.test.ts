@@ -153,8 +153,7 @@ describe('resolveViewerBrowsingLevel', () => {
  * Everything above tests pure resolvers that these components merely have to
  * CHOOSE to use. Every defect in this area so far has been one hook name at one
  * call site, and no test of a resolver can reach that. The hooks are React, so a
- * render test lands in the `component` project, which runs in no CI job; this
- * reads the sources instead.
+ * render test lands in the `component` project; this reads the sources instead.
  *
  * ⚠️ What a source guard is worth, stated because it flatters itself: it catches
  * a revert to `useBrowsingLevelDebounced`, which is the regression that keeps

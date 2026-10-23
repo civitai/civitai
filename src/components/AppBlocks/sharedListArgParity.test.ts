@@ -114,7 +114,7 @@ function sharedListArgKeys(src: string): string[] {
  * `sharedListArgKeys` THROWS on the two shapes it cannot see through (a spread, a
  * second call site). Computed in the `describe` body, those throws are a
  * COLLECTION error: vitest reports `Tests  no tests` — a reassuring zero that a
- * report-only lane renders as "nothing to see" rather than as a failure. Measured
+ * lane reading only the exit code renders as "nothing to see" rather than as a failure. Measured
  * that exact output before moving it. Inside an `it`, the same throw is a failed
  * test with the message attached.
  */

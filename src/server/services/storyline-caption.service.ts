@@ -5,8 +5,9 @@ import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/erro
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * Sets the caption the post's author wrote on one image of a storyline chapter. Empty text
- * deletes it. An edit keeps the old text's refusal and rating until its own scan settles them.
+ * Sets the caption the post's author wrote on one image of a storyline chapter, or of a draft
+ * started from the storyline flow. Empty text deletes it. An edit keeps the old text's refusal and
+ * rating until its own scan settles them.
  */
 export async function setStorylineImageCaption({
   imageId,
@@ -26,11 +27,17 @@ export async function setStorylineImageCaption({
   if (!image?.postId || !image.post) throw throwNotFoundError('Image not found');
   if (image.post.userId !== userId)
     throw throwAuthorizationError('Only the post author can caption its images');
-  const chapter = await dbWrite.storylineChapter.findFirst({
-    where: { postId: image.postId, removedAt: null },
-    select: { id: true },
-  });
-  if (!chapter) throw throwNotFoundError('Captions are only for storyline chapters');
+  const [chapter, pending] = await Promise.all([
+    dbWrite.storylineChapter.findFirst({
+      where: { postId: image.postId, removedAt: null },
+      select: { id: true },
+    }),
+    dbWrite.storylinePendingChapter.findUnique({
+      where: { postId: image.postId },
+      select: { postId: true },
+    }),
+  ]);
+  if (!chapter && !pending) throw throwNotFoundError('Captions are only for storyline chapters');
 
   const text = content.trim();
   if (!text) {
@@ -52,6 +59,29 @@ export async function setStorylineImageCaption({
   });
   scanEntityInBackground({ entityType: 'ImageCaption', entityId: imageId });
   return { imageId, content: text };
+}
+
+/**
+ * The captions on a post's images, for its author writing them, or a moderator. Content only: a
+ * refused caption is not surfaced to its author as refused. From the primary, since the editor
+ * reads it straight after a write.
+ */
+export async function getPostImageCaptions({
+  postId,
+  userId,
+  isModerator,
+}: {
+  postId: number;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<{ imageId: number; content: string }[]> {
+  const post = await dbWrite.post.findUnique({ where: { id: postId }, select: { userId: true } });
+  if (!post || (post.userId !== userId && !isModerator)) return [];
+  return dbWrite.imageCaption.findMany({
+    where: { image: { postId } },
+    select: { imageId: true, content: true },
+    orderBy: { imageId: 'asc' },
+  });
 }
 
 /** An unscanned caption (nsfwLevel 0) is shown to every reader. */

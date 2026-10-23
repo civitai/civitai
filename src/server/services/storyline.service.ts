@@ -576,6 +576,26 @@ export async function getPendingChapterForPost({
   };
 }
 
+/**
+ * Unlinks a draft from the storyline it was started from; the post stays an ordinary draft. Only
+ * its author, and only while unpublished: once published, the link is publish's to resolve.
+ */
+export async function removePendingChapter({ postId, userId }: { postId: number; userId: number }) {
+  const link = await dbWrite.storylinePendingChapter.findUnique({
+    where: { postId },
+    select: { userId: true, post: { select: { userId: true, publishedAt: true } } },
+  });
+  if (!link) return { removed: false };
+  if (link.userId !== userId || link.post.userId !== userId)
+    throw throwAuthorizationError('Only the author of this draft can remove it from the storyline');
+  if (link.post.publishedAt) throw throwBadRequestError('This post is already published');
+  // Conditional, so a publish that lands between the read and here keeps its link.
+  const { count } = await dbWrite.storylinePendingChapter.deleteMany({
+    where: { postId, userId, post: { userId, publishedAt: null } },
+  });
+  return { removed: count > 0 };
+}
+
 /** Chapter 1's row, once `assertPostCanBeChapter` has passed the post. */
 export const createRootChapter = (
   db: Db,
@@ -1962,6 +1982,16 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
     /** Chapter 1, where the main route starts. */
     rootChapterId: firstChapters[0]?.id ?? null,
   };
+}
+
+/** Throws NotFound unless this viewer could open the storyline's page. */
+export async function assertStorylineVisible(
+  storylineId: number,
+  viewer: Viewer,
+  browsingLevel: number
+) {
+  const { storyline } = await getStorylineForRead(storylineId, viewer, browsingLevel);
+  return { userId: storyline.userId, tosViolation: storyline.tosViolation };
 }
 
 /**

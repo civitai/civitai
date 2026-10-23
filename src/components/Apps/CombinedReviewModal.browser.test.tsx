@@ -13,7 +13,7 @@ import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
- * test (report-only in Tekton; the blocking gate for the pairing logic is the
+ * test (`Component tests` in CI; the node-tier gate for the pairing logic is the
  * `unifiedReviewRow` unit suite). Asserts:
  *  - BOTH stacked section headers render (App code review + Listing media);
  *  - the CODE section shows the agent ReportTabs (Scopes/Security/Code review);

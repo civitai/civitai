@@ -12,7 +12,7 @@ import {
 
 /**
  * The moderator → app-developer message composer (`appListings.messageAppOwner`, which
- * shipped with no UI at all). Browser-mode (report-only in Tekton): the two-field gate,
+ * shipped with no UI at all). Browser-mode (`Component tests` in CI): the two-field gate,
  * the collaborator opt-in, the exact mutation payload, and the failure posture.
  *
  * The gate RULE is pinned in the blocking node project by

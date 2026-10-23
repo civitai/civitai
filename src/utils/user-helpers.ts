@@ -1,5 +1,5 @@
 import { banReasonDetails } from '~/server/common/constants';
-import type { BanReasonCode } from '~/server/common/enums';
+import { BanReasonCode } from '~/server/common/enums';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -29,3 +29,15 @@ export const getUserBanDetails = ({
     bannedReasonDetails: banDetails?.detailsExternal,
   });
 };
+
+/** The reasons a moderator can pick when banning by hand. */
+export const banReasonOptions = () =>
+  Object.values(BanReasonCode)
+    .filter((code) => !banReasonDetails[code].systemOnly)
+    .map((code) => {
+      const { privateBanReasonLabel } = banReasonDetails[code];
+      return {
+        value: code,
+        label: privateBanReasonLabel ? `${code}: ${privateBanReasonLabel}` : code,
+      };
+    });
