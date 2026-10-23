@@ -283,6 +283,21 @@ describe('an app already under the fork’s slug', () => {
     expect(page.getByTestId('app-fork-setup').elements()).toHaveLength(0);
   });
 
+  test('opens the FORK, not the app worked on most recently', async () => {
+    m.list = [
+      sandbox('sbx-recent000007', {
+        app: 'recent-other-app',
+        lastActivityAt: '2026-10-23T12:00:00.000Z',
+      }),
+      sandbox('sbx-fork00000008', { lastActivityAt: '2026-10-01T12:00:00.000Z' }),
+    ];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(`Switch app: ${FORK_SLUG}, Running`);
+    // And it stays there once everything has settled.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await expect.element(switcher()).toHaveAccessibleName(`Switch app: ${FORK_SLUG}, Running`);
+  });
+
   test('already_exists from the service (made meanwhile) → the list is re-read and it opens', async () => {
     m.seedResult = {
       error: new SandboxApiError(

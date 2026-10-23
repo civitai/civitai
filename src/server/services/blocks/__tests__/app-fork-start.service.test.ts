@@ -120,6 +120,8 @@ const PARENT_FILES: Record<string, string> = {
     name: PARENT_NAME,
     version: '1.4.0',
     scopes: ['ai:write:budgeted'],
+    // The PARENT's repository — must not become the fork's "Source" link.
+    repository: 'https://github.com/parent-author/pixel-garden',
   }),
   'README.md': '# Pixel Garden',
   'src/index.ts': 'export const garden = 1;',
@@ -137,6 +139,13 @@ const PARENT_FILES: Record<string, string> = {
   id_ed25519: 'ssh private',
   '.ssh/id_rsa.pub': 'ssh public',
   '.npmrc': '//registry/:_authToken=parent-token',
+  '.yarnrc.yml': 'npmAuthToken: parent-yarn-token',
+  '.dev.vars': 'API_KEY=parent-wrangler',
+  '.aws/credentials': '[default]',
+  '.pgpass': 'db:5432:*:u:p',
+  '.docker/config.json': '{"auths":{}}',
+  'android/app/release.jks': 'keystore',
+  'secrets/credentials.json': '{"client_secret":"x"}',
 };
 const EXCLUDED = [
   '.env',
@@ -152,6 +161,13 @@ const EXCLUDED = [
   'id_ed25519',
   '.ssh/id_rsa.pub',
   '.npmrc',
+  '.yarnrc.yml',
+  '.dev.vars',
+  '.aws/credentials',
+  '.pgpass',
+  '.docker/config.json',
+  'android/app/release.jks',
+  'secrets/credentials.json',
 ];
 
 async function parentBundle(files: Record<string, string> = PARENT_FILES): Promise<Buffer> {
@@ -209,11 +225,13 @@ const sessionKey = (slug: string) => `${REDIS_SYS_KEYS.BLOCKS.FORK_SESSION}:${sl
 let takenSlugs = new Set<string>();
 let approvedSha: string | null = APPROVED_SHA;
 let listingKind = 'onsite';
+let blockStatus = 'approved';
 
 function installDb() {
   takenSlugs = new Set();
   approvedSha = APPROVED_SHA;
   listingKind = 'onsite';
+  blockStatus = 'approved';
   dbMock.dbRead.appListing.findFirst.mockImplementation(
     async (args: { where: { id?: string; slug?: string } }) => {
       if (args.where.slug) return takenSlugs.has(args.where.slug) ? { id: 'apl_taken_5199' } : null;
@@ -224,7 +242,12 @@ function installDb() {
             listingKind === 'onsite'
               ? // The block row's own currentVersionSha is a DIFFERENT sha: the fork must use the
                 // approved request's, not this.
-                { id: PARENT_BLOCK, blockId: PARENT_SLUG, currentVersionSha: HEAD_SHA }
+                {
+                  id: PARENT_BLOCK,
+                  blockId: PARENT_SLUG,
+                  status: blockStatus,
+                  currentVersionSha: HEAD_SHA,
+                }
               : null,
         };
       return null;
@@ -244,6 +267,8 @@ function installDb() {
 }
 
 let putBodies: Buffer[] = [];
+/** Every S3 command sent: its class and key. */
+let s3Commands: Array<{ command: string; key: unknown }> = [];
 let sendSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
@@ -262,9 +287,14 @@ beforeEach(async () => {
     APP_FORK_SEED_S3_SECRET_ACCESS_KEY: 'fork-test-secret',
   });
   putBodies = [];
+  s3Commands = [];
   sendSpy = vi.spyOn(S3Client.prototype, 'send').mockImplementation(async (command: unknown) => {
     const input = (command as { input?: { Body?: unknown } }).input;
     if (input?.Body) putBodies.push(input.Body as Buffer);
+    s3Commands.push({
+      command: (command as { constructor: { name: string } }).constructor.name,
+      key: (input as { Key?: unknown } | undefined)?.Key,
+    });
     return {} as never;
   });
 });
@@ -510,6 +540,51 @@ describe('startAppFork — a successful start', () => {
       code: 'PRECONDITION_FAILED',
       message: FORK_SOURCE_UNREADABLE_MESSAGE,
     });
+    expect(store.size).toBe(0);
+  });
+});
+
+describe('startAppFork — round-1 audit cases', () => {
+  it('a parent whose APP is suspended behind a still-approved listing reads as missing', async () => {
+    blockStatus = 'suspended';
+    await expect(start()).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: FORK_PARENT_UNAVAILABLE_MESSAGE,
+    });
+    expect(m.reconstruct).not.toHaveBeenCalled();
+  });
+
+  it.each([['http://seeds.fork-store.test'], ['https://seeds.fork-store.test:8443']])(
+    'an endpoint the sandbox service would refuse (%s) refuses every fork up front: no upload',
+    async (endpoint) => {
+      setEnv({ APP_FORK_SEED_S3_ENDPOINT: endpoint });
+      await expect(start()).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: FORK_UNAVAILABLE_HERE_MESSAGE,
+      });
+      expect(s3Commands).toEqual([]);
+      expect(m.summary).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a start that fails AFTER uploading deletes the seed it uploaded', async () => {
+    // The final session write (no NX) fails; the reservation (NX) succeeded.
+    redisMock.sysRedis.set.mockImplementation(
+      async (key: string, value: string, opts?: { NX?: boolean }) => {
+        if (!opts?.NX) throw new Error('redis write failed');
+        store.set(key, value);
+        return 'OK';
+      }
+    );
+    await expect(start()).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: FORK_SOURCE_UNREADABLE_MESSAGE,
+    });
+    const put = s3Commands.find((c) => c.command === 'PutObjectCommand');
+    expect(put?.key).toMatch(/^fork-seeds\/pixel-garden-fork-[0-9a-f]{4}\/[0-9a-f]{64}\.zip$/);
+    expect(s3Commands.filter((c) => c.command === 'DeleteObjectCommand')).toEqual([
+      { command: 'DeleteObjectCommand', key: put?.key },
+    ]);
     expect(store.size).toBe(0);
   });
 });
