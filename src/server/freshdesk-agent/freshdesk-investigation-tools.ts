@@ -857,7 +857,7 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
              "feeCurrency", "paidFiat", chain, "createdAt", "updatedAt"
       FROM "CryptoDeposit"
       WHERE "userId" = ${userId}
-        AND status NOT IN (${Prisma.join(UNVERIFIED_DEPOSIT_STATUSES)})
+        AND status <> 'unverified'
       ORDER BY "createdAt" DESC
       LIMIT 10
     `),
@@ -907,6 +907,16 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
   } else {
     lines.push(`\n--- NOWPAYMENTS DEPOSIT DETAILS (${deposits.length}) ---`);
     for (const d of deposits) {
+      if (UNVERIFIED_DEPOSIT_STATUSES.includes(d.status)) {
+        lines.push(
+          `  Payment #${d.paymentId} [${d.status}] - claimed, not confirmed by NOWPayments: do not credit by hand, escalate`
+        );
+        lines.push(
+          `    Claimed currency: ${d.payCurrency} | Claimed amount: ${d.payAmount ?? 'N/A'}`
+        );
+        lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
+        continue;
+      }
       const buzzTotal = (d.buzzCredited ?? 0) + (d.bonusBuzz ?? 0);
       const multiplierStr = d.multiplier ? ` (${d.multiplier / 100}x multiplier)` : '';
       const fees =

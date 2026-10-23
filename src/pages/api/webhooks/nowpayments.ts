@@ -6,7 +6,11 @@ import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { isDepositComplete } from '~/server/common/chain-config';
 import { logToAxiom } from '~/server/logging/client';
-import { processDeposit, recordUnverifiedDeposit } from '~/server/services/nowpayments.service';
+import {
+  isDepositCredited,
+  processDeposit,
+  recordUnverifiedDeposit,
+} from '~/server/services/nowpayments.service';
 
 export const config = {
   api: {
@@ -85,16 +89,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // The IPN only says which payment to look at; what is recorded and credited comes from
     // NOWPayments' own record of it. partially_paid is credited like finished; failed records the
     // status and credits nothing.
-    if (ACTIONABLE_STATUSES.includes(paymentStatus)) {
-      const payment = await client.getPaymentStatus(event.payment_id).catch((e) => {
-        log({ stage: 'payment-status-failed', paymentId: event.payment_id, error: e.message });
-        return null;
-      });
+    // A credited deposit has nothing left to learn; a replay must not spend a lookup.
+    if (ACTIONABLE_STATUSES.includes(paymentStatus) && !(await isDepositCredited(event.payment_id))) {
+      const { payment, status: lookupStatus } = await client
+        .lookupPayment(event.payment_id)
+        .catch((e) => {
+          log({ stage: 'payment-status-failed', paymentId: event.payment_id, error: e.message });
+          return { payment: null, status: 0 };
+        });
       const verified = payment ? eventFromPayment(payment) : null;
       // NOWPayments' record can trail its own IPN. A paid IPN it cannot confirm yet is handed to
       // the retry sweep, and the 400 asks NOWPayments to redeliver.
       const unconfirmed = !payment
-        ? 'unavailable'
+        ? lookupStatus === 404
+          ? 'not-found'
+          : `lookup-failed-${lookupStatus}`
         : verified?.payment_id !== event.payment_id
         ? 'different-payment'
         : isDepositComplete(paymentStatus) && !isDepositComplete(payment.payment_status)
@@ -122,10 +131,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           paymentId: event.payment_id,
           fields: mismatched,
         });
-      } else {
-        // Display-only amounts the status lookup does not return.
-        verified.fee = event.fee;
-        verified.actually_paid_at_fiat = event.actually_paid_at_fiat;
       }
 
       const status = payment.payment_status;

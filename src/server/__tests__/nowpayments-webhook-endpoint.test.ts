@@ -20,9 +20,16 @@ vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
-  default: { validateWebhookEvent, getPaymentStatus },
+  default: {
+    validateWebhookEvent,
+    lookupPayment: async (id: number) => ({ payment: await getPaymentStatus(id), status: 200 }),
+  },
 }));
-vi.mock('~/server/services/nowpayments.service', () => ({ processDeposit }));
+vi.mock('~/server/services/nowpayments.service', () => ({
+  processDeposit,
+  isDepositCredited: async () => false,
+  recordUnverifiedDeposit: async () => undefined,
+}));
 
 const handler = (await import('~/pages/api/webhooks/nowpayments')).default;
 

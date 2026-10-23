@@ -155,25 +155,27 @@ const userIdFromOrderId = (orderId: string | null | undefined) => {
   return userId && !isNaN(userId) ? userId : null;
 };
 
+export const isDepositCredited = async (paymentId: number) => {
+  const row = await dbRead.cryptoDeposit.findUnique({
+    where: { paymentId: BigInt(paymentId) },
+    select: { status: true, buzzCredited: true },
+  });
+  return row?.status === 'finished' && row.buzzCredited != null;
+};
+
 /** Hands a paid IPN NOWPayments could not confirm to the retry sweep, crediting nothing. */
 export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) => {
   const userId = userIdFromOrderId(event.order_id);
   if (!event.payment_id || !userId) return;
   const paymentId = BigInt(event.payment_id);
 
-  const existing = await dbWrite.cryptoDeposit.findUnique({
+  await dbWrite.cryptoDeposit.upsert({
     where: { paymentId },
-    select: { status: true },
+    create: { paymentId, userId, status: 'unverified', payCurrency: event.pay_currency ?? 'unknown' },
+    update: {},
   });
-  if (!existing) {
-    await dbWrite.cryptoDeposit.upsert({
-      where: { paymentId },
-      create: { paymentId, userId, status: 'unverified', payCurrency: event.pay_currency ?? 'unknown' },
-      update: {},
-    });
-    return;
-  }
-  // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here.
+  // A row NOWPayments already confirmed keeps its owner; the sweep picks it up from here. Run
+  // after the upsert so a row another delivery created meanwhile is still handed over.
   await dbWrite.cryptoDeposit.updateMany({
     where: { paymentId, status: { in: ['waiting', 'confirming', 'sending', 'partially_paid', 'failed'] } },
     data: { status: 'buzz_failed', retryCount: 0 },
@@ -372,7 +374,9 @@ export const processDeposit = async (
       // (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
       // into a terminal state, and a `finished` arriving after `failed` must still win.
       const statusRank: Record<string, number> = {
-        unverified: 0, unverified_exhausted: 0, waiting: 0, confirming: 1, sending: 1, partially_paid: 1,
+        // unverified sits above the in-flight statuses: a confirming IPN NOWPayments has verified
+        // re-owns the row but leaves it to the sweep, which a paid IPN already asked for.
+        waiting: 0, unverified_exhausted: 0, confirming: 1, sending: 1, partially_paid: 1, unverified: 1.5,
         failed: 2, buzz_failed: 3, finished: 4,
       };
       const existingRank = existing ? (statusRank[existing.status] ?? 0) : -1;
@@ -695,18 +699,26 @@ async function reconcileSinglePayment(
 
 /** Max retries before marking a deposit as permanently failed (72 retries × 10 min = 12 hours). */
 const MAX_BUZZ_RETRIES = 72;
+const MAX_SWEEP_OWED = 50;
+const MAX_SWEEP_UNVERIFIED = 25;
 
 /**
  * Sweep CryptoDeposit records stuck in buzz_failed or unverified and retry granting buzz.
  * Re-fetches from the NP API for fresh data before each retry.
  */
 export const retryFailedDeposits = async () => {
-  const failedDeposits = await dbRead.cryptoDeposit.findMany({
-    where: { status: { in: ['buzz_failed', 'unverified'] }, retryCount: { lt: MAX_BUZZ_RETRIES } },
-    select: { paymentId: true, retryCount: true, status: true },
-    orderBy: [{ retryCount: 'asc' }, { updatedAt: 'asc' }],
-    take: 50, // Cap per run to avoid overloading
-  });
+  // Owed deposits first, each status with its own cap, so unconfirmed claims never crowd them out.
+  const sweep = (status: string, take: number) =>
+    dbRead.cryptoDeposit.findMany({
+      where: { status, retryCount: { lt: MAX_BUZZ_RETRIES } },
+      select: { paymentId: true, retryCount: true, status: true },
+      orderBy: [{ retryCount: 'asc' }, { updatedAt: 'asc' }],
+      take,
+    });
+  const failedDeposits = [
+    ...(await sweep('buzz_failed', MAX_SWEEP_OWED)),
+    ...(await sweep('unverified', MAX_SWEEP_UNVERIFIED)),
+  ];
 
   if (!failedDeposits.length) return { retried: 0, succeeded: 0, failed: 0, exhausted: 0 };
 

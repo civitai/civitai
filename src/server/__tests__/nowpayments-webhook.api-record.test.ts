@@ -11,7 +11,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { caller, grantBuzzPurchase, getTransactionByExternalId, signalSend, createNotification } =
   vi.hoisted(() => ({
-    caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn() },
+    caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn(), lookupPayment: vi.fn() },
     grantBuzzPurchase: vi.fn(),
     getTransactionByExternalId: vi.fn(),
     signalSend: vi.fn(),
@@ -133,6 +133,11 @@ beforeEach(() => {
   grantedIds.clear();
   caller.validateWebhookEvent.mockReset().mockReturnValue({ isValid: true });
   caller.getPaymentStatus.mockReset().mockResolvedValue(apiPayment());
+  // The webhook's lookup answers what getPaymentStatus would, plus the HTTP status of a miss.
+  caller.lookupPayment.mockReset().mockImplementation(async (id: number) => {
+    const payment = await caller.getPaymentStatus(id);
+    return { payment, status: payment ? 200 : 404 };
+  });
   signalSend.mockReset().mockResolvedValue(undefined);
   createNotification.mockReset().mockResolvedValue(undefined);
   // The Buzz service refuses a second transaction with the same external id.
@@ -151,8 +156,12 @@ beforeEach(() => {
   dbMock.dbRead.cryptoDeposit.findUnique.mockImplementation(findUnique);
   dbMock.dbWrite.cryptoDeposit.findUnique.mockImplementation(findUnique);
   getTransactionByExternalId.mockReset().mockResolvedValue(null);
-  dbMock.dbRead.cryptoDeposit.findMany.mockImplementation(async ({ where }: { where: Row }) =>
-    [...deposits.values()].filter((row) => matches(row, where)).map((row) => structuredClone(row))
+  dbMock.dbRead.cryptoDeposit.findMany.mockImplementation(
+    async ({ where, take }: { where: Row; take?: number }) =>
+      [...deposits.values()]
+        .filter((row) => matches(row, where))
+        .slice(0, take)
+        .map((row) => structuredClone(row))
   );
   dbMock.dbRead.cryptoDeposit.count.mockImplementation(
     async ({ where }: { where: Row }) =>
@@ -222,10 +231,28 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
     expect(signalSend.mock.calls.map(([call]) => call.userId)).toEqual([42]);
   });
 
-  it('records the fees a matching request carries', async () => {
-    await deliver(ipn());
+  it('takes no fees or fiat value from the notification', async () => {
+    await deliver(ipn({ actually_paid_at_fiat: 10 }));
 
-    expect(deposits.get(ROW)).toMatchObject({ depositFee: 0.1, serviceFee: 0.2 });
+    expect(deposits.get(ROW)).toMatchObject({ depositFee: null, serviceFee: null, paidFiat: null });
+  });
+
+  it('spends no lookup on a deposit already credited', async () => {
+    seed({
+      paymentId: ROW,
+      userId: 42,
+      status: 'finished',
+      payCurrency: 'btc',
+      buzzCredited: 9500,
+    });
+
+    const res = await deliver(ipn());
+
+    expect(res._status()).toBe(200);
+    expect(caller.lookupPayment).not.toHaveBeenCalled();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished', buzzCredited: 9500 });
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+    expect(signalSend).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -280,6 +307,64 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
       );
     }
   );
+
+  it.each([
+    [404, 'not-found'],
+    [500, 'lookup-failed-500'],
+  ])('says why a lookup answered %i came back empty', async (status, reason) => {
+    caller.lookupPayment.mockResolvedValue({ payment: null, status });
+
+    await deliver(ipn());
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'payment-verify-unavailable', reason })
+    );
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified' });
+  });
+
+  it('leaves a deposit marked finished without credit as it is while the lookup is down', async () => {
+    seed({
+      paymentId: ROW,
+      userId: 42,
+      status: 'finished',
+      payCurrency: 'btc',
+      buzzCredited: null,
+    });
+    caller.getPaymentStatus.mockResolvedValue(null);
+
+    await deliver(ipn());
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished' });
+  });
+
+  it('hands the sweep a deposit another delivery creates while this one records it', async () => {
+    caller.getPaymentStatus.mockResolvedValue(apiPayment({ payment_status: 'confirming' }));
+    const upsert = dbMock.dbWrite.cryptoDeposit.upsert.getMockImplementation()!;
+    dbMock.dbWrite.cryptoDeposit.upsert.mockImplementationOnce(async (args: never) => {
+      seed({ paymentId: ROW, userId: 42, status: 'confirming', payCurrency: 'btc' });
+      return upsert(args);
+    });
+
+    await deliver(ipn());
+    expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42 });
+
+    caller.getPaymentStatus.mockResolvedValue(apiPayment());
+    await retryFailedDeposits();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished' });
+    expect(grantBuzzPurchase).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a paid claim on the sweep when a verified confirming IPN follows it', async () => {
+    caller.getPaymentStatus.mockResolvedValue(apiPayment({ payment_status: 'confirming' }));
+    await deliver(ipn({ order_id: 'user:99' }));
+    await deliver(ipn({ payment_status: 'confirming', order_id: 'user:99' }));
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', userId: 42 });
+
+    caller.getPaymentStatus.mockResolvedValue(apiPayment());
+    await retryFailedDeposits();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished', userId: 42 });
+    expect(grantBuzzPurchase).toHaveBeenCalledTimes(1);
+  });
 
   it('writes nothing for a confirming IPN NOWPayments cannot find', async () => {
     caller.getPaymentStatus.mockResolvedValue(null);
@@ -385,6 +470,33 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     await retryFailedDeposits();
 
     expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', retryCount: 1 });
+  });
+
+  it('leaves a deposit credited mid-sweep finished when the sweep gives up on it', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'buzz_failed', payCurrency: 'btc', retryCount: 71 });
+    caller.getPaymentStatus.mockImplementation(async () => {
+      deposits.get(ROW)!.status = 'finished';
+      return null;
+    });
+
+    await retryFailedDeposits();
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished' });
+  });
+
+  it('retries an owed deposit however many unconfirmed claims are waiting', async () => {
+    for (let id = 1; id <= 100; id++) {
+      seed({ paymentId: BigInt(id), userId: 99, status: 'unverified', payCurrency: 'btc' });
+    }
+    seed({ paymentId: ROW, userId: 42, status: 'buzz_failed', payCurrency: 'btc' });
+    caller.getPaymentStatus.mockResolvedValue(null);
+
+    await retryFailedDeposits();
+
+    const looked = caller.getPaymentStatus.mock.calls.map(([id]) => Number(id));
+    expect(looked[0]).toBe(PAYMENT_ID);
+    expect(looked.length).toBe(26);
+    expect(deposits.get(ROW)).toMatchObject({ retryCount: 1 });
   });
 
   it('marks a confirmed deposit the sweep can no longer find as failed when it gives up', async () => {
