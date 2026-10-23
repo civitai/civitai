@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PendingStorylineDraft } from '~/components/Storyline/editor/useStorylineDraftPublish';
 import { useStorylineDraftPublish } from '~/components/Storyline/editor/useStorylineDraftPublish';
+import type * as TrpcMod from '~/utils/trpc';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const mocks = vi.hoisted(() => ({
@@ -32,11 +33,20 @@ vi.mock('~/components/Storyline/storyline.data', () => ({
     return mocks.terms;
   },
 }));
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    useUtils: () => ({ placement: { getStorylineContinuePrice: { invalidate: mocks.invalidate } } }),
-  },
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {},
+      {
+        useUtils: () => ({
+          placement: { getStorylineContinuePrice: { invalidate: mocks.invalidate } },
+        }),
+      }
+    ),
+  };
+});
 vi.mock('~/utils/notifications', () => ({ showWarningNotification: mocks.warn }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,7 +79,11 @@ function mount(draft: PendingStorylineDraft | null | undefined, authorId = WRITE
 beforeEach(() => {
   document.body.innerHTML = '';
   mocks.viewerId = WRITER;
-  mocks.terms = { data: { open: true, price: 50, closedReason: null }, isLoading: false, unavailable: false };
+  mocks.terms = {
+    data: { open: true, price: 50, closedReason: null },
+    isLoading: false,
+    unavailable: false,
+  };
   mocks.termsArgs.mockClear();
   mocks.invalidate.mockReset().mockResolvedValue(undefined);
   mocks.warn.mockClear();
@@ -154,7 +168,11 @@ describe('the price is sent only for a contributor’s draft', () => {
 
   it('not for chapter 1, which has no chapter it continues', () => {
     const { current } = mount(pending({ parentChapter: null }));
-    expect([current.plan, current.label, current.expectedPrice]).toEqual([null, undefined, undefined]);
+    expect([current.plan, current.label, current.expectedPrice]).toEqual([
+      null,
+      undefined,
+      undefined,
+    ]);
   });
 
   it('not for a post that is not linked to a storyline', () => {

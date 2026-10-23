@@ -217,7 +217,9 @@ export function storylineDraftPublishCaption(plan: StorylineDraftPublish) {
       return 'Joins your storyline as soon as you publish.';
     case 'contributor':
       return `Goes to the creator for review. If they do not answer in ${STORYLINE_CONTINUATION_EXPIRY_DAYS} days it expires${
-        plan.expectedPrice > 0 ? ` and your ${storylinePriceLabel(plan.expectedPrice)} is refunded` : ''
+        plan.expectedPrice > 0
+          ? ` and your ${storylinePriceLabel(plan.expectedPrice)} is refunded`
+          : ''
       }.`;
     case 'closed':
       return `${
