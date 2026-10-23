@@ -1,18 +1,14 @@
 import {
   Alert,
   Anchor,
-  Badge,
   Box,
   Center,
   Container,
-  Divider,
   Group,
   Loader,
   Menu,
-  Stack,
   Text,
   ThemeIcon,
-  Title,
   Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
@@ -87,7 +83,6 @@ const TransferModelOwnership = dynamic(
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -110,6 +105,17 @@ import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
+import {
+  CategoryBadge,
+  ModelStatBadge,
+  ModelStatText,
+  ModelTitle,
+  PageGroup,
+  PageStack,
+  TagBadge,
+  TagDivider,
+  UpdatedText,
+} from '~/components/Model/ModelPageDs/ModelPageDs';
 import {
   modelVersionAccessInput,
   toModelVersionPermissionData,
@@ -438,6 +444,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
+  const ds = !!features.modelPageDesignSystemMarkup;
   const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
@@ -925,24 +932,23 @@ export default function ModelDetailsV2({
       <RenderAdUnitOutstream minContainerWidth={2800} />
       <div className={showRail ? `${classes.mainRegion} ${classes.withRail}` : classes.mainRegion}>
         <Container size="xl" px={0} className={classes.contentCol} data-tour="model:start">
-          <Stack gap="xl">
-            <Stack gap="xs">
-              <Stack gap={4}>
-                <Group align="flex-start" justify="space-between" wrap="nowrap">
-                  <Group className={classes.titleWrapper} align="center">
-                    <Title className={classes.title} order={1} lineClamp={2}>
+          <PageStack ds={ds} gap="xl">
+            <PageStack ds={ds} gap="xs">
+              <PageStack ds={ds} gap={4}>
+                <PageGroup ds={ds} align="flex-start" justify="space-between" nowrap>
+                  <PageGroup ds={ds} className={classes.titleWrapper}>
+                    <ModelTitle ds={ds} className={classes.title}>
                       {model?.name}
-                    </Title>
+                    </ModelTitle>
                     <StatHoverCard
                       label="Unique Reviews"
                       value={model.rank?.thumbsUpCountAllTime ?? 0}
                     >
                       <div>
                         <LoginRedirect reason="favorite-model">
-                          <IconBadge
-                            radius="sm"
+                          <ModelStatBadge
+                            ds={ds}
                             color={isFavorite ? 'green' : 'gray'}
-                            size="lg"
                             icon={
                               <ThumbsUpIcon
                                 size={18}
@@ -958,10 +964,10 @@ export default function ModelDetailsV2({
                               handleToggleFavorite({ setTo: !isFavorite });
                             }}
                           >
-                            <Text className={classes.modelBadgeText}>
+                            <ModelStatText ds={ds} className={classes.modelBadgeText}>
                               {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
-                            </Text>
-                          </IconBadge>
+                            </ModelStatText>
+                          </ModelStatBadge>
                         </LoginRedirect>
                       </div>
                     </StatHoverCard>
@@ -970,15 +976,15 @@ export default function ModelDetailsV2({
                       value={model.rank?.downloadCountAllTime ?? 0}
                       message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
                     >
-                      <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
-                        <Text className={classes.modelBadgeText}>
+                      <ModelStatBadge ds={ds} icon={<IconDownload size={18} />}>
+                        <ModelStatText ds={ds} className={classes.modelBadgeText}>
                           {model.hiddenMetrics?.downloads ? (
                             <HiddenMetricNotice size={18} withTooltip={false} />
                           ) : (
                             abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
                           )}
-                        </Text>
-                      </IconBadge>
+                        </ModelStatText>
+                      </ModelStatBadge>
                     </StatHoverCard>
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -986,15 +992,15 @@ export default function ModelDetailsV2({
                         modelId={model.id}
                         data-activity="create:model-stat"
                       >
-                        <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
-                          <Text className={classes.modelBadgeText}>
+                        <ModelStatBadge ds={ds} icon={<IconBrush size={18} />}>
+                          <ModelStatText ds={ds} className={classes.modelBadgeText}>
                             {model.hiddenMetrics?.generations ? (
                               <HiddenMetricNotice size={18} />
                             ) : (
                               abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
                             )}
-                          </Text>
-                        </IconBadge>
+                          </ModelStatText>
+                        </ModelStatBadge>
                       </GenerateButton>
                     )}
                     {features.collections && (
@@ -1004,17 +1010,16 @@ export default function ModelDetailsV2({
                       >
                         <div>
                           <LoginRedirect reason="add-to-collection">
-                            <IconBadge
-                              radius="sm"
-                              size="lg"
+                            <ModelStatBadge
+                              ds={ds}
                               icon={<IconBookmark size={18} />}
                               className="cursor-pointer"
                               onClick={handleCollect}
                             >
-                              <Text className={classes.modelBadgeText}>
+                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
                                 {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                              </Text>
-                            </IconBadge>
+                              </ModelStatText>
+                            </ModelStatBadge>
                           </LoginRedirect>
                         </div>
                       </StatHoverCard>
@@ -1031,22 +1036,21 @@ export default function ModelDetailsV2({
                             entityId={model.id}
                             entityType="Model"
                           >
-                            <IconBadge
+                            <ModelStatBadge
+                              ds={ds}
                               className="cursor-pointer"
-                              radius="sm"
-                              size="lg"
                               icon={
                                 <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
                               }
                             >
-                              <Text className={classes.modelBadgeText}>
+                              <ModelStatText ds={ds} className={classes.modelBadgeText}>
                                 {model.hiddenMetrics?.buzz ? (
                                   <HiddenMetricNotice size={18} withTooltip={false} />
                                 ) : (
                                   abbreviateNumber(buzzEarned)
                                 )}
-                              </Text>
-                            </IconBadge>
+                              </ModelStatText>
+                            </ModelStatBadge>
                           </InteractiveTipBuzzButton>
                         </div>
                       </StatHoverCard>
@@ -1060,19 +1064,14 @@ export default function ModelDetailsV2({
                           </Text>
                         }
                       >
-                        <IconBadge
-                          radius="sm"
-                          color="green"
-                          size="lg"
-                          icon={<IconClock size={18} />}
-                        >
+                        <ModelStatBadge ds={ds} color="green" icon={<IconClock size={18} />}>
                           Early Access
-                        </IconBadge>
+                        </ModelStatBadge>
                       </Tooltip>
                     )}
-                  </Group>
+                  </PageGroup>
 
-                  <Group gap={8} wrap="nowrap">
+                  <PageGroup ds={ds} gap={8} nowrap>
                     <HowToButton
                       size={30}
                       stroke={1.5}
@@ -1426,50 +1425,27 @@ export default function ModelDetailsV2({
                         )}
                       </Menu.Dropdown>
                     </Menu>
-                  </Group>
-                </Group>
-                <Group gap={4}>
-                  <Text size="xs" c="dimmed">
-                    Updated: {formatDate(model.updatedAt)}
-                  </Text>
+                  </PageGroup>
+                </PageGroup>
+                <PageGroup ds={ds} gap={4}>
+                  <UpdatedText ds={ds}>Updated: {formatDate(model.updatedAt)}</UpdatedText>
                   {category && (
                     <>
-                      <Divider orientation="vertical" />
-                      <Link
-                        href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`}
-                        legacyBehavior
-                        passHref
-                      >
-                        <Badge component="a" size="sm" color="blue" className="cursor-pointer">
-                          {category.name}
-                        </Badge>
-                      </Link>
+                      <TagDivider ds={ds} />
+                      <CategoryBadge ds={ds} name={category.name} />
                     </>
                   )}
 
-                  {tags.length > 0 && <Divider orientation="vertical" />}
+                  {tags.length > 0 && <TagDivider ds={ds} />}
                   <Collection
                     items={tags}
+                    ds={ds}
                     renderItem={(tag) => (
-                      <Link
-                        legacyBehavior
-                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                        passHref
-                      >
-                        <Badge
-                          component="a"
-                          size="sm"
-                          color="gray"
-                          variant={colorScheme === 'dark' ? 'filled' : undefined}
-                          className="cursor-pointer"
-                        >
-                          {tag.name}
-                        </Badge>
-                      </Link>
+                      <TagBadge ds={ds} name={tag.name} colorScheme={colorScheme} />
                     )}
                   />
-                </Group>
-              </Stack>
+                </PageGroup>
+              </PageStack>
               {(model.status === ModelStatus.Unpublished || modelDeleted) && (
                 <Alert color="red">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1557,8 +1533,8 @@ export default function ModelDetailsV2({
                   publishedAt={model.publishedAt}
                 />
               )}
-            </Stack>
-            <Group gap={4} wrap="nowrap">
+            </PageStack>
+            <PageGroup ds={ds} gap={4} nowrap>
               {isOwner ? (
                 <>
                   {model.availability !== Availability.Private && (
@@ -1581,6 +1557,7 @@ export default function ModelDetailsV2({
                 </>
               ) : null}
               <ModelVersionList
+                ds={ds}
                 versions={model.modelVersions}
                 selected={selectedVersion?.id}
                 onVersionClick={(version) => {
@@ -1599,16 +1576,17 @@ export default function ModelDetailsV2({
                 showExtraIcons={isOwner || isModerator}
                 showToggleCoverage={model.type === ModelType.Checkpoint}
               />
-            </Group>
+            </PageGroup>
             {!!selectedVersion && (
               <ModelVersionDetails
+                ds={ds}
                 model={model}
                 version={selectedVersion}
                 image={image}
                 onFavoriteClick={handleToggleFavorite}
               />
             )}
-          </Stack>
+          </PageStack>
           {versionCount > 1 ? (
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}

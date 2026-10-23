@@ -1,0 +1,253 @@
+/* Badges, codes, text and tooltips on `@civitai/components` markup (flag
+   `modelPageDesignSystemMarkup`), each matching the Mantine component it replaces.
+
+   Same arrangement as `ShellDs.module.css`, for the same reasons: values come from Mantine's own
+   CSS variables (civitai's palette, both colour schemes) because `@civitai/theme` is not loaded, so
+   every `--civitai-*` token the design-system sheet reads is undefined; and everything sits in a
+   nested `@layer shell`, so any other CSS module on the same element still wins, as it did over
+   Mantine's layered rules. */
+
+@layer shell {
+  /* ---- Badge: Mantine `Badge` with civitai's theme defaults (`variant="light"`, `radius="sm"`) */
+
+  .badge {
+    --badge-height: var(--ds-badge-height, 20px);
+    -webkit-tap-highlight-color: transparent;
+    font-size: var(--ds-badge-fz, 11px);
+    border-radius: var(--ds-badge-radius, var(--mantine-radius-sm));
+    height: var(--badge-height);
+    line-height: calc(var(--badge-height) - calc(0.125rem * var(--mantine-scale)));
+    text-decoration: none;
+    padding: 0 var(--ds-badge-px, 10px);
+    display: inline-grid;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.25px;
+    cursor: default;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    /* Mantine leaves it inherited; the design-system sheet sets `nowrap`. */
+    white-space: inherit;
+    color: var(--ds-badge-color);
+    background: var(--ds-badge-bg);
+    border: calc(0.0625rem * var(--mantine-scale)) solid var(--ds-badge-bd);
+  }
+
+  .badgeWithLeft {
+    grid-template-columns: auto 1fr;
+  }
+
+  .badgeLabel {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    cursor: inherit;
+  }
+
+  .badgeSection {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    max-height: calc(var(--badge-height) - 2px);
+    margin-inline-end: calc(var(--mantine-spacing-xs) / 2);
+  }
+
+  .badgeSm {
+    --ds-badge-height: 18px;
+    --ds-badge-fz: 10px;
+    --ds-badge-px: 8px;
+  }
+
+  .badgeLg {
+    --ds-badge-height: 26px;
+    --ds-badge-fz: 13px;
+    --ds-badge-px: 12px;
+  }
+
+  .badgeRadiusXl {
+    --ds-badge-radius: var(--mantine-radius-xl);
+  }
+
+  .badgeLight {
+    --ds-badge-bg: var(--ds-c-light);
+    --ds-badge-color: var(--ds-c-light-color);
+    --ds-badge-bd: transparent;
+  }
+
+  .badgeFilled {
+    --ds-badge-bg: var(--ds-c-filled);
+    --ds-badge-color: var(--mantine-color-white);
+    --ds-badge-bd: transparent;
+  }
+
+  .badgeOutline {
+    --ds-badge-bg: transparent;
+    --ds-badge-color: var(--ds-c-outline);
+    --ds-badge-bd: var(--ds-c-outline);
+  }
+
+  .gray {
+    --ds-c-light: var(--mantine-color-gray-light);
+    --ds-c-light-color: var(--mantine-color-gray-light-color);
+    --ds-c-filled: var(--mantine-color-gray-filled);
+    --ds-c-outline: var(--mantine-color-gray-outline);
+  }
+
+  .blue {
+    --ds-c-light: var(--mantine-color-blue-light);
+    --ds-c-light-color: var(--mantine-color-blue-light-color);
+    --ds-c-filled: var(--mantine-color-blue-filled);
+    --ds-c-outline: var(--mantine-color-blue-outline);
+  }
+
+  .violet {
+    --ds-c-light: var(--mantine-color-violet-light);
+    --ds-c-light-color: var(--mantine-color-violet-light-color);
+    --ds-c-filled: var(--mantine-color-violet-filled);
+    --ds-c-outline: var(--mantine-color-violet-outline);
+  }
+
+  .teal {
+    --ds-c-light: var(--mantine-color-teal-light);
+    --ds-c-light-color: var(--mantine-color-teal-light-color);
+    --ds-c-filled: var(--mantine-color-teal-filled);
+    --ds-c-outline: var(--mantine-color-teal-outline);
+  }
+
+  .cyan {
+    --ds-c-light: var(--mantine-color-cyan-light);
+    --ds-c-light-color: var(--mantine-color-cyan-light-color);
+    --ds-c-filled: var(--mantine-color-cyan-filled);
+    --ds-c-outline: var(--mantine-color-cyan-outline);
+  }
+
+  .yellow {
+    --ds-c-light: var(--mantine-color-yellow-light);
+    --ds-c-light-color: var(--mantine-color-yellow-light-color);
+    --ds-c-filled: var(--mantine-color-yellow-filled);
+    --ds-c-outline: var(--mantine-color-yellow-outline);
+  }
+
+  .green {
+    --ds-c-light: var(--mantine-color-green-light);
+    --ds-c-light-color: var(--mantine-color-green-light-color);
+    --ds-c-filled: var(--mantine-color-green-filled);
+    --ds-c-outline: var(--mantine-color-green-outline);
+  }
+
+  /* ---- Text: Mantine `Text` (`size`, `c="dimmed"`) and `Title order={1}` */
+
+  .text {
+    -webkit-tap-highlight-color: transparent;
+    text-decoration: none;
+    font-size: var(--ds-text-fz, var(--mantine-font-size-md));
+    line-height: var(--ds-text-lh, var(--mantine-line-height-md));
+    font-weight: normal;
+    margin: 0;
+    padding: 0;
+  }
+
+  .textXs {
+    --ds-text-fz: var(--mantine-font-size-xs);
+    --ds-text-lh: var(--mantine-line-height-xs);
+  }
+
+  .textSm {
+    --ds-text-fz: var(--mantine-font-size-sm);
+    --ds-text-lh: var(--mantine-line-height-sm);
+  }
+
+  .dimmed {
+    color: var(--mantine-color-dimmed);
+  }
+
+  .title {
+    margin: 0;
+    font-weight: var(--mantine-h1-font-weight);
+    font-size: var(--mantine-h1-font-size);
+    line-height: var(--mantine-h1-line-height);
+    font-family: var(--mantine-font-family-headings);
+    text-wrap: var(--mantine-heading-text-wrap);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /* ---- Code: Mantine `Code` (inline), `color="blue"` as `.codeBlue` */
+
+  .code {
+    font-family: var(--mantine-font-family-monospace);
+    line-height: var(--mantine-line-height);
+    padding: 2px calc(var(--mantine-spacing-xs) / 2);
+    border-radius: var(--mantine-radius-sm);
+    font-size: var(--mantine-font-size-xs);
+    margin: 0;
+    overflow: auto;
+    background-color: var(--ds-code-bg, var(--mantine-color-gray-1));
+    color: var(--mantine-color-black);
+  }
+
+  :global([data-mantine-color-scheme='dark']) .code {
+    background-color: var(--ds-code-bg, var(--mantine-color-dark-5));
+    color: var(--mantine-color-white);
+  }
+
+  .codeBlue {
+    --ds-code-bg: var(--mantine-color-blue-filled);
+  }
+
+  /* ---- Tooltip: Mantine `Tooltip` with civitai's `withArrow` default.
+
+     The bubble is NOT the design system's CSS-only bubble: that one is positioned inside its
+     wrapper, and every tooltip on the model page sits inside an `overflow: hidden` ancestor (the
+     action card, the Details accordion item), which clips it. This one is rendered into
+     `document.body` on the client only, `position: fixed`, like Mantine's portal. */
+
+  .tooltip {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .bubble {
+    position: fixed;
+    z-index: 300;
+    padding: calc(var(--mantine-spacing-xs) / 2) var(--mantine-spacing-xs);
+    pointer-events: none;
+    font-size: var(--mantine-font-size-sm);
+    white-space: nowrap;
+    border-radius: var(--mantine-radius-default);
+    background-color: var(--mantine-color-gray-9);
+    color: var(--mantine-color-white);
+    /* Undo the design system's in-wrapper placement and hover-only reveal. */
+    bottom: auto;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    max-width: none;
+    width: auto;
+    line-height: var(--mantine-line-height);
+    font-weight: normal;
+    text-align: start;
+  }
+
+  :global([data-mantine-color-scheme='dark']) .bubble {
+    background-color: var(--mantine-color-gray-2);
+    color: var(--mantine-color-black);
+  }
+
+  .arrow {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    transform: rotate(45deg);
+    background-color: inherit;
+    border: 0;
+    z-index: 1;
+  }
+}

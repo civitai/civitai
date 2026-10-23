@@ -1,0 +1,142 @@
+/* Mantine `Stack`/`Group` and `IconBadge` for the model page (flag `modelPageDesignSystemMarkup`).
+
+   In `@layer shell` (inside the file's `modules` layer), not Tailwind utilities: the page puts its
+   own module classes on these elements (`.titleWrapper` sets `gap`), and those must keep winning
+   as they did over Mantine's layered rules. An unlayered utility would beat them. */
+
+@layer shell {
+  .stack {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: var(--ds-gap, var(--mantine-spacing-md));
+  }
+
+  .group {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: center;
+    gap: var(--ds-gap, var(--mantine-spacing-md));
+  }
+
+  .nowrap {
+    flex-wrap: nowrap;
+  }
+
+  .alignStart {
+    align-items: flex-start;
+  }
+
+  .spaceBetween {
+    justify-content: space-between;
+  }
+
+  .gapXl {
+    --ds-gap: var(--mantine-spacing-xl);
+  }
+
+  .gapXs {
+    --ds-gap: var(--mantine-spacing-xs);
+  }
+
+  .gap4 {
+    --ds-gap: calc(0.25rem * var(--mantine-scale));
+  }
+
+  .gap8 {
+    --ds-gap: calc(0.5rem * var(--mantine-scale));
+  }
+
+  /* `IconBadge`'s `styles`: root `paddingLeft: 3, paddingRight: 5`, section `marginRight: 4`.
+     Doubled class: `ContentDs.module.css`'s badge rules share this layer, and which sheet loads
+     last is chunk order. */
+  .statBadge.statBadge {
+    padding-left: 3px;
+    padding-right: 5px;
+  }
+
+  .statBadge.statBadge > :first-child {
+    margin-right: 4px;
+  }
+
+  .gap0 {
+    --ds-gap: 0rem;
+  }
+
+  .gap6 {
+    --ds-gap: calc(0.375rem * var(--mantine-scale));
+  }
+
+  .gap12 {
+    --ds-gap: calc(0.75rem * var(--mantine-scale));
+  }
+
+  /* ---- Mantine `Grid type="container"` with the version page's gutter and spans. Mantine's
+     container queries use `breakpoints.json` (sm 768px, md 1024px), not its own em breakpoints. */
+
+  .gridContainer {
+    container: mantine-grid / inline-size;
+  }
+
+  .gridRoot {
+    --grid-gutter: var(--mantine-spacing-xl);
+    overflow: visible;
+  }
+
+  @container mantine-grid (min-width: 768px) {
+    .gridRoot {
+      --grid-gutter: var(--mantine-spacing-sm);
+    }
+  }
+
+  @container mantine-grid (min-width: 1024px) {
+    .gridRoot {
+      --grid-gutter: var(--mantine-spacing-xl);
+    }
+  }
+
+  .gridInner {
+    width: calc(100% + var(--grid-gutter));
+    display: flex;
+    flex-wrap: wrap;
+    margin: calc(var(--grid-gutter) / -2);
+  }
+
+  .gridCol {
+    flex-shrink: 0;
+    flex-grow: 0;
+    flex-basis: 100%;
+    max-width: 100%;
+    margin-inline-start: 0rem;
+    padding: calc(var(--grid-gutter) / 2);
+  }
+
+  @container mantine-grid (min-width: 768px) {
+    .sidebarCol {
+      order: 2;
+      flex-basis: 41.66666666666667%;
+      max-width: 41.66666666666667%;
+    }
+
+    .mainCol {
+      order: 1;
+      flex-basis: 58.333333333333336%;
+      max-width: 58.333333333333336%;
+    }
+  }
+
+  @container mantine-grid (min-width: 1024px) {
+    .sidebarCol {
+      flex-basis: 33.333333333333336%;
+      max-width: 33.333333333333336%;
+    }
+
+    .mainCol {
+      flex-basis: 66.66666666666667%;
+      max-width: 66.66666666666667%;
+    }
+  }
+}
