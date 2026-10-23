@@ -314,6 +314,61 @@ describe('dismissing a hold', () => {
       restoredAt: null,
     });
     expect((await hold()).meta).toMatchObject({ decision: 'dismiss_not_subject' });
+    expect((await modelRow()).meta).not.toHaveProperty('modelRulesCleared');
+  });
+
+  describe('a training hold on a model that is not live', () => {
+    const draft = (over: Seed = {}) =>
+      seed({
+        mode: 'active',
+        status: 'Draft',
+        modelMeta: {},
+        holdMeta: { source: 'training' },
+        ...over,
+      });
+
+    it.each(['dismiss_not_subject', 'dismiss_allowed'] as const)(
+      'clears the matched rules for that text instead of republishing, on %s',
+      async (decision) => {
+        await draft();
+        await decide(decision);
+
+        expect(mocks.publishModelHandler).not.toHaveBeenCalled();
+        expect((await modelRow()).meta).toEqual({
+          modelRulesCleared: { textHash: HASH, ruleIds: [3, 4] },
+        });
+        expect(await hold()).toMatchObject({ status: 'Dismissed', decidedById: 7 });
+        expect(await labels()).toHaveLength(2);
+      }
+    );
+
+    it('keeps the rules a moderator cleared for the same text before', async () => {
+      await draft({ modelMeta: { modelRulesCleared: { textHash: HASH, ruleIds: [9] } } });
+      await decide('dismiss_allowed');
+      expect((await modelRow()).meta).toEqual({
+        modelRulesCleared: { textHash: HASH, ruleIds: [9, 3, 4] },
+      });
+    });
+
+    it('replaces a clearance made for other text', async () => {
+      await draft({ modelMeta: { modelRulesCleared: { textHash: 'older', ruleIds: [9] } } });
+      await decide('dismiss_allowed');
+      expect((await modelRow()).meta).toEqual({
+        modelRulesCleared: { textHash: HASH, ruleIds: [3, 4] },
+      });
+    });
+
+    it('clears nothing on a confirm', async () => {
+      await draft();
+      await decide('confirm');
+      expect((await modelRow()).meta).not.toHaveProperty('modelRulesCleared');
+    });
+
+    it('still refuses a deleted model', async () => {
+      await draft({ status: 'Deleted' });
+      await expect(decide('dismiss_allowed')).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect((await hold()).status).toBe('Pending');
+    });
   });
 
   it('republishes a taken-down model, with its pre-publish versions and the ones the takedown stamped', async () => {
