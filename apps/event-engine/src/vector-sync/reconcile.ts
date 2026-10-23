@@ -82,8 +82,11 @@ export async function reconcile(
   return total;
 }
 
-async function reconcileEmbedder() {
-  const blocked = await embedBlockedReason();
+async function reconcileEmbedder(store: VectorStore) {
+  // A new collection's model is recorded by the backfill canary, not here (see the doc).
+  const blocked =
+    (await embedBlockedReason()) ??
+    ((await store.isStamped()) ? null : 'the collection has no recorded model yet');
   if (!blocked) return Embedder.fromConfig('low');
   logger.warn({ reason: blocked }, 'vector-reconcile: not embedding; missing ids are only counted');
   return null;
@@ -118,7 +121,7 @@ async function main() {
         pg,
         store,
         // With embedding off, drift is still deleted and the missing ids are counted.
-        embedder: dryRun ? null : await reconcileEmbedder(),
+        embedder: dryRun ? null : await reconcileEmbedder(store),
         dryRun,
       }
     );

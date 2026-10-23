@@ -10,7 +10,7 @@ import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { MixedStampError, Embedder } from './embedder';
 import { ModelMismatchError, VectorStore } from './qdrant';
-import { embedBlockedReason, syncImageIds, type SyncDeps } from './sync';
+import { connectorBlock, staticEmbedBlock, syncImageIds, type SyncDeps } from './sync';
 
 /** Image ids a CDC message touches. Deletes carry the key columns in `before`. */
 export function imageIdFromEvent(topic: string, value: unknown): number | null {
@@ -30,6 +30,8 @@ export const VECTOR_SYNC_TOPICS = ['postgres.TagsOnImageNew', 'postgres.ImageRes
 const IMAGE_TOPIC = 'postgres.Image';
 /** Above this many pending ids, consumption waits for a flush. */
 const MAX_PENDING = 5_000;
+/** Deferred ids beyond this are dropped (logged); the reconciler finds them. */
+const MAX_DEFERRED = 100_000;
 
 type Offset = { topic: string; partition: number; offset: string };
 
@@ -43,11 +45,17 @@ export class VectorSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
-  /** A flush starting or an embed workflow finishing. */
+  /** An embed workflow returning vectors, or a flush succeeding. */
   lastProgress = Date.now();
+  /** Failed flushes in a row that made no progress. */
   consecutiveFailures = 0;
-  /** Why embedding stopped at runtime, if it did. */
+  private progressCount = 0;
+  /** Why embedding stopped for good (until restart), if it did. */
   embedStopped: string | null = null;
+  /** Why embedding is paused right now, if it is; cleared when the check passes again. */
+  gateBlocked: string | null = null;
+  /** Images that needed embedding while it was paused, retried once it resumes. In memory only. */
+  readonly deferred = new Set<number>();
 
   constructor(
     private readonly deps: SyncDeps,
@@ -79,7 +87,7 @@ export class VectorSyncQueue {
       this.lastFlushOk = Date.now();
       return;
     }
-    this.noteProgress();
+    const progressAtStart = this.progressCount;
     const ids = [...this.pending];
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
@@ -88,12 +96,24 @@ export class VectorSyncQueue {
       const started = Date.now();
       // A new collection's model is recorded by one process first (the backfill canary); until
       // then this consumer does not embed into it, so two writers cannot stamp it differently.
-      const stamped = !!this.deps.embedder && (await this.deps.store.isStamped());
-      if (this.deps.embedder && !stamped) {
-        logger.warn('vector-sync: collection has no recorded model yet; not embedding this flush');
+      const stamped =
+        !!this.deps.embedder && !this.gateBlocked && (await this.deps.store.isStamped());
+      if (this.deps.embedder && !this.gateBlocked && !stamped) {
+        logger.warn('vector-sync: collection has no recorded model yet; deferring embeds');
+      }
+      if (stamped && this.deferred.size) {
+        for (const id of this.deferred) ids.push(id);
+        this.deferred.clear();
       }
       const stats = await syncImageIds(ids, stamped ? this.deps : { ...this.deps, embedder: null });
-      logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, 'vector-sync: flushed');
+      const { deferredIds = [], ...counts } = stats;
+      // Paused, not stopped: keep them for when it resumes. Stopped for good, they wait for a
+      // reconcile like everything else that is missing.
+      if (this.deps.embedder) this.defer(deferredIds);
+      logger.info(
+        { ids: ids.length, ms: Date.now() - started, deferred: this.deferred.size, ...counts },
+        'vector-sync: flushed'
+      );
     } catch (err) {
       // Put the work back; newer offsets taken meanwhile stay, older ones are re-covered by them.
       for (const id of ids) this.pending.add(id);
@@ -101,7 +121,9 @@ export class VectorSyncQueue {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
       }
-      this.consecutiveFailures++;
+      // A flush that stored some vectors before one batch failed is slow, not stuck.
+      if (this.progressCount === progressAtStart) this.consecutiveFailures++;
+      else this.consecutiveFailures = 0;
       if (err instanceof ModelMismatchError || err instanceof MixedStampError) {
         // Retrying would pay for the same rejected vectors every tick.
         this.stopEmbedding((err as Error).message);
@@ -115,10 +137,34 @@ export class VectorSyncQueue {
       logger.warn({ err }, 'vector-sync: offset commit failed');
     }
     this.lastFlushOk = Date.now();
+    this.lastProgress = this.lastFlushOk;
     this.consecutiveFailures = 0;
   }
 
+  private defer(ids: number[]) {
+    for (const id of ids) {
+      if (this.deferred.size >= MAX_DEFERRED) {
+        logger.warn(
+          { dropped: ids.length },
+          'vector-sync: deferred set full; reconcile will find the rest'
+        );
+        return;
+      }
+      this.deferred.add(id);
+    }
+  }
+
+  /** Pauses embedding while `reason` is set, resumes when it is cleared. */
+  setGate(reason: string | null) {
+    if (reason !== this.gateBlocked) {
+      if (reason) logger.warn({ reason }, 'vector-sync: embedding paused');
+      else logger.info('vector-sync: embedding resumed');
+    }
+    this.gateBlocked = reason;
+  }
+
   noteProgress() {
+    this.progressCount++;
     this.lastProgress = Date.now();
   }
 
@@ -131,20 +177,23 @@ export class VectorSyncQueue {
   }
 
   /**
-   * Healthy within 10 minutes of a successful flush. Past that, a slow flush that is still
-   * finishing workflows stays healthy (killing it would lose paid work), but not one whose
-   * flushes keep failing: retries restart the flush every tick, so they look like progress.
-   * 35 minutes outlasts the 30-minute workflow timeout.
+   * Healthy within 10 minutes of a successful flush. Past that, a flush still finishing
+   * workflows stays healthy (killing it would lose paid work), but not one whose flushes keep
+   * failing without progress. 45 minutes outlasts a batch's rate-limit backoff plus the
+   * 30-minute workflow timeout.
    */
   isHealthy(now = Date.now()) {
     if (now - this.lastFlushOk < 10 * 60_000) return true;
-    return this.consecutiveFailures < 3 && now - this.lastProgress < 35 * 60_000;
+    return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
   }
 }
 
-/** The live-sync embedder, or null when embedding may not run (see embedBlockedReason). */
-export async function consumerEmbedder(): Promise<Embedder | null> {
-  const blocked = await embedBlockedReason();
+/**
+ * The live-sync embedder, or null when this process's config rules embedding out. Whether the
+ * connector streams Image is checked by the queue's gate instead, which can pause and resume.
+ */
+export function consumerEmbedder(): Embedder | null {
+  const blocked = staticEmbedBlock();
   if (blocked) {
     logger.warn(
       { reason: blocked },
@@ -164,7 +213,7 @@ async function main() {
   );
   const store = VectorStore.fromConfig();
   await store.bootstrap();
-  const embedder = await consumerEmbedder();
+  const embedder = consumerEmbedder();
 
   const topics = [
     ...VECTOR_SYNC_TOPICS,
@@ -180,14 +229,16 @@ async function main() {
     consumer.commitOffsets(offsets)
   );
   if (embedder) embedder.onProgress = () => queue.noteProgress();
-  // The connector can lose Image after startup (the watcher recreates it from its own env), and
-  // then blocks stop arriving.
+  // Embedding is paused while the connector does not stream Image (blocks would not arrive),
+  // and resumes when it does again; a Kafka Connect blip only pauses it.
+  const checkGate = () =>
+    connectorBlock()
+      .then((reason) => queue.setGate(reason))
+      .catch((err) => queue.setGate(`gate check failed: ${(err as Error).message}`));
+  if (embedder) await checkGate();
   const gate = setInterval(() => {
-    if (!embedder || queue.embedStopped) return;
-    embedBlockedReason()
-      .then((reason) => reason && queue.stopEmbedding(reason))
-      .catch((err) => logger.error({ err }, 'vector-sync: gate re-check failed'));
-  }, 10 * 60_000);
+    if (embedder) void checkGate();
+  }, 60_000);
 
   let stopping = false;
   const timer = setInterval(() => {
@@ -204,8 +255,10 @@ async function main() {
         JSON.stringify({
           healthy,
           pending: queue.size,
-          embedding: !!embedder && !queue.embedStopped,
+          embedding: !!embedder && !queue.embedStopped && !queue.gateBlocked,
           embedStopped: queue.embedStopped,
+          embedPaused: queue.gateBlocked,
+          deferred: queue.deferred.size,
         })
       );
     })

@@ -27,6 +27,8 @@ export type SyncStats = {
   failed: number;
   embedOff: number;
   skipped: Record<string, number>;
+  /** Ids that needed embedding while it was off; the consumer retries them later. */
+  deferredIds?: number[];
 };
 
 export function emptyStats(): SyncStats {
@@ -49,13 +51,27 @@ export async function embedBlockedReason({
   withoutImageCdc = false,
   fetchImpl = globalThis.fetch,
 }: { withoutImageCdc?: boolean; fetchImpl?: typeof fetch } = {}): Promise<string | null> {
+  return (
+    staticEmbedBlock({ withoutImageCdc }) ?? (withoutImageCdc ? null : connectorBlock(fetchImpl))
+  );
+}
+
+/** The conditions this process's own config decides. */
+export function staticEmbedBlock({ withoutImageCdc = false } = {}): string | null {
   if (!config.vectorSync.embedEnabled) return 'VECTOR_SYNC_EMBED_ENABLED is off';
-  if (withoutImageCdc) return null;
-  if (!config.kafka.cdcOnlyTables.includes('public.Image')) {
+  if (!withoutImageCdc && !config.kafka.cdcOnlyTables.includes('public.Image')) {
     return 'CDC_IMAGE_ENABLED is off, so blocks would not reach the index';
   }
-  // This process's flag says nothing about the connector, which the metrics watcher manages
-  // from its own env. Ask Kafka Connect what it actually streams.
+  return null;
+}
+
+/**
+ * Whether the connector streams Image right now. This process's flag says nothing about the
+ * connector, which the metrics watcher manages from its own env, so ask Kafka Connect.
+ */
+export async function connectorBlock(
+  fetchImpl: typeof fetch = globalThis.fetch
+): Promise<string | null> {
   const connectUrl = process.env.DEBEZIUM_CONNECT_URL;
   if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the Image stream cannot be verified';
   try {
@@ -142,6 +158,7 @@ export async function syncRows(
   await deps.store.setPayloads(update);
   if (!deps.embedder) {
     stats.embedOff = inputs.length;
+    stats.deferredIds = inputs.map((i) => Number(i.id));
     return stats;
   }
   if (!inputs.length) return stats;

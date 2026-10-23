@@ -107,22 +107,28 @@ the metrics watcher and never configures the Debezium connector.
 - Image ids collect for `VECTOR_SYNC_DEBOUNCE_MS`, so a burst of tag rows for one image becomes
   one re-read. Offsets are committed only after the Qdrant writes for everything before them
   succeed.
-- It embeds only when `VECTOR_SYNC_EMBED_ENABLED` and `CDC_IMAGE_ENABLED` are both on, and
-  Kafka Connect (`DEBEZIUM_CONNECT_URL`) confirms the connector streams `public.Image` and is
-  running. It re-checks every 10 minutes and stops embedding if that stops being true. Block,
-  review and scan changes touch only the Image row, so without Image events a blocked image would
-  keep its vector. Otherwise it deletes and updates payloads, and counts what it would have
-  embedded as `embedOff`.
+- It embeds only when `VECTOR_SYNC_EMBED_ENABLED` and `CDC_IMAGE_ENABLED` are both on. Block,
+  review and scan changes touch only the Image row, so without Image events a blocked image
+  would keep its vector. Otherwise it only deletes and updates payloads, and counts what it
+  would have embedded as `embedOff`.
+- Embedding is also **paused** while Kafka Connect (`DEBEZIUM_CONNECT_URL`) does not confirm
+  that the connector streams `public.Image` and is running, or while the collection has no
+  recorded model. It is checked at startup and every minute, and resumes when it passes again,
+  so a Connect blip only pauses it. Images that needed embedding meanwhile are kept (in memory,
+  up to 100k) and embedded on resume; a restart loses that list, and the reconciler finds them.
+  The health response shows `embedPaused` and `deferred`.
 - It writes to Qdrant even with embedding off: it creates the collection, payload indexes and
   alias on startup, and applies deletes and payload updates. Deploy it only once its Qdrant is
   provisioned.
 - If the embedder starts returning a different model than the collection holds, it stops
   embedding (deletes and payload updates continue) rather than paying for rejected vectors. The
   health response reports it (`embedding: false`, `embedStopped`). It lasts until the process
-  restarts, which pays for one more flush before stopping again.
+  restarts, which pays for one more flush before stopping again. A stop is permanent for the
+  process, unlike a pause.
 - `GET` on the health port answers 200 within 10 minutes of a successful flush. Past that it
-  stays 200 while workflows keep finishing (within 35 minutes, longer than the workflow
-  timeout) and fewer than 3 flushes in a row have failed. So a liveness probe neither kills one
+  stays 200 while workflows keep returning vectors (within 45 minutes, longer than a batch's
+  backoff plus the workflow timeout) and fewer than 3 flushes in a row have failed without
+  storing any. So a liveness probe neither kills one
   slow embed mid-way nor hides a retry loop.
 
 ### Streaming the Image table
@@ -163,6 +169,9 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
 - `pause` / `resume` set a flag the run checks before each page. They, `status` and `reset`
   address the run for `VECTOR_COLLECTION` in their own env, and log it. `status` prints the cursor.
   `reset` clears it. SIGTERM finishes in-flight pages and stops.
+- A run holds a lease (`...:lease` beside the cursor, renewed every 30 s, lapsing 2 minutes
+  after the run dies), so a second copy of the same backfill refuses to start instead of
+  paying for every page twice.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
   so that live sync is already removing blocked images. Kafka Connect must also confirm the
   connector streams Image and is running. `--without-image-cdc` lifts the Image conditions for
@@ -176,8 +185,9 @@ buckets newest first. In each one it compares the eligible ids in Postgres with 
 Qdrant (an ordered scroll) and re-syncs the difference: missing ids embed, extra ids are re-read
 and deleted if still ineligible. It checks presence only, not payload freshness. Eligible media it
 cannot embed (videos while video is off, external URLs) shows as missing on every run and is
-reported under `skipped`. Embedding follows the same conditions as the consumer. When they are
-not met, it still deletes and counts the rest.
+reported under `skipped`. Embedding follows the same conditions as the consumer, and it does
+not record a new collection's model either. When they are not met, it still deletes and counts
+the rest.
 `--dry-run` only reports.
 
 ## Configuration

@@ -140,6 +140,22 @@ class FakeEmbedder {
   };
 }
 
+/** An in-memory lease with the same contract as the Redis one. */
+function memoryLease() {
+  let holder: string | null = null;
+  return {
+    acquireLease: async (owner: string, _ttlMs?: number) => {
+      if (holder && holder !== owner) return false;
+      holder = owner;
+      return true;
+    },
+    renewLease: async (owner: string) => holder === owner,
+    releaseLease: async (owner: string) => {
+      if (holder === owner) holder = null;
+    },
+  };
+}
+
 function deps(pg: FakePg, store: FakeStore, embedder: FakeEmbedder | null = new FakeEmbedder()) {
   // FakePg answers only the queries vector-sync makes, not pg's full overload set.
   return { pg: pg as unknown as Pool, store, embedder };
@@ -436,6 +452,7 @@ describe('backfill', () => {
       setPaused: async (p: boolean) => void (s.paused = p),
       reset: async () => void (s.cursor = null),
       close: async () => undefined,
+      ...memoryLease(),
     };
     return s;
   }
@@ -524,6 +541,44 @@ describe('backfill', () => {
     );
     expect(waits).toBe(3);
     expect(store.points.has(1)).toBe(true);
+  });
+});
+
+describe('backfill lease', () => {
+  test('a second run of the same backfill refuses to start while the first holds the lease', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 20 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    let cursor: number | null = null;
+    const lease = memoryLease();
+    const state: RunState = {
+      getCursor: async () => cursor,
+      setCursor: async (id) => void (cursor = id),
+      isPaused: async () => false,
+      setPaused: async () => undefined,
+      reset: async () => undefined,
+      close: async () => undefined,
+      ...lease,
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slowPg = new FakePg().put(...pg.images.values());
+    const base = slowPg.query;
+    slowPg.query = (async (sql: string, params: unknown[]) => {
+      await gate;
+      return base(sql, params);
+    }) as FakePg['query'];
+    const first = runBackfill(
+      { watermark: 20, floor: 0, span: 10, pages: 1 },
+      { ...deps(slowPg, store), state }
+    );
+    await expect(
+      runBackfill({ watermark: 20, floor: 0, span: 10, pages: 1 }, { ...deps(pg, store), state })
+    ).rejects.toThrow(/holds its lease/);
+    release();
+    await first;
+    expect(store.points.size).toBe(20);
+    // Released at the end, so a later run may start.
+    expect(await lease.acquireLease('next', 1000)).toBe(true);
   });
 });
 
@@ -697,6 +752,7 @@ describe('review round: paid-path failure modes', () => {
       setPaused: async () => undefined,
       reset: async () => undefined,
       close: async () => undefined,
+      ...memoryLease(),
     };
     await expect(
       runBackfill(
@@ -774,16 +830,12 @@ describe('embedding gate', () => {
     expect(await reason({ CDC_IMAGE_ENABLED: undefined }, { withoutImageCdc: true })).toBeNull();
   });
 
-  test('the consumer builds no embedder unless the gate passes', async () => {
-    const build = (env: Record<string, string | undefined>, tables = 'public.Image') => {
-      vi.stubGlobal('fetch', connector(tables));
-      return withEnv(env, async () =>
-        (await import('@/vector-sync/consumer')).consumerEmbedder()
-      ).finally(() => vi.unstubAllGlobals());
-    };
+  test('the consumer builds no embedder unless its own config allows it', async () => {
+    // The connector half is the queue's pausable gate, not a reason to build no embedder.
+    const build = (env: Record<string, string | undefined>) =>
+      withEnv(env, async () => (await import('@/vector-sync/consumer')).consumerEmbedder());
     expect(await build({})).not.toBeNull();
     expect(await build({ CDC_IMAGE_ENABLED: undefined })).toBeNull();
-    expect(await build({}, 'public.Comment')).toBeNull();
     expect(await build({ VECTOR_SYNC_EMBED_ENABLED: undefined })).toBeNull();
     await expect(build({ VECTOR_IMAGE_LOCATION: '' })).rejects.toThrow(/VECTOR_IMAGE_LOCATION/);
   });
@@ -858,7 +910,7 @@ describe('review round 2', () => {
     queue.consecutiveFailures = 3;
     expect(queue.isHealthy(t0 + 25 * 60_000)).toBe(false);
     queue.consecutiveFailures = 0;
-    expect(queue.isHealthy(t0 + 60 * 60_000)).toBe(false);
+    expect(queue.isHealthy(t0 + 70 * 60_000)).toBe(false);
   });
 
   test('the consumer does not embed into a collection whose model is not yet recorded', async () => {
@@ -871,9 +923,57 @@ describe('review round 2', () => {
     await queue.flush();
     expect(embedder.calls).toEqual([]);
     store.stamped = true;
-    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '1' });
+    // No new event: the deferred id is retried on its own.
+    await queue.flush();
+    queue.add(null, { topic: 'postgres.Image', partition: 0, offset: '1' });
     await queue.flush();
     expect(embedder.calls).toEqual([['1']]);
+    expect(store.points.has(1)).toBe(true);
+  });
+
+  test('a failed connector check pauses embedding and a passing one resumes it, catching up', async () => {
+    const pg = new FakePg().put(imageRow(1), imageRow(2));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    const queue = new VectorSyncQueue(deps(pg, store, embedder), async () => undefined);
+    queue.setGate('the connector could not be read (503/503)');
+    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '0' });
+    await queue.flush();
+    expect(embedder.calls).toEqual([]);
+    expect(queue.deferred.has(1)).toBe(true);
+
+    queue.setGate(null);
+    queue.add(2, { topic: 'postgres.Image', partition: 0, offset: '1' });
+    await queue.flush();
+    expect(embedder.calls.flat().sort()).toEqual(['1', '2']);
+    expect(queue.deferred.size).toBe(0);
+    expect(queue.embedStopped).toBeNull();
+  });
+
+  test('a flush that stored vectors before one batch failed does not count towards unhealthy', async () => {
+    const pg = new FakePg().put(imageRow(1), imageRow(2));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    embedder.dropIds.add(2);
+    const queue = new VectorSyncQueue(deps(pg, store, embedder), async () => undefined);
+    queue.consecutiveFailures = 2;
+    // Real progress comes from the embedder's onProgress; the fake reports it here.
+    const embed = embedder.embed;
+    embedder.embed = async (...args) => {
+      queue.noteProgress();
+      return embed(...args);
+    };
+    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '0' });
+    queue.add(2, { topic: 'postgres.Image', partition: 0, offset: '1' });
+    await expect(queue.flush()).rejects.toThrow('503');
+    expect(queue.consecutiveFailures).toBe(0);
+
+    embedder.embed = embed;
+    store.existing = async () => {
+      throw new Error('qdrant down');
+    };
+    await expect(queue.flush()).rejects.toThrow('qdrant down');
+    expect(queue.consecutiveFailures).toBe(1);
   });
 
   test('two concurrent first model checks on an empty collection cannot both pass', async () => {

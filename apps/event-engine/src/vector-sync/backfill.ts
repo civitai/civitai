@@ -11,6 +11,7 @@
  * past a page once every page above it is written, so a restart resumes without a gap. Points
  * that already exist are not re-embedded, so resuming over a page repeats only payload writes.
  */
+import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
@@ -37,14 +38,47 @@ export type BackfillResult = ReturnType<typeof emptyStats> & {
   done: boolean;
 };
 
+type BackfillDeps = SyncDeps & {
+  state: RunState;
+  shouldStop?: () => boolean;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+const LEASE_MS = 120_000;
+
+/** Holds the run's lease for its whole length, so a second copy refuses to start. */
 export async function runBackfill(
   opts: BackfillOptions,
-  deps: SyncDeps & {
-    state: RunState;
-    shouldStop?: () => boolean;
-    sleep?: (ms: number) => Promise<void>;
-  }
+  deps: BackfillDeps
 ): Promise<BackfillResult> {
+  if (deps.dryRun) return runPages(opts, deps);
+  const owner = randomUUID();
+  if (!(await deps.state.acquireLease(owner, LEASE_MS))) {
+    throw new Error('another run of this backfill holds its lease; refusing to start a second');
+  }
+  let lost = false;
+  const renew = setInterval(() => {
+    deps.state
+      .renewLease(owner, LEASE_MS)
+      .then((held) => {
+        if (!held) lost = true;
+      })
+      .catch((err) => logger.warn({ err }, 'vector-backfill: lease renewal failed'));
+  }, LEASE_MS / 4);
+  try {
+    const result = await runPages(opts, {
+      ...deps,
+      shouldStop: () => lost || !!deps.shouldStop?.(),
+    });
+    if (lost) throw new Error('lost the backfill lease; stopped so two runs do not overlap');
+    return result;
+  } finally {
+    clearInterval(renew);
+    await deps.state.releaseLease(owner).catch(() => undefined);
+  }
+}
+
+async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<BackfillResult> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const total = { ...emptyStats(), scanned: 0, cursor: 0, done: false };
   const start = (await deps.state.getCursor()) ?? opts.watermark + 1;
