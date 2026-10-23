@@ -859,7 +859,8 @@ export async function getInfiniteChallenges(
  * Used by both the public getChallengeDetail and moderator getChallengeForEdit.
  */
 async function buildChallengeDetail(
-  challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>
+  challenge: NonNullable<Awaited<ReturnType<typeof getChallengeById>>>,
+  green?: { isGreen?: boolean; viewerId?: number }
 ) {
   const id = challenge.id;
 
@@ -907,7 +908,7 @@ async function buildChallengeDetail(
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
   if (challenge.status === ChallengeStatus.Completed) {
-    const rawWinners = await getChallengeWinners(id);
+    const rawWinners = await getChallengeWinners(id, green);
     // Enrich winners with profile pictures and cosmetics
     const winnerUserIds = rawWinners.map((w) => w.userId);
     const [winnerProfilePics, winnerCosmetics] =
@@ -1144,7 +1145,7 @@ export async function getChallengeDetail(
   )
     return null;
 
-  const { _internal, ...detail } = await buildChallengeDetail(challenge);
+  const { _internal, ...detail } = await buildChallengeDetail(challenge, { isGreen, viewerId });
   return detail;
 }
 

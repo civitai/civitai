@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
-import { STORYLINE_CEILING_LEVELS, STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
+import {
+  STORYLINE_CAPTION_MAX_LENGTH,
+  STORYLINE_CEILING_LEVELS,
+  STORYLINE_PATH_LIMIT,
+} from '~/shared/utils/storyline';
 
 const ceilingSchema = z
   .number()
@@ -39,6 +43,12 @@ export const updateStorylineSchema = z.object({
   ...picksSchema,
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
+
+/** Empty text deletes the caption. */
+export const setStorylineImageCaptionSchema = z.object({
+  imageId: z.number().int().positive(),
+  content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
+});
 
 export const storylineCollaboratorSchema = z.object({
   storylineId: z.number().int().positive(),

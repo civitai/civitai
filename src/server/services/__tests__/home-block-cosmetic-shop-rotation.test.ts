@@ -108,6 +108,24 @@ describe('a CosmeticShop home block', () => {
     expect(cached.cosmeticShopSection.items).toEqual(ITEMS);
   });
 
+  it('shows a section filled only by its event tag, which has no placed items to count', async () => {
+    isFliptPublic.mockResolvedValue(true);
+    getShopSectionsWithItems.mockResolvedValue([
+      { id: 59, _count: { items: 0 }, items: [{ shopItem: { id: 5 } }] },
+    ]);
+
+    const block = await getHomeBlockData({
+      homeBlock: {
+        id: 40,
+        type: HomeBlockType.CosmeticShop,
+        metadata: { cosmeticShopSection: { id: 59 } },
+      },
+      input: {},
+    });
+
+    expect(ids(block as ShopBlock)).toEqual([5]);
+  });
+
   // The body is shared, so the flag is read as it is for a signed-out viewer. Off must reach the
   // homepage too: it is the switch that pulls creator items, and what a Flipt outage reads as.
   it.each([true, false])(
