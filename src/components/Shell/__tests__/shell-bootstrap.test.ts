@@ -136,6 +136,7 @@ const SITE_ALERTS = {
 const IMAGE = { id: 101, nsfwLevel: 4, userId: 7, createdAt: new Date('2025-05-06T07:08:09.000Z') };
 
 const imageKey = getQueryKey(trpc.image.get, { id: 101 }, 'query');
+const liveNowKey = getQueryKey(trpc.system.getLiveNow, undefined, 'query');
 
 /** `trpcState` as `createServerSideProps` dehydrates it: the server transformer's serialize. */
 function trpcStateFor(image: typeof IMAGE) {
@@ -592,12 +593,28 @@ describe('a shell boot adopts the page data into the state a full render would h
     expect(requests).toEqual([]);
   });
 
-  it('a page-data answer without liveNow is still adopted (the client does not read it)', async () => {
+  it('a page-data answer without liveNow is still adopted (it is optional)', async () => {
     window.__civShell = Promise.resolve(json(payload({ liveNow: undefined })));
-    await render(shellPageProps());
+    await render(shellPageProps({ liveNow: true }));
     expect(last().shellReady).toBe(true);
     expect(navigate).not.toHaveBeenCalled();
+    // Absent leaves the shell's own value in place.
+    expect(queryClient.getQueryData(liveNowKey)).toBe(true);
   });
+
+  it.each([
+    [true, false],
+    [false, true],
+  ])(
+    'the page data’s liveNow (%s) replaces the shell’s (%s), which the edge may have held',
+    async (fromPageData, fromShell) => {
+      window.__civShell = Promise.resolve(json(payload({ liveNow: fromPageData })));
+      await render(shellPageProps({ liveNow: fromShell }));
+      expect(last().shellReady).toBe(true);
+      expect(queryClient.getQueryData(liveNowKey)).toBe(fromPageData);
+      expect(requests).toEqual([]);
+    }
+  );
 
   it('a signed-out answer renders anonymous and does not fetch the session', async () => {
     window.__civShell = Promise.resolve(
