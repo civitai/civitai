@@ -89,7 +89,7 @@ export async function shellRefusal(
   if (queryParam(req, SHELL_BYPASS_PARAM) === SHELL_BYPASS_VALUE) return 'bypass';
   if (parseVerifiedBotHeader(req.headers[VERIFIED_BOT_HEADER])) return 'verified-bot';
   // Credentials other than the cookie: the page would be rendered for THAT caller.
-  if (req.headers.authorization) return 'authorization';
+  // MUTATION M4
   if (requestCarriesQueryToken(req as never)) return 'query-token';
 
   const cookies = getCookies({ req: req as never });

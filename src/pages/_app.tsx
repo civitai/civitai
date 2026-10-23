@@ -524,7 +524,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // `__NEXT_DATA__.query` and renders with this router (`render.js`), so both are emptied here,
     // before anything renders; the client restores them from `location` (`useShellPagePending`).
     const query = appContext.ctx.query;
-    for (const key of Object.keys(query)) delete query[key];
+    void query; // MUTATION M1
     appContext.ctx.asPath = appContext.ctx.pathname;
     (appContext.router as { asPath: string }).asPath = appContext.ctx.pathname;
     renderRequest[SESSION_UNRESOLVED_REQ_KEY] = false;
@@ -553,6 +553,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         availableOAuthProviders,
         host: request.headers.host ?? '',
         verifiedBot: null,
+        session: null, // MUTATION M7
       },
       ...appProps,
     };

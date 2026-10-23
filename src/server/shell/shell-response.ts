@@ -45,7 +45,7 @@ export function applyShellResponseHeaders(res: ServerResponse, route: ShellRoute
   res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, SHELL_CDN_CACHE_CONTROL);
   res.setHeader('Cache-Tag', shellCacheTag(route));
   res.setHeader(SHELL_RENDER_HEADER, 'shell');
-  res.removeHeader('Set-Cookie');
+  // MUTATION M2
 }
 
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
