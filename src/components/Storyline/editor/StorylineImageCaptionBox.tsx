@@ -23,7 +23,7 @@ export function StorylineImageCaptionBox({
   imageId: number;
   media: ReactNode;
 }) {
-  const { captions } = usePostImageCaptions(postId);
+  const { captions, isLoading } = usePostImageCaptions(postId);
   const loaded = captions.get(imageId) ?? '';
 
   const [draft, setDraft] = useState<string | null>(null);
@@ -62,6 +62,8 @@ export function StorylineImageCaptionBox({
         }}
         maxLength={STORYLINE_CAPTION_MAX_LENGTH}
         onBlur={save}
+        readOnly={isLoading}
+        aria-busy={isLoading}
         autosize
         minRows={2}
         maxRows={10}
