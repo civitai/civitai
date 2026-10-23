@@ -37,6 +37,7 @@ const {
   getOpenFlaggerVersions,
   getVotedItemOwner,
   isControlFlaggerVersion,
+  itemForToken,
   sourceOrder,
 } = await import('../scan-label.service');
 
@@ -48,6 +49,7 @@ const MIGRATIONS = [
   '20261022130000_scan_label_queue',
   '20261022140000_scan_label_outcomes',
   '20261023130000_scan_label_reasons_copy',
+  '20261128120000_scan_label_claim_token',
 ].map((name) =>
   readFileSync(
     join(
@@ -399,6 +401,48 @@ describe('claimNext source mix', { timeout: 60_000 }, () => {
   });
 });
 
+describe('claim tokens', () => {
+  it('keeps the token of a card whose lease is refreshed', async () => {
+    const it1 = await seedItem(1);
+    const first = (await claimNext(1, {}, NOW))!;
+    expect(first.itemId).toBe(it1);
+    const refreshed = (await claimNext(1, {}, later(LEASE_MS + 1)))!;
+    expect(refreshed.itemId).toBe(it1);
+    expect(refreshed.leaseExpiresAt.getTime()).toBeGreaterThan(first.leaseExpiresAt.getTime());
+    expect(refreshed.token).toBe(first.token);
+  });
+
+  it('mints a different token per claim', async () => {
+    const it1 = await seedItem(1);
+    const a = (await claimNext(1, {}, NOW))!;
+    const b = (await claimNext(2, {}, NOW))!;
+    expect([a.itemId, b.itemId]).toEqual([it1, it1]);
+    expect(a.token).not.toBe(b.token);
+  });
+
+  it('resolves a token only for the moderator it was minted for', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(await itemForToken(token, 2)).toBeNull();
+  });
+
+  it('still finds the card for a repeat vote from a second tab', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    const cast = () =>
+      castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token }, NOW);
+    expect((await cast()).ok).toBe(true);
+    // The vote released the lease, so only the vote can say what the token was for.
+    expect((await pg.query(`SELECT 1 FROM "ScanLabelClaim" WHERE token = $1`, [token])).rows).toEqual(
+      []
+    );
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(await itemForToken(token, 2)).toBeNull();
+    expect(await cast()).toEqual({ ok: false, reason: 'already-voted' });
+  });
+});
+
 describe('vote slots', () => {
   it('two claimers never share the last slot', async () => {
     const last = await seedItem(1, { votes: 2, blockVotes: 1 });
@@ -561,7 +605,17 @@ describe('owner reveal', () => {
     await ownedItem(1);
     const card = await claimNext(1, {}, NOW);
     expect(Object.keys(card!).sort()).toEqual(
-      ['itemId', 'imageId', 'url', 'type', 'name', 'width', 'height', 'leaseExpiresAt'].sort()
+      [
+        'itemId',
+        'imageId',
+        'token',
+        'url',
+        'type',
+        'name',
+        'width',
+        'height',
+        'leaseExpiresAt',
+      ].sort()
     );
   });
 
