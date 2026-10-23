@@ -91,8 +91,10 @@ is absent, so the page reads as unconfigured rather than broken in dev.
 - **Two readers, and only one is in this repo's main app.** `chat.getAudit` backs
   `/moderator/chat-audit`; `apps/moderator`'s Chat Audit transcript reads every
   `type = 'edit'` row for a message, oldest first, to show each superseded
-  version — `ChatMessage.content` is overwritten in place and Postgres keeps no
-  copy. The rows chain (each `oldValue` equals the previous `newValue`, verified
+  version. Since `ChatMessageEdit` shipped, Postgres keeps the replaced text too,
+  written in the same statement as the edit; the transcript reads both and drops
+  the log row that duplicates a recorded edit, so the log now matters only for
+  edits made before that table existed. The rows chain (each `oldValue` equals the previous `newValue`, verified
   across every multi-edit message), so the log is a full history rather than a
   before/after pair: 144 of 1,025 edited messages have more than one edit and one
   has 21. Reducing it to first-and-last is what the reader used to do, and it

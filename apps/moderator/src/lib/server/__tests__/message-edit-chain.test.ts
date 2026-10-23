@@ -17,9 +17,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const rows = vi.hoisted(() => [] as Record<string, unknown>[]);
+const recorded = vi.hoisted(() => [] as Record<string, unknown>[]);
+const down = vi.hoisted(() => ({ clickhouse: false, recorded: false }));
 
 vi.mock('../clickhouse', () => ({
-  getClickhouse: () => ({ $query: () => Promise.resolve(rows) }),
+  getClickhouse: () => ({
+    $query: () => (down.clickhouse ? Promise.reject(new Error('down')) : Promise.resolve(rows)),
+  }),
 }));
 
 const message = vi.hoisted(() => ({
@@ -34,15 +38,20 @@ const message = vi.hoisted(() => ({
 }));
 
 vi.mock('../db', () => {
+  let table = '';
   const chain = {
-    selectFrom: () => chain,
+    selectFrom: (t: string) => ((table = t), chain),
     leftJoin: () => chain,
     innerJoin: () => chain,
     select: () => chain,
     where: () => chain,
     orderBy: () => chain,
     limit: () => chain,
-    execute: () => Promise.resolve([message]),
+    execute: () => {
+      if (table !== 'ChatMessageEdit') return Promise.resolve([message]);
+      // The relation-missing error a build deployed before its migration gets.
+      return down.recorded ? Promise.reject(new Error('42P01')) : Promise.resolve(recorded);
+    },
   };
   return { dbRead: chain };
 });
@@ -64,9 +73,15 @@ const edit = (at: string, oldValue: string, newValue: string, actorRole = 'owner
   actorRole,
 });
 
+beforeEach(() => {
+  rows.length = 0;
+  recorded.length = 0;
+  down.clickhouse = false;
+  down.recorded = false;
+});
+
 describe('a message edited three times', () => {
   beforeEach(() => {
-    rows.length = 0;
     rows.push(
       edit('2026-09-02 10:00:00', 'v1', 'v2'),
       edit('2026-09-03 10:00:00', 'v2', 'v3'),
@@ -109,7 +124,6 @@ describe('a message edited three times', () => {
 
 describe('a message edited once', () => {
   beforeEach(() => {
-    rows.length = 0;
     rows.push(edit('2026-09-02 10:00:00', 'only-original', 'v4'));
   });
 
@@ -119,5 +133,80 @@ describe('a message edited once', () => {
 
     expect(edits?.[7]).toHaveLength(1);
     expect(edits?.[7][0].oldValue).toBe('only-original');
+  });
+});
+
+const recordedEdit = (at: string, previousContent: string, editorId = message.userId) => ({
+  messageId: 7,
+  editorId,
+  previousContent,
+  createdAt: new Date(at),
+});
+
+describe('edits recorded in Postgres', () => {
+  it('chains each recorded edit to the next, ending at the current content', async () => {
+    recorded.push(
+      recordedEdit('2026-09-02T10:00:00Z', 'v1'),
+      recordedEdit('2026-09-03T10:00:00Z', 'v2', 99)
+    );
+    const { edits, editsPartial } = await getTranscript(1);
+
+    expect(edits[7]).toEqual([
+      expect.objectContaining({ oldValue: 'v1', newValue: 'v2', actorRole: 'owner' }),
+      expect.objectContaining({ oldValue: 'v2', newValue: 'v4', actorRole: 'moderator' }),
+    ]);
+    expect(editsPartial).toBe(false);
+  });
+
+  it('keeps edits only the log saw, and shows an edit both sources hold once', async () => {
+    // v1 -> v2 predates the table. v2 -> v4 is in both: the log row lands a moment after.
+    rows.push(edit('2026-09-02 10:00:00', 'v1', 'v2'), edit('2026-09-03 10:00:01', 'v2', 'v4'));
+    recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
+    const { edits } = await getTranscript(1);
+
+    expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
+      ['v1', 'v2'],
+      ['v2', 'v4'],
+    ]);
+  });
+
+  it('matches a logged edit to the recorded edit it is, not one from the same text', async () => {
+    // During a rolling deploy: v1 -> v2 on the old build (logged only), then v2 -> v1 -> v4 on the new
+    // one, all inside the match window. The first logged edit shares its replaced text with the last
+    // recorded one; matching on that alone dropped the original and showed v1 -> v4 twice.
+    rows.push(
+      edit('2026-09-03 10:00:00', 'v1', 'v2'),
+      edit('2026-09-03 10:00:10', 'v2', 'v1'),
+      edit('2026-09-03 10:00:20', 'v1', 'v4')
+    );
+    recorded.push(
+      recordedEdit('2026-09-03T10:00:10Z', 'v2'),
+      recordedEdit('2026-09-03T10:00:20Z', 'v1')
+    );
+    const { edits } = await getTranscript(1);
+
+    expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
+      ['v1', 'v2'],
+      ['v2', 'v1'],
+      ['v1', 'v4'],
+    ]);
+  });
+
+  it('still shows recorded edits when the log is down, and says history may be missing', async () => {
+    down.clickhouse = true;
+    recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v3'));
+    const { edits, editsPartial } = await getTranscript(1);
+
+    expect(edits[7].map((e) => e.oldValue)).toEqual(['v3']);
+    expect(editsPartial).toBe(true);
+  });
+
+  it('still loads from the log before the table exists', async () => {
+    down.recorded = true;
+    rows.push(edit('2026-09-02 10:00:00', 'v1', 'v4'));
+    const { edits, editsPartial } = await getTranscript(1);
+
+    expect(edits[7].map((e) => e.oldValue)).toEqual(['v1']);
+    expect(editsPartial).toBe(true);
   });
 });

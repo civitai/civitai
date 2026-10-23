@@ -53,8 +53,8 @@ export type ChatMessageRow = {
   username: string | null;
   bannedAt: Date | null;
   content: string;
-  /** Set when the sender rewrote the message. The ORIGINAL text is not kept on the row — an edit
-   *  overwrites `content` — so it comes from the audit log instead; see `getMessageEdits`. */
+  /** Set when the sender rewrote the message. An edit overwrites `content`, so earlier versions come
+   *  from the edit history instead; see `getRecordedEdits` and `getMessageEdits`. */
   editedAt: Date | null;
   /** Deleted messages are hidden from both participants but retained for exactly this. A report is
    *  usually filed about a message the sender then removed, so omitting them hid the evidence. */
@@ -62,7 +62,7 @@ export type ChatMessageRow = {
 };
 
 /**
- * ONE edit, from the `chatAuditEvents` log — the only place a superseded version survives.
+ * ONE edit, from `ChatMessageEdit` or, for edits before it shipped, the `chatAuditEvents` log.
  *
  * A message carries a LIST of these, oldest first, because 144 of the 1,025 edited messages on the
  * site were edited more than once and one was edited 21 times. Collapsing them to first-and-last
@@ -396,11 +396,13 @@ export async function getTranscript(
 ): Promise<{
   rows: ChatMessageRow[];
   truncated: boolean;
-  /** Every edit per message, oldest first. Null when the audit log could not be read — distinct from
-   *  an empty map, which says the log was read and holds nothing for these messages. */
-  edits: Record<number, MessageEdit[]> | null;
+  /** Every edit per message, oldest first. */
+  edits: Record<number, MessageEdit[]>;
+  /** A history source could not be read, so a message may have more versions than `edits` holds — and
+   *  one with none is unknown, not unrecorded. */
+  editsPartial: boolean;
 }> {
-  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {} };
+  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {}, editsPartial: false };
 
   const rows = await chatMessageRead(chatId)
     // Newest first so the cap drops the OLDEST; reversed here for reading order.
@@ -410,9 +412,97 @@ export async function getTranscript(
 
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit).reverse();
-  const edited = page.filter((r) => r.editedAt).map((r) => r.id);
+  const edited = page.filter((r) => r.editedAt);
 
-  return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
+  const [recorded, logged] = await Promise.all([
+    getRecordedEdits(edited),
+    getMessageEdits(
+      chatId,
+      edited.map((r) => r.id)
+    ),
+  ]);
+  return {
+    rows: page,
+    truncated,
+    edits: mergeEdits(recorded ?? {}, logged ?? {}),
+    editsPartial: recorded === null || logged === null,
+  };
+}
+
+/**
+ * Edits from `ChatMessageEdit`, written in the same statement as the edit. Each row holds the text it
+ * replaced; the text it left is the next row's, or the message's current content.
+ */
+async function getRecordedEdits(
+  messages: Pick<ChatMessageRow, 'id' | 'userId' | 'content'>[]
+): Promise<Record<number, MessageEdit[]> | null> {
+  if (!messages.length) return {};
+
+  try {
+    const rows = await dbRead
+      .selectFrom('ChatMessageEdit')
+      .select(['messageId', 'editorId', 'previousContent', 'createdAt'])
+      .where(
+        'messageId',
+        'in',
+        messages.map((m) => m.id)
+      )
+      .orderBy('id', 'asc')
+      .execute();
+
+    const byId = new Map(messages.map((m) => [m.id, m]));
+    const byMessage: Record<number, MessageEdit[]> = {};
+    rows.forEach((r, i) => {
+      const message = byId.get(r.messageId);
+      if (!message) return;
+      const next = rows.slice(i + 1).find((n) => n.messageId === r.messageId);
+      (byMessage[r.messageId] ??= []).push({
+        at: new Date(r.createdAt).toISOString(),
+        oldValue: r.previousContent,
+        newValue: next?.previousContent ?? message.content,
+        truncated: false,
+        actorRole: r.editorId === message.userId ? 'owner' : 'moderator',
+      });
+    });
+    return byMessage;
+  } catch (e) {
+    // The moderator app can deploy before the table's migration is applied.
+    console.error('[chat-audit] recorded message edits unavailable', e);
+    return null;
+  }
+}
+
+/** The same edit lands in both sources, its ClickHouse row inserted just after the Postgres one. */
+const SAME_EDIT_WINDOW_MS = 60_000;
+
+/**
+ * Postgres history starts when it shipped; the ClickHouse log reaches further back while its flag was on.
+ * A logged edit that matches a recorded one (same text either side, moments apart) is that edit, so it is
+ * dropped; the rest are earlier edits only the log saw.
+ */
+export function mergeEdits(
+  recorded: Record<number, MessageEdit[]>,
+  logged: Record<number, MessageEdit[]>
+): Record<number, MessageEdit[]> {
+  const merged: Record<number, MessageEdit[]> = {};
+  for (const id of new Set([...Object.keys(recorded), ...Object.keys(logged)].map(Number))) {
+    const pending = [...(recorded[id] ?? [])];
+    const onlyLogged = (logged[id] ?? []).filter((l) => {
+      const i = pending.findIndex(
+        (r) =>
+          r.oldValue === l.oldValue &&
+          r.newValue === l.newValue &&
+          Math.abs(Date.parse(r.at) - Date.parse(l.at)) < SAME_EDIT_WINDOW_MS
+      );
+      if (i === -1) return true;
+      pending.splice(i, 1);
+      return false;
+    });
+    merged[id] = [...onlyLogged, ...(recorded[id] ?? [])].sort(
+      (a, b) => Date.parse(a.at) - Date.parse(b.at)
+    );
+  }
+  return merged;
 }
 
 /** Messages shown above the oldest held one and below the newest held one. */
@@ -501,8 +591,8 @@ export async function getJudgedMessages(
 }
 
 /**
- * The text a message had BEFORE it was edited, from the `chatAuditEvents` ClickHouse log — Postgres
- * keeps only the current version. Best-effort: the log being down must not take the transcript with it.
+ * Edits from the `chatAuditEvents` ClickHouse log, the only record of those made before
+ * `ChatMessageEdit` existed. Best-effort: the log being down must not take the transcript with it.
  */
 async function getMessageEdits(
   chatId: number,
