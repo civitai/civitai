@@ -13,6 +13,7 @@ import {
   USERS,
   type Fixture,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
+import { SHELL_PAGE_DATA_REQUIRED_KEYS } from '~/components/Shell/shell-page-data';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -198,6 +199,17 @@ describe('page-data parity with getServerSideProps', () => {
     expect(body?.chatSettings).toEqual(SETTINGS.chat);
     expect(body?.flags).toEqual({ shellImages: true });
     expect(body?.userFeatureFlags).toBeDefined();
+  });
+
+  // The client adopts a 200 only when these are all present (`shell-page-data.ts`).
+  it.each([
+    ['a signed-in viewer', ownerFixture],
+    ['a signed-out viewer', { ...ownerFixture, user: null }],
+  ])('carries every key the shell client requires, for %s', async (_, fixture) => {
+    const { res, body } = await fetchPageData(fixture);
+    expect(res.statusCode).toBe(200);
+    const wire = jsonRoundTrip(body) as Record<string, unknown>;
+    expect(SHELL_PAGE_DATA_REQUIRED_KEYS.filter((key) => !(key in wire))).toEqual([]);
   });
 
   it('seeds no per-user chat settings or overlay for a signed-out viewer', async () => {

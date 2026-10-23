@@ -306,3 +306,95 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
   });
 });
+
+/**
+ * A shell boot learns the region after mount (`AppProvider`'s `shell` prop: `null`, then the
+ * upgrade), and `isConsentRequired(undefined)` fails open — so until the region arrives the gate
+ * must be CLOSED, and when it arrives nothing below it may remount.
+ */
+function ShellAppShell({
+  shell,
+  initialConsent,
+}: {
+  shell: { region?: RegionInfo; verifiedBot: null } | null;
+  initialConsent: ConsentDecision | null;
+}) {
+  return (
+    <AppProvider
+      seed={1}
+      canIndex={false}
+      settings={{} as UserContentSettings}
+      liveNow={false}
+      domain="blue"
+      host="civitai.com"
+      serverDomains={SERVER_DOMAINS}
+      availableOAuthProviders={[]}
+      verifiedBot={null}
+      isAuthed={false}
+      shell={shell}
+    >
+      <ThirdPartyConsentProvider initialConsent={initialConsent} loggedIn={false}>
+        <MountLedger />
+        <Probe nav={shell ? 1 : 0} />
+      </ThirdPartyConsentProvider>
+    </AppProvider>
+  );
+}
+
+describe('ThirdPartyConsentProvider — on a shell boot, closed until the region is known', () => {
+  test('🔴 while the region is pending, third parties are NOT allowed and no banner shows', async () => {
+    await renderWithProviders(<ShellAppShell shell={null} initialConsent={null} />);
+
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+    await expect.element(probe()).toHaveAttribute('data-required', 'false');
+    await expect
+      .element(page.getByText('Your privacy choices', { exact: true }))
+      .not.toBeInTheDocument();
+  });
+
+  test('🔴 a consent-required region arriving gates and ASKS, without remounting the app', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent={null} />
+    );
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+
+    await rerender(
+      <ShellAppShell shell={{ region: CALIFORNIA, verifiedBot: null }} initialConsent={null} />
+    );
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-required', 'true');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+    await expect.element(page.getByText('Your privacy choices', { exact: true })).toBeVisible();
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+  });
+
+  test('a consent-required region arriving honours a REJECTED cookie', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent="rejected" />
+    );
+    await rerender(
+      <ShellAppShell shell={{ region: CALIFORNIA, verifiedBot: null }} initialConsent="rejected" />
+    );
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+  });
+
+  test('a region that needs no consent arriving opens it, without remounting the app', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent={null} />
+    );
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+
+    await rerender(
+      <ShellAppShell shell={{ region: TEXAS, verifiedBot: null }} initialConsent={null} />
+    );
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-required', 'false');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+  });
+});
