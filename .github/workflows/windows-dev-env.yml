@@ -137,6 +137,10 @@ on:
       - 'packages/*/package.json'
       - 'packages/civitai-db-schema/**'
       - 'apps/**'
+  # With the path filter above, most `main` pushes skip this workflow, so a
+  # release can't count on a push run for its pin. Dispatch it on the pin's
+  # branch instead; the run groups by that branch's ref, apart from `main`.
+  workflow_dispatch:
 
 permissions:
   contents: read
