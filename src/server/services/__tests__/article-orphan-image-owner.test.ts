@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
@@ -42,6 +45,7 @@ import {
   applyArticleContentChange,
   deleteArticleById,
   linkArticleContentImages,
+  ownerUnderSafetyReport,
   unusedAuthorImage,
   upsertArticle,
 } from '~/server/services/article.service';
@@ -141,9 +145,15 @@ const matches = (row: Row, where: Record<string, any>) =>
     return !row.uses.includes(key) || (key === 'article' && row.id === deletedArticleCover);
   });
 
+/** What the owner's legal-hold read returns: `[{ held }]`, or no row when it cannot be read. */
+const hold = { rows: [{ held: false }] as { held: boolean }[] };
+
 beforeEach(() => {
   vi.clearAllMocks();
   deletedArticleCover = null;
+  hold.rows = [{ held: false }];
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('?').includes(' AS held') ? hold.rows : undefined) as never);
   // The article's own connections, after the edit: every unlinked image.
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
     UNLINKED.map((row) => ({ imageId: row.id })) as never
@@ -361,4 +371,99 @@ describe('an owner with a safety report on file', () => {
       expect(deletedIds()).toEqual([]);
     }
   );
+});
+
+// A hold marker, an image awaiting review, or a report naming them as a secondary user: no
+// "CsamReport" row of their own, so only the shared hold read can see it.
+describe.each([
+  ['under a legal hold with no report of their own', [{ held: true }]],
+  ['whose legal hold cannot be read', []],
+])('an owner %s', (_, rows) => {
+  beforeEach(() => {
+    hold.rows = rows;
+  });
+
+  it('keeps every image the edit unlinks', async () => {
+    const { orphanedImageIds } = await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(orphanedImageIds).toEqual([]);
+  });
+
+  it('keeps the cover and every content image when the article is deleted', async () => {
+    deleteArticleWithCover(OWN_COVER);
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toEqual([]);
+  });
+});
+
+// The read itself, against the real hold migration on a Postgres stand-in.
+describe('ownerUnderSafetyReport over the real hold view', () => {
+  const MARKED = 71; // a hold marker
+  const SECONDARY = 72; // the secondary user on someone else's pending report
+  const REVIEWED = 73; // an image awaiting CSAM review
+  const FREE = 74;
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text,
+        "blockedFor" text, metadata jsonb
+      );
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "CsamReport" (
+        id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+        images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+      );
+    `);
+    await db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+    await db.exec(`
+      INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
+      INSERT INTO "CsamReport" ("userId", details) VALUES (1, '{"secondaryUserId": ${SECONDARY}}');
+      INSERT INTO "Image" (id, "userId", "needsReview") VALUES (9001, ${REVIEWED}, 'csam');
+    `);
+  });
+  afterAll(() => db.close());
+
+  // None of them has a "CsamReport" row of their own, so the count alone would let each through.
+  const heldOn = (ownerId: number) =>
+    ownerUnderSafetyReport(
+      {
+        csamReport: { count: async () => 0 },
+        $queryRaw: (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const flat = Prisma.sql(strings, ...(values as never[]));
+          return (await db.query(flat.text, flat.values as unknown[])).rows;
+        }) as never,
+      } as never,
+      ownerId
+    );
+
+  it.each([
+    ['a hold marker', MARKED],
+    ["the secondary user on another's report", SECONDARY],
+    ['an image awaiting CSAM review', REVIEWED],
+  ])('holds an owner held by %s', async (_, ownerId) => {
+    expect(await heldOn(ownerId)).toBe(true);
+  });
+
+  it('lets an owner with no hold through', async () => {
+    expect(await heldOn(FREE)).toBe(false);
+  });
 });

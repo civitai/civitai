@@ -1,5 +1,7 @@
 import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
@@ -1642,12 +1644,21 @@ async function withoutOfferingCovers(
   return imageIds.filter((id) => !used.has(id));
 }
 
-/** An owner with a safety report on file keeps every image: the report's review needs them. */
-async function ownerUnderSafetyReport(
-  db: Pick<Prisma.TransactionClient, 'csamReport'>,
+/**
+ * An owner with a safety report on file, or under any legal hold, keeps every image: the review
+ * needs them. Held when the hold cannot be read.
+ */
+export async function ownerUnderSafetyReport(
+  db: Pick<Prisma.TransactionClient, 'csamReport' | '$queryRaw'>,
   ownerId: number
 ) {
-  return (await db.csamReport.count({ where: { userId: ownerId } })) > 0;
+  if ((await db.csamReport.count({ where: { userId: ownerId } })) > 0) return true;
+  const owner = Prisma.sql`${ownerId}::int`;
+  const [row] =
+    (await db.$queryRaw<{ held: unknown }[]>`
+      SELECT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)}) AS held
+    `) ?? [];
+  return row?.held !== false;
 }
 
 export const deleteArticleById = async ({
