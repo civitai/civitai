@@ -46,6 +46,9 @@ export function FreeUpSlotCard({
       setPicked(oldestInactiveApp(apps, openName)?.name ?? null);
   }, [apps, openName, picked]);
   const chosen = apps.find((s) => s.name === picked) ?? null;
+  // Exporting a paused app starts it, which pauses the one that runs.
+  const running = apps.find((s) => s.state !== 'suspended') ?? null;
+  const exportPauses = running && apps.some((s) => s.state === 'suspended') ? running.app : null;
 
   return (
     <section
@@ -87,6 +90,11 @@ export function FreeUpSlotCard({
             ))}
           </Stack>
         </Radio.Group>
+        {exportPauses && (
+          <Text size="xs" c="dimmed">
+            {`Exporting a paused app starts it, which pauses ${exportPauses}.`}
+          </Text>
+        )}
         <AppError error={error} />
         <Group justify="space-between" wrap="nowrap" gap="sm">
           <Text size="xs" c="dimmed">

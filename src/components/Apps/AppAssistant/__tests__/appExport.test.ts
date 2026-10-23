@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AppExportError,
   EXPORT_FAILED,
+  EXPORT_GONE,
   EXPORT_NOTE,
   EXPORT_TOO_LARGE,
   exportAppZip,
@@ -32,6 +33,7 @@ function setup({
   states = ['running'] as Sandbox['state'][],
   exports = [] as (number | 'ok')[],
   startFails = false,
+  startCreates = false,
 } = {}) {
   const events: string[] = [];
   const zip = new Blob(['PK-zip-bytes'], { type: 'application/zip' });
@@ -51,11 +53,16 @@ function setup({
   const start = vi.fn(async (target: Sandbox) => {
     events.push(`start ${target.app}`);
     if (startFails) throw new SandboxApiError('busy', 409, 'conflict');
-    return { ...target, state: 'starting' as const };
+    // The listed app was gone: the service made a new, empty one under the same key.
+    if (startCreates) return { sandbox: sandbox('starting', 'sbx-tipcalc0002'), created: true };
+    return { sandbox: { ...target, state: 'starting' as const }, created: false };
+  });
+  const discard = vi.fn(async (name: string) => {
+    events.push(`discard ${name}`);
   });
   const run = (target: Sandbox) =>
-    exportAppZip({ client, sandbox: target, start, pollMs: 1, timeoutMs: 200 });
-  return { client, start, events, zip, run };
+    exportAppZip({ client, sandbox: target, start, discard, pollMs: 1, timeoutMs: 200 });
+  return { client, start, discard, events, zip, run };
 }
 
 describe('exportAppZip', () => {
@@ -116,6 +123,23 @@ describe('exportAppZip', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it('a start that made a new, empty app (the listed one is gone) is “gone”: that app is deleted, nothing exported', async () => {
+    const { run, events, client } = setup({ startCreates: true });
+    const error = await run(sandbox('suspended')).catch((e) => e);
+    expect(error).toMatchObject({
+      kind: 'gone',
+      message: 'This app no longer exists, so there is nothing to export.',
+    });
+    expect(events).toEqual(['start tip-calculator', 'discard sbx-tipcalc0002']);
+    expect(client.exportApp).not.toHaveBeenCalled();
+  });
+
+  it('NEGATIVE CONTROL: a start that found the app deletes nothing', async () => {
+    const { run, discard } = setup();
+    await run(sandbox('suspended'));
+    expect(discard).not.toHaveBeenCalled();
+  });
+
   it('a start that fails is the generic error, and nothing is downloaded', async () => {
     const { run, client } = setup({ startFails: true });
     const error = await run(sandbox('suspended')).catch((e) => e);
@@ -139,8 +163,9 @@ describe('the export copy', () => {
     expect(exportFileName('tip-calculator')).toBe('tip-calculator.zip');
     expect(EXPORT_TOO_LARGE).toBe('This app is too large to export.');
     expect(EXPORT_FAILED).toBe('The app could not be exported. Try again in a moment.');
+    expect(EXPORT_GONE).toBe('This app no longer exists, so there is nothing to export.');
     expect(EXPORT_NOTE).toBe(
-      'It has the app’s own files only: no node_modules, build output, caches, .git or .env files.'
+      'It has the app’s own files only: no node_modules, build output, caches, logs, .git, keys or .env files (.env.example is kept).'
     );
   });
 });

@@ -65,7 +65,9 @@ import {
 import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
+  SandboxApiError,
   createSandboxClient,
+  isRunningLimit,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
@@ -269,10 +271,8 @@ export function AppAssistantWorkspace({
   const chatIdRef = useRef(chatId);
   const previewShown = useRef(false);
   const pickedOnLoad = useRef(false);
-  // The message the user sent last (the one a kept-apps refusal answered), and the one the
-  // free-a-slot card is sending again, which does not take the card away.
+  // The message the user sent last in this chat: the one a kept-apps refusal answered.
   const lastSent = useRef<string | null>(null);
-  const resending = useRef<string | null>(null);
   type Slot = { message: string | null; deleting: boolean; error: unknown };
   const [slot, setSlot] = useState<Slot | null>(null);
   const slotRef = useRef(slot);
@@ -280,8 +280,9 @@ export function AppAssistantWorkspace({
   // The app being started from the paused notice or a menu (its key), and why its last start failed.
   const [startingApp, setStartingApp] = useState<string | null>(null);
   const [startError, setStartError] = useState<{ app: string; error: unknown } | null>(null);
-  // The sandbox being exported (its name).
+  // The sandbox being exported (its name); one export at a time.
   const [exporting, setExporting] = useState<string | null>(null);
+  const exportingRef = useRef(exporting);
   // The open app was seen paused: its notice stays while it starts.
   const [pausedSeen, setPausedSeen] = useState<string | null>(null);
 
@@ -745,8 +746,8 @@ export function AppAssistantWorkspace({
       // Before the message may be kept back: a resume ask and a waiting message never both act.
       endResumeAsk();
       lastSent.current = text;
-      // Anything else the user sends takes the free-a-slot card away.
-      if (text !== resending.current) setSlot(null);
+      // A message the user sends takes the free-a-slot card away (its own re-send goes after it went).
+      setSlot(null);
       // A new turn: the chat's own asks for a reply after it start afresh.
       const chat = `\n${chatIdRef.current}`;
       for (const keys of [autoGaveUp.current, autoWoke.current])
@@ -760,6 +761,8 @@ export function AppAssistantWorkspace({
       if (id !== chatIdRef.current) {
         endResumeAsk();
         setSlot(null);
+        // The card re-sends a message of the chat it was sent in, never of another.
+        lastSent.current = null;
       }
       onChatChange(id);
     },
@@ -775,14 +778,15 @@ export function AppAssistantWorkspace({
    * Starts a paused app (the paused notice, the app menu's Start, a switcher pick, an export): finds,
    * creates or resumes it, pausing the one that runs. The one start a user asks for by hand.
    */
-  const startApp = useCallback(async (target: Sandbox): Promise<Sandbox> => {
+  const startApp = useCallback(async (target: Sandbox) => {
     setStartingApp(target.app);
     setStartError(null);
     try {
-      const { sandbox: opened } = await openRef.current(target.app);
+      const result = await openRef.current(target.app);
+      const opened = result.sandbox;
       // Unless the user moved on meanwhile; a deleted app comes back under a new name.
       if (live.current.active?.app === opened.app) setActiveName(opened.name);
-      return opened;
+      return result;
     } catch (error) {
       setStartError({ app: target.app, error });
       throw error;
@@ -802,13 +806,15 @@ export function AppAssistantWorkspace({
   };
   const exportApp = useCallback(
     async (target: Sandbox) => {
-      if (!sandboxClient) return;
+      if (!sandboxClient || exportingRef.current) return;
+      exportingRef.current = target.name;
       setExporting(target.name);
       try {
         const blob = await exportAppZip({
           client: sandboxClient,
           sandbox: target,
           start: startApp,
+          discard: (name) => removeRef.current(name).then(() => onRemovedRef.current(name)),
         });
         const filename = exportFileName(target.app);
         saveBlob(blob, filename);
@@ -822,6 +828,7 @@ export function AppAssistantWorkspace({
           error: new Error(error instanceof AppExportError ? error.message : EXPORT_FAILED),
         });
       } finally {
+        exportingRef.current = null;
         setExporting(null);
       }
     },
@@ -831,6 +838,10 @@ export function AppAssistantWorkspace({
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
+  const removeRef = useRef(sandboxes.remove.mutateAsync);
+  removeRef.current = sandboxes.remove.mutateAsync;
+  const onRemovedRef = useRef(onRemoved);
+  onRemovedRef.current = onRemoved;
   /** The free-a-slot card's delete, once confirmed: then the message that hit the limit goes again. */
   const freeSlot = (target: Sandbox) =>
     confirmDeleteApp(target.app, async () => {
@@ -848,16 +859,8 @@ export function AppAssistantWorkspace({
       setSlot(null);
       if (!message || !chat) return;
       // Sent as the user's, once; a chat that cannot send now gives it back to them instead.
-      if (!chat.canSend) {
-        chat.giveBack(message);
-        return;
-      }
-      resending.current = message;
-      try {
-        await chat.send(message);
-      } finally {
-        resending.current = null;
-      }
+      if (chat.canSend) await chat.send(message);
+      else chat.giveBack(message);
     });
   // A failed start is told on its app's notice, until another app is opened.
   useEffect(() => setStartError(null), [activeName]);
@@ -870,9 +873,17 @@ export function AppAssistantWorkspace({
     !!active &&
     (active.state === 'suspended' || (active.state === 'starting' && pausedSeen === active.name));
   const noticeError = active && startError?.app === active.app ? startError.error : null;
-  // An error the notice or the card already shows is not shown twice.
+  // An error the notice or the card already shows is not shown twice, and while the card offers to
+  // free a slot the kept-apps refusal is not also told above.
   const pageError = appsError(sandboxes);
-  const shownBelow = !!pageError && (pageError === noticeError || pageError === slot?.error);
+  const shownBelow =
+    !!pageError &&
+    (pageError === noticeError ||
+      pageError === slot?.error ||
+      (!!slot &&
+        pageError instanceof SandboxApiError &&
+        pageError.kind === 'limit' &&
+        !isRunningLimit(pageError)));
   const startNewApp = () => {
     setActiveName(null);
     chatRef.current?.newChat();

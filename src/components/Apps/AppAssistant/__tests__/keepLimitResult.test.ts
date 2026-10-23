@@ -68,7 +68,7 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
     const results = await resultsOf(KEEP_CAP, 2);
     expect(results).toHaveLength(2);
     expect(results[1].refused).toBe(
-      'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.'
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.'
     );
     expect(results.map(isKeepLimitResult)).toEqual([true, true]);
   });
@@ -89,7 +89,7 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
 
   it('is false for another tool that reports the same words, and for a create_app that worked', () => {
     const words =
-      'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.';
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
     expect(
       isKeepLimitResult({
         name: 'set_checklist',

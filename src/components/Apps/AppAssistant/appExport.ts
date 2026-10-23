@@ -3,14 +3,20 @@ import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 
 /** What the zip leaves out, as the gateway builds it (`appExportPath`). */
 export const EXPORT_NOTE =
-  'It has the app’s own files only: no node_modules, build output, caches, .git or .env files.';
+  'It has the app’s own files only: no node_modules, build output, caches, logs, .git, keys or .env files (.env.example is kept).';
 export const EXPORT_TOO_LARGE = 'This app is too large to export.';
 export const EXPORT_FAILED = 'The app could not be exported. Try again in a moment.';
+/** Starting it made a new, empty app: the one listed was deleted meanwhile (or expired). */
+export const EXPORT_GONE = 'This app no longer exists, so there is nothing to export.';
 
 export const exportFileName = (app: string) => `${app}.zip`;
 
 export class AppExportError extends Error {
-  constructor(message: string, readonly kind: 'too_large' | 'failed', options?: ErrorOptions) {
+  constructor(
+    message: string,
+    readonly kind: 'too_large' | 'gone' | 'failed',
+    options?: ErrorOptions
+  ) {
     super(message, options);
     this.name = 'AppExportError';
   }
@@ -36,23 +42,31 @@ export async function waitUntilRunning(
 /**
  * The app as a zip. A paused app is started first (`start`, which may pause the one that runs) and
  * waited for; a 409 (the sandbox is not running) starts it once more and asks again. A 413 is
- * `too_large`; anything else is `failed`.
+ * `too_large`. A start that made a new, empty app (the listed one is gone) is `gone`, and the new
+ * app is `discard`ed rather than exported as if it were the user's. Anything else is `failed`.
  */
 export async function exportAppZip({
   client,
   sandbox,
   start,
+  discard,
   pollMs,
   timeoutMs,
 }: {
   client: Pick<SandboxClient, 'get' | 'exportApp'>;
   sandbox: Sandbox;
-  start: (sandbox: Sandbox) => Promise<Sandbox>;
+  start: (sandbox: Sandbox) => Promise<{ sandbox: Sandbox; created: boolean }>;
+  /** Deletes the new, empty app a start made in place of a gone one. */
+  discard: (name: string) => Promise<unknown>;
   pollMs?: number;
   timeoutMs?: number;
 }): Promise<Blob> {
   const startAndWait = async (target: Sandbox) => {
-    const started = await start(target);
+    const { sandbox: started, created } = await start(target);
+    if (created) {
+      await discard(started.name).catch(() => undefined);
+      throw new AppExportError(EXPORT_GONE, 'gone');
+    }
     return waitUntilRunning(client, started.name, { pollMs, timeoutMs });
   };
   try {
@@ -68,6 +82,7 @@ export async function exportAppZip({
       }
     }
   } catch (error) {
+    if (error instanceof AppExportError) throw error;
     if (error instanceof SandboxApiError && error.status === 413)
       throw new AppExportError(EXPORT_TOO_LARGE, 'too_large', { cause: error });
     throw new AppExportError(EXPORT_FAILED, 'failed', { cause: error });

@@ -87,7 +87,7 @@ interface AppActions {
   onExport: (sandbox: Sandbox) => void;
   /** The app being started (its key), for its menu's busy state. */
   starting: string | null;
-  /** The sandbox being exported (its name), for its menu's busy state. */
+  /** The sandbox being exported (its name), for its menu's busy state; one export at a time. */
   exporting: string | null;
 }
 
@@ -148,13 +148,23 @@ export function AppMenu({
             Pause
           </Menu.Item>
         )}
-        <Menu.Item leftSection={<IconDownload size={16} />} onClick={() => onExport(sandbox)}>
+        <Menu.Item
+          leftSection={<IconDownload size={16} />}
+          disabled={!!exporting}
+          onClick={() => onExport(sandbox)}
+        >
           <Text component="span" size="sm" display="block">
             Export
           </Text>
           <Text component="span" size="xs" c="dimmed" display="block">
             Download as zip
           </Text>
+          {/* A paused app is started to export it. */}
+          {sandbox.state === 'suspended' && pauses && (
+            <Text component="span" size="xs" c="dimmed" display="block">
+              {`${pauses.app} will be paused`}
+            </Text>
+          )}
         </Menu.Item>
         <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
           Delete app

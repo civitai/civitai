@@ -640,7 +640,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({ allow: true });
     await expect(
       Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
-    ).rejects.toThrow(/Delete one you no longer need/);
+    ).rejects.toThrow(/Choose one to delete in the card under the chat/);
     expect(m.open).toHaveBeenCalledTimes(1);
 
     expect(m.chat!.beforeToolCall!('create_app', {}, conv)).toEqual({
@@ -697,7 +697,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     m.openReject = new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
     await expect(
       Promise.resolve(m.chat!.tools.create_app.execute({ name: 'Fourth app' }, ctx))
-    ).rejects.toThrow(/Delete one you no longer need/);
+    ).rejects.toThrow(/Choose one to delete in the card under the chat/);
     m.openError = m.openReject;
     screen.rerender(<Workspace />);
     await expect.element(page.getByText('You have as many apps as you can keep')).toBeVisible();
@@ -2384,7 +2384,7 @@ function stubExport() {
 }
 
 const EXPORT_NOTE_TEXT =
-  'It has the app’s own files only: no node_modules, build output, caches, .git or .env files.';
+  'It has the app’s own files only: no node_modules, build output, caches, logs, .git, keys or .env files (.env.example is kept).';
 
 describe('AppAssistantWorkspace app menu: Start and Export', () => {
   let restore: (() => void) | null = null;
@@ -2412,6 +2412,10 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     const exportItem = page.getByRole('menuitem', { name: /^Export/ });
     await expect.element(exportItem.getByText('Export', { exact: true })).toBeVisible();
     await expect.element(exportItem.getByText('Download as zip', { exact: true })).toBeVisible();
+    // Exporting a paused app starts it, so it says so too.
+    await expect
+      .element(exportItem.getByText('app-aaaa will be paused', { exact: true }))
+      .toBeVisible();
   });
 
   test('NEGATIVE CONTROL: a running app’s menu has Export but no Start', async () => {
@@ -2420,6 +2424,49 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     await openMenu('app-aaaa');
     await expect.element(page.getByRole('menuitem', { name: /^Export/ })).toBeVisible();
     expect(page.getByRole('menuitem', { name: /^Start/ }).elements()).toHaveLength(0);
+    // A running app is exported as it is: nothing is paused.
+    expect(
+      page
+        .getByRole('menuitem', { name: /^Export/ })
+        .getByText(/will be paused/)
+        .elements()
+    ).toHaveLength(0);
+  });
+
+  test('Export of an app that is gone (its start made a new, empty one) deletes that one and says so, downloading nothing', async () => {
+    restore = stubExport();
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-bbbb');
+    // Deleted elsewhere since the page last listed it.
+    m.list = [m.list[0]];
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
+    expect(m.toasts[0]).toMatchObject({
+      kind: 'error',
+      message: 'This app no longer exists, so there is nothing to export.',
+    });
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(m.events).toEqual(['start app-bbbb']);
+    expect(m.downloads).toEqual([]);
+  });
+
+  test('one export at a time: while one runs, Export is off in every menu', async () => {
+    restore = stubExport();
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-bbbb');
+    m.deferOpen = true;
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
+    await actions('app-aaaa').click();
+    await expect.element(page.getByRole('menuitem', { name: /^Export/ })).toBeDisabled();
+    // NEGATIVE CONTROL: once it is done, Export is on again.
+    m.settleOpen!();
+    await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
+    // app-aaaa's menu is still open.
+    await expect.element(page.getByRole('menuitem', { name: /^Export/ })).toBeEnabled();
   });
 
   test('Start starts that app, with only its own menu button busy', async () => {
@@ -2529,7 +2576,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
 
 describe('AppAssistantWorkspace free-a-slot card', () => {
   const KEEP =
-    'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.';
+    'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
   const RUNNING =
     'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
   const card = () => page.getByRole('region', { name: 'Free up a slot' });
@@ -2564,11 +2611,12 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
   }
   async function atLimit() {
     m.list = kept();
-    await mount();
+    const screen = await mount();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
     await userSends('Make a quiz night app');
     await createApp(keepCap());
     await expect.element(card()).toBeVisible();
+    return screen;
   }
   async function confirmDelete(app: string) {
     await card().getByRole('button', { name: 'Delete and continue' }).click();
@@ -2596,7 +2644,48 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
       'Paused · last used 5 days ago',
     ])
       await expect.element(card().getByText(line, { exact: true })).toBeVisible();
+    await expect
+      .element(
+        card().getByText('Exporting a paused app starts it, which pauses app-aaaa.', {
+          exact: true,
+        })
+      )
+      .toBeVisible();
     expect(m.remove).not.toHaveBeenCalled();
+  });
+
+  test('while the card shows, the page does not also tell the limit above; once it goes, it does', async () => {
+    const screen = await atLimit();
+    // The start create_app asked for failed at the cap: the apps' latest error.
+    m.openError = keepCap();
+    screen.rerender(<Workspace />);
+    await settle();
+    expect(
+      page.getByText('You have as many apps as you can keep', { exact: true }).elements()
+    ).toHaveLength(0);
+    await userSends('Actually, change the colors');
+    await expect.element(card()).not.toBeInTheDocument();
+    await expect
+      .element(page.getByText('You have as many apps as you can keep', { exact: true }))
+      .toBeVisible();
+  });
+
+  test('a limit reported after the user opened another chat sends nothing again', async () => {
+    await atLimit();
+    await userSends('Never mind');
+    m.chat!.onChatChange!('chat-2');
+    m.chat!.onToolResult!({
+      name: 'create_app',
+      input: { name: 'Quiz night' },
+      output: { error: KEEP },
+      isError: true,
+    });
+    await expect.element(card()).toBeVisible();
+    await confirmDelete('app-bbbb');
+    await vi.waitFor(() => expect(m.remove).toHaveBeenCalledTimes(1));
+    await settle(100);
+    expect(m.send).not.toHaveBeenCalled();
+    await expect.element(card()).not.toBeInTheDocument();
   });
 
   test('when the app used longest ago is the open one, the next oldest is chosen', async () => {
