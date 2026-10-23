@@ -897,7 +897,7 @@ const DEV_TUNNEL_WINDOW_MS = 30_000;
 const DEFAULT_WINDOW_MS = 10_000;
 const DEFAULT_TIMEOUT_TITLE = "This app didn't load in time";
 const DEFAULT_TIMEOUT_HINT = 'It may be a temporary network or server hiccup. Try again.';
-const DEV_TUNNEL_TIMEOUT_TITLE = "Still waiting on your app's dev server";
+const DEV_TUNNEL_TIMEOUT_TITLE = "Your app's dev server didn't respond in time";
 const DEV_TUNNEL_TIMEOUT_HINT =
   "Your app's dev server is taking a while to respond. It may be a slow connection to the preview — try again.";
 

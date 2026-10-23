@@ -86,7 +86,7 @@ const REASON_COPY: Record<
 /** `timeout` copy on the dev tunnel — see `BlockFallbackProps.timeoutCopy`. */
 const DEV_SERVER_TIMEOUT_COPY = {
   color: 'gray',
-  title: "Still waiting on your app's dev server",
+  title: "Your app's dev server didn't respond in time",
   hint: "Your app's dev server is taking a while to respond. It may be a slow connection to the preview — try again.",
 };
 

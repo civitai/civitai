@@ -1407,9 +1407,11 @@ export function readyWaitPolicyFor(surface: BlockHostSurface): ReadyWaitPolicy {
  * `readyWaitPolicyFor`). A dev-tunnel launch that succeeds within its FIRST
  * attempt (token wait + 30 s) is always inside the sample cap — a test pins that.
  * A dev-tunnel launch that also needed an automatic attempt (an auth re-mint, or a
- * `fatal` remount) can run past the cap; that sample is DROPPED (never clamped),
- * and only dev-tunnel samples can be. Accepted: the dev tunnel's latency measures
- * the author's own dev server and tunnel, not the platform.
+ * `fatal` remount) can run past the cap; that sample is DROPPED (never clamped).
+ * Accepted: the dev tunnel's latency measures the author's own dev server and
+ * tunnel, not the platform. (This bound covers the AUTOMATIC path only on every
+ * surface — repeated manual Retry can exceed it anywhere; see
+ * `worstReachableInitPosts`.)
  */
 export function worstReachableLaunchMs(): number {
   const backoffs = AUTO_RETRY_BACKOFF_MS.slice(0, MAX_AUTO_RETRIES).reduce((a, b) => a + b, 0);
