@@ -90,9 +90,19 @@ export async function submitFinalScan(target: FinalScanTarget): Promise<'Pending
       currencies: [],
       tags: ['civitai', 'creator-services-final-scan'],
       steps: [
-        { $type: 'modelClamScan', name: 'clamScan', metadata, input: { model: air } },
-        { $type: 'modelPickleScan', name: 'pickleScan', metadata, input: { model: air } },
-      ] as WorkflowStepTemplate[],
+        {
+          $type: 'modelClamScan',
+          name: 'clamScan',
+          metadata,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'modelPickleScan',
+          name: 'pickleScan',
+          metadata,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+      ],
     },
   });
   if (!data?.id) throw new Error('Scan workflow was not accepted');
