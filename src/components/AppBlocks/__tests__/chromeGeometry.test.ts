@@ -18,8 +18,8 @@
  *
  * It lives in the node `unit` project on purpose: that tier EXECUTES the
  * assertion without a browser; the browser `component` project runs in CI as the
- * `Component tests` check. The node tier is report-only on a pull
- * request too (`continue-on-error`) and renders a real verdict on a push to
+ * `Component tests` check, which goes red on a failing test. The node tier is
+ * report-only on a pull request (`continue-on-error`) and renders a real verdict on a push to
  * `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires
  * no status check at all in this repo, so this is a signal a reviewer must read,
  * not a door that stays shut.

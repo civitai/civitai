@@ -34,9 +34,9 @@
  * check. Its node-tier counterpart for this change
  * is `__tests__/chromeGeometry.test.ts` (which is unit coverage of a new module,
  * not regression coverage — see its own header); that tier is report-only on a
- * pull request too (`continue-on-error`) and renders a real verdict on a push to
- * `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires
- * no status check at all in this repo, so a red run here is a signal a reviewer
+ * pull request (`continue-on-error`, unlike `Component tests`, which goes red) and renders a real
+ * verdict on a push to `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main`
+ * requires no status check at all in this repo, so a red run here is a signal a reviewer
  * must read, not a door that stays shut.
  */
 import '@mantine/core/styles.css';

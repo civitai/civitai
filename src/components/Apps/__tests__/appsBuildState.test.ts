@@ -201,7 +201,7 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
  * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
  * this repository prevents a merge. What these rows buy is that `unit` DOES run on
  * `push: [main]` without that flag, so the regression reds the `main` build after it lands
- * rather than going unobserved. Weaker than blocking, stronger than the browser tier, and
+ * rather than going unobserved. Weaker than blocking, and
  * worth having on those terms — not on the ones first written here.
  *
  * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an

@@ -23,9 +23,9 @@
  *
  * 🔴 WHAT "THE NODE TIER" ACTUALLY BUYS — READ THIS BEFORE QUOTING A SEVERITY.
  * THE CANONICAL STATEMENT FOR THIS COMPONENT; every other comment that mentions a
- * tier defers to it. The node `unit` project **blocks pushes to `main` and is
- * REPORT-ONLY on a pull request**: `.github/workflows/lint.yml` puts
- * `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
+ * tier defers to it. The node `unit` project **is REPORT-ONLY on a pull request and
+ * gives a real verdict (a red `main` build) on a push to `main`**: `.github/workflows/lint.yml`
+ * puts `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
  * `unit` (line 405) and on `geometry` (line 830). The browser `component` project
  * runs as `Component tests` and, like every check here, blocks no merge.
  *
@@ -33,7 +33,7 @@
  * tests` goes red when a browser test fails, while `unit` stays green as a job with a red
  * step underneath; on a push to `main` both give a real verdict. Three
  * comments in this arc, and a severity call in the PR body, were written on the
- * premise that node gates a PR and browser does not. It does not. The guards built
+ * premise that node gates a PR and browser does not. Neither gates a merge. The guards built
  * on that premise are still worth having, but do not price them as merge gates. `lint.yml:377`
  * warns about the same trap from the other side: with `continue-on-error` the JOB conclusion is
  * `success` while the step underneath is `failure`, so a branch-protection rule naming "Unit tests

@@ -22,7 +22,7 @@
  * `--header-height` `""` → `60px`, and `calc(100dvh - var(--header-height))`
  * `0px` → `viewport − 60`. ⚠️ That guard runs in CI as `Component tests`, which,
  * like every check here, does not block a merge — so it tells you, it does not
- * stop you. The CSS↔TS value binding it leans on is in the gating tier
+ * stop you. The CSS↔TS value binding it leans on is pinned in the node `unit` tier
  * (`pageRunScrollContract.test.ts`).
  *
  * So `var(--header-height)` is now safe in a component that a browser test

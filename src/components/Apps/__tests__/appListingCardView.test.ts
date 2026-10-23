@@ -163,9 +163,10 @@ describe('getRecommendLabel', () => {
  * renders the real card and asserts the omission end-to-end (`Component tests` in CI);
  * the node `unit` project checks the rule without a browser. Expressing the rule as a
  * pure function is what makes it visible to this tier at all — as JSX
- * (`card.openCount ? … : null`) it would be invisible here. (Neither tier gates a
- * PR: `lint.yml` marks both `continue-on-error` for `pull_request`. Canonical
- * statement: `appListingCardGeometry.ts`'s header.)
+ * (`card.openCount ? … : null`) it would be invisible here. (Neither tier blocks a
+ * merge: `unit` is `continue-on-error` on a pull request, and `Component tests` goes red
+ * but `main` requires no checks. Canonical statement: `appListingCardGeometry.ts`'s
+ * header.)
  *
  * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND SHARE NOTHING WITH THE STRINGS
  * ASSERTED. 4821 → "4.8k" and 1_234_567 → "1.2m" are values whose rendered form

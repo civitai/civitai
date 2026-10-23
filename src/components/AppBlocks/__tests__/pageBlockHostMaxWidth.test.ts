@@ -94,7 +94,7 @@ import { stripComments as stripTsComments } from '../../../../test/strip-comment
  * `PageBlockHostMaxWidth.browser.test.tsx`, which is the only tier that can see a
  * width at all — and the browser `component` project runs in CI as the
  * `Component tests` check. This file is in the node
- * `unit` project, which is report-only on a pull request too (`continue-on-error`)
+ * `unit` project, which is report-only on a pull request (`continue-on-error`)
  * and renders a real verdict on a push to `main` or a `workflow_dispatch`.
  * 🔴 NEITHER TIER BLOCKS A MERGE — `main` requires no status check at all in this
  * repo — so what a source guard buys is a verdict that is honest on `main` and an

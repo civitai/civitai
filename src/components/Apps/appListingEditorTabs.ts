@@ -122,7 +122,7 @@ export type EditorTabContext = {
    * 🔴 BE PRECISE ABOUT THAT, because an earlier version of this comment overstated it as
    * "the browser suite that covers this function does NOT run in CI". It does:
    * `Component tests` runs the `component` project. The real distinction is BLOCKING vs
-   * ANNOTATING — no check blocks a merge here, and the `unit` job is
+   * ANNOTATING — `Component tests` is not a required check, and the `unit` job is
    * `continue-on-error` on pull requests. So every test covering this field annotates; only
    * the type gates. That is the argument for making it required, and it survives the
    * correction intact.

@@ -133,7 +133,7 @@ import type * as TrpcMod from '~/utils/trpc';
  * `Component tests` check, so a break here turns that check red
  * but does not block a merge. This file is the EMPIRICAL half; the source-guard
  * half is `__tests__/pageBlockHostMaxWidth.test.ts`, which is in the node `unit`
- * project — report-only on a pull request too (`continue-on-error`), and an
+ * project — report-only on a pull request (`continue-on-error`), and an
  * honest verdict on a push to `main` or a `workflow_dispatch`. NEITHER TIER
  * BLOCKS A MERGE: `main` requires no status check at all in this repo. Neither
  * can replace the other either: only a real layout can see a width, and only the

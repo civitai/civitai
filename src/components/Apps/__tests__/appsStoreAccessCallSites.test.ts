@@ -60,8 +60,8 @@ import { describe, it, expect } from 'vitest';
  * matters. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the exceptions:
  * their behavioural tests are unit tests too — the resolver's cover is the two
  * `resolveAppsPageAccess` describe blocks inside `hasAppsStoreAccess.test.ts`. Two more are
- * browser-covered (`AppsRailNav`, `AppListingsMarketplaceBody`) and therefore blocking-covered
- * NOWHERE: enumerated, 3 + 2 + 3 = 8.)
+ * browser-covered (`AppsRailNav`, `AppListingsMarketplaceBody`) and have no node-tier pin:
+ * enumerated, 3 + 2 + 3 = 8.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
