@@ -365,7 +365,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 try {
                   await notifyAir({ email, name });
                 } catch (err) {
-                  await sysRedis.del(notifiedKey);
+                  try {
+                    await sysRedis.del(notifiedKey);
+                  } catch (releaseErr) {
+                    // The claim outlives Stripe's retries, so AIR is never told about this checkout.
+                    log({
+                      type: 'error',
+                      stage: 'air-claim-release-failed',
+                      eventId: event.id,
+                      checkoutSessionId: checkoutSession.id,
+                      error: (releaseErr as Error).message,
+                    });
+                  }
                   throw err;
                 }
                 break;

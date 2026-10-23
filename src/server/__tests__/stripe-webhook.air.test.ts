@@ -83,6 +83,8 @@ async function deliver(object: unknown, eventId = 'evt_air_1') {
   return res;
 }
 
+const loggedText = () => JSON.stringify(loggingMock.logToAxiom.mock.calls);
+
 beforeEach(() => {
   vi.clearAllMocks();
   envMock.set({ STRIPE_WEBHOOK_SECRET: 'whsec_test', AIR_PAYMENT_LINK_ID: LINK });
@@ -108,6 +110,7 @@ describe('stripe webhook: Civitai AIR checkout', () => {
     expect(res.statusCode).toBe(200);
     expect(notifyAir).toHaveBeenCalledWith({ email: 'buyer@example.com', name: 'Buyer' });
     expect(manageCheckoutPayment).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain('buyer@example.com');
   });
 
   it('tells AIR once when Stripe delivers the same checkout twice', async () => {
@@ -116,6 +119,7 @@ describe('stripe webhook: Civitai AIR checkout', () => {
 
     expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
     expect(notifyAir).toHaveBeenCalledTimes(1);
+    expect(loggedText()).not.toContain('buyer@example.com');
   });
 
   it('asks Stripe to retry when AIR cannot be told, and tells it on the retry', async () => {
@@ -127,6 +131,28 @@ describe('stripe webhook: Civitai AIR checkout', () => {
     expect(first.statusCode).toBe(400);
     expect(retry.statusCode).toBe(200);
     expect(notifyAir).toHaveBeenCalledTimes(2);
+    expect(loggedText()).not.toContain('buyer@example.com');
+  });
+
+  it('logs an error, and still asks Stripe to retry, when the claim cannot be released', async () => {
+    notifyAir.mockRejectedValueOnce(new Error('AIR unavailable'));
+    redisMock.sysRedis.del.mockRejectedValueOnce(new Error('redis unavailable'));
+
+    const res = await deliver(session());
+
+    expect(res.statusCode).toBe(400);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'event-handler', error: 'AIR unavailable' }),
+      'webhooks'
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        stage: 'air-claim-release-failed',
+        checkoutSessionId: 'cs_air_1',
+      }),
+      'webhooks'
+    );
   });
 
   it('asks Stripe to retry, and tells AIR nothing, when the checkout cannot be claimed', async () => {
@@ -147,6 +173,5 @@ describe('stripe webhook: Civitai AIR checkout', () => {
       expect.objectContaining({ stage: 'air-no-email', eventId: 'evt_air_1' }),
       'webhooks'
     );
-    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('buyer@example.com');
   });
 });
