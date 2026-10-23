@@ -21,7 +21,13 @@ import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentG
  *     carrying X-Frame-Options: DENY). Every document the app itself served said hello
  *     once; a load no hello accounts for is a document the app did not serve.
  *
- * WHY "MORE LOADS THAN HELLOS", and not the alternatives each audit round falsified:
+ * THE COUNTS (`countGuestFrameEvent`). A hello and its own document's `load` may arrive
+ * in EITHER order, and a document can say hello and then navigate away before its `load`
+ * ever fires. So each `load` also caps the hello count at the load count: a hello no load
+ * ever matched (its document navigated first) is forgotten rather than left to cancel a
+ * later 401's load.
+ *
+ * Every rule here was a falsified alternative first — recorded so they are not re-derived:
  *   - not "any load after ready": the first `load` can arrive AFTER BLOCK_READY, since the
  *     app acks as soon as its module code receives the init while `load` also waits for
  *     every image and stylesheet (measured in Chromium: READY at 24 ms, the first `load`
@@ -30,16 +36,23 @@ import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentG
  *   - not "the second load ever": an app whose boot replaces its document ONCE before
  *     READY (a `location.replace`, Vite's "new dependencies optimized" reload) loads twice
  *     — a loop again. Both of its documents said hello, so 2 loads / 2 hellos is not one.
- *   - not "loads since the last hello": that assumes a document's hello reaches the host
- *     before the same document's `load`. An app that starts its SDK late (e.g. in a React
- *     mount effect) can say hello after it; the hello then erased its own document's
- *     load, and the later 401 reload went unanswered. Counting both needs no order.
+ *   - not "loads since the last hello": an app that starts its SDK late (e.g. in a React
+ *     mount effect) says hello AFTER its own load, and the hello erased that load.
+ *   - not "loads vs hellos, uncapped": a document that said hello and navigated before its
+ *     `load` left a spare hello that hid the later 401's load.
  *   - "at least two loads" keeps an SDK that never says hello from reading its own first
  *     load as a reload.
- *   - Residual, stated rather than hidden: an app that navigates during boot BEFORE its
- *     SDK says hello (or on an SDK that never does) reads as reloading — once per such
- *     boot, so a loop only if it does that on every boot. `@civitai/sdk` has said hello
- *     since its first release, and `@civitai/blocks-react` since 2026-08-04.
+ *
+ * Residuals, stated rather than hidden — each needs the app to navigate during boot:
+ *   - a document that navigates BEFORE its SDK says hello (or on an SDK that never does)
+ *     reads as reloading: one extra remount per such boot, a loop only if every boot does.
+ *   - a document that says hello and navigates before its `load`, FOLLOWED by one whose
+ *     SDK says hello only after its own `load`: event for event that is a boot-time
+ *     document replace, which must not remount, so a later 401 goes unanswered (the
+ *     pre-fix freeze). The host cannot tell the two apart; this picks no-loop.
+ *   The `page-elements` scaffold reaches `@civitai/sdk`'s `initialize()` synchronously
+ *   from its entry module, so its hello precedes its `load`; `@civitai/blocks-react` has
+ *   said hello since 2026-08-04, but only once a hook mounts, which can follow `load`.
  *
  * Every `load` must be OBSERVED for the count to mean anything, so the dev-tunnel host
  * mounts its frame client-side only (DevTunnelBlockHost): a frame in the server-rendered
@@ -55,12 +68,29 @@ import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentG
  */
 export type GuestFrameEvent = 'hello' | 'load';
 
+/** The frame's `load`s and BLOCK_HELLOs since it was (re)mounted. */
+export interface GuestFrameCounts {
+  loads: number;
+  hellos: number;
+}
+
+export const NO_GUEST_FRAME_EVENTS: GuestFrameCounts = { loads: 0, hellos: 0 };
+
+/** Fold one event into the counts — see THE COUNTS above for the cap on `load`. */
+export function countGuestFrameEvent(
+  counts: GuestFrameCounts,
+  event: GuestFrameEvent
+): GuestFrameCounts {
+  if (event === 'hello') return { loads: counts.loads, hellos: counts.hellos + 1 };
+  const loads = counts.loads + 1;
+  return { loads, hellos: Math.min(counts.hellos, loads) };
+}
+
 export function isDevTunnelGuestReload(args: {
   surface: BlockHostSurface;
   event: GuestFrameEvent;
-  /** `load` events on this frame since it was (re)mounted, INCLUDING the one judged. */
+  /** `countGuestFrameEvent` counts AFTER folding in the event being judged. */
   loads: number;
-  /** BLOCK_HELLOs from this frame since it was (re)mounted, including the one judged. */
   hellos: number;
   status: 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 }): boolean {

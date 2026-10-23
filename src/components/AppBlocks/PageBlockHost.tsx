@@ -8,8 +8,12 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
-import { isDevTunnelGuestReload } from './devTunnelGuestReload';
-import type { GuestFrameEvent } from './devTunnelGuestReload';
+import {
+  countGuestFrameEvent,
+  isDevTunnelGuestReload,
+  NO_GUEST_FRAME_EVENTS,
+} from './devTunnelGuestReload';
+import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
 import {
   blockInitFragmentEnabled,
   blockInitStorageMode,
@@ -1672,21 +1676,20 @@ export function PageBlockHost({
   // whose fresh mint fails unmounts this host into its own error state, so there is
   // nothing here to loop. The callback is read through a ref so a parent's inline arrow
   // cannot change these handlers' identity.
-  const guestFrameRef = useRef({ loads: 0, hellos: 0 });
+  const guestFrameRef = useRef<GuestFrameCounts>(NO_GUEST_FRAME_EVENTS);
   useEffect(() => {
     // Only on a RE-key (the first mount starts at zero), after the new <iframe> commits —
     // its document needs a network round trip before it can load or say hello.
     if (reloadNonce === 0) return;
-    guestFrameRef.current = { loads: 0, hellos: 0 };
+    guestFrameRef.current = NO_GUEST_FRAME_EVENTS;
   }, [reloadNonce]);
   const guestReloadReportedRef = useRef(false);
   const onGuestReloadedRef = useRef(onGuestReloaded);
   onGuestReloadedRef.current = onGuestReloaded;
   const noteGuestFrame = useCallback(
     (event: GuestFrameEvent) => {
-      const guest = guestFrameRef.current;
-      if (event === 'load') guest.loads += 1;
-      else guest.hellos += 1;
+      const guest = countGuestFrameEvent(guestFrameRef.current, event);
+      guestFrameRef.current = guest;
       if (guestReloadReportedRef.current) return;
       const reload = isDevTunnelGuestReload({
         surface,
