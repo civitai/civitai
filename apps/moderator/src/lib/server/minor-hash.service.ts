@@ -82,21 +82,22 @@ const moderatorMinorSeed = (alias: string) => sql`
 `;
 const moderatorMinorSeedPredicate = moderatorMinorSeed('m');
 
-/** Copied verbatim from `poiSeedPredicate` in the main app's `poi-hash.service.ts`: a model whose
- *  weights match against. Needs `m`. */
-const poiSeedPredicate = sql`
-  m.poi
-  AND 'poi' = ANY(m."lockedProperties")
-  AND m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+/** Copied from `poiSeedPredicate` in the main app's `poi-hash.service.ts`, keep in step: a model
+ *  whose weights match against. */
+const poiSeed = (alias: string) => sql`
+  ${sql.ref(`${alias}.poi`)}
+  AND 'poi' = ANY(${sql.ref(`${alias}.lockedProperties`)})
+  AND ${sql.ref(`${alias}.meta`)}->${POI_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
   AND COALESCE((
     SELECT ma.activity <> 'setPoiAutoHash'
     FROM "ModActivity" ma
-    WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
+    WHERE ma."entityType" = 'model' AND ma."entityId" = ${sql.ref(`${alias}.id`)}
       AND ma.activity IN ('setPoi', 'setPoiAutoHash')
     ORDER BY ma."createdAt" DESC, ma.id DESC
     LIMIT 1
   ), true)
 `;
+const poiSeedPredicate = poiSeed('m');
 
 /** A moderator's minor seed `s` carries a file with this hash, and `uploader` holds of it. */
 const seedSharesHash = (hash: RawBuilder<unknown>, uploader: RawBuilder<unknown>) => sql`
@@ -150,8 +151,9 @@ const humanConfirmedPredicate = (label: FlagLabel) => sql`
   )
 `;
 
-/** The scan hook's flags still inside the review window and not yet affirmed by a human. Searching a
- *  model id lifts the window for that model, so a moderator can still reach Revert once it has closed. */
+/** The scan hook's flags not yet affirmed by a human, a minor one only inside its review window.
+ *  Searching a model id lifts the window for that model, so a moderator can still reach Revert once it
+ *  has closed. */
 const hashFlaggedPredicate = (label: FlagLabel, search?: MinorSearch) => {
   const snapshot = HASH_FLAG[label].snapshot;
   return sql`
@@ -637,7 +639,7 @@ export type FlaggedFlagItem = {
   textHash: string | null;
   /** ISO timestamp (from jsonb), or null when the entry carries none. */
   flaggedAt: string | null;
-  /** Hash flags only: days until the review window closes and the flag is presumed correct. */
+  /** Minor hash flags only: days until the review window closes and the flag is presumed correct. */
   daysLeft: number | null;
   redetected: RedetectionView | null;
   /** Text-scan flags only: the flag entry as the scan wrote it (reason, names, hash). */
@@ -780,7 +782,7 @@ const textScanFlaggedPredicate = sql`
   )
 `;
 
-/** Auto-flagged lists the model: a hash flag in its window or an open text-scan flag. Evaluated once
+/** Auto-flagged lists the model: a hash flag it lists or an open text-scan flag. Evaluated once
  *  per page row of another tab, which says so with an "also in" chip. */
 const inAutoFlaggedSql = (modelId: RawBuilder<unknown>) => sql`EXISTS (
   SELECT 1 FROM "Model" m
@@ -964,7 +966,7 @@ const withDaysLeft = <T extends { modelId: number; flags: Omit<FlaggedFlagItem, 
   })),
 });
 
-/** Auto-flagged: hash auto-flags in their review window and text-scan auto-flags, merged in SQL and
+/** Auto-flagged: hash auto-flags still waiting (`hashFlaggedPredicate`) and text-scan auto-flags, merged in SQL and
  *  grouped per model, so one query pages, sorts and counts models: a model flagged minor and real
  *  person is one row carrying both flags. Oldest flag first by default so nothing starves (newest
  *  first sorts on the newest flag); a model with no timestamp sorts last either way. A filter narrows
@@ -1198,13 +1200,16 @@ function needsReviewKeyedCtes(
           AND ${searchPredicate(
             search,
             userRefs,
+            // A seed's model or uploader id, as the minor matches search their seeds.
             (id) => sql`EXISTS (
               SELECT 1
               FROM "ModelFileHash" sh
               JOIN "ModelFile" sf ON sf.id = sh."fileId" AND sf.type = ${MINOR_HASH_FILE_TYPE}
               JOIN "ModelVersion" sv ON sv.id = sf."modelVersionId"
+              JOIN "Model" s ON s.id = sv."modelId"
               WHERE sh.type = 'SHA256' AND sh.hash = m.meta->'poiHashMatch'->>'hash'
-                AND sv."modelId" = ${id} AND sv."modelId" <> m.id
+                AND s.id <> m.id AND (s.id = ${id} OR s."userId" = ${id})
+                AND ${poiSeed('s')}
             )`
           )}
       )`);
@@ -1363,7 +1368,8 @@ export async function getNeedsReviewCount({
  *  still waits on it. From the primary: a flag kept a moment ago in the same decision must show. */
 export async function getModelFlagState(modelId: number) {
   const result = await sql<Record<FlagLabel, boolean> & { poiMatchQueued: boolean }>`
-    SELECT m.minor, m.poi, COALESCE(m.meta ? 'poiHashMatch', FALSE) AS "poiMatchQueued"
+    SELECT m.minor, m.poi, COALESCE(m.meta ? 'poiHashMatch' AND m.status <> 'Deleted', FALSE)
+             AS "poiMatchQueued"
     FROM "Model" m WHERE m.id = ${modelId}
   `.execute(dbWrite);
   return result.rows[0] ?? { minor: false, poi: false, poiMatchQueued: false };

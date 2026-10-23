@@ -124,7 +124,7 @@ export const textSinceFlag = (
 };
 
 /** The provenance line of a hash flag: "hash sweep, 3 d ago · 27 days left, then the flag is presumed
- *  correct". `daysLeft` is null outside the review window's reach (a confirmed or manual flag). */
+ *  correct". `daysLeft` is null outside the review window's reach (a confirmed, manual or real-person flag). */
 export const hashSweepText = (
   flaggedAt: Date | string | null,
   daysLeft: number | null,

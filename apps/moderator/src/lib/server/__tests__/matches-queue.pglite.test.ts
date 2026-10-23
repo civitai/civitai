@@ -26,8 +26,13 @@ vi.mock('../cache', () => ({
   }),
 }));
 
-const { getAutoFlaggedMinorMatch, getMinorQueueCounts, getNeedsReviewCount, getNeedsReviewModels } =
-  await import('../minor-hash.service');
+const {
+  getAutoFlaggedMinorMatch,
+  getMinorQueueCounts,
+  getModelFlagState,
+  getNeedsReviewCount,
+  getNeedsReviewModels,
+} = await import('../minor-hash.service');
 
 const MATCHES = { detections: false, matches: true };
 const BOTH = { detections: true, matches: true };
@@ -370,6 +375,17 @@ describe('Needs review: real-person file matches', () => {
       (await matches({ limit: 10, search: { modelOrUserId: 50 } })).items.map((r) => r.modelId)
     ).toEqual([51]);
     expect((await matches({ limit: 10, search: { modelOrUserId: 999 } })).items).toEqual([]);
+    // The seed's uploader too; a flagged copy that does not seed is no seed.
+    expect(
+      (await matches({ limit: 10, search: { modelOrUserId: 1 } })).items.map((r) => r.modelId)
+    ).toEqual([51]);
+    expect((await matches({ limit: 10, search: { modelOrUserId: 52 } })).items).toEqual([]);
+  });
+
+  it('reads whether a real-person match still waits on a model', async () => {
+    expect(await getModelFlagState(51)).toEqual({ minor: false, poi: false, poiMatchQueued: true });
+    expect(await getModelFlagState(50)).toEqual({ minor: false, poi: true, poiMatchQueued: false });
+    expect(await getModelFlagState(53)).toMatchObject({ poiMatchQueued: false }); // deleted
   });
 
   it('searches by username', async () => {

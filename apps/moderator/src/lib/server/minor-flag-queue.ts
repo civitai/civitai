@@ -273,7 +273,7 @@ type RulingReason = { resolvedReason: string; internalNotes: string | undefined 
 
 /** The keep and lift of each label's hash flag and file match (no reason yet). */
 const hashRuling = (source: 'hash' | 'file-match', label: FlaggedLabel, keep: boolean) => {
-  // Only the picked pair is read: reading every import, as a table would, breaks the hand-listed
+  // Only the picked endpoint is read: reading every import, as a table would, breaks the hand-listed
   // mocks of minor-flag.service in the route tests.
   if (source === 'hash')
     return label === 'poi'
