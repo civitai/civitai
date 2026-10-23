@@ -9,10 +9,13 @@ import {
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
+  accountHoldSql,
   assertOwnersNotUnderLegalHold,
+  HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -2198,6 +2201,9 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   return { id, userId: result.userId };
 };
 
+/** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
+export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
@@ -2270,7 +2276,28 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      const deletedModel = await tx.model.delete({ where: { id } });
+      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
+      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
+      // account hold too: its image legs cover the images this deletes.
+      const owner = Prisma.raw('m."userId"');
+      const [deletedModel] = await tx.$queryRaw<
+        { id: number; userId: number; nsfwLevel: number }[]
+      >`
+        DELETE FROM "Model" m
+        WHERE m.id = ${id}
+          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+        RETURNING m.id, m."userId", m."nsfwLevel"
+      `.catch((e: unknown) => {
+        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+      });
+      if (!deletedModel) {
+        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
+        // transaction deleted passed a hold check, so it must not commit.
+        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
+        if (!stillThere)
+          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+      }
       return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }

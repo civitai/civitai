@@ -171,5 +171,21 @@ describe('moving items between groups', () => {
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'auctions')).toBe('creator-tools');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'crucibles')).toBe('rewards');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'browse-challenges')).toBe('rewards');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'civitai-link')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'link-app')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'getting-started')).toBe('help');
+  });
+
+  it('keeps Download Link App last in Creator tools and Getting started first in Get help', () => {
+    const childIds = (id: string) => {
+      const node = USER_MENU_LAYOUT.find((n) => n.kind === 'group' && n.id === id);
+      return node?.kind === 'group' ? node.children.map((c) => c.id) : [];
+    };
+    expect(childIds('creator-tools').at(-1)).toBe('link-app');
+    expect(childIds('help')[0]).toBe('getting-started');
+  });
+
+  it('keeps Download Link App in the signed-out menu, which has no Creator tools', () => {
+    expect(findUserMenuGroup(USER_MENU_SIGNED_OUT_LAYOUT, 'link-app')).toBeNull();
   });
 });
