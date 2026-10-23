@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PlacementService from '~/server/services/placement.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MysteryBoxInventoryService from '~/server/services/mystery-box-inventory.service';
 import type * as PrizeService from '~/server/services/prize.service';
 
-const { countBoxes, countPrizes } = vi.hoisted(() => ({
+const { countBoxes, countPrizes, countReviews } = vi.hoisted(() => ({
   countBoxes: vi.fn(),
   countPrizes: vi.fn(),
+  countReviews: vi.fn(async () => ({ total: 0, byCollection: {} })),
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -20,7 +25,7 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
-  getPendingCollectionReviewCounts: vi.fn(async () => ({ total: 0, byCollection: {} })),
+  getPendingCollectionReviewCounts: countReviews,
 }));
 vi.mock('~/server/services/mystery-box-inventory.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxInventoryService>()),
@@ -37,17 +42,21 @@ const check = ({
   mysteryBox = true,
   userMenuV2 = false,
   isModerator = false,
+  isGreen = false,
+  canViewNsfw = true,
   country,
 }: Partial<{
   mysteryBox: boolean;
   userMenuV2: boolean;
   isModerator: boolean;
+  isGreen: boolean;
+  canViewNsfw: boolean;
   country: string;
 }> = {}) =>
   checkUserNotificationsHandler({
     ctx: {
       user: { id: 7, isModerator },
-      features: { mysteryBox, userMenuV2 },
+      features: { mysteryBox, userMenuV2, isGreen, canViewNsfw },
       req: { headers: country ? { 'cf-ipcountry': country } : {} },
     } as never,
   });
@@ -55,6 +64,7 @@ const check = ({
 beforeEach(() => {
   countBoxes.mockReset();
   countPrizes.mockReset();
+  countReviews.mockClear();
 });
 
 describe('checkNotifications', () => {
@@ -120,5 +130,21 @@ describe('checkNotifications', () => {
     expect(counts.unclaimedPrizes).toBe(0);
     expect(counts.unopenedBoxes).toBe(1);
     expect(counts.comment).toBe(2);
+  });
+
+  it.each([
+    ['civitai.com', { isGreen: true, canViewNsfw: false }, sfwBrowsingLevelsFlag],
+    ['civitai.red', { isGreen: false, canViewNsfw: true }, allBrowsingLevelsFlag],
+    [
+      'civitai.red, restricted region,',
+      { isGreen: false, canViewNsfw: false },
+      sfwBrowsingLevelsFlag,
+    ],
+  ])('counts pending reviews at what %s can show', async (_site, site, levels) => {
+    countBoxes.mockResolvedValue(0);
+
+    await check(site);
+
+    expect(countReviews).toHaveBeenCalledWith({ userId: 7, levels });
   });
 });
