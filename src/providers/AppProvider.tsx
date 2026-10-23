@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
@@ -64,6 +64,18 @@ type AppProviderProps = {
   // `user.getSettings` query (a protectedProcedure) so logged-out users don't fire
   // a guaranteed-401 fetch; the SSR `initialData` still seeds the cache for them.
   isAuthed: boolean;
+  /**
+   * Only for an app that booted on a static shell page: `null` until its page data arrives (the
+   * viewer-dependent queries below stay off and `regionPending` is true), then the viewer's
+   * region, and the ToS and site-alert seeds the shell render did not carry, applied once.
+   */
+  shell?: AppShellUpgrade | null;
+};
+
+export type AppShellUpgrade = {
+  region?: RegionInfo;
+  tosMeta?: TosMeta;
+  siteAlerts?: SiteAlertsPayload;
 };
 
 type AppContext = {
@@ -81,6 +93,8 @@ type AppContext = {
   navBannersDismissed?: string[];
   siteAlerts?: SiteAlertsPayload;
   tosMeta?: TosMeta;
+  /** Present only on a shell boot: true until the viewer's region is known. */
+  regionPending?: boolean;
 };
 const Context = createContext<AppContext | null>(null);
 export const NAV_BANNERS_STALE_TIME = 1000 * 60 * 5;
@@ -129,12 +143,17 @@ export function AppProvider({
   availableOAuthProviders,
   verifiedBot,
   isAuthed,
+  shell,
   ...appContext
 }: AppProviderProps) {
+  const shellPending = shell === null;
   // Gate on `isAuthed` — `user.getSettings` is a protectedProcedure, so firing it
   // for a logged-out user is a guaranteed 401. `initialData` still seeds the cache
   // for everyone; only the network fetch is suppressed when not logged in.
-  trpc.user.getSettings.useQuery(undefined, { initialData: settings, enabled: isAuthed });
+  trpc.user.getSettings.useQuery(undefined, {
+    initialData: settings,
+    enabled: isAuthed && !shellPending,
+  });
   // Seed `user.getFollowingUsers` (the followed-userId list) from the SSR
   // snapshot so the ambient follow/notify buttons read a primed cache and never
   // fire it on bootstrap. The list only changes via the user's own follow/
@@ -163,6 +182,7 @@ export function AppProvider({
   trpc.event.getNavBanners.useQuery(undefined, {
     initialData: navBanners,
     staleTime: NAV_BANNERS_STALE_TIME,
+    enabled: !shellPending,
   });
   // Seed `chat.getUserSettings` (per-user chat settings) from the SSR snapshot
   // so the chat widget reads a primed cache and never fires the query on
@@ -199,5 +219,19 @@ export function AppProvider({
     tosMeta,
   }));
 
-  return <Context.Provider value={state}>{children}</Context.Provider>;
+  const value = useMemo(
+    () =>
+      shell === undefined
+        ? state
+        : {
+            ...state,
+            region: shell?.region,
+            tosMeta: state.tosMeta ?? shell?.tosMeta,
+            siteAlerts: state.siteAlerts ?? shell?.siteAlerts,
+            regionPending: shellPending,
+          },
+    [state, shell, shellPending]
+  );
+
+  return <Context.Provider value={value}>{children}</Context.Provider>;
 }

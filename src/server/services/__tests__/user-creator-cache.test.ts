@@ -110,6 +110,11 @@ beforeEach(() => {
     if (!usernames[id]) return null;
     return { ...rowFor(id), username: usernames[id] };
   }) as never);
+  dbMock.dbWrite.user.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ username: usernames[id] }))) as never);
   dbMock.dbRead.model.count.mockImplementation(
     (async ({ where }: { where: { userId: number } }) => modelCounts[where.userId]) as never
   );
@@ -213,7 +218,9 @@ describe('creator card cache: bust on write', () => {
       entryAtPurge = store.peek(entryKey(USER));
     });
     expect(await afterWrite(() => bustUserCreator(USER))).toBe('renamed');
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${USER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${USER}`, 'user-creator-renamed'],
+    });
     expect(entryAtPurge).toMatchObject({ debounce: true });
   });
 
@@ -223,7 +230,9 @@ describe('creator card cache: bust on write', () => {
     ['deleteUserLinkHandler', () => deleteUserLinkHandler({ input: { id: 9 }, ctx } as never)],
   ])('%s busts it', async (_name, write) => {
     expect(await afterWrite(write)).toBe('renamed');
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${USER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${USER}`, 'user-creator-renamed'],
+    });
   });
 
   it('a milestone cosmetic grant (refreshEquippedCosmetics) busts it', async () => {
@@ -236,7 +245,9 @@ describe('creator card cache: bust on write', () => {
     expect(
       await afterWrite(() => updateCreatorShopSettings({ userId: USER, enabled: false } as never))
     ).toBe('renamed');
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${USER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${USER}`, 'user-creator-renamed'],
+    });
   });
 
   it('a bulk grant purges one chunk at a time: the next purge waits for the previous one', async () => {
