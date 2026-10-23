@@ -74,3 +74,21 @@ export function intersectBrowsingCaps(...caps: (number | undefined)[]) {
 
 /** What both hooks fall back to once debouncing has settled on nothing. */
 export const BROWSING_LEVEL_FALLBACK = NsfwLevel.PG;
+
+/**
+ * A collection's ceiling as this viewer may use it: the levels both allow, so the ceiling can only
+ * narrow what a viewer browses, never widen it. Moderators and owners judging the collection
+ * (`bypass`) keep the full ceiling, as `Gated` lets them past it.
+ *
+ * Never 0: a level of 0 reads as "no filter" on the server, so no overlap falls back to
+ * `BROWSING_LEVEL_FALLBACK`, which a collection forced above it should hold nothing at.
+ */
+export function viewerCollectionCap(
+  forced: number | null | undefined,
+  viewer: number,
+  bypass = false
+): number | undefined {
+  if (!forced) return undefined;
+  if (bypass) return forced;
+  return Flags.intersection(forced, viewer) || BROWSING_LEVEL_FALLBACK;
+}
