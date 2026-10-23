@@ -1299,6 +1299,11 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Violated Responsible Resource Development',
     privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
   },
+  [BanReasonCode.Chargeback]: {
+    code: BanReasonCode.Chargeback,
+    publicBanReasonLabel: 'Reversed payment',
+    privateBanReasonLabel: 'Lost payment dispute (chargeback)',
+  },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
     publicBanReasonLabel: '',

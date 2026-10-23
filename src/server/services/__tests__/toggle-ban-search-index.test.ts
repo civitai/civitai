@@ -328,3 +328,76 @@ describe('toggleBan -> removeMedia', () => {
     ).toBe(true);
   });
 });
+
+describe('toggleBan -> profile links', () => {
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  it('deletes the profile links of a banned account', async () => {
+    await call();
+
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+  });
+
+  it('keeps them when the caller asks to', async () => {
+    await toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      keepProfileLinks: true,
+    } as Parameters<typeof toggleBan>[0]);
+
+    expect(userUpdate).toHaveBeenCalled();
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggleBan onlyBan', () => {
+  const banOnly = () =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      onlyBan: true,
+    } as Parameters<typeof toggleBan>[0]);
+  const primaryFindUnique = dbMock.dbWrite.user.findUnique;
+
+  it('bans from the primary even while the replica still shows a lifted ban', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    primaryFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+
+    await banOnly();
+
+    expect(userUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bannedAt: expect.any(Date) }) })
+    );
+  });
+
+  it('refuses, and writes nothing, on an account the primary shows banned', async () => {
+    primaryFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+
+    await expect(banOnly()).rejects.toThrow('already banned');
+    expect(userUpdate).not.toHaveBeenCalled();
+  });
+});

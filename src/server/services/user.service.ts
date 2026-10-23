@@ -2364,19 +2364,30 @@ export const toggleBan = async ({
   removeModels,
   removeComments,
   mediaBlockedByCaller,
+  keepProfileLinks,
+  onlyBan,
 }: ToggleBanUser & {
   userId: number;
   isModerator?: boolean;
   force?: boolean;
   /** Server-only, never in the input schema: the caller blocks the media itself, more strictly. */
   mediaBlockedByCaller?: boolean;
+  /** Server-only: a ban an unban may need to undo leaves the profile links, which no unban restores. */
+  keepProfileLinks?: boolean;
+  /**
+   * Server-only: never lifts a ban. Reads the primary, because a replica that has not yet seen a
+   * moderator's ban or unban would otherwise decide the direction, and throws on an account that is
+   * already banned rather than unbanning it.
+   */
+  onlyBan?: boolean;
 }) => {
   // Get user with username for search index deletion
-  const user = await getUserById({
-    id,
-    select: { bannedAt: true, meta: true, username: true, email: true },
-  });
+  const select = { bannedAt: true, meta: true, username: true, email: true } as const;
+  const user = onlyBan
+    ? await dbWrite.user.findUnique({ where: { id }, select })
+    : await getUserById({ id, select });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (onlyBan && user.bannedAt) throw new Error(`User ${id} is already banned`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
   const bannedAt = force ? null : user.bannedAt;
@@ -2428,13 +2439,15 @@ export const toggleBan = async ({
 
       // Wipe public-profile UserLink rows so banned users' off-site links
       // disappear immediately (replaces a manual Retool DELETE step).
-      dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-delete-user-links',
-          message: (error as Error).message,
-        })
-      ),
+      keepProfileLinks
+        ? Promise.resolve()
+        : dbWrite.userLink.deleteMany({ where: { userId: id } }).catch((error) =>
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-delete-user-links',
+              message: (error as Error).message,
+            })
+          ),
 
       // Revoke every live App Block instance of every block this user PUBLISHES.
       // `invalidateSession` above ends their own browser sessions; it does not touch

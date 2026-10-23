@@ -22,6 +22,7 @@ export const BAN_REASONS = [
   'LeaderboardCheating',
   'BuzzCheating',
   'RRDViolation',
+  'Chargeback',
   'Other',
 ] as const;
 

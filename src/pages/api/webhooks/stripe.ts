@@ -14,7 +14,8 @@ import type Stripe from 'stripe';
 import type { Readable } from 'node:stream';
 import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
-import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
+import { constants, STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
+import { BanReasonCode } from '~/server/common/enums';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
@@ -69,7 +70,72 @@ const relevantEvents = new Set([
   'payment_intent.succeeded',
   'charge.refunded',
   'charge.dispute.created',
+  'charge.dispute.closed',
 ]);
+
+const idOf = (ref: string | { id: string } | null | undefined) =>
+  typeof ref === 'string' ? ref : ref?.id;
+
+type DisputeBanOutcome = 'banned' | 'already-banned' | 'skipped-moderator' | 'no-user' | 'failed';
+const logDisputeBan = (data: {
+  disputeId: string;
+  outcome: DisputeBanOutcome;
+  userId?: number;
+  error?: string;
+}) => log({ type: data.outcome === 'banned' ? 'info' : 'warning', stage: 'dispute-ban', ...data });
+
+// The payer is the Stripe customer on the PaymentIntent: every checkout creates it for the paying
+// user, so for a gift it is the gifter, not the recipient.
+async function banPayerForLostDispute({
+  customerId,
+  disputeId,
+}: {
+  customerId: string | undefined;
+  disputeId: string;
+}) {
+  const payer = customerId
+    ? await dbWrite.user.findUnique({ where: { customerId }, select: { id: true } })
+    : null;
+  if (!payer) return logDisputeBan({ disputeId, outcome: 'no-user' });
+
+  try {
+    const user = await dbWrite.user.findUnique({
+      where: { id: payer.id },
+      select: { bannedAt: true, isModerator: true },
+    });
+    let outcome: DisputeBanOutcome;
+    if (!user) outcome = 'no-user';
+    else if (user.bannedAt) outcome = 'already-banned';
+    else if (user.isModerator) outcome = 'skipped-moderator';
+    else {
+      const { toggleBan } = await import('~/server/services/user.service');
+      await toggleBan({
+        id: payer.id,
+        userId: constants.system.user.id,
+        reasonCode: BanReasonCode.Chargeback,
+        detailsInternal: `Stripe dispute ${disputeId} lost`,
+        detailsExternal: 'A payment on this account was reversed.',
+        removeMedia: false,
+        removeModels: false,
+        removeComments: false,
+        // A disputed charge can be a family member's or a mistake, and an unban restores no links.
+        keepProfileLinks: true,
+        // toggleBan flips the ban: this keeps a ban that lands after the read above from being lifted.
+        onlyBan: true,
+      });
+      outcome = 'banned';
+    }
+    logDisputeBan({ disputeId, outcome, userId: payer.id });
+  } catch (err) {
+    logDisputeBan({
+      disputeId,
+      outcome: 'failed',
+      userId: payer.id,
+      error: (err as Error).message,
+    });
+    throw err;
+  }
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Count any 5xx this webhook emits into civitai_app_http_errors_total — these
@@ -400,92 +466,132 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             break;
-          case 'charge.refunded':
           case 'charge.dispute.created': {
-            const charge = event.data.object as Stripe.Charge | Stripe.Dispute;
-            const paymentIntentId =
-              typeof charge.payment_intent === 'string'
-                ? charge.payment_intent
-                : charge.payment_intent?.id;
-            let invoiceId: string | undefined;
-            try {
-              if (paymentIntentId) {
-                const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-                if (pi.invoice) {
-                  invoiceId = typeof pi.invoice === 'string' ? pi.invoice : pi.invoice.id;
-                }
-              }
-            } catch {
-              // lookup failed — still try with PI id so buzz-purchase path revokes
+            // A dispute can still be won, so nothing is revoked until it closes as lost.
+            const dispute = event.data.object as Stripe.Dispute;
+            log({
+              type: 'warning',
+              stage: 'dispute-created',
+              eventId: event.id,
+              disputeId: dispute.id,
+              paymentIntentId: idOf(dispute.payment_intent),
+              amount: dispute.amount,
+              reason: dispute.reason,
+            });
+            break;
+          }
+          case 'charge.refunded':
+          case 'charge.dispute.closed': {
+            const object = event.data.object as Stripe.Charge | Stripe.Dispute;
+            if (
+              event.type === 'charge.dispute.closed' &&
+              (object as Stripe.Dispute).status !== 'lost'
+            ) {
+              log({
+                type: 'info',
+                stage: 'dispute-closed-not-lost',
+                eventId: event.id,
+                disputeId: object.id,
+                status: (object as Stripe.Dispute).status,
+              });
+              break;
             }
-            if (paymentIntentId) {
+            const isLostDispute = event.type === 'charge.dispute.closed';
+            const paymentIntentId = idOf(object.payment_intent);
+            if (!paymentIntentId) {
+              log({
+                type: 'warning',
+                stage: 'refund-no-payment-intent',
+                eventType: event.type,
+                eventId: event.id,
+                objectId: object.id,
+              });
+              if (isLostDispute) logDisputeBan({ disputeId: object.id, outcome: 'no-user' });
+              break;
+            }
+            // Stripe sends charge.refunded for every partial refund. Only the one that leaves the
+            // charge fully refunded revokes; a partial refund is for support to handle.
+            if (event.type === 'charge.refunded' && !(object as Stripe.Charge).refunded) {
+              const partial = object as Stripe.Charge;
+              log({
+                type: 'warning',
+                stage: 'partial-refund',
+                eventId: event.id,
+                paymentIntentId,
+                amount: partial.amount,
+                amountRefunded: partial.amount_refunded,
+              });
+              break;
+            }
+            const reason = event.type === 'charge.refunded' ? 'refund' : 'chargeback';
+
+            // Every step is idempotent, so all of them run, and any failure fails the event:
+            // Stripe then redelivers it and the steps that already succeeded do nothing.
+            let invoiceId: string | undefined;
+            let customerId: string | undefined;
+            let paymentIntentLoaded = false;
+            const failedStages: string[] = [];
+            const attempt = async (stage: string, run: () => Promise<unknown>) => {
+              try {
+                await run();
+              } catch (err) {
+                failedStages.push(stage);
+                log({
+                  type: 'error',
+                  stage,
+                  eventType: event.type,
+                  eventId: event.id,
+                  paymentIntentId,
+                  invoiceId,
+                  error: (err as Error)?.message,
+                });
+              }
+            };
+
+            await attempt('refund-payment-intent-lookup', async () => {
+              const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+              invoiceId = idOf(pi.invoice);
+              customerId = idOf(pi.customer);
+              paymentIntentLoaded = true;
+            });
+            await attempt('membership-gift-revoke', async () => {
               const { revokeMembershipGift } = await import(
                 '~/server/services/membership-gift.service'
               );
-              await revokeMembershipGift({
-                paymentIntentId,
-                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
-              }).catch((err) => {
-                log({
-                  type: 'error',
-                  stage: 'membership-gift-revoke',
-                  eventType: event.type,
-                  paymentIntentId,
-                  error: (err as Error)?.message,
-                });
-                return false;
-              });
-            }
+              await revokeMembershipGift({ paymentIntentId, reason });
+            });
+            // Buzz purchases are keyed on the PaymentIntent, membership payments on its invoice.
             for (const sourceEventId of [paymentIntentId, invoiceId].filter(Boolean) as string[]) {
-              await revokeForChargeback({
-                sourceEventId,
-                reason: event.type,
-              }).catch(() => null);
-              // Also void any App Blocks attribution row that referenced
-              // this payment. If the row had already paid out, the row
-              // flips to voided here and the payout reconciliation job
-              // claws back from the publisher's NEXT payout (the row
-              // stamps payout_id for audit). Always-livemode is enforced
-              // upstream — refund webhooks for test-mode events still
-              // can't match any attribution row because we never wrote
-              // one in the first place.
-              await voidAttributionsForPayment({
-                paymentProvider: 'stripe',
-                paymentTransactionId: sourceEventId,
-                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
-              }).catch((err) => {
-                log({
-                  type: 'error',
-                  stage: 'block-attribution-void',
-                  eventType: event.type,
-                  sourceEventId,
-                  error: (err as Error)?.message,
-                });
-                return 0;
-              });
-
-              // W3 flow C — also void/clawback any membership (subscription)
-              // attribution row keyed on this invoice. block_buzz_attribution
-              // is keyed on the PI id, but block_subscription_attribution is
-              // keyed on the invoice_id (the per-period anchor). The loop
-              // already resolves the parent invoiceId from the PI, so this
-              // matches both keys. Like the buzz void: paid_out rows write a
-              // negative clawback that nets out of the publisher's next
-              // payout; pending/confirmed rows just void.
-              await voidSubscriptionAttributionsForInvoice({
-                paymentProvider: 'stripe',
-                invoiceId: sourceEventId,
-                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
-              }).catch((err) => {
-                log({
-                  type: 'error',
-                  stage: 'block-subscription-attribution-void',
-                  eventType: event.type,
-                  sourceEventId,
-                  error: (err as Error)?.message,
-                });
-                return 0;
-              });
+              await attempt('referral-revoke', () =>
+                revokeForChargeback({ sourceEventId, reason: event.type })
+              );
+              await attempt('block-attribution-void', () =>
+                voidAttributionsForPayment({
+                  paymentProvider: 'stripe',
+                  paymentTransactionId: sourceEventId,
+                  reason,
+                })
+              );
+              await attempt('block-subscription-attribution-void', () =>
+                voidSubscriptionAttributionsForInvoice({
+                  paymentProvider: 'stripe',
+                  invoiceId: sourceEventId,
+                  reason,
+                })
+              );
+            }
+            // After the revokes, so a failed ban never stops them.
+            if (isLostDispute) {
+              if (paymentIntentLoaded) {
+                await attempt('payer-ban', () =>
+                  banPayerForLostDispute({ customerId, disputeId: object.id })
+                );
+              } else {
+                logDisputeBan({ disputeId: object.id, outcome: 'failed' });
+              }
+            }
+            if (failedStages.length) {
+              throw new Error(`Refund/dispute steps failed: ${failedStages.join(', ')}`);
             }
             break;
           }

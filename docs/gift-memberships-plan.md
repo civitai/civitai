@@ -136,7 +136,7 @@ model MembershipGift {
 
 ## Refunds / chargebacks
 
-Extend the existing `charge.refunded` / `charge.dispute.created` branch (`webhooks/stripe.ts:334`): look up `MembershipGift` by `stripePaymentIntentId` →
+Extend the existing `charge.refunded` / dispute branch in `webhooks/stripe.ts` (now: a full refund, or a dispute closed as `lost`): look up `MembershipGift` by `stripePaymentIntentId` →
 
 - Coupon not yet exhausted: delete the coupon / remove the discount from the subscription.
 - Gift-created sub (Case B): cancel it immediately.
