@@ -35,4 +35,18 @@ describe('RemovedImagesView with more rows than fit', () => {
     const hit = document.elementFromPoint(left + width / 2, top + height / 2);
     expect(last.contains(hit)).toBe(true);
   });
+
+  it('shows its scrollbar without a hover, so the viewer can tell the list continues', async () => {
+    await renderAtViewport(<RemovedImagesView removed={removed} />);
+
+    const bar = document.querySelector(
+      '.mantine-ScrollArea-scrollbar[data-orientation="vertical"]'
+    ) as HTMLElement | null;
+
+    // Mantine's default is a hover-only overlay: before the pointer arrives the bar is not in the
+    // DOM at all, and on a touch screen it never arrives.
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute('data-state')).not.toBe('hidden');
+    expect(box(bar!).width).toBeGreaterThan(0);
+  });
 });

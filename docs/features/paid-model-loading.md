@@ -16,7 +16,7 @@ workflow, what it would change in the decisions below, and why `BOOST_NON_REFUND
 the day it ships.
 
 **Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs
-(2026-09-04, 09-07, 09-10), the `@civitai/client` and `@civitai/orchestration-client` SDKs, and the
+(2026-09-04, 09-07, 09-10), the `@civitai/orchestration-client` and `@civitai/orchestration-client` SDKs, and the
 orchestrator source at `9306e7333`.
 
 > **History.** This file replaces four docs merged on 2026-09-11 — the boost model, the build plan,
@@ -219,7 +219,7 @@ moves with `maxBuzz`.
 
 Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` rather than trusting
 this section once it ages. The app's own orchestrator calls still go through the older
-`@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
+`@civitai/orchestration-client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 The fleet-wide loaded list (`/v1/manager/resources/loaded`) is in neither client, so
 `getLoadedResourceAirs` (`src/server/http/orchestrator/loaded-resources.ts`) calls it through the
 orchestrator caller.

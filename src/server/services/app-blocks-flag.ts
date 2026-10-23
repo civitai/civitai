@@ -1085,8 +1085,8 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
 }
 
 /**
- * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
- * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
+ * training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
  * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
  * `blocks.consentTrainingQuote`).

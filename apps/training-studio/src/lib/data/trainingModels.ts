@@ -228,7 +228,7 @@ export const MODEL_CARDS: ModelCard[] = [
       {
         key: 'flux3klein',
         label: 'Base',
-        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/client` ships no
+        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/orchestration-client` ships no
         // Flux3Klein training input yet, so the ecosystem literal is unchecked.
         air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
         baseModel: 'Flux.3 Klein-base',

@@ -78,8 +78,8 @@ const nativePoolPlugin = {
 
 // 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
 // optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
-// `deps.optimizer.ssr.include` lists serves the other list's transforms: 148 of 150 files failed
-// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted.
+// `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/orchestration-client` until the cache was deleted.
 const optimizerCacheKeyPlugin = {
   name: 'civitai:fs-cache-optimizer-key',
   configureVitest({
@@ -124,6 +124,9 @@ const civitaiWorkspacePkgs = [
   // `@civitai/post-planner` (packages/civitai-post-planner) is imported by the planner REST route
   // and its service; resolved through tsconfig paths in the app build, not symlinked into root.
   'post-planner',
+  // `@civitai/app-assistant` (packages/civitai-app-assistant): App Assistant's gate, prompt and
+  // sandbox client, shared by the page and apps/assistant-runner. Not symlinked into root either.
+  'app-assistant',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
@@ -196,6 +199,95 @@ const sharpExecutingTestFiles = [
   'src/tests/api/og.milestone.test.ts',
 ];
 
+// 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
+// sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
+// contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
+// mock factories keep working (see the `default` note on `deps.optimizer`).
+const mantineFamily = [
+  '@mantine/core',
+  '@mantine/hooks',
+  '@mantine/dates',
+  '@mantine/dropzone',
+  '@mantine/modals',
+  '@mantine/notifications',
+  '@mantine/nprogress',
+  '@mantine/tiptap',
+  'mantine-react-table',
+];
+
+// Packages pre-bundled for the unit projects' node environment. The hazards to check before adding
+// one are on `deps.optimizer` inside `unitTestConfig`.
+const prebundledDeps = [
+  'lodash-es',
+  'googleapis',
+  '@tiptap/html',
+  '@axiomhq/axiom-node',
+  '@aws-sdk/s3-request-presigner',
+  // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
+  // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
+  // subpath import still resolves through the module runner to the original files and the
+  // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
+  // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
+  // is the shape that breaks, e.g. `error instanceof z.ZodError` in
+  // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
+  // package whose identity is compared with `instanceof`.
+  'zod',
+  // 'react' is NOT here on purpose. Vitest hardcodes
+  // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
+  // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
+  // react-dom.js but no react.js. Listing it would read as a delivered win that never
+  // happened.
+  'react-dom',
+  'zustand',
+  'immer',
+  'clsx',
+  'uuid',
+  'prom-client',
+  '@tanstack/react-query',
+  '@paddle/paddle-node-sdk',
+  // Resolvable from the root only because it is a root devDependency; otherwise the
+  // optimizer logs "Failed to resolve dependency" and the package stays native.
+  'kysely',
+  'kysely/helpers/postgres',
+  'remark-gfm',
+  'remark-parse',
+  'remark-rehype',
+  'rehype-stringify',
+  'unified',
+  'stripe',
+  'jose',
+  'pg',
+  'form-graph',
+  'form-graph/react',
+  'sanitize-html',
+  '@openrouter/sdk',
+  '@openrouter/sdk/models',
+  '@openrouter/sdk/models/errors',
+  'nodemailer',
+  'obscenity',
+  'superjson',
+  'htmlparser2',
+  '@discordjs/rest',
+  'redis',
+  '@aws-sdk/client-s3',
+  '@aws-sdk/lib-storage',
+  // Subpath: not covered by the bare entry above.
+  '@tiptap/html/server',
+  // Both forms are imported by `utils/metadata`; a subpath left out is a separate native copy.
+  '@civitai/generation-metadata',
+  '@civitai/generation-metadata/civitai',
+  // CommonJS and mocked: its factory must keep `default`.
+  'cloudflare',
+  ...mantineFamily,
+];
+
+// The `client` optimizer's list: only browser-safe ESM packages. A server CommonJS package bundled
+// for the browser target loses its Node built-ins (`redis` died on `util.inherits is not a
+// function`, and every happy-dom file that reached it collected zero tests), and a package that is
+// also reached through a native copy splits in two (`@tanstack/react-query`, via `@trpc/*`, failed
+// with "No QueryClient set").
+const clientPrebundledDeps = ['lodash-es', ...mantineFamily];
+
 // Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
 // Every other setting has to stay identical or the split changes behaviour as well as scheduling.
 const unitTestConfig = {
@@ -242,9 +334,10 @@ const unitTestConfig = {
     // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
     // load into one chunk, paid once for the run.
     //
-    // 🔴 A MOCKED package needs `default` in every factory before it goes on this list.
-    // Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory that returns only
-    // named exports stops satisfying its consumers, and the file collects zero tests:
+    // 🔴 A MOCKED CommonJS package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps it as a CJS-interop chunk (`export default require_x()`), so a `vi.mock`
+    // factory that returns only named exports stops satisfying its consumers, and the file collects
+    // zero tests (an ESM package such as Mantine bundles to named exports and is not affected):
     //   Error: [vitest] No "default" export is defined on the "redis" mock.
     // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
     // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
@@ -267,74 +360,13 @@ const unitTestConfig = {
     // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
     // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
     // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
-    // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
-    // way and are the follow-up this list is building toward:
-    //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
-    //   `next`                3,459 / 114                        — 10 mocking files
-    //   `@mantine/core`       1,180 / 249                        — 4 mocking files
+    // `@tabler/icons-react` and `next` are not listed: their `vi.mock` callers have not been checked
+    // against pre-bundling.
     optimizer: {
-      ssr: {
-        enabled: true,
-        include: [
-          'lodash-es',
-          'googleapis',
-          '@tiptap/html',
-          '@axiomhq/axiom-node',
-          '@aws-sdk/s3-request-presigner',
-          // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
-          // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
-          // see the PGlite note above, where the total stayed put while 87 tests stopped running.
-          //
-          // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
-          // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
-          // subpath import still resolves through the module runner to the original files and the
-          // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
-          // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
-          // is the shape that breaks, e.g. `error instanceof z.ZodError` in
-          // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
-          // package whose identity is compared with `instanceof`.
-          'zod',
-          // 'react' is NOT here on purpose. Vitest hardcodes
-          // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
-          // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
-          // react-dom.js but no react.js. Listing it would read as a delivered win that never
-          // happened.
-          'react-dom',
-          'zustand',
-          'immer',
-          'clsx',
-          'uuid',
-          'prom-client',
-          '@tanstack/react-query',
-          '@paddle/paddle-node-sdk',
-          // Resolvable from the root only because it is a root devDependency; otherwise the
-          // optimizer logs "Failed to resolve dependency" and the package stays native.
-          'kysely',
-          'kysely/helpers/postgres',
-          'remark-gfm',
-          'remark-parse',
-          'remark-rehype',
-          'rehype-stringify',
-          'unified',
-          'stripe',
-          'jose',
-          'pg',
-          'form-graph',
-          'form-graph/react',
-          'sanitize-html',
-          '@openrouter/sdk',
-          '@openrouter/sdk/models',
-          '@openrouter/sdk/models/errors',
-          'nodemailer',
-          'obscenity',
-          'superjson',
-          'htmlparser2',
-          '@discordjs/rest',
-          'redis',
-          '@aws-sdk/client-s3',
-          '@aws-sdk/lib-storage',
-        ],
-      },
+      ssr: { enabled: true, include: prebundledDeps },
+      // `@vitest-environment happy-dom`/`jsdom` files run in Vite's client environment, which has its
+      // own optimizer; `ssr` alone leaves them loading these natively.
+      client: { enabled: true, include: clientPrebundledDeps },
     },
   },
   // A transform cache on disk, keyed per module and shared between separate `vitest run`

@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -62,7 +63,7 @@ let db: PGlite;
 beforeEach(async () => {
   vi.clearAllMocks();
   refundAppealFee.mockResolvedValue(true);
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(`
     INSERT INTO "User" ("id", "username") VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four');

@@ -643,10 +643,8 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    * to `PLACEMENT_SURFACES` and this goes red, pointing at the copy that needs
    * the third name.
    */
-  // Promotions are paid only: nothing creates a free placement on them, so they
-  // never draw on this budget. Neither does a surface that may be priced at
-  // zero: `createFreePlacement` refuses it, and its zero-priced placements are
-  // not free rows, so the daily count never sees them.
+  // Promotions are paid only, and a zero-priceable surface has no free tier: neither draws on this
+  // budget.
   it('fails if a surface is added to the shared budget without updating the copy', () => {
     expect(
       placementSurfaces

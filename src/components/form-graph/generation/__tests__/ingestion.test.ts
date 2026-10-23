@@ -357,4 +357,50 @@ describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
     store.set({ resources: [] });
     expect(state(store)).toMatchObject({ steps: 25, cfgScale: 3 });
   });
+
+  // A community turbo LoRA is recognised only by its `turbo` flag; a rebuild that drops it
+  // (toResourceData) would file it under Additional Resources.
+  it('a remixed turbo LoRA keeps its turbo flag, so the Turbo row claims it', () => {
+    const store = makeStore();
+    const recommendedSettings = {
+      steps: { min: 4, max: 8, default: 8 },
+      cfgScale: { min: 1, max: 1, default: 1 },
+    };
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p' },
+      resources: [
+        res({ id: 3409867, model: { id: 2960000, type: 'Checkpoint' }, baseModel: 'MOSS Image' }),
+        res({
+          id: 3418353,
+          model: { id: 2994272, type: 'LORA' },
+          baseModel: 'MOSS Image',
+          turbo: true,
+          recommendedSettings,
+        }),
+      ],
+    } satisfies Payload);
+    const meta = store.getField('resources')?.meta as {
+      turbo: { enabled: boolean; active?: { id: number }; withoutTurbo: unknown[] };
+    };
+    expect(meta.turbo).toMatchObject({ enabled: true, active: { id: 3418353 }, withoutTurbo: [] });
+    expect(state(store)).toMatchObject({ steps: 8, cfgScale: 1 });
+  });
+
+  it('a remixed checkpoint keeps its own default turbo LoRA, so the pick starts on it', () => {
+    const store = makeStore();
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: { workflow: 'txt2img', ecosystem: 'MossImage', prompt: 'p' },
+      resources: [
+        res({
+          id: 3409868,
+          model: { id: 3005406, type: 'Checkpoint' },
+          baseModel: 'MOSS Image',
+          settings: { turboLora: { id: 3413516, strength: 0.7 } },
+        }),
+      ],
+    } satisfies Payload);
+    expect(store.getField('turboLora')?.value).toMatchObject({ id: 3413516, strength: 0.7 });
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as SubmitModule from '~/server/services/text-scan/submit';
 const mockDbRead = dbMock.dbRead;
@@ -131,6 +132,10 @@ describe('challengeModerationAdapter.submit under text-scan', () => {
 
     expect(await challengeModerationAdapter.submit({ entityId: 42, content: 'T' })).toBeNull();
 
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 42, isNsfw: false });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 42,
+      isNsfw: false,
+      level: NsfwLevel.PG,
+    });
   });
 });

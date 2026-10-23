@@ -10,6 +10,12 @@ export function failureMessage(result: ActionResultLike): string | null {
   return typeof error === 'string' ? error : 'Action failed.';
 }
 
+/** The banner for a failed action: the error, led by the item it concerns when the action named one. */
+export function failureBanner(form: { error?: string; subject?: string } | null | undefined) {
+  if (!form?.error) return null;
+  return form.subject ? `${form.subject}: ${form.error}` : form.error;
+}
+
 /** One step through the queue, clamped at both ends. */
 export function step<K extends string | number>(
   ids: readonly K[],

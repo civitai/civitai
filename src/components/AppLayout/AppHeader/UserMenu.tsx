@@ -15,6 +15,7 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconArrowsExchange,
   IconChevronLeft,
   IconChevronRight,
   IconCircleCheck,
@@ -27,9 +28,10 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, forwardRef, useContext, useState } from 'react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import {
@@ -64,43 +66,71 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getInitials } from '~/utils/string-helpers';
 
-const UserMenuCtx = createContext<{ handleClose: () => void }>({ handleClose: () => undefined });
+export const UserMenuCtx = createContext<{ handleClose: () => void }>({
+  handleClose: () => undefined,
+});
 function useUserMenuContext() {
   return useContext(UserMenuCtx);
 }
 
+// ssr: false: rendered on the server, the lazy chunk was not ready at hydration and React
+// reported a mismatch.
+const UserMenuV2 = dynamic(() => import('~/components/AppLayout/AppHeader/UserMenuV2/UserMenuV2'), {
+  ssr: false,
+  loading: () => <UserMenuTrigger open={false} />,
+});
+
 export function UserMenu() {
+  const features = useFeatureFlags();
+  return features.userMenuV2 ? <UserMenuV2 /> : <LegacyUserMenu />;
+}
+
+/** `indicator` is positioned by the caller, who must pass a `relative` className. */
+export const UserMenuTrigger = forwardRef<
+  HTMLButtonElement,
+  { open: boolean; indicator?: React.ReactNode; className?: string; onClick?: () => void }
+>(function UserMenuTrigger({ open, indicator, className, ...props }, ref) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const creator = useGetCreator();
+
+  return (
+    <UnstyledButton
+      ref={ref}
+      aria-label={currentUser ? 'Account menu' : 'Menu'}
+      className={clsx(
+        'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+        { ['bg-gray-1 dark:bg-dark-5']: open },
+        className
+      )}
+      type="button"
+      {...props}
+    >
+      <div
+        className={clsx('flex items-center gap-2', {
+          ['hidden']: !currentUser,
+          ['@max-md:hidden']: !features.buzzSpendPop,
+        })}
+      >
+        <div className="@max-md:hidden">
+          <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+        </div>
+        {features.buzz && currentUser && <HeaderUserBuzz />}
+      </div>
+      <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
+      {indicator}
+    </UnstyledButton>
+  );
+});
+
+function LegacyUserMenu() {
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const [open, setOpen] = useState(false);
 
   return (
     <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
-        <UnstyledButton
-          aria-label={currentUser ? 'Account menu' : 'Menu'}
-          className={clsx(
-            'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
-            { ['bg-gray-1 dark:bg-dark-5']: open }
-          )}
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-        >
-          <div
-            className={clsx('flex items-center gap-2', {
-              ['hidden']: !currentUser,
-              ['@max-md:hidden']: !features.buzzSpendPop,
-            })}
-          >
-            <div className="@max-md:hidden">
-              <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
-            </div>
-            {features.buzz && currentUser && <HeaderUserBuzz />}
-          </div>
-          <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
-        </UnstyledButton>
+        <UserMenuTrigger open={open} onClick={() => setOpen((o) => !o)} />
       </Popover.Target>
       <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
@@ -156,12 +186,8 @@ function PopoverContent() {
 }
 
 function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
-  const { toggleColorScheme } = useMantineColorScheme();
-  const colorScheme = useComputedColorScheme('dark');
-  const { logout } = useAccountContext();
 
   const { handleClose } = useUserMenuContext();
   const menuItems = useGetMenuItems();
@@ -201,51 +227,78 @@ function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
           </div>
         )}
       </div>
-      <div className="flex gap-3 border-t border-gray-3 px-3 py-2 dark:border-dark-4">
-        <Tooltip label={colorScheme === 'dark' ? 'Light mode' : 'Dark mode'}>
-          <LegacyActionIcon
-            color="gray"
-            variant="default"
-            onClick={() => toggleColorScheme()}
-            size="lg"
-            className="flex-1"
-          >
-            {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-          </LegacyActionIcon>
-        </Tooltip>
-        {currentUser && (
-          <>
-            <Tooltip label="Account settings">
-              <LegacyActionIcon
-                variant="default"
-                color="gray"
-                size="lg"
-                onClick={handleClose}
-                component={NextLink}
-                href="/user/account"
-                className="flex-1"
-              >
-                <IconSettings stroke={1.5} />
-              </LegacyActionIcon>
-            </Tooltip>
-            <Tooltip label="Logout">
-              <LegacyActionIcon
-                variant="default"
-                color="gray"
-                onClick={() => logout()}
-                size="lg"
-                className="flex-1"
-              >
-                <IconLogout
-                  stroke={1.5}
-                  color={theme.colors.red[getPrimaryShade(theme, colorScheme)]}
-                />
-              </LegacyActionIcon>
-            </Tooltip>
-          </>
-        )}
-      </div>
+      <UserMenuFooter />
     </>
+  );
+}
+
+export function UserMenuFooter({ onSwitchAccount }: { onSwitchAccount?: () => void }) {
+  const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
+  const { toggleColorScheme } = useMantineColorScheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const { logout } = useAccountContext();
+  const { handleClose } = useUserMenuContext();
+
+  return (
+    <div className="flex gap-3 border-t border-gray-3 px-3 py-2 dark:border-dark-4">
+      <Tooltip label={colorScheme === 'dark' ? 'Light mode' : 'Dark mode'}>
+        <LegacyActionIcon
+          color="gray"
+          variant="default"
+          onClick={() => toggleColorScheme()}
+          size="lg"
+          className="flex-1"
+        >
+          {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
+        </LegacyActionIcon>
+      </Tooltip>
+      {currentUser && (
+        <>
+          {onSwitchAccount && (
+            <Tooltip label="Switch account">
+              <LegacyActionIcon
+                variant="default"
+                color="gray"
+                size="lg"
+                onClick={onSwitchAccount}
+                className="flex-1"
+                aria-label="Switch account"
+              >
+                <IconArrowsExchange stroke={1.5} />
+              </LegacyActionIcon>
+            </Tooltip>
+          )}
+          <Tooltip label="Account settings">
+            <LegacyActionIcon
+              variant="default"
+              color="gray"
+              size="lg"
+              onClick={handleClose}
+              component={NextLink}
+              href="/user/account"
+              className="flex-1"
+            >
+              <IconSettings stroke={1.5} />
+            </LegacyActionIcon>
+          </Tooltip>
+          <Tooltip label="Logout">
+            <LegacyActionIcon
+              variant="default"
+              color="gray"
+              onClick={() => logout()}
+              size="lg"
+              className="flex-1"
+            >
+              <IconLogout
+                stroke={1.5}
+                color={theme.colors.red[getPrimaryShade(theme, colorScheme)]}
+              />
+            </LegacyActionIcon>
+          </Tooltip>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -313,7 +366,7 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
   );
 }
 
-function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
+export function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
   const { accounts, swapAccount, removeAccount } = useAccountContext();
   const { handleClose } = useUserMenuContext();
 
@@ -475,7 +528,7 @@ function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
   );
 }
 
-function MenuItemButton({
+export function MenuItemButton({
   children,
   className,
   ...props
@@ -495,7 +548,7 @@ function MenuItemButton({
   );
 }
 
-function MenuItemLink({
+export function MenuItemLink({
   children,
   className,
   ...props
@@ -515,7 +568,11 @@ function MenuItemLink({
   );
 }
 
-function BuzzMenuItem() {
+/** `onOpen` runs when the row itself is opened, not when Buy Buzz is pressed. */
+export function BuzzMenuItem({
+  onOpen,
+  compact = false,
+}: { onOpen?: () => void; compact?: boolean } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
@@ -526,10 +583,47 @@ function BuzzMenuItem() {
   if (!features.buzz) return null;
   if (!currentUser) return null;
 
+  const buyBuzz = (
+    <Button
+      component="div"
+      variant={compact ? 'light' : 'white'}
+      radius="xl"
+      px={12}
+      size="compact-xs"
+      onClick={(e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onBuyBuzz({});
+      }}
+    >
+      Buy Buzz
+    </Button>
+  );
+
+  // One blended total beside the Buy Buzz button, so the row fits a phone line next to the name.
+  if (compact)
+    return (
+      <NextLink
+        href="/user/buzz-dashboard"
+        className="flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-4"
+        onClick={() => {
+          onOpen?.();
+          handleClose();
+        }}
+      >
+        <UserBuzz animated={features.buzzSpendPop} iconSize={16} iconGap={2} textSize="sm" />
+        {buyBuzz}
+      </NextLink>
+    );
+
   return (
     <MenuItemLink
       href="/user/buzz-dashboard"
       className="-mx-1 my-1 flex items-center justify-between bg-gray-2 dark:bg-dark-4"
+      onClick={() => {
+        onOpen?.();
+        handleClose();
+      }}
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
         <UserBuzz
@@ -549,20 +643,7 @@ function BuzzMenuItem() {
           accountTypes={[mainBuzzColor]}
         />
       </div>
-      <Button
-        component="div"
-        variant="white"
-        radius="xl"
-        px={12}
-        size="compact-xs"
-        onClick={(e: React.MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onBuyBuzz({});
-        }}
-      >
-        Buy Buzz
-      </Button>
+      {buyBuzz}
     </MenuItemLink>
   );
 }

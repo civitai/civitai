@@ -33,7 +33,7 @@ export function StorylineToolbarChip({
 }) {
   const storyline = useStorylineMode();
   // The same test as the slots' `@md:hidden` / `@max-md:hidden`: the stage container under md.
-  // A viewport check at sm left 768-1023px with both slots' chips unmounted or hidden.
+  // A viewport check at sm leaves a band of widths with neither chip.
   const narrowStage = useIsMobile({ breakpoint: 'md' });
   if (narrowStage !== (placement === 'mobile')) return null;
   if (!storyline.active) return <StorylineEntryPill postId={postId} />;
@@ -88,7 +88,6 @@ export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean })
   );
 }
 
-/** Outside storyline mode: says the image is part of a storyline and offers to read it as one. */
 function StorylineEntryPill({ postId }: { postId: number | null }) {
   const enabled = useStorylinesEnabled();
   const storyline = useStorylineMode();

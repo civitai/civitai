@@ -146,6 +146,7 @@ describe('who can move a listing rating by re-rating an image', () => {
   it('the hook has exactly one caller: the moderator branch above', () => {
     const root = path.resolve(__dirname, '../../../..');
     const callers = globSync('src/**/*.{ts,tsx}', { cwd: root })
+      .map((f) => f.split(path.sep).join('/'))
       .filter((f) => !/\.test\.tsx?$/.test(f))
       .filter((f) => statSync(path.join(root, f)).isFile())
       .filter((f) =>

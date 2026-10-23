@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   forkShares: { enough: false, total: 0, minChoices: 20, shares: {} as Record<number, number> } as
     | { enough: boolean; total: number; minChoices: number; shares: Record<number, number> }
     | undefined,
-  // What the image guard decides: true shows the picture, false the blurred hash.
   safe: true,
   trackCreateClick: vi.fn(),
   trigger: vi.fn(),
@@ -317,7 +316,8 @@ describe('StorylineEndOfChapter', () => {
     ]);
   });
 
-  // Settled with Justin: shares show from the first recorded choice; the minimum is copy only.
+  // The UI shows the shares it is given and does not gate on `enough`; the server withholds them
+  // below `minChoices` (default 1: from the first choice).
   it('shows each way share from the first choice, with the readers behind the lead', () => {
     mocks.children = [
       child(5, 'canon', 'Kept'),
@@ -409,7 +409,7 @@ describe('StorylineEndOfChapter', () => {
   });
 
   // The owner adds their own chapter through the picker, parented on the chapter they are at the
-  // end of; the button is theirs alone, and nobody else gets it.
+  // end of.
   it('offers the owner the picker, parented on this chapter, and nobody else', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };

@@ -6,6 +6,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
@@ -43,6 +44,8 @@
   // page per chat, so seeding once is enough.
   let prompt = $state(untrack(() => (data.turns.length ? '' : starterPrompt(data.chat))));
   let playbook = $state(NO_PLAYBOOK);
+  // Seeded from the chat's last turn; the layout remounts this page per chat.
+  let model = $state(untrack(() => data.model));
 
   async function send() {
     const text = prompt.trim();
@@ -53,7 +56,7 @@
     prompt = '';
     await streamTurn(
       chatId,
-      { prompt: text, playbook: playbook || null },
+      { prompt: text, playbook: playbook || null, model },
       (event: TurnEvent) => {
       if (event.type === 'tool') current.tools.push({ name: event.name, done: false, rows: null, error: null });
       else if (event.type === 'tool-done') {
@@ -88,6 +91,8 @@
   const playbookLabel = $derived(
     data.playbooks.find((p) => p.slug === playbook)?.title ?? 'No playbook'
   );
+  const modelLabel = $derived(data.models.find((m) => m.id === model)?.label ?? model);
+  const usd = (n: number) => (n < 0.01 && n > 0 ? '<$0.01' : `$${n.toFixed(2)}`);
 </script>
 
 <header class="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -109,8 +114,42 @@
       <Button type="submit" size="sm" variant="outline" disabled={rename.submitting}>Rename</Button>
     {/if}
   </form>
-  <div class="flex items-center gap-2 text-xs text-dark-2">
-    <span>{num(data.allowance.used)} / {num(data.allowance.cap)} tokens today</span>
+  <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
+    <span>{usd(data.allowance.spentUsd)} of {usd(data.allowance.capUsd)} today</span>
+    {#if data.spend.byModel.length}
+      <!-- A popover, not a title: the per-model split must reach a phone and a keyboard too. -->
+      <Popover.Root>
+        <Popover.Trigger class="underline decoration-dotted underline-offset-2">
+          By model
+        </Popover.Trigger>
+        <Popover.Content align="end" class="w-64 text-xs">
+          <p class="mt-0 mb-2 text-dark-2">
+            Estimated at OpenRouter's list prices. The router picks the provider per call, so the real
+            cost can differ. Your daily allowance counts each answer at the higher of today's price and
+            the price this release shipped with.
+          </p>
+          {#if !data.spend.current}
+            <p class="mt-0 mb-2 text-amber-300">
+              OpenRouter's current prices could not be read, so some of this uses the prices this
+              release shipped with, which may be out of date.
+            </p>
+          {/if}
+          <ul class="m-0 space-y-1 p-0">
+            {#each data.spend.byModel as r (r.model)}
+              <li class="flex justify-between gap-2">
+                <span>{r.label}</span>
+                <span class="text-dark-0">{r.usd === null ? 'price unknown' : usd(r.usd)}</span>
+              </li>
+            {/each}
+          </ul>
+          {#if data.spend.unpricedTokens}
+            <p class="mt-2 mb-0 text-amber-300">
+              {num(data.spend.unpricedTokens)} tokens on models with no price are not in the total.
+            </p>
+          {/if}
+        </Popover.Content>
+      </Popover.Root>
+    {/if}
     {#if canUse}
       <form method="POST" action="?/archive" use:enhance={archive.enhance}>
         <ConfirmButton
@@ -174,17 +213,30 @@
       disabled={busy}
     />
     <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-      <Select.Root type="single" bind:value={() => playbook, (v) => (playbook = v ?? NO_PLAYBOOK)}>
-        <Select.Trigger class="w-full max-w-64 text-xs sm:w-64" aria-label="Playbook">
-          {playbookLabel}
-        </Select.Trigger>
-        <Select.Content>
-          <Select.Item value={NO_PLAYBOOK}>No playbook</Select.Item>
-          {#each data.playbooks as p (p.slug)}
-            <Select.Item value={p.slug}>{p.title}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
+      <!-- One line on a phone: the composer is sticky, so every extra row costs the transcript. -->
+      <div class="flex w-full min-w-0 gap-2 sm:w-auto">
+        <Select.Root type="single" bind:value={() => playbook, (v) => (playbook = v ?? NO_PLAYBOOK)}>
+          <Select.Trigger class="min-w-0 flex-1 text-xs sm:w-64 sm:flex-none" aria-label="Playbook">
+            {playbookLabel}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value={NO_PLAYBOOK}>No playbook</Select.Item>
+            {#each data.playbooks as p (p.slug)}
+              <Select.Item value={p.slug}>{p.title}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <Select.Root type="single" bind:value={() => model, (v) => (model = v || data.model)}>
+          <Select.Trigger class="min-w-0 flex-1 text-xs sm:w-44 sm:flex-none" aria-label="Model">
+            {modelLabel}
+          </Select.Trigger>
+          <Select.Content>
+            {#each data.models as m (m.id)}
+              <Select.Item value={m.id}>{m.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
       <div class="flex items-center gap-2">
         <span class="hidden text-xs text-dark-2 sm:inline">Ctrl+Enter</span>
         <Button type="submit" disabled={busy || !prompt.trim()}>

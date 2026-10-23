@@ -103,10 +103,24 @@ describe('facets', () => {
     expect(byOrigin).toContain('@.origin.remix.promptMatch == "identical"');
   });
 
+  it('counts types under the status and origin filters, ignoring the type filter itself', async () => {
+    const sqls = await emitted(() =>
+      getRestrictionFacets({ type: 'generation', status: 'Pending', origin: 'remix', userId: 4 })
+    );
+    expect(sqls).toHaveLength(3);
+    const byType = sqls.find((s) => s.includes('group by "ur"."type"'))!;
+
+    expect(byType).toContain('"ur"."status" =');
+    expect(byType).toContain('$.origin.remix');
+    expect(byType).toContain('"ur"."userId" =');
+    expect(byType).not.toContain('"ur"."type" =');
+  });
+
   it('returns zeros for an empty queue', async () => {
     expect(await getRestrictionFacets({})).toEqual({
       status: { any: 0, Pending: 0, Upheld: 0, Overturned: 0 },
       origin: { all: 0, remix: 0, typed: 0, 'unchanged-remix': 0 },
+      type: { generation: 0, 'bot-account': 0, scam: 0 },
     });
   });
 });

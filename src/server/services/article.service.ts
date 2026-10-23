@@ -39,6 +39,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -819,6 +820,9 @@ export const getArticleById = async ({
   }
 };
 
+const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
+  'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
+
 export const upsertArticle = async ({
   id,
   userId,
@@ -837,13 +841,14 @@ export const upsertArticle = async ({
 }) => {
   // Set only while the guarded draft write below is in flight, so its P2025 is told apart.
   let writingNeverPublishedDraft = false;
+  let writingWithoutViolationStatus = false;
   try {
     const officialTag = await getOfficialArticleTag();
     const tags = withoutOfficialArticleTag(inputTags, officialTag);
-    await throwOnBlockedUserContent([data.title, data.content], {
-      isModerator,
-      surface: 'article',
-    });
+    await throwOnBlockedUserContent(
+      [data.title, data.content, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+      { isModerator, surface: 'article' }
+    );
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level
@@ -1106,15 +1111,13 @@ export const upsertArticle = async ({
     // user's original choice instead of being permanently anchored by a
     // prior clamp.
 
-    // Prevent owners from re-publishing articles unpublished for ToS violations
     if (
+      !isModerator &&
       article.status === ArticleStatus.UnpublishedViolation &&
-      data.status === ArticleStatus.Published &&
-      !isModerator
+      data.status &&
+      data.status !== article.status
     ) {
-      throw throwBadRequestError(
-        'This article was unpublished for violating Terms of Service and cannot be republished. Please contact support if you believe this was in error.'
-      );
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     }
 
     // SECURITY: Validate image scan status before allowing publish
@@ -1220,8 +1223,15 @@ export const upsertArticle = async ({
     // Guarded: the job may have taken this draft live since the read, and an unguarded write would
     // revert it to Draft and re-fire the go-live side effects on the next publish.
     writingNeverPublishedDraft = article.status === ArticleStatus.Draft && !article.publishedAt;
+    // A removal landing between the read and this write must not be overwritten by the owner.
+    writingWithoutViolationStatus =
+      !writingNeverPublishedDraft &&
+      !isModerator &&
+      article.status !== ArticleStatus.UnpublishedViolation;
     const updateWhere: Prisma.ArticleWhereUniqueInput = writingNeverPublishedDraft
       ? { id, status: ArticleStatus.Draft, publishedAt: null }
+      : writingWithoutViolationStatus
+      ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
@@ -1302,6 +1312,7 @@ export const upsertArticle = async ({
       return updated;
     });
     writingNeverPublishedDraft = false;
+    writingWithoutViolationStatus = false;
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -1358,6 +1369,12 @@ export const upsertArticle = async ({
       throw throwBadRequestError(
         'This article was published while you were editing it. Reload it and save again.'
       );
+    if (
+      writingWithoutViolationStatus &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    )
+      throw throwBadRequestError(ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE);
     throw throwDbError(error);
   }
 };
@@ -1675,40 +1692,43 @@ export const deleteArticleById = async ({
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // Delete cover image (DB + S3 + cache). Guarded like the content-image loop below:
-    // unguarded, a rejection here skips the articles-index `Delete` at the end of this
-    // function and the deleted article stays in that index indefinitely.
-    if (deleted.coverId)
-      await deleteImageById({ id: deleted.coverId }).catch((error) => {
-        handleLogError(error, 'article-cover-image-cleanup', {
-          articleId: id,
-          imageId: deleted.coverId,
+    // The cover goes through the same checks as the content images: it can be someone else's
+    // upload, or still shown elsewhere.
+    const imageIds = [
+      ...new Set([
+        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...contentImageConnections.map((conn) => conn.imageId),
+      ]),
+    ];
+
+    // The article is already gone, so a failed cleanup is logged rather than reported as a failed
+    // delete, and it must not skip the articles-index `Delete` below.
+    try {
+      if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
+        const trulyOrphanedImages = await dbWrite.image.findMany({
+          where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
+          select: { id: true },
         });
-      });
 
-    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    const contentImageIds = contentImageConnections
-      .map((conn) => conn.imageId)
-      .filter((imageId) => imageId !== deleted.coverId);
-
-    if (contentImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
-      const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
-        select: { id: true },
-      });
-
-      const deletable = await withoutOfferingCovers(
-        dbWrite,
-        trulyOrphanedImages.map((img) => img.id)
-      );
-      for (const imageId of deletable) {
-        await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(error, 'article-content-image-cleanup', {
-            articleId: id,
-            imageId,
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          trulyOrphanedImages.map((img) => img.id)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(
+              error,
+              imageId === deleted.coverId
+                ? 'article-cover-image-cleanup'
+                : 'article-content-image-cleanup',
+              { articleId: id, imageId }
+            );
           });
-        });
+        }
       }
+    } catch (error) {
+      handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);

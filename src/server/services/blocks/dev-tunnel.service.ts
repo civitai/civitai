@@ -810,6 +810,10 @@ export type StartDevTunnelResult = {
   sshHostPublicKey: string;
 };
 
+/** What `startDevTunnel` throws for a public key that does not parse — the one caller mistake it
+ *  throws on; every other throw is the route render failing. */
+export const INVALID_SSH_PUBLIC_KEY = 'invalid SSH public key';
+
 /**
  * Mint a dev-tunnel credential + host, render the ephemeral Traefik route, and
  * persist the session state in Redis. Enforces ONE active tunnel per (user,
@@ -821,9 +825,9 @@ export type StartDevTunnelResult = {
  */
 export async function startDevTunnel(params: StartDevTunnelParams): Promise<StartDevTunnelResult> {
   const normalizedKey = normalizeSshPublicKey(params.sshPublicKey);
-  if (!normalizedKey) throw new Error('invalid SSH public key');
+  if (!normalizedKey) throw new Error(INVALID_SSH_PUBLIC_KEY);
   const fingerprint = fingerprintSshPublicKey(normalizedKey);
-  if (!fingerprint) throw new Error('invalid SSH public key');
+  if (!fingerprint) throw new Error(INVALID_SSH_PUBLIC_KEY);
 
   // Tear down any existing tunnel for this (user, block) so a re-run doesn't
   // orphan a route/credential.
@@ -988,10 +992,24 @@ async function teardownSession(
  *  a caller can never tear down another author's tunnel). Returns true if a
  *  session was found + torn down. */
 export async function stopDevTunnel(userId: number, sessionId: string): Promise<boolean> {
-  const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
-  if (!session || session.userId !== userId) return false;
-  await teardownSession(session, 'stop');
-  return true;
+  return (await stopOwnDevTunnel(userId, sessionId)) === 'stopped';
+}
+
+/**
+ * `stopDevTunnel`, telling a session that is not there (or not `userId`'s) apart from one that
+ * could not be READ just now — which `stopDevTunnel` reports as `false`, i.e. "nothing to close".
+ * For a caller that retries (App Assistant's server runner): `unavailable` means nothing was
+ * closed and the tunnel may still be live, so ask again.
+ */
+export async function stopOwnDevTunnel(
+  userId: number,
+  sessionId: string
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return 'unavailable';
+  if (read.status === 'absent' || read.session.userId !== userId) return 'not_found';
+  await teardownSession(read.session, 'stop');
+  return 'stopped';
 }
 
 /** Stop whatever active tunnel exists for a (user, block) pair (used by
@@ -1066,16 +1084,66 @@ export async function touchDevTunnelActivity(host: string): Promise<void> {
     if (!sessionId || typeof sessionId !== 'string') return;
     const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
     if (!session) return;
-    const now = nowSec();
-    const remaining = session.hardExpiresAt - now;
-    // Past the hard cap → do NOT re-persist (would resurrect an expired session /
-    // set a non-positive EX). Let the reaper + hard-TTL collect it.
-    if (remaining <= 0) return;
-    const updated: DevTunnelSessionRecord = { ...session, lastActivityAt: now };
-    await sysRedis.set(sessionKey(sessionId), JSON.stringify(updated), { EX: remaining });
+    await stampSessionActivity(session);
   } catch {
     /* best-effort idle refresh — never throw into the gate */
   }
+}
+
+/**
+ * Stamp `lastActivityAt = now` on a session the caller has already read, WITHOUT extending the
+ * hard-TTL: the EX is the time REMAINING until `hardExpiresAt`, so activity can never push a tunnel
+ * past its 8h cap. Returns the stamp, or null past the hard cap (not re-persisted: that would
+ * resurrect an expired session / set a non-positive EX; the reaper + hard-TTL collect it).
+ *
+ * `XX`: only overwrites a key that still exists, so a stamp racing a teardown (which deletes the
+ * key between our read and this write) cannot resurrect the record of a stopped tunnel.
+ */
+async function stampSessionActivity(session: DevTunnelSessionRecord): Promise<number | null> {
+  const now = nowSec();
+  const remaining = session.hardExpiresAt - now;
+  if (remaining <= 0) return null;
+  const updated: DevTunnelSessionRecord = { ...session, lastActivityAt: now };
+  const written = await sysRedis.set(sessionKey(session.sessionId), JSON.stringify(updated), {
+    EX: remaining,
+    XX: true,
+  });
+  return written === null ? null : now;
+}
+
+export type DevTunnelKeepAlive =
+  | { status: 'kept'; lastActivityAt: number; hardExpiresAt: number }
+  /** No such session, it is not `userId`'s, or it is past its hard cap — one answer for all
+   *  three, so a caller learns nothing about a session that is not its own. */
+  | { status: 'not_found' }
+  /** The session could not be read just now (Redis error): nothing was changed; ask again. */
+  | { status: 'unavailable' };
+
+/**
+ * Keep `userId`'s tunnel `sessionId` from idling out: the same idle stamp a browser visit makes
+ * (`touchDevTunnelActivity`), for a caller with no browser on the tunnel — App Assistant's server
+ * runner, while a run is in progress. Never extends the 8h hard cap. Once the calls stop, the
+ * normal idle window (DEV_TUNNEL_IDLE_SECONDS) runs from the last one.
+ *
+ * Ownership-checked like `stopDevTunnel`: a caller can never keep another author's tunnel alive.
+ */
+export async function keepAliveDevTunnel(
+  userId: number,
+  sessionId: string
+): Promise<DevTunnelKeepAlive> {
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  const session = read.session;
+  if (session.userId !== userId) return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,9 +1261,10 @@ export async function chargeDevSessionOverage(sessionId: string, costBuzz: numbe
 // Reaper (server-authoritative — NOT CLI-dependent)
 // ---------------------------------------------------------------------------
 
-/** A reaper session read that distinguishes a genuine ABSENCE (reap) from a
+/** A session read that distinguishes a genuine ABSENCE (reap) from a
  *  transient read ERROR (skip) — `readJson` collapses both to null, which would
- *  let a Redis blip reap a LIVE route. */
+ *  let a Redis blip reap a LIVE route. Also read by `keepAliveDevTunnel`, which
+ *  must not answer "no such tunnel" to a blip. */
 type ReaperRead =
   | { status: 'ok'; session: DevTunnelSessionRecord }
   | { status: 'absent' }

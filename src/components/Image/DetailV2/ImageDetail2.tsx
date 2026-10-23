@@ -182,7 +182,8 @@ export function ImageDetail2() {
   const navigation = withStorylineNavigation(
     carouselNavigation,
     images.length,
-    storyline.active ? () => storyline.setEndOpen(true) : undefined
+    storyline.active ? () => storyline.setEndOpen(true) : undefined,
+    storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
   );
 
   // Deferred to the carousel settling rather than run per slide change: the URL
@@ -209,7 +210,7 @@ export function ImageDetail2() {
     if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
     lastSettledIdRef.current = target.id;
     carouselNavigate(index);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
   }, [index, storyline.active]);
 
   const image = images[carouselNavigation.index];
@@ -258,7 +259,6 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
-  // The storyline chip sits after Save in the desktop toolbar only; the phone puts it by the close button.
   const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (

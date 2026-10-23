@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as WhatIfProviderModule from '~/components/form-graph/generation/WhatIfProvider';
 import type * as BuzzModule from '~/components/Buzz/useBuzz';
@@ -114,7 +114,10 @@ import {
   SubmitButton,
 } from '~/components/form-graph/generation/FormFooter';
 
-const store = { getSnapshot: () => ({ state: {} }) } as unknown as GenerationStore;
+const store = {
+  getSnapshot: () => ({ state: {} }),
+  subscribe: () => () => undefined,
+} as unknown as GenerationStore;
 
 const footerUi = () => (
   <div>
@@ -234,5 +237,37 @@ describe('FormFooter cost box', () => {
     expect(costButton().textContent).toContain('37');
     expect(costButton().textContent).not.toContain('–');
     expect(generateButton().disabled).toBe(false);
+  });
+});
+
+describe('Generate while a reuse-prompt remix link is being prepared', () => {
+  // Signed in, so LoginRedirect passes the click on instead of opening the login prompt.
+  beforeEach(() => {
+    state.whatIf = { ...base, total: 37 };
+    window.isAuthed = true;
+  });
+  afterEach(() => {
+    window.isAuthed = false;
+  });
+
+  test('says so, and a second click does not submit again', async () => {
+    const onSubmit = vi.fn();
+    await renderWithProviders(<SubmitButton store={store} preparing onSubmit={onSubmit} />);
+
+    const button = Array.from(document.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === 'Preparing remix…'
+    );
+    expect(button).toBeDefined();
+    expect(button?.disabled).toBe(true);
+    button?.click();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  test('POSITIVE CONTROL: the same button submits once it is not preparing', async () => {
+    const onSubmit = vi.fn();
+    await renderWithProviders(<SubmitButton store={store} onSubmit={onSubmit} />);
+
+    generateButton().click();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

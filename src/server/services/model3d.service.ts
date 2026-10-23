@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
@@ -61,9 +62,13 @@ import type {
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
-import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import {
+  getPolyGenPostBlock,
+  getPolyGenPrimaryModel,
+} from '~/server/orchestrator/polygen/polygen-output';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {
@@ -319,7 +324,10 @@ export const ensureModel3DFromWorkflow = async ({
     const polyGenStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'polyGen') as
       | PolyGenStep
       | undefined;
-    if (!polyGenStep?.output?.model) {
+    const primaryModel = polyGenStep?.output
+      ? getPolyGenPrimaryModel(polyGenStep.output)
+      : undefined;
+    if (!polyGenStep?.output || !primaryModel) {
       throw throwBadRequestError('Workflow has no PolyGen output to materialize a 3D model from');
     }
 
@@ -338,15 +346,16 @@ export const ensureModel3DFromWorkflow = async ({
     // must be unlocked (yellow Buzz → allowMatureContent) before it can be
     // materialized into a postable draft.
     const effectiveNsfwLevel = maxNsfwLevel([
-      polyGenStep.output.model.nsfwLevel,
+      primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    if (workflow.allowMatureContent === false && isMature(effectiveNsfwLevel)) {
-      throw throwBadRequestError(
-        'This 3D model was rated mature. Unlock it with Yellow Buzz before posting.'
-      );
-    }
+    const postBlock = getPolyGenPostBlock({
+      primaryModel,
+      effectiveNsfwLevel,
+      allowMatureContent: workflow.allowMatureContent,
+    });
+    if (postBlock) throw throwBadRequestError(postBlock);
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
@@ -673,10 +682,10 @@ export const upsertModel3D = async ({
   const isModerator = !!user.isModerator;
   const { id, tagIds, tagNames, generationParams, meta, ...data } = input;
 
-  await throwOnBlockedUserContent([data.name, data.description, data.licenseDetails], {
-    isModerator,
-    surface: 'model3d',
-  });
+  await throwOnBlockedUserContent(
+    [data.name, data.description, data.licenseDetails, ...(await newTagNames(tagNames))],
+    { isModerator, surface: 'model3d' }
+  );
 
   // Resolve free-form tag names (creating any that don't exist yet under
   // TagTarget.Model3D) and merge with `tagIds`. Mirrors the article-form

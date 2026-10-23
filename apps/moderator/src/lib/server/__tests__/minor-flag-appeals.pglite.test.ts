@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -34,7 +35,8 @@ CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "userId" INTEGER NOT NULL,
   "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
-  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB,
+  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
@@ -47,13 +49,20 @@ CREATE TABLE "ModelVersion" (
   "trainedWords" TEXT[] NOT NULL DEFAULT '{}', "status" TEXT NOT NULL DEFAULT 'Published',
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01'
 );
+CREATE TABLE "ModelFile" (
+  "id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER NOT NULL, "type" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "name" TEXT NOT NULL DEFAULT 'file',
+  "sizeKB" DOUBLE PRECISION NOT NULL DEFAULT 0
+);
+CREATE TABLE "ModelFileHash" ("fileId" INTEGER NOT NULL, "type" TEXT NOT NULL, "hash" TEXT NOT NULL);
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "modelVersionId" INTEGER,
   "publishedAt" TIMESTAMPTZ
 );
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
-  "postId" INTEGER, "index" INTEGER, "type" TEXT NOT NULL DEFAULT 'image'
+  "postId" INTEGER, "index" INTEGER, "type" TEXT NOT NULL DEFAULT 'image',
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL);
 CREATE TABLE "TagsOnModels" ("modelId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL);
@@ -63,7 +72,7 @@ CREATE TABLE "ModActivity" (
 );
 CREATE TABLE "EntityModeration" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
+  "workflowId" TEXT, "status" TEXT NOT NULL DEFAULT 'Pending', "result" JSONB,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-01-01',
   UNIQUE ("entityType", "entityId")
 );
@@ -138,7 +147,7 @@ const MODELS: Seed[] = [
 let db: PGlite;
 
 beforeEach(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   for (const [id, username] of [
     [10, 'owner'],
@@ -191,7 +200,6 @@ describe('source filter', () => {
     ['text-scan', [3, 7]],
     ['hash', [2]],
     ['moderator', [1, 5]],
-    ['none', [4, 6]],
   ] as const)('%s', async (source, expected) => {
     expect(await ids({ source })).toEqual(expected);
   });
@@ -201,7 +209,7 @@ describe('text-scan real-person flag with no snapshot', () => {
   it('reads as a text-scan source in the row, the filter and the counts', async () => {
     const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
     expect(items.find((i) => i.modelId === 7)?.flagSource).toBe('text-scan');
-    expect(await ids({ source: 'none' })).not.toContain(7);
+    expect(await ids({ source: 'text-scan' })).toContain(7);
   });
 });
 
@@ -210,13 +218,12 @@ describe('flag filter', () => {
     ['all', [1, 2, 3, 4, 5, 6, 7]],
     ['minor', [1, 2, 6]],
     ['poi', [2, 3, 7]],
-    ['unflagged', [4, 5]],
   ] as const)('%s', async (flag, expected) => {
     expect(await ids({ flag })).toEqual(expected);
   });
 
   it('combines with the source filter', async () => {
-    expect(await ids({ source: 'moderator', flag: 'unflagged' })).toEqual([5]);
+    expect(await ids({ source: 'moderator', flag: 'minor' })).toEqual([1]);
     expect(await ids({ source: 'text-scan', flag: 'minor' })).toEqual([]);
   });
 });
@@ -252,7 +259,7 @@ describe('paging under a filter', () => {
 describe('search', () => {
   it('narrows within a filter, by username and by id', async () => {
     expect(
-      await getMinorFlagAppealsForReview({ limit: 50, search: { username: 'OWNER' } }).then((r) =>
+      await getMinorFlagAppealsForReview({ limit: 50, search: { text: 'OWNER' } }).then((r) =>
         r.items.map((i) => i.modelId)
       )
     ).toEqual([1, 5]);
@@ -263,19 +270,37 @@ describe('search', () => {
     });
     expect(items.map((i) => i.modelId)).toEqual([1]);
   });
+
+  it('matches a model name as a case-insensitive substring, wildcards taken literally', async () => {
+    await db.query(`UPDATE "Model" SET name = 'Anime 10%_Girl' WHERE id = 5`);
+    const ids = async (text: string) =>
+      (await getMinorFlagAppealsForReview({ limit: 50, search: { text } })).items.map(
+        (i) => i.modelId
+      );
+
+    expect(await ids('aNiMe')).toEqual([5]);
+    expect(await ids('10%')).toEqual([5]);
+    // Unescaped, `_` would match the space in "model 1".
+    expect(await ids('l_1')).toEqual([]);
+    const f = appealFacets(
+      await getMinorFlagAppealGroups({ search: { text: 'anime' } }),
+      DEFAULT_APPEAL_FILTERS
+    );
+    expect(f.source.all).toBe(1);
+  });
 });
 
 describe('facet groups', () => {
   it('yields counts that match what each filter returns', async () => {
     const groups = await getMinorFlagAppealGroups({});
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
-    expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2, none: 2 });
-    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3, unflagged: 2 });
+    expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2 });
+    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3 });
   });
 
   it('honours the search', async () => {
     const f = appealFacets(
-      await getMinorFlagAppealGroups({ search: { username: 'owner' } }),
+      await getMinorFlagAppealGroups({ search: { text: 'owner' } }),
       DEFAULT_APPEAL_FILTERS
     );
     expect(f.source.all).toBe(2);
@@ -330,10 +355,17 @@ describe('row context', () => {
     expect((await rowFor(2)).tags).toEqual([]);
   });
 
-  it('serves up to four owner-posted images, published posts first, in version then post then image order', async () => {
+  it('serves up to four owner-posted images and videos, published posts first, in version then post then image order', async () => {
     const row = await rowFor(1);
-    expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-c', 'u-d']);
-    expect(row.coverImages[1]).toEqual({ id: 2, url: 'u-b' });
+    expect(row.coverImages.map((i) => i.url)).toEqual(['u-a', 'u-b', 'u-vid', 'u-c']);
+    expect(row.coverImages[1]).toEqual({
+      id: 2,
+      url: 'u-b',
+      nsfwLevel: 4,
+      type: 'image',
+      minor: false,
+      acceptableMinor: false,
+    });
     expect((await rowFor(2)).coverImages).toEqual([]);
   });
 
@@ -349,7 +381,9 @@ describe('row context', () => {
         (9, 'u-unpub', 1, 204, 0, 'image'), (10, 'u-early-unpub', 1, 205, 0, 'image'),
         (11, 'u-late-pub', 1, 206, 0, 'image');
     `);
-    expect((await rowFor(3)).coverImages).toEqual([{ id: 9, url: 'u-unpub' }]);
+    expect((await rowFor(3)).coverImages).toEqual([
+      { id: 9, url: 'u-unpub', nsfwLevel: 1, type: 'image', minor: false, acceptableMinor: false },
+    ]);
     expect((await rowFor(4)).coverImages.map((i) => i.url)).toEqual([
       'u-late-pub',
       'u-early-unpub',
@@ -368,6 +402,166 @@ describe('row context', () => {
     expect(row.otherFlaggedModels).toBe(0);
     expect(row.pastAppeals).toEqual({ approved: 1, rejected: 2, void: 0, pending: 1 });
     expect((await rowFor(5)).otherFlaggedModels).toBe(1);
+  });
+
+  it('counts model appeals on other models sharing a SHA256 with this one, by status', async () => {
+    const withHash = async (
+      modelId: number,
+      hash: string,
+      { hashType = 'SHA256', fileType = 'Model' } = {}
+    ) => {
+      await db.query(
+        `INSERT INTO "ModelVersion" ("id","modelId","baseModel") VALUES ($1,$2,'SDXL')`,
+        [900 + modelId, modelId]
+      );
+      await db.query(`INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, $2)`, [
+        900 + modelId,
+        fileType,
+      ]);
+      await db.query(`INSERT INTO "ModelFileHash" VALUES ($1, $2, $3)`, [
+        900 + modelId,
+        hashType,
+        hash,
+      ]);
+    };
+    // Models 1, 2 and 3 carry one file. Model 4 has other bytes, and its AutoV2 hash that equals the
+    // shared value does not count: only SHA256 identifies the file.
+    await withHash(1, 'shared');
+    await withHash(2, 'shared');
+    await withHash(3, 'shared');
+    await withHash(4, 'other');
+    await withHash(5, 'shared', { hashType: 'AutoV2' });
+    // Model 6 shares only a VAE: a shared config or VAE must not link unrelated models.
+    await withHash(6, 'shared', { fileType: 'VAE' });
+    await db.exec(`
+      INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","category") VALUES
+        (70, 99, 'Model', 3, 'Rejected', '2026-06-01', NULL),
+        (71, 99, 'Model', 3, 'Rejected', '2026-06-02', NULL),
+        (72, 99, 'Model', 4, 'Rejected', '2026-06-03', NULL),
+        (73, 99, 'Model', 3, 'Rejected', '2026-06-04', 'Model'),
+        (74, 99, 'Image', 3, 'Rejected', '2026-06-05', NULL),
+        (75, 99, 'Model', 5, 'Rejected', '2026-06-06', NULL),
+        (76, 99, 'Model', 6, 'Rejected', '2026-06-07', NULL);
+    `);
+    // Model 2 holds the seeded Approved appeal and its own pending one; model 3 its pending one plus
+    // the two rejections. Model 1's own appeal, the category and Image appeals, and models 4, 5 and 6 are out.
+    expect((await rowFor(1)).sameFileAppeals).toEqual({
+      approved: 1,
+      rejected: 2,
+      void: 0,
+      pending: 2,
+      models: 2,
+    });
+    // Model 4 shares nothing; a model with no file at all has nothing to match either.
+    expect((await rowFor(4)).sameFileAppeals).toEqual({
+      approved: 0,
+      rejected: 0,
+      void: 0,
+      pending: 0,
+      models: 0,
+    });
+    expect((await rowFor(6)).sameFileAppeals.models).toBe(0);
+  });
+
+  it("numbers the appeal among the uploader's model appeals this year, any status", async () => {
+    // Owner 10: three July appeals, then this one (Oct 1), then model 5's (Oct 5); the Image appeal
+    // and appeals from last year do not count.
+    await db.exec(`INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt") VALUES
+      (63, 10, 'Model', 9, 'Rejected', '2025-12-30')`);
+    expect((await rowFor(1)).appealNthThisYear).toBe(4);
+    expect((await rowFor(5)).appealNthThisYear).toBe(5);
+    expect((await rowFor(2)).appealNthThisYear).toBe(2);
+    expect((await rowFor(4)).appealNthThisYear).toBe(1);
+  });
+});
+
+describe('also in Auto-flagged and Needs review', () => {
+  const also = async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    return Object.fromEntries(
+      items.map((i) => [i.modelId, [i.alsoInAutoFlagged, i.alsoInNeedsReview]])
+    );
+  };
+  const withFile = async (modelId: number, hash: string) => {
+    await db.query(
+      `INSERT INTO "ModelVersion" ("id","modelId","baseModel") VALUES ($1, $2, 'SDXL')`,
+      [modelId + 100, modelId]
+    );
+    await db.query(
+      `INSERT INTO "ModelFile" ("id","modelVersionId","type") VALUES ($1, $1, 'Model')`,
+      [modelId + 100]
+    );
+    await db.query(`INSERT INTO "ModelFileHash" VALUES ($1, 'SHA256', $2)`, [modelId + 100, hash]);
+  };
+
+  it('marks applied flags as Auto-flagged and leads nothing was applied for as Needs review', async () => {
+    // Model 2: a hash auto-flag inside its review window. Model 7: an open text-scan real-person
+    // flag. Model 4: a held re-detection.
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
+      JSON.stringify(snapshot('auto', new Date(Date.now() - 86_400_000).toISOString())),
+    ]);
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 4`, [
+      JSON.stringify({
+        textScanFlags: { minor: { redetected: { workflowId: 'w', textHash: 'h' } } },
+      }),
+    ]);
+    expect(await also()).toEqual({
+      1: [false, false],
+      2: [true, false],
+      3: [false, false],
+      4: [false, true],
+      5: [false, false],
+      6: [false, false],
+      7: [true, false],
+    });
+  });
+
+  it("marks a file match: an unflagged model sharing a file with another uploader's seed", async () => {
+    // Model 1 becomes a moderator's minor seed (user 10); model 4 (user 13) and model 5 (user 10,
+    // the seed's own uploader, so automation's business) carry the same file.
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{minor}' WHERE id = 1`);
+    // The File matches predicates read keys off meta, as the queue does, so it is never null here.
+    await db.query(`UPDATE "Model" SET meta = '{}'::jsonb WHERE id = 4`);
+    await withFile(1, 'aa');
+    await withFile(4, 'aa');
+    await withFile(5, 'aa');
+    const result = await also();
+    expect(result[4]).toEqual([false, true]);
+    expect(result[5]).toEqual([false, false]);
+    // A dismissed match is no longer waiting.
+    await db.query(`UPDATE "Model" SET meta = '{"minorHashDismissed": true}'::jsonb WHERE id = 4`);
+    expect((await also())[4]).toEqual([false, false]);
+  });
+
+  it('drops a hash flag once its review window has closed', async () => {
+    await db.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 2`, [
+      JSON.stringify(snapshot('auto', '2020-01-01T00:00:00Z')),
+    ]);
+    expect((await also())[2]).toEqual([false, false]);
+  });
+});
+
+describe('scan rows', () => {
+  it('carries both text-scan rows with their workflow and text hash', async () => {
+    await db.exec(`INSERT INTO "EntityModeration" ("entityType","entityId","workflowId","status","result","updatedAt") VALUES
+      ('Model', 7, 'wf-1', 'Succeeded', '{"textHash": "h1"}', '2026-10-08T01:02:03.456'),
+      ('Model:search', 7, 'wf-2', 'Pending', NULL, '2026-10-09T00:00:00')`);
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 7)!.scanRows).toEqual({
+      main: {
+        workflowId: 'wf-1',
+        textHash: 'h1',
+        status: 'Succeeded',
+        updatedAt: '2026-10-08T01:02:03.456Z',
+      },
+      search: {
+        workflowId: 'wf-2',
+        textHash: null,
+        status: 'Pending',
+        updatedAt: '2026-10-09T00:00:00.000Z',
+      },
+    });
+    expect(items.find((i) => i.modelId === 1)!.scanRows).toEqual({ main: null, search: null });
   });
 });
 

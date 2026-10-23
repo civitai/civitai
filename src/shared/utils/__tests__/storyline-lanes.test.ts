@@ -27,7 +27,7 @@ const link = (lanes: StorylineLanes, parentChapterId: number, chapterId: number)
   lanes.links.find((l) => l.parentChapterId === parentChapterId && l.chapterId === chapterId);
 
 // The demo story: trunk 1-3; fork to A (11-13, canon) and B (21-23); both rejoin at R1 (30);
-// R1 forks to C (41, 42, canon) and D (51-53); both rejoin at R2 (60). 16 chapters.
+// R1 forks to C (41, 42, canon) and D (51-53); both rejoin at R2 (60).
 const demo: [number | `${number}*`, number][] = [
   ['2*', 1],
   ['3*', 2],

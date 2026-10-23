@@ -9,10 +9,6 @@ import { STORYLINE_MAX_COLLABORATORS } from '~/shared/utils/storyline';
 
 export type StorylineCollaborator = { id: number; username: string | null };
 
-/**
- * Endorsed collaborators of one storyline. Endorsing someone skips review for their
- * continuations and lists them after canon; removing them keeps the chapters they already wrote.
- */
 export function StorylineCollaboratorsPanel({
   ownerId,
   collaborators,

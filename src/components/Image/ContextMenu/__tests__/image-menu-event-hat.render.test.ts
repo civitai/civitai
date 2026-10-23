@@ -42,6 +42,7 @@ vi.mock('~/components/Dialog/triggers/add-to-collection', () => ({
 vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: vi.fn() }));
 const mutation = () => ({ mutate: vi.fn(), isLoading: false });
 vi.mock('~/components/Image/hooks/useDeleteImage', () => ({ useDeleteImage: mutation }));
+vi.mock('~/components/Post/hooks/useDeletePost', () => ({ useDeletePost: mutation }));
 vi.mock('~/components/Image/hooks/useRescanImage', () => ({ useRescanImage: mutation }));
 vi.mock('~/components/Image/hooks/useReportTosViolation', () => ({
   useReportTosViolation: mutation,

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -147,7 +148,7 @@ const confirmations = async () =>
 beforeEach(async () => {
   vi.clearAllMocks();
   chQuery.mockResolvedValue([]);
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(MIGRATION);
   await db.query(`INSERT INTO "User" VALUES ($1, 'req'), ($2, 'conf'), ($3, 'appr')`, [

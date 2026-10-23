@@ -59,6 +59,7 @@ import type {
   TagSource,
   PartnerPricingModel,
   ApiKeyType,
+  CommentEntityType,
   TagEngagementType,
   DomainColor,
   CosmeticType,
@@ -2542,6 +2543,11 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
 };
+export type CommentMute = {
+  userId: number;
+  commentId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type CommentReaction = {
   id: Generated<number>;
   commentId: number;
@@ -2553,6 +2559,18 @@ export type CommentReaction = {
 export type CommentReport = {
   commentId: number;
   reportId: number;
+};
+export type CommentTopic = {
+  entityType: CommentEntityType;
+  entityId: number;
+  locked: Generated<boolean>;
+  commentCount: Generated<number>;
+};
+export type CommentTopicMute = {
+  userId: number;
+  entityType: CommentEntityType;
+  entityId: number;
+  mutedAt: Generated<Timestamp>;
 };
 export type CommentV2 = {
   id: Generated<number>;
@@ -2578,6 +2596,38 @@ export type CommentV2Reaction = {
 };
 export type CommentV2Report = {
   commentV2Id: number;
+  reportId: number;
+};
+export type CommentV3 = {
+  id: Generated<number>;
+  entityType: CommentEntityType;
+  entityId: number;
+  parentId: number | null;
+  replyToId: number | null;
+  rootId: Generated<number>;
+  depth: Generated<number>;
+  userId: number;
+  content: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  tosViolation: Generated<boolean>;
+  hidden: Generated<boolean>;
+  locked: Generated<boolean>;
+  pinnedAt: Timestamp | null;
+  reactionCount: Generated<number>;
+  legacyV1Id: number | null;
+};
+export type CommentV3Reaction = {
+  id: Generated<number>;
+  commentId: number;
+  userId: number;
+  reaction: ReviewReactions;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type CommentV3Report = {
+  commentId: number;
   reportId: number;
 };
 export type Cosmetic = {
@@ -2627,6 +2677,7 @@ export type CosmeticShopItem = {
   rejectionReason: string | null;
   listed: Generated<boolean>;
   itemDefinitionId: number | null;
+  eventTags: Generated<string[]>;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;
@@ -2701,6 +2752,35 @@ export type CreatorMilestoneCosmetic = {
   milestoneKey: string;
   cosmeticId: number;
 };
+export type CreatorProgramPayoutReview = {
+  id: Generated<number>;
+  period: string;
+  userId: number;
+  status: Generated<string>;
+  hold: Generated<boolean>;
+  signals: string[];
+  payoutCents: number;
+  evidence: Generated<unknown>;
+  firstFlaggedAt: Generated<Timestamp>;
+  lastEvaluatedAt: Generated<Timestamp>;
+  evaluations: Generated<number>;
+  decidedAt: Timestamp | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  version: Generated<number>;
+  decisions: Generated<unknown>;
+};
+export type CreatorProgramPayoutReviewRun = {
+  id: Generated<number>;
+  period: string;
+  startedAt: Timestamp;
+  finishedAt: Timestamp | null;
+  creditedCount: Generated<number>;
+  evaluatedCount: Generated<number>;
+  flaggedCount: Generated<number>;
+  error: string | null;
+};
 export type CreatorScoreGrant = {
   id: Generated<number>;
   userId: number;
@@ -2749,6 +2829,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2809,6 +2890,19 @@ export type CryptoWallet = {
   smartAccount: string | null;
   payCurrency: Generated<string>;
 };
+export type CsamFlagRelease = {
+  id: Generated<number>;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  /**
+   * The hold legs the release overrode.
+   */
+  overriddenLegs: unknown;
+  imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
 export type CsamReport = {
   id: Generated<number>;
   userId: number | null;
@@ -2821,6 +2915,48 @@ export type CsamReport = {
   details: Generated<unknown>;
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
+  /**
+   * The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+   */
+  sendClaimId: string | null;
+  sendClaimedAt: Timestamp | null;
+};
+export type CsamReportArchiveObject = {
+  id: Generated<number>;
+  csamReportId: number;
+  /**
+   * base | images | generatedImages | trainingData
+   */
+  kind: string;
+  key: string;
+  etag: string | null;
+  /**
+   * Entries appended to a zip archive.
+   */
+  entries: number | null;
+  /**
+   * Items the report names that this archive was expected to hold, and how many it lacks.
+   */
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Generated<Timestamp>;
+};
+export type CsamReportAudit = {
+  id: Generated<number>;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  /**
+   * A keyed fingerprint of the details for tamper detection, never their content.
+   */
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Timestamp | null;
+  changedAt: Generated<Timestamp>;
+  changedBy: Generated<string>;
 };
 export type CustomerSubscription = {
   id: string;
@@ -3228,6 +3364,25 @@ export type Image = {
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
 };
+export type ImageCdnAccess = {
+  url: string;
+  state: string;
+  deniedAt: Generated<Timestamp>;
+  retractedAt: Timestamp | null;
+  lastAssertedAt: Generated<Timestamp>;
+};
+export type ImageCdnAccessClaim = {
+  url: string;
+  token: string;
+  claimedUntil: Timestamp;
+};
+export type ImageCdnModeratorDelete = {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: Generated<boolean>;
+  deletedAt: Generated<Timestamp>;
+};
 export type ImageConnection = {
   imageId: number;
   entityId: number;
@@ -3560,6 +3715,10 @@ export type Model = {
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
   isOfficial: Generated<boolean>;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -5204,6 +5363,20 @@ export type StorylineEarlyAccessSignup = {
   storylineId: number | null;
   createdAt: Generated<Timestamp>;
 };
+export type StorylinePendingChapter = {
+  postId: number;
+  storylineId: number;
+  /**
+   * null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+   * migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+   */
+  parentChapterId: number | null;
+  /**
+   * The draft's author when it was linked. Not a relation, as on StorylineChapter.
+   */
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineReport = {
   storylineId: number;
   reportId: number;
@@ -6017,11 +6190,17 @@ export type DB = {
   ComicReference: ComicReference;
   ComicReferenceImage: ComicReferenceImage;
   Comment: Comment;
+  CommentMute: CommentMute;
   CommentReaction: CommentReaction;
   CommentReport: CommentReport;
+  CommentTopic: CommentTopic;
+  CommentTopicMute: CommentTopicMute;
   CommentV2: CommentV2;
   CommentV2Reaction: CommentV2Reaction;
   CommentV2Report: CommentV2Report;
+  CommentV3: CommentV3;
+  CommentV3Reaction: CommentV3Reaction;
+  CommentV3Report: CommentV3Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
@@ -6032,6 +6211,8 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
   CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
+  CreatorProgramPayoutReview: CreatorProgramPayoutReview;
+  CreatorProgramPayoutReviewRun: CreatorProgramPayoutReviewRun;
   CreatorScoreGrant: CreatorScoreGrant;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
@@ -6040,7 +6221,10 @@ export type DB = {
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
+  CsamFlagRelease: CsamFlagRelease;
   CsamReport: CsamReport;
+  CsamReportArchiveObject: CsamReportArchiveObject;
+  CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
   Donation: Donation;
   DonationGoal: DonationGoal;
@@ -6071,6 +6255,9 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageCdnAccess: ImageCdnAccess;
+  ImageCdnAccessClaim: ImageCdnAccessClaim;
+  ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
@@ -6219,6 +6406,7 @@ export type DB = {
   StorylineCollaborator: StorylineCollaborator;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;
   TagEngagement: TagEngagement;

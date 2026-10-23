@@ -8,6 +8,7 @@
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
     defaultRunParams,
@@ -215,6 +216,8 @@
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
     </Button>
   </div>
+
+  <ServiceStatusBanner />
 
   {#if step === 1}
     <SelectStep

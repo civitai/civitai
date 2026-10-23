@@ -651,10 +651,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId'],
     decision: 'subject',
   },
-  'src/server/services/user.service.ts#deleteUser': {
-    writes: ['profilePictureId: null'],
-    decision: 'clears',
-  },
 };
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */

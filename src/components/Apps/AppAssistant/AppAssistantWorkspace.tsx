@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import type {
   BeforeSendDetail,
   ChatMcpServer,
+  ChatToolResult,
   CivitaiChat,
   QueuedMessage,
   ReplyResumeDetail,
@@ -26,7 +27,11 @@ import type {
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
-import { NO_APP_REFUSAL, createAppTools } from '~/components/Apps/AppAssistant/appTools';
+import {
+  CREATE_APP,
+  NO_APP_REFUSAL,
+  createAppTools,
+} from '~/components/Apps/AppAssistant/appTools';
 import {
   BUILD_IT_MESSAGE,
   SANDBOX_SERVER_ID,
@@ -41,7 +46,11 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
-import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
+import {
+  createPreviewTools,
+  runnerPreviewAction,
+} from '~/components/Apps/AppAssistant/previewTools';
+import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   createSandboxClient,
@@ -180,12 +189,18 @@ export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
   subagents = false,
+  remoteRunner = false,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
   /** The assistant may start read-only subagents. */
   subagents?: boolean;
+  /**
+   * Replies run on the server runner (`appAssistantRemoteRunner`), so they keep going while the user
+   * is away. Off, they run in the browser exactly as before.
+   */
+  remoteRunner?: boolean;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -259,12 +274,26 @@ export function AppAssistantWorkspace({
   const openRef = useRef(sandboxes.open.mutateAsync);
   openRef.current = sandboxes.open.mutateAsync;
 
+  // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
     const current = live.current.session;
     if (!current) return;
+    live.current.session = null;
     setSession(null);
-    stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
+    if (current.sessionId) stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
+  /** Shows a preview that (re)started: the first one of an app moves a phone to the Preview tab. */
+  const showPreview = useCallback((next: PreviewSession | null) => {
+    live.current.session = next;
+    setSession(next);
+    // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
+    if (next && !previewShown.current) {
+      previewShown.current = true;
+      setTab('preview');
+    }
+  }, []);
+  // Each preview the server runner starts gets its own frame, even on the same host.
+  const runnerViews = useRef(0);
 
   const appTools = useMemo(
     () =>
@@ -311,20 +340,12 @@ export function AppAssistantWorkspace({
         startDevTunnel: (input) => startRef.current(input),
         stopDevTunnel: (input) => stopRef.current(input),
         getSession: () => live.current.session,
-        setSession: (next) => {
-          live.current.session = next;
-          setSession(next);
-          // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
-          if (next && !previewShown.current) {
-            previewShown.current = true;
-            setTab('preview');
-          }
-        },
+        setSession: showPreview,
       }),
       ...appTools.tools,
       ...gate.tools,
     }),
-    [canPreview, gate, appTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -334,8 +355,40 @@ export function AppAssistantWorkspace({
         apps: (live.current.apps ?? []).map((s) => s.app),
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
+        ...(remoteRunner ? { runner: 'remote' as const } : {}),
       }),
-    []
+    [remoteRunner]
+  );
+
+  // The server runner holds the tools and the gate; the page tells it which app is open, and signs
+  // each request (a viewer token) and each start (a run grant). Read once, as the chat starts.
+  const runner = useMemo(
+    () =>
+      appAssistantRemoteRunnerFor(remoteRunner, () => ({
+        app: live.current.active?.app ?? null,
+      })),
+    [remoteRunner]
+  );
+  // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
+  // the runner's start_preview says only which block it shows and where (never the tunnel's id):
+  // the pane fetches that block's frame, which civitai finds by the user's live tunnel.
+  const onToolResult = useCallback(
+    (result: ChatToolResult) => {
+      gate.onToolResult(result);
+      if (!remoteRunner || result.isError) return;
+      const preview = runnerPreviewAction(result);
+      if (preview && 'show' in preview)
+        return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
+      if (preview) return stopPreview();
+      if (result.name !== CREATE_APP) return;
+      const app = (result.output as { app?: unknown } | null)?.app;
+      if (typeof app !== 'string') return;
+      void refetchRef.current().then(({ data }) => {
+        const opened = data?.find((s) => s.app === app);
+        if (opened) setActiveName(opened.name);
+      });
+    },
+    [gate, remoteRunner, showPreview, stopPreview]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
@@ -825,12 +878,13 @@ export function AppAssistantWorkspace({
             mcpServers={mcpServers}
             holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
             beforeToolCall={gate.beforeToolCall}
-            onToolResult={gate.onToolResult}
+            onToolResult={onToolResult}
             chatRef={chatRef}
             onBeforeSend={onSend}
             onReplyResume={onReplyResume}
             onChatChange={onChatOpened}
             subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
+            remoteRunner={runner}
           />
         </Paper>
         {session && (

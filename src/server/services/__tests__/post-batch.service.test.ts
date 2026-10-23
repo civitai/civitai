@@ -8,19 +8,38 @@ import type * as VisibilityService from '~/server/services/model-version-visibil
 import type { ProtectedContext } from '~/server/createContext';
 import type { ScheduleBatchInput } from '~/server/schema/post.schema';
 
-const { createPost, updatePost, addImage, removePost, addTools, addTechniques, canViewVersion } =
-  vi.hoisted(() => ({
-    createPost: vi.fn(),
-    updatePost: vi.fn(),
-    addImage: vi.fn(),
-    removePost: vi.fn(),
-    addTools: vi.fn(),
-    addTechniques: vi.fn(),
-    canViewVersion: vi.fn(),
-  }));
+const {
+  createPost,
+  updatePost,
+  addImage,
+  removePost,
+  addTools,
+  addTechniques,
+  canViewVersion,
+  heldLocks,
+} = vi.hoisted(() => ({
+  createPost: vi.fn(),
+  updatePost: vi.fn(),
+  addImage: vi.fn(),
+  removePost: vi.fn(),
+  addTools: vi.fn(),
+  addTechniques: vi.fn(),
+  canViewVersion: vi.fn(),
+  heldLocks: new Set<string>(),
+}));
 
-vi.mock('~/server/services/post-schedule-lock', () => ({
-  withPostScheduleLock: (_userId: number, operation: () => Promise<unknown>) => operation(),
+// The real per-creator lock over an in-process one: a second holder is refused at once, where
+// the real lock first retries for a few seconds.
+vi.mock('~/server/utils/distributed-lock', () => ({
+  withDistributedLock: async (options: { key: string }, operation: () => Promise<unknown>) => {
+    if (heldLocks.has(options.key)) return null;
+    heldLocks.add(options.key);
+    try {
+      return await operation();
+    } finally {
+      heldLocks.delete(options.key);
+    }
+  },
 }));
 vi.mock('~/server/controllers/post.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof PostController>()),
@@ -43,6 +62,7 @@ vi.mock('~/server/services/model-version-visibility.service', async (importOrigi
 }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { scheduleBatch, validateBatchSchedule } from '~/server/services/post-batch.service';
 
 const NOW = new Date('2026-10-01T12:00:00.000Z');
@@ -145,7 +165,7 @@ describe('validateBatchSchedule', () => {
     existingPosts(Array.from({ length: 20 }, (_, i) => at(-11 + i)));
 
     const result = await validateBatchSchedule({
-      input: { publishedAts: [at(8, 15), at(9)] },
+      input: { publishedAts: [at(8, 8), at(9)] },
       user: OWNER,
     });
 
@@ -197,7 +217,7 @@ describe('scheduleBatch', () => {
     existingPosts([at(2)]);
 
     await expect(
-      scheduleBatch({ input: batchOf([at(2, 10), at(0, 2)]), ctx: ctxFor() })
+      scheduleBatch({ input: batchOf([at(2, 8), at(0, 2)]), ctx: ctxFor() })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringMatching(/Post 2 must be at least 10 minutes.*Post 1 is too close/s),
@@ -385,5 +405,278 @@ describe('scheduleBatch', () => {
 
     expect(result).toEqual({ created: [], failedAt: 0, message: 'nope' });
     expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 100 } });
+  });
+});
+
+/**
+ * A creator's posts as the service reads and writes them, so a second call sees what the first
+ * one created. `post.findMany` answers only the filters the retry lookup sends and throws on any
+ * other, so a changed query fails here instead of matching everything.
+ */
+type WorldPost = { id: number; createdAt: Date; publishedAt: Date | null; urls: string[] };
+function worldOf(posts: WorldPost[] = []) {
+  const store = new Map<string, string>();
+  let nextId = 500;
+  const byId = (id: number) => posts.find((post) => post.id === id) as WorldPost;
+
+  createPost.mockImplementation(async () => {
+    const post = { id: nextId++, createdAt: new Date(), publishedAt: null, urls: [] };
+    posts.push(post);
+    return { id: post.id };
+  });
+  addImage.mockImplementation(async (arg: { postId: number; url: string }) => {
+    byId(arg.postId).urls.push(arg.url);
+    return { id: 9000 + byId(arg.postId).urls.length };
+  });
+  updatePost.mockImplementation(async (arg: { input: { id: number; publishedAt: Date } }) => {
+    byId(arg.input.id).publishedAt = arg.input.publishedAt;
+  });
+  dbMock.dbWrite.$queryRaw.mockImplementation((async () =>
+    posts
+      .filter((post) => post.publishedAt && post.publishedAt >= START_OF_TODAY_UTC)
+      .map((post) => ({ publishedAt: post.publishedAt }))) as never);
+  type Where = {
+    id?: { in: number[] };
+    userId: number;
+    publishedAt?: { not: null } | { gt: Date };
+    createdAt?: { gte: Date };
+    images?: { some: { url: { in: string[] } } };
+  };
+  dbMock.dbWrite.post.findMany.mockImplementation((async ({ where }: { where: Where }) => {
+    const known = ['id', 'userId', 'publishedAt', 'createdAt', 'images'];
+    const unknown = Object.keys(where).filter((key) => !known.includes(key));
+    if (unknown.length) throw new Error(`fake post.findMany: unhandled filter ${unknown}`);
+    if (where.userId !== OWNER.id) return [];
+    return posts
+      .filter((post) => !where.id || where.id.in.includes(post.id))
+      .filter((post) => {
+        if (!where.publishedAt) return true;
+        if ('not' in where.publishedAt) return post.publishedAt !== null;
+        return !!post.publishedAt && post.publishedAt > where.publishedAt.gt;
+      })
+      .filter((post) => !where.createdAt || post.createdAt >= where.createdAt.gte)
+      .filter(
+        (post) => !where.images || post.urls.some((url) => where.images?.some.url.in.includes(url))
+      )
+      .map((post) => ({
+        id: post.id,
+        publishedAt: post.publishedAt,
+        images: post.urls.map((url) => ({ url })),
+      }));
+  }) as never);
+  redisMock.sysRedis.get.mockImplementation(async (key: string) => store.get(key) ?? null);
+  redisMock.sysRedis.set.mockImplementation(async (key: string, value: string) => {
+    store.set(key, value);
+    return 'OK';
+  });
+  return posts;
+}
+
+const KEYS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+];
+const NEW_KEYS = ['44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555'];
+const keyed = (input: ScheduleBatchInput, keys: string[]): ScheduleBatchInput => ({
+  ...input,
+  posts: input.posts.map((post, index) => ({ ...post, clientKey: keys[index] })),
+});
+
+describe('scheduleBatch: an attempt repeated after the client gave up on it', () => {
+  it('a retry with the same client keys gets the original posts back and creates nothing', async () => {
+    worldOf();
+    const input = keyed(batchOf([at(24), at(48)]), KEYS);
+    const first = await scheduleBatch({ input, ctx: ctxFor() });
+
+    const retry = await scheduleBatch({ input, ctx: ctxFor() });
+
+    // On main the retry is refused: "Post 1 is too close to a post you already have scheduled".
+    expect(retry).toEqual({
+      created: first.created.map((entry) => ({ ...entry, alreadyCreated: true })),
+    });
+    expect(createPost).toHaveBeenCalledTimes(2);
+  });
+
+  it('recognises a retry by its key even after the post went live, where its upload cannot', async () => {
+    const world = worldOf();
+    const input = keyed(batchOf([at(0, 20)]), KEYS);
+    const first = await scheduleBatch({ input, ctx: ctxFor() });
+    vi.setSystemTime(at(1));
+
+    const retry = await scheduleBatch({ input, ctx: ctxFor() });
+
+    expect(retry.created).toEqual([{ ...first.created[0], alreadyCreated: true }]);
+    expect(world).toHaveLength(1);
+  });
+
+  it('recognises a resubmit with new keys by its first upload, and reports the ORIGINAL time', async () => {
+    const world = worldOf();
+    const dates = [at(24), at(48)];
+    await scheduleBatch({ input: keyed(batchOf(dates), KEYS), ctx: ctxFor() });
+
+    // The creator moved both dates by two hours before resubmitting from the composer.
+    const resubmit = await scheduleBatch({
+      input: keyed(batchOf([at(26), at(50)]), NEW_KEYS),
+      ctx: ctxFor(),
+    });
+
+    expect(resubmit.created).toEqual([
+      { postId: 500, publishedAt: dates[0].toISOString(), alreadyCreated: true },
+      { postId: 501, publishedAt: dates[1].toISOString(), alreadyCreated: true },
+    ]);
+    expect(world).toHaveLength(2);
+  });
+
+  it('creates only the posts of a chunk the earlier attempt did not reach', async () => {
+    const world = worldOf();
+    const dates = [at(24), at(48), at(72)];
+    await scheduleBatch({ input: keyed(batchOf(dates.slice(0, 1)), KEYS), ctx: ctxFor() });
+
+    const retry = await scheduleBatch({ input: keyed(batchOf(dates), KEYS), ctx: ctxFor() });
+
+    expect(retry.created.map((entry) => [entry.postId, !!entry.alreadyCreated])).toEqual([
+      [500, true],
+      [501, false],
+      [502, false],
+    ]);
+    expect(world.map((post) => post.urls[0])).toEqual(['0-a', '1-a', '2-a']);
+  });
+
+  it('gives an image already on a PUBLISHED post a new post', async () => {
+    const world = worldOf([{ id: 400, createdAt: at(-2), publishedAt: at(-1), urls: ['0-a'] }]);
+
+    const result = await scheduleBatch({ input: keyed(batchOf([at(24)]), KEYS), ctx: ctxFor() });
+
+    expect(result.created).toEqual([{ postId: 500, publishedAt: at(24).toISOString() }]);
+    expect(world).toHaveLength(2);
+  });
+
+  it('gives an image on a still-scheduled post made outside the window a new post', async () => {
+    const world = worldOf([{ id: 400, createdAt: at(-7), publishedAt: at(30), urls: ['0-a'] }]);
+
+    const result = await scheduleBatch({ input: keyed(batchOf([at(24)]), KEYS), ctx: ctxFor() });
+
+    expect(result.created).toEqual([{ postId: 500, publishedAt: at(24).toISOString() }]);
+    expect(world).toHaveLength(2);
+  });
+
+  it('still refuses a new post 3 minutes from one already scheduled', async () => {
+    worldOf([{ id: 400, createdAt: at(-1), publishedAt: at(24), urls: ['other'] }]);
+
+    await expect(
+      scheduleBatch({ input: keyed(batchOf([at(24, 8)]), KEYS), ctx: ctxFor() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('too close') });
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a different upload at the same instant as a scheduled post', async () => {
+    worldOf([{ id: 400, createdAt: at(-1), publishedAt: at(24), urls: ['other'] }]);
+
+    await expect(
+      scheduleBatch({ input: keyed(batchOf([at(24)]), KEYS), ctx: ctxFor() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('too close') });
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('refuses a retry that arrives while the original still runs, then serves it once done', async () => {
+    worldOf();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const create = createPost.getMockImplementation() as (...args: unknown[]) => Promise<unknown>;
+    createPost.mockImplementationOnce(async (...args: unknown[]) => {
+      await gate;
+      return create(...args);
+    });
+    const input = keyed(batchOf([at(24)]), KEYS);
+
+    const original = scheduleBatch({ input, ctx: ctxFor() });
+    // The original holds the lock and is mid-way through creating its post.
+    await vi.waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
+    await expect(scheduleBatch({ input, ctx: ctxFor() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('still running'),
+    });
+    expect(createPost).toHaveBeenCalledTimes(1);
+
+    release();
+    const done = await original;
+    const later = await scheduleBatch({ input, ctx: ctxFor() });
+
+    expect(later.created).toEqual([{ ...done.created[0], alreadyCreated: true }]);
+    expect(createPost).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('scheduleBatch: the step breakdown a slow call logs', () => {
+  const logAxiom = loggingMock.logToAxiom;
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const stepLines = () =>
+    logAxiom.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .filter((payload) => payload.name === 'post-schedule-batch-steps');
+
+  beforeEach(() => {
+    logAxiom.mockClear();
+    vi.stubEnv('TRPC_SLOW_LOG_MS', '1');
+    // Nothing from an earlier attempt: the world fakes above outlive their own tests.
+    dbMock.dbWrite.post.findMany.mockReset().mockResolvedValue([]);
+    redisMock.sysRedis.get.mockReset().mockResolvedValue(null);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('logs where a slow call spent its time, in durations and counts only', async () => {
+    addImage.mockImplementation(async () => {
+      await pause(5);
+      return { id: 1 };
+    });
+
+    await scheduleBatch({
+      input: batchOf([at(24), at(48)], { tools: [1], techniques: [9] }),
+      ctx: ctxFor(),
+    });
+
+    const [line] = stepLines();
+    expect(stepLines()).toHaveLength(1);
+    expect(line).toMatchObject({
+      type: 'info',
+      userId: OWNER.id,
+      posts: 2,
+      created: 2,
+      alreadyCreated: 0,
+      images: 4,
+      failed: false,
+    });
+    expect(line.addImageMs as number).toBeGreaterThanOrEqual(15);
+    expect(line.addImageMaxMs as number).toBeGreaterThanOrEqual(4);
+    expect(line.durationMs as number).toBeGreaterThanOrEqual(line.addImageMs as number);
+    for (const key of ['lockWaitMs', 'lookupMs', 'validateMs', 'createPostMs', 'toolsMs'])
+      expect(typeof line[key]).toBe('number');
+    // Nothing the creator wrote or uploaded.
+    expect(JSON.stringify(line)).not.toMatch(/0-a|1-b|Post 1|Post 2/);
+  });
+
+  it('marks a slow call that was refused as failed', async () => {
+    existingPosts([at(24)]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => {
+      await pause(3);
+      return [{ publishedAt: at(24) }];
+    }) as never);
+
+    await expect(
+      scheduleBatch({ input: batchOf([at(24, 8)]), ctx: ctxFor() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(stepLines()).toEqual([expect.objectContaining({ failed: true, created: 0 })]);
+  });
+
+  it('logs nothing for a call under the slow threshold', async () => {
+    vi.stubEnv('TRPC_SLOW_LOG_MS', '60000');
+
+    await scheduleBatch({ input: batchOf([at(24)]), ctx: ctxFor() });
+
+    expect(stepLines()).toEqual([]);
   });
 });

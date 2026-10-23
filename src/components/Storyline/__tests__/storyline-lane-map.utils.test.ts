@@ -3,6 +3,9 @@ import {
   buildCanonLane,
   buildStorylineLaneMap,
   buildStorylineLaneList,
+  getStorylinePathLanes,
+  laneColor,
+  LANE_COLORS,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import { parseIdListParam, STORYLINE_VIA_PARAM } from '~/components/Storyline/storyline-mode.utils';
@@ -231,7 +234,7 @@ describe('buildStorylineLaneList', () => {
 
   it('says whose path forks when the fork is off the canon path, not a canon chapter number', () => {
     const { rows, canonForkOf } = buildStorylineLaneList(offCanon, canonOf(offCanon, [1, 2]));
-    // Shares load only at canon forks, as the page did before.
+    // Shares load only at canon forks.
     expect(Object.fromEntries(canonForkOf)).toEqual({ 2: 1, 3: 1 });
     expect(rows[2].bands).toEqual([
       expect.objectContaining({ kind: 'fork', chapterId: 3, canon: false, author: 'author' }),
@@ -316,6 +319,84 @@ describe('buildCanonLane', () => {
         number: 3,
         href: '/images/3000?storylineChapter=30&storylineVia=2',
       },
+    ]);
+  });
+});
+
+describe('getStorylinePathLanes', () => {
+  const graph = { rootChapterId: 1, chapters: ids.map((chapterId) => ({ chapterId })), edges };
+  const CANON = [1, 2, 3, 11, 12, 13, 30, 41, 42, 60];
+  const pathOf = (route: number[]) =>
+    route.map((chapterId) => ({ chapterId, onMain: CANON.includes(chapterId) }));
+
+  it("gives a reader's off-main chapters the lane the map draws them in, and the main route none", () => {
+    // Trunk, then branch B (21-23), then R1 and on along the canon.
+    const lanes = getStorylinePathLanes(graph, pathOf([1, 2, 3, 21, 22, 23, 30, 41]));
+    expect([...lanes]).toEqual([
+      [21, 1],
+      [22, 1],
+      [23, 1],
+    ]);
+  });
+
+  it('agrees with the lane the chapters list draws every chapter in', () => {
+    const map = build(visible)!;
+    const list = buildStorylineLaneList(
+      map,
+      CANON.map((id) => map.nodes.find((n) => n.chapterId === id)!)
+    );
+    const drawn = new Map(
+      list.rows.flatMap((r) => [...r.branches].map((n) => [n.chapterId, n.lane] as const))
+    );
+    const lanes = getStorylinePathLanes(
+      graph,
+      ids.map((chapterId) => ({ chapterId, onMain: CANON.includes(chapterId) }))
+    );
+    expect(lanes.size).toBe(drawn.size);
+    expect([...lanes].sort()).toEqual([...drawn].sort());
+  });
+
+  it('puts an off-main chapter the layout left in lane 0 in the spare lane, as the map does', () => {
+    // Canon 2 is a leaf, so the layout hands lane 0 on to branch chapter 5 (see the list tests).
+    const g = {
+      rootChapterId: 1,
+      chapters: [1, 2, 3, 4, 5].map((chapterId) => ({ chapterId })),
+      edges: [
+        { chapterId: 2, parentChapterId: 1, canon: true },
+        { chapterId: 3, parentChapterId: 1, canon: false },
+        { chapterId: 4, parentChapterId: 3, canon: true },
+        { chapterId: 5, parentChapterId: 3, canon: false },
+      ],
+    };
+    const lanes = getStorylinePathLanes(
+      g,
+      [1, 3, 5].map((chapterId) => ({ chapterId, onMain: chapterId === 1 }))
+    );
+    // The chapters list draws 3 and 4 in lane 1 and 5 in lane 2 (not lane 0, the canon column).
+    expect([...lanes]).toEqual([
+      [3, 1],
+      [5, 2],
+    ]);
+  });
+
+  it('is empty before the graph arrives, without chapter 1, or for chapters the graph lacks', () => {
+    expect(getStorylinePathLanes(undefined, pathOf([1, 21])).size).toBe(0);
+    expect(getStorylinePathLanes({ ...graph, rootChapterId: null }, pathOf([1, 21])).size).toBe(0);
+    const capped = { ...graph, chapters: graph.chapters.filter((c) => c.chapterId !== 22) };
+    expect([...getStorylinePathLanes(capped, pathOf([1, 2, 3, 21, 22]))]).toEqual([[21, 1]]);
+  });
+});
+
+describe('laneColor', () => {
+  it('names the lane colours in order, wrapping after the last', () => {
+    expect(LANE_COLORS).toHaveLength(8);
+    expect([0, 1, 4, 7, 8, 9].map(laneColor)).toEqual([
+      'var(--mantine-color-blue-6)',
+      'var(--mantine-color-grape-6)',
+      'var(--mantine-color-pink-6)',
+      'var(--mantine-color-yellow-6)',
+      'var(--mantine-color-blue-6)',
+      'var(--mantine-color-grape-6)',
     ]);
   });
 });

@@ -20,6 +20,7 @@ import * as z from 'zod';
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
 import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -211,11 +212,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
-          userNsfwLevel: canEditUserNsfwLevel
-            ? userNsfwLevel
-              ? Number(userNsfwLevel)
-              : 0
-            : undefined,
+          userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
           // Empty string means "clear override" -> null.

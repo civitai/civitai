@@ -1,16 +1,32 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
+  import { IconZoomCancel } from '@tabler/icons-svelte';
+  import { cn } from '@civitai/ui/utils.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { originSummary } from '$lib/restrictions/origin';
+  import {
+    DEFAULT_RESTRICTION_FILTERS,
+    RESTRICTION_ORIGIN_LABELS,
+    RESTRICTION_ORIGINS,
+    RESTRICTION_STATUS_LABELS,
+    RESTRICTION_STATUSES,
+    resolveRestrictionFilters,
+    restrictionFilterParams,
+    type RestrictionFilters,
+  } from '$lib/restriction-filters';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import {
+    SORT_LABELS,
+    SORT_ORDERS,
     unwiredRulingReason,
     type RestrictionType,
-    type SortOrder,
   } from '$lib/restriction-types';
   import type {
     RemixSource,
@@ -19,7 +35,6 @@
   } from '$lib/server/user-restriction.service';
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
-  import RestrictionFilterBar from './RestrictionFilterBar.svelte';
   import RestrictionTriageDetail from './RestrictionTriageDetail.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -32,15 +47,13 @@
     sources: Record<number, RemixSource>;
     sourcesFailed: boolean;
     sourcesNotLoaded: number[];
-    facets: RestrictionFacets;
+    facets: RestrictionFacets | undefined;
     totalCount: number;
     page: number;
     hasMore: boolean;
     offset: number;
     type: RestrictionType;
-    status: string;
-    origin: string | null;
-    sort: SortOrder | null;
+    filters: RestrictionFilters;
     q: string;
     civitaiUrl: string;
     grants: Record<string, boolean | undefined>;
@@ -49,13 +62,14 @@
   let {
     data,
     form,
-    types,
     fallbackType,
+    tabs,
   }: {
     data: QueueData;
     form: { error?: string } | null | undefined;
-    types: readonly RestrictionType[];
     fallbackType: RestrictionType;
+    /** A page's type switch, at the top of the list column. */
+    tabs?: Snippet;
   } = $props();
 
   // The open restriction, reported by the shell; a chosen verdict belongs to it alone.
@@ -66,9 +80,7 @@
   const actionHref = (action: string) =>
     formActionHref(action, {
       type: data.type === fallbackType ? undefined : data.type,
-      status: data.status === 'Pending' ? undefined : data.status,
-      origin: data.origin ?? undefined,
-      sort: data.sort ?? undefined,
+      ...restrictionFilterParams(data.filters),
       q: data.q,
       page: data.page > 1 ? data.page : undefined,
     });
@@ -82,6 +94,39 @@
   const canDecide = (row: RestrictionRow) =>
     row.status === 'Pending' && !unwiredRulingReason(row.type);
 
+  const SELECTION = 'selected';
+
+  const statusGroup = $derived({
+    key: 'status',
+    label: 'Status',
+    values: RESTRICTION_STATUSES,
+    labels: RESTRICTION_STATUS_LABELS,
+    active: data.filters.status,
+    defaultValue: DEFAULT_RESTRICTION_FILTERS.status,
+    counts: data.facets?.status,
+    resets: ['sort'],
+    pill: true,
+    compact: true,
+  } satisfies ChipGroup);
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: SORT_ORDERS,
+    labels: SORT_LABELS,
+    active: data.filters.sort,
+    defaultValue: resolveRestrictionFilters({ status: data.filters.status }).sort,
+  } satisfies ChipGroup);
+  const originGroup = $derived({
+    key: 'origin',
+    label: 'Origin',
+    values: RESTRICTION_ORIGINS,
+    labels: RESTRICTION_ORIGIN_LABELS,
+    active: data.filters.origin,
+    defaultValue: DEFAULT_RESTRICTION_FILTERS.origin,
+    counts: data.facets?.origin,
+    compact: true,
+  } satisfies ChipGroup);
+
   const clearFiltersHref = $derived(
     urlWith(page.url, {
       status: null,
@@ -89,48 +134,77 @@
       sort: null,
       q: null,
       page: null,
-      selected: null,
+      [SELECTION]: null,
     })
   );
-  const filtersActive = $derived(data.status !== 'Pending' || !!data.origin || !!data.q);
+  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
+  const filtersActive = $derived(
+    data.filters.status !== DEFAULT_RESTRICTION_FILTERS.status ||
+      data.filters.origin !== DEFAULT_RESTRICTION_FILTERS.origin ||
+      !!data.q
+  );
 </script>
-
-<RestrictionFilterBar
-  type={data.type}
-  {types}
-  {fallbackType}
-  status={data.status}
-  origin={data.origin}
-  sort={data.sort}
-  facets={data.facets}
-  q={data.q}
-/>
 
 {#snippet notice({ unpicked }: { unpicked: boolean })}
   {#if form?.error && !hydrated}
-    <ErrorAlert message={form.error} />
+    <ErrorAlert class="mx-6 mt-3" message={form.error} />
   {/if}
   {#if data.selectedMissing && (unpicked || !hydrated)}
-    <ErrorAlert message="Restriction #{data.selectedMissing} was not found in this queue." />
+    <ErrorAlert
+      class="mx-6 mt-3"
+      message="Restriction #{data.selectedMissing} was not found in this queue."
+    />
   {/if}
 {/snippet}
 
-{#snippet empty()}
-  <div class="p-5 text-sm text-dark-0">
-    <p class="m-0">
-      {data.q ? `Nothing matches "${data.q}".` : 'No restrictions match these filters.'}
-    </p>
-    {#if filtersActive}
-      <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
-    {/if}
+{#snippet listHeader()}
+  <div class="flex flex-col gap-2.5">
+    {@render tabs?.()}
+    <div class="flex flex-col gap-1.5">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
+        <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+      </div>
+      <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
+    </div>
   </div>
 {/snippet}
 
+<!-- The shell renders this in the list and again in the detail pane when nothing matches; the
+     `in-[...]` variants pick the half that belongs to the pane it landed in. -->
+{#snippet empty()}
+  {@const status = RESTRICTION_STATUS_LABELS[data.filters.status].toLowerCase()}
+  <div
+    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
+  >
+    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
+    <p class="m-0 font-medium text-white">
+      {#if data.q}
+        No {data.filters.status === 'any' ? '' : `${status} `}restrictions match "{data.q}"
+      {:else if filtersActive}
+        No restrictions match these filters
+      {:else}
+        No {data.filters.status === 'any' ? '' : `${status} `}restrictions
+      {/if}
+    </p>
+    {#if data.q}
+      <p class="m-0 text-xs text-dark-2">Search matches a username or a user ID.</p>
+    {/if}
+    {#if filtersActive}
+      <a href={data.q ? clearSearchHref : clearFiltersHref} class="text-xs {LINK_CLASS}">
+        {data.q ? 'Clear search' : 'Clear filters'}
+      </a>
+    {/if}
+  </div>
+  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select a restriction to review it.</p>
+{/snippet}
+
 <TriageShell
+  flush
   rows={data.items}
   rowKey={(row: RestrictionRow) => row.id}
   parseKey={(raw) => Number(raw) || null}
-  selectionParam="selected"
+  selectionParam={SELECTION}
   queueLabel="Restriction queue"
   itemLabel="Restriction"
   decisionEnabled={(row) => [canDecide(row), canDecide(row)]}
@@ -142,29 +216,57 @@
   offset={data.offset}
   total={data.totalCount}
   {notice}
+  {listHeader}
   {empty}
 >
   {#snippet listRow(row, state)}
     {@const chip = originSummary(row.triggers).chip}
-    <TriageRow
-      id={state.id}
-      href={state.href}
-      selected={state.selected}
-      title={row.username ?? `User #${row.userId}`}
-      meta="{row.status === 'Pending' ? 'waiting' : 'opened'} {shortAge(row.createdAt)}"
-      cover={false}
-      verdict={state.verdict}
-      error={state.error}
-      onselect={state.select}
-    >
-      {#snippet badges()}
-        <StatusBadge status={row.status} />
-        <span class="text-xs text-dark-2">
-          {row.triggers.length} {row.triggers.length === 1 ? 'trigger' : 'triggers'}
-        </span>
-        {#if chip}<span class="text-xs text-dark-0">{chip}</span>{/if}
-      {/snippet}
-    </TriageRow>
+    <li id={state.id}>
+      <a
+        href={state.href}
+        onclick={(e) => {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          state.select();
+        }}
+        aria-current={state.selected ? 'true' : undefined}
+        class={cn(
+          'block border-l-2 px-3 py-2.5 transition-colors hover:bg-dark-5',
+          state.selected ? 'border-blue-500 bg-dark-5' : 'border-transparent',
+          state.verdict && 'opacity-50'
+        )}
+      >
+        <div class="flex items-baseline justify-between gap-2">
+          <span class="flex min-w-0 items-baseline gap-1.5">
+            <span class="truncate text-sm font-medium text-white">
+              {row.username ?? `User #${row.userId}`}
+            </span>
+            {#if row.username}
+              <span class="shrink-0 text-xs text-dark-2 tabular-nums">#{row.userId}</span>
+            {/if}
+          </span>
+          <span class="shrink-0 text-xs text-dark-2 tabular-nums">
+            {row.status === 'Pending' ? 'waiting' : 'ruled'}
+            {shortAge(row.status === 'Pending' ? row.createdAt : (row.resolvedAt ?? row.createdAt))}
+          </span>
+        </div>
+        {#if state.error}
+          <p class="m-0 mt-1 text-sm text-red-300">Failed: {state.error}</p>
+        {/if}
+        {#if state.verdict}
+          <p class="m-0 mt-1 text-sm text-dark-0">{state.verdict}</p>
+        {:else}
+          <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={row.status} outline />
+            <span class="text-xs text-dark-2">
+              {row.triggers.length}
+              {row.triggers.length === 1 ? 'trigger' : 'triggers'}
+            </span>
+          </div>
+          {#if chip}<p class="m-0 mt-1 text-xs text-dark-2">{chip}</p>{/if}
+        {/if}
+      </a>
+    </li>
   {/snippet}
   {#snippet detail(row, state)}
     <RestrictionTriageDetail
@@ -179,7 +281,6 @@
       error={state.error}
       submit={state.submit}
       {actionHref}
-      choose={ruling.choose}
       bind:draft={() => ruling.current, (d) => (ruling.current = d)}
     />
   {/snippet}

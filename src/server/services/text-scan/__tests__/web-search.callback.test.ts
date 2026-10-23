@@ -4,7 +4,7 @@ import type * as Adapters from '~/server/services/moderation-adapters';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (getWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (getWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -18,7 +18,7 @@ vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
 
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
-const { getWorkflow } = await import('@civitai/client');
+const { getWorkflow } = await import('@civitai/orchestration-client');
 const { getTextScanMode, getTextScanWebSearchMode } = await import(
   '~/server/services/text-scan/mode'
 );

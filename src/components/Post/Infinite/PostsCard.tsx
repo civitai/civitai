@@ -54,6 +54,7 @@ export function PostsCard({
                     <ImageContextMenu
                       image={image}
                       context="post"
+                      postImageCount={imageCount}
                       className=""
                       additionalMenuItems={
                         isOwner ? (

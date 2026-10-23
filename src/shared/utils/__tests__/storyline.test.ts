@@ -234,7 +234,8 @@ describe('getStorylineChapterTombstone', () => {
 });
 
 describe('storylineShareMinChoices', () => {
-  // The default is 1: shares show from the first choice, and the minimum only words the copy.
+  // The default is 1: shares show from the first choice. Anything unparseable or below 1 falls back
+  // to it.
   it.each([
     [undefined, 1],
     ['', 1],

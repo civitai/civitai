@@ -51,11 +51,11 @@ export type EcosystemSupport = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
-/** A recommended value with the advisory band the generator paints around it. */
-export type RecommendedRange = { min: number; max: number; default: number };
+/** A default with its bounds. */
+export type Range = { min: number; max: number; default: number };
 
 /** The settings a turbo LoRA applies when it is on. */
-export type TurboSettings = { steps: RecommendedRange; cfgScale: RecommendedRange };
+export type TurboSettings = { steps: Range; cfgScale: Range };
 
 /** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
 export const TURBO_PRESETS = {
@@ -81,9 +81,7 @@ export type EcosystemSettings = {
     engine?: string;
     /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
     turbo?: {
-      /** The LoRA the generator's Turbo picker starts on. */
-      lora?: { id: number };
-      /** Prefills a LoRA version's turbo block; the generator's fallback for anything it left unset. */
+      /** Prefills a LoRA version's turbo settings; the generator uses it for a turbo LoRA whose own `recommendedSettings` are not loaded. */
       settings: TurboSettings;
     };
   };
@@ -5210,7 +5208,7 @@ export function getBaseModelGroup(baseModel: string): string {
   // Fall back to matching by ecosystem key directly (e.g., "NanoBanana", "OpenAI").
   // Matches the legacy base-model.constants.ts behavior where getBaseModelConfig
   // checked both `x.name === baseModel || x.group === baseModel`. Some constants
-  // (e.g. generationConfig.NanoBanana.checkpoint.baseModel = 'NanoBanana') store
+  // (e.g. a NanoBanana checkpoint whose resource baseModel is 'NanoBanana') store
   // the ecosystem key in the resource's baseModel field instead of the display
   // name, and downstream code like the form-watch subscription in
   // GenerationFormProvider relies on this lookup returning a real ecosystem key

@@ -9,9 +9,8 @@ import { StartStorylineMenuItem } from '~/components/Storyline/StartStorylineMen
 import { StorylinePostEditorSwitch } from '~/components/Storyline/StorylinePostEditorSwitch';
 
 /**
- * The two ways in from a post. A post that is already a chapter must lead to its storyline and never
- * offer to start a second one; a storyline cannot be detached from its first chapter, so the
- * editor switch stays on.
+ * The two ways in from a post. A post that is already a chapter must lead to its storyline and
+ * never offer to start a second one.
  */
 
 const mocks = vi.hoisted(() => ({

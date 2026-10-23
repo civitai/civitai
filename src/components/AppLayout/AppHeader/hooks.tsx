@@ -7,6 +7,7 @@ import {
   IconBook,
   IconBookmark,
   IconBookmarkEdit,
+  IconBriefcase,
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
@@ -46,6 +47,7 @@ import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -53,6 +55,8 @@ import type { CollectionType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 
 export type UserMenuItem = {
+  /** Set on items the drill-in menu can place and pin; see `USER_MENU_ITEM_IDS`. */
+  id?: UserMenuItemId;
   label: string;
   icon: React.ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   color?: string;
@@ -61,6 +65,8 @@ export type UserMenuItem = {
   as?: string;
   rel?: 'nofollow';
   onClick?: () => void;
+  /** Opens `href` in a new tab. */
+  external?: boolean;
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
@@ -118,6 +124,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       visible: !!currentUser,
       items: [
         {
+          id: 'profile',
           href: `/user/${currentUser?.username as string}`,
           icon: IconUser,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
@@ -126,6 +133,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         // Stays after the event's strip is dismissed: the way back to the event.
         ...eventItems,
         {
+          id: 'inventory',
           href: '/user/inventory',
           visible: enabledInventoryTypes(features).length > 0,
           icon: IconBackpack,
@@ -134,6 +142,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           badge: unopenedBoxes,
         },
         {
+          id: 'my-shop',
           href: `/user/${currentUser?.username as string}/shop`,
           // Only Creator Program members qualify to run a shop.
           visible:
@@ -144,6 +153,17 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'My Shop',
         },
         {
+          id: 'service-requests',
+          // The buyer's list of what they've requested; a seller's incoming ones are on the shop's
+          // manage page.
+          href: '/services/deals',
+          visible: !!currentUser && features.creatorServices,
+          icon: IconBriefcase,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My service requests',
+        },
+        {
+          id: 'placements',
           // The creator's own review queues — stickers AND remixes, one page.
           // Their only other routes are four levels deep in account settings
           // and the approve/decline drawn on a single image, so a creator with
@@ -165,6 +185,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-20'),
         },
         {
+          id: 'training',
           // With the Training Studio on, "my trainings" IS the studio's run list.
           href: features.trainingStudioUi
             ? '/training-studio'
@@ -175,6 +196,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Training',
         },
         {
+          id: 'collections',
           href: `/collections`,
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
@@ -182,12 +204,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           badge: pendingCollectionReviews,
         },
         {
+          id: 'liked-models',
           href: `/collections/${bookmarkedModelsCollection?.id}`,
           icon: IconThumbUp,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Liked Models',
         },
         {
+          id: 'bookmarked-articles',
           href: `/collections/${bookmarkedArticlesCollection?.id}`,
           visible: !!bookmarkedArticlesCollection,
           icon: IconBookmarkEdit,
@@ -195,6 +219,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Bookmarked Articles',
         },
         {
+          id: 'bounties',
           href: '/bounties?engagement=favorite',
           as: '/bounties',
           visible: features.bounties,
@@ -203,6 +228,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'My Bounties',
         },
         {
+          id: 'challenges',
           href: '/challenges?engagement=created',
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
@@ -211,6 +237,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-08-15'),
         },
         {
+          id: 'buzz-dashboard',
           href: '/user/buzz-dashboard',
           visible: features.buzz,
           icon: IconProgressBolt,
@@ -218,6 +245,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Buzz Dashboard',
         },
         {
+          id: 'creator-studio',
           // The Creator Studio spoke (creator-studio.civitai.com) — earnings/analytics + per-version
           // licensing-fee and paid-access management. Shared session, so a plain cross-subdomain link.
           href: 'https://creator-studio.civitai.com',
@@ -228,6 +256,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-01'),
         },
         {
+          id: 'creator-journey',
           href: CREATOR_JOURNEY_HREF,
           visible: !!currentUser && features.creatorJourney,
           icon: IconStairsUp,
@@ -236,6 +265,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-11-15'),
         },
         {
+          id: 'vault',
           href: '/user/vault',
           visible: features.vault,
           icon: IconCloudLock,
@@ -243,6 +273,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'My Vault',
         },
         {
+          id: 'referrals',
           href: '/user/referrals',
           visible: features.referralProgramV2,
           icon: IconGift,
@@ -251,6 +282,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
+          id: 'apps',
           // 🔴 ONE `/apps*` DROPDOWN ENTRY, ONE DESTINATION. This was two entries
           // ("Build apps" → `/apps/get-started` and "Apps" → `/apps`), then one entry
           // with a CONDITIONAL href that fell back to `/apps/get-started` for a viewer
@@ -288,12 +320,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       visible: !!currentUser,
       items: [
         {
+          id: 'leaderboard',
           href: '/leaderboard/overall',
           icon: IconCrown,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
+          id: 'auctions',
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
@@ -302,6 +336,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-04-07'),
         },
         {
+          id: 'knights-of-new',
           href: '/games/knights-of-new-order',
           visible: features.newOrderGame,
           icon: IconSword,
@@ -310,21 +345,25 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-06-15'),
         },
         {
+          id: 'link-app',
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
         },
         {
+          id: 'following',
           href: `/user/${currentUser?.username as string}/following`,
           icon: IconUsers,
           label: 'Creators You Follow',
         },
         {
+          id: 'downloads',
           href: '/user/downloads',
           icon: IconHistory,
           label: 'Download History',
         },
         {
+          id: 'getting-started',
           icon: IconPlayerPlayFilled,
           label: 'Getting Started',
           onClick: () => {
@@ -344,12 +383,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       items: [
         ...eventItems,
         {
+          id: 'leaderboard',
           href: '/leaderboard/overall',
           icon: IconCrown,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
+          id: 'auctions',
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
@@ -358,11 +399,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-04-07'),
         },
         {
+          id: 'link-app',
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
         },
         {
+          id: 'sign-in',
           href: `/login?returnUrl=${router.asPath}`,
           rel: 'nofollow',
           icon: IconUserCircle,

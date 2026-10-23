@@ -13,6 +13,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
+import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
+import { createFlux3VideoInput } from '../flux3-video.handler';
 import { createFormGraphStepInput } from '../index';
 import { createOpenAIInput } from '../openai.handler';
 
@@ -139,6 +141,131 @@ describe('flux3.handler', () => {
   });
 });
 
+describe('flux3-video.handler', () => {
+  const V3 = flux3VideoVersionIds['v3.0'];
+  const MAX = flux3VideoVersionIds['v3.0-max'];
+
+  it('v3.0 still sends first/last frames as firstLastFrameToVideo', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:first-last',
+      ecosystem: 'Flux3Video',
+      model: { id: V3 },
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'flux',
+      version: 'v3.0',
+      operation: 'firstLastFrameToVideo',
+      startImage: IMAGE.url,
+      endImage: IMAGE2.url,
+      aspectRatio: 'auto',
+    });
+    expect(firstInput(steps)).not.toHaveProperty('reasoningLevel');
+  });
+
+  it('Max text-to-video carries the ratio, reasoning level and audio default', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 8,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'flux',
+      version: 'v3.0-max',
+      operation: 'textToVideo',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 8,
+      reasoningLevel: 'high',
+      generateAudio: true,
+    });
+    expect(firstInput(steps)).not.toHaveProperty('draft');
+  });
+
+  it('Max image-to-video takes the end frame on the same operation', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:first-last',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+      reasoningLevel: 'low',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      version: 'v3.0-max',
+      operation: 'imageToVideo',
+      image: IMAGE.url,
+      endImage: IMAGE2.url,
+      aspectRatio: 'auto',
+      reasoningLevel: 'low',
+    });
+  });
+
+  it('Max image-to-video with one image sends no end frame, and passes audio off and the seed', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      images: [IMAGE],
+      generateAudio: false,
+      seed: 42,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'imageToVideo',
+      image: IMAGE.url,
+      generateAudio: false,
+      seed: 42,
+    });
+    expect(firstInput(steps)).not.toHaveProperty('endImage');
+  });
+
+  it('refuses keyframes when the picker has swapped Max away, rather than sending a v3.0 text-to-video', () => {
+    const data = {
+      workflow: 'img2vid:keyframes',
+      ecosystem: 'Flux3Video',
+      flux3VideoVersion: 'v3',
+      model: { id: V3, model: { type: 'Checkpoint' } },
+      prompt: 'a cat',
+      duration: 5,
+      resolution: '720p',
+      generateAudio: false,
+      draft: false,
+    } as never;
+
+    expect(() => createFlux3VideoInput(data, ctx)).toThrow(/Max/);
+  });
+
+  it('keyframes picked with v3.0 selected go out on Max, in frame order as url + frameIndex pairs', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:keyframes',
+      ecosystem: 'Flux3Video',
+      model: { id: V3 },
+      prompt: 'a cat',
+      duration: 5,
+      keyframes: [
+        { image: IMAGE, frameIndex: 96 },
+        { image: IMAGE2, frameIndex: 0 },
+      ],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      version: 'v3.0-max',
+      operation: 'keyframesToVideo',
+      aspectRatio: 'auto',
+      keyframes: [
+        { image: IMAGE2.url, frameIndex: 0 },
+        { image: IMAGE.url, frameIndex: 96 },
+      ],
+    });
+    expect(firstInput(steps)).not.toHaveProperty('images');
+  });
+});
+
 describe('krea3.handler', () => {
   it('create sends ratio, resolution and thinking mode with no images', async () => {
     const create = await dispatch({
@@ -188,6 +315,50 @@ describe('krea3.handler', () => {
       thinkingMode: 'high',
     });
     expect(firstInput(create)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
+  });
+
+  it('sends Ultra only when krea3Ultra is on', async () => {
+    const on = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '2k',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(on)).toMatchObject({ thinkingMode: 'ultra' });
+
+    const off = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '2k',
+      thinkingMode: 'ultra',
+    });
+    expect(firstInput(off)).toMatchObject({ thinkingMode: 'instant' });
+  });
+
+  // The orchestrator refuses Ultra at 1K ("Ultra is only available at 2K"), and 1K is the default.
+  it('sends Ultra only at 2K, falling back to instant at 1K', async () => {
+    const at2k = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '2k',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(at2k)).toMatchObject({ resolution: '2k', thinkingMode: 'ultra' });
+
+    const at1k = await dispatch({
+      workflow: 'txt2img',
+      ecosystem: 'Krea3',
+      prompt: 'a cat',
+      resolution: '1k',
+      thinkingMode: 'ultra',
+      expectFlags: { krea3Ultra: true },
+    });
+    expect(firstInput(at1k)).toMatchObject({ resolution: '1k', thinkingMode: 'instant' });
   });
 });
 

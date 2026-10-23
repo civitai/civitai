@@ -45,6 +45,10 @@ enters the flow.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
+- **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
+  session cookie, `CIVITAI_URL`); `submitTrainingBatch`/`continueTraining` refuse to run without a
+  `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
+
 ## Model catalog
 
 `src/lib/data/trainingModels.ts` is a **vendored mirror** of the main app's `src/utils/training.ts`
@@ -63,8 +67,11 @@ does not run it.
 Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run
 with `pnpm --filter @civitai/training-studio-app test`, or from the root `pnpm run test:apps:run`).
 They cover what the UI can't be typechecked into: the flow's param/prompt rules (`trainingFlow.test.ts`),
-the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape
-(`train-core.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`). `@civitai/client` is mocked by hand there — its dist imports a directory, which
+the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape and its
+required `checkText` hook (`train-core.test.ts`), the standalone server's call to the main app's text
+check (`src/lib/server/text-check.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`).
+`$env/dynamic/private` is aliased to `src/test/env.mock.ts` in `vitest.config.ts` (this config doesn't
+load the SvelteKit plugin), so modules importing it can run under test. `@civitai/orchestration-client` is mocked by hand there — its dist imports a directory, which
 Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 ## Previewing the UI without OAuth

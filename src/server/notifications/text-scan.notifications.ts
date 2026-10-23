@@ -35,7 +35,8 @@ export const textScanNotifications = createNotificationProcessor({
     },
   },
 
-  // A storyline has no dispute on its page: its owner edits the title, which is scanned again.
+  // Unlike `text-scan-rating-raised`, no rating dispute to point at: an owner edits the title,
+  // which is scanned again.
   'storyline-title-moderated': {
     displayName: 'Storyline title moderated',
     category: NotificationCategory.System,

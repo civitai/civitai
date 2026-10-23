@@ -4,8 +4,7 @@ import { expect as baseExpect, test } from '@playwright/test';
 const expect = baseExpect.configure({ timeout: 30_000 });
 
 /**
- * Smoke path through the demo storyline built by scripts/storylines/storylines-demo-seed.sql:
- * image detail -> storyline mode -> end of the main path -> forks -> coming-soon prompt.
+ * Smoke path through the demo storyline built by scripts/storylines/storylines-demo-seed.sql.
  *
  * Runs against a dev server on the dev database, not the local e2e database, so it signs in
  * itself and must be run without the `setup` project (which asserts a local database). It is
@@ -56,7 +55,6 @@ test.describe('storylines smoke', () => {
     await expect(page).toHaveURL(/[?&]storylineChapter=\d+/);
     await expect(page.getByTestId('storyline-mode-chip')).toContainText('The Patch');
 
-    // The chip opens the map sheet; it is a single button.
     await page.getByTestId('storyline-mode-chip').click();
     await expect(page.getByTestId('storyline-subway')).toBeVisible();
   });
@@ -78,8 +76,6 @@ test.describe('storylines smoke', () => {
     const forks = page.getByTestId('storyline-fork');
     await expect(forks).toHaveCount(3);
 
-    // Above the storyline's ceiling: kept as a placeholder so later chapters stay reachable,
-    // with none of the post's content.
     const aboveCeiling = page.locator(
       `[data-testid="storyline-fork"][data-chapter-id="${env.aboveCeilingChapterId}"]`
     );

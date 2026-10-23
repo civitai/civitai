@@ -9,8 +9,8 @@ import {
 } from '~/components/Storyline/StorylinesIntro';
 
 /**
- * The welcome card on /storylines: shown until dismissed, remembered across visits, and the
- * "start one" link only for someone signed in (it goes to their own posts).
+ * The welcome card on /storylines. The "start one" link shows only when signed in: it goes to the
+ * reader's own posts (see StorylinesIntro.tsx).
  */
 
 const mocks = vi.hoisted(() => ({ user: null as { username: string } | null }));

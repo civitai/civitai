@@ -1,10 +1,11 @@
 import { constants } from '~/server/common/constants';
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { nsfwEscalationBits } from '~/server/games/daily-challenge/challenge-currency';
 import { logToAxiom } from '~/server/logging/client';
 import { cancelCrucible, claimCrucibleCancellation } from '~/server/services/crucible.service';
 import { createNotification } from '~/server/services/notification.service';
-import { Flags } from '~/shared/utils/flags';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 export function notifyCrucibleCreator({
@@ -30,11 +31,13 @@ export function notifyCrucibleCreator({
 export async function applyCrucibleNsfwEscalation({
   entityId,
   isNsfw,
+  level,
   greenCancels = true,
 }: {
   entityId: number;
   isNsfw: boolean;
-  // False under text-scan: an R+ verdict raises a green crucible to R rather than cancelling it.
+  level?: number | null;
+  // False under text-scan: an R+ verdict raises a green crucible's rating rather than cancelling it.
   greenCancels?: boolean;
 }): Promise<void> {
   // Primary: a moderator rating written just before this callback must be seen.
@@ -66,6 +69,7 @@ export async function applyCrucibleNsfwEscalation({
   }
 
   if (crucible.buzzType !== 'green' || !greenCancels) {
+    const nsfwLevel = crucible.nsfwLevel | nsfwEscalationBits(level);
     // The read above is unlocked, so a moderator rating can commit before this write; the
     // condition keeps the raise from landing over it.
     const { count } = await dbWrite.crucible.updateMany({
@@ -74,7 +78,7 @@ export async function applyCrucibleNsfwEscalation({
         ingestion: CrucibleIngestionStatus.Scanned,
         scannedAt: new Date(),
         textNsfw: true,
-        nsfwLevel: Flags.addFlag(crucible.nsfwLevel, NsfwLevel.R),
+        nsfwLevel,
       },
     });
     if (count === 0) {
@@ -86,8 +90,9 @@ export async function applyCrucibleNsfwEscalation({
         userId: crucible.userId,
         crucibleId: entityId,
         key: 'crucible-nsfw-raised',
-        message:
-          "Your crucible's rating was raised to R based on its text, so people browsing safe-for-work content won't see it.",
+        message: `Your crucible's rating was raised to ${getBrowsingLevelLabel(
+          nsfwLevel
+        )} based on its text, so people browsing safe-for-work content won't see it.`,
       });
     }
     return;

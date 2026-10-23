@@ -10,6 +10,8 @@ const { mockTx, mockPreventReplicationLag } = vi.hoisted(() => ({
   mockTx: {
     modelVersion: { create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
     $executeRaw: vi.fn(),
+    // The name/trained-words row lock; no stored row, so no conflict check.
+    $queryRaw: vi.fn(async () => []),
   },
   mockPreventReplicationLag: vi.fn(),
 }));

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementService from '~/server/services/placement.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
@@ -76,7 +77,7 @@ const ROOT_POST = 100;
 const STRANGER_POST = 200;
 const COLLABORATOR_POST = 300;
 const STRANGER_X_POST = 400;
-// NsfwLevel flags: PG = 1, X = 8. The storyline's ceiling is PG.
+// The storyline's ceiling is PG.
 const PG = 1;
 const X = 8;
 const ALL_LEVELS = 31;
@@ -319,8 +320,6 @@ describe('the storyline continuation loop', () => {
     expect(db.rows('placement')).toEqual([]);
   });
 
-  // Product rule, from the surface config: a declined PRICED continuation keeps
-  // the standard 30% decline fee for the owner, as remix galleries do.
   it('keeps the 30% decline fee for the owner, refunds the rest, and writes no chapter', async () => {
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);
@@ -344,7 +343,6 @@ describe('the storyline continuation loop', () => {
     const submittedAt = Date.now();
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);
-    // Stamped by submission itself, seven days out: a row with no deadline never expires.
     expect((db.row('placement', { id })!.expiresAt as Date).getTime()).toBe(
       submittedAt + 7 * 24 * 3_600_000
     );
@@ -420,9 +418,68 @@ describe('the storyline continuation loop', () => {
     }
   );
 
-  // Justin's ruling: a storyline whose title the scan found to be about a minor stays up, and
-  // nothing in it may be NSFW, forks included. Its chapters are held to PG-13 whatever the owner
-  // set (storylineCeiling), at submission, at approval and when read.
+  // While the title scan holds a storyline as about a minor, its chapters are held to
+  // `storylineCeiling` whatever the owner set, at submission, at approval and when read.
+  // Hold and mark, decided for the takedown: it can lift (an appeal, a clean rescan), so a
+  // continuation in a taken-down storyline is kept, not refunded early, and the owner's queue shows
+  // it as not answerable until the takedown lifts. Its own deadline still refunds it.
+  describe('in a storyline that is taken down', () => {
+    const setTakenDown = (tosViolation: boolean) =>
+      db.update('storyline', { id: STORYLINE }, { tosViolation });
+    const queueMarks = async () =>
+      (
+        await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS })
+      ).items.map((item) => [item.id, item.storyline.takenDown]);
+
+    // The fake answers the queue and the orphan sweep from their clauses on the chapter alone, so
+    // it cannot see a takedown filter added to either. Hold and mark was decided (no early refund,
+    // no hidden rows): if you are adding the storyline's takedown to either statement, that decision
+    // has to change first. The takedown lives on "Storyline"; neither statement reads that table.
+    it('reads no storyline takedown in the queue or the orphan sweep, so neither hides nor refunds a held row', async () => {
+      await submit(STRANGER, STRANGER_POST);
+      setTakenDown(true);
+      await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS });
+      await settleOrphanedContinuations();
+      const statements = [
+        ...dbMock.dbRead.$queryRaw.mock.calls,
+        ...dbMock.dbWrite.$queryRaw.mock.calls,
+      ]
+        .map(([strings, ...values]) =>
+          (Array.isArray(strings)
+            ? Prisma.sql(strings as never, ...values)
+            : (strings as Prisma.Sql)
+          ).text.replace(/\s+/g, ' ')
+        )
+        .filter((text) => text.includes('FROM "Placement" pl'));
+      const queue = statements.filter((text) => text.includes('JOIN "Post" p'));
+      const sweep = statements.filter((text) => text.includes('pl.amount = 0 OR'));
+      expect([queue.length > 0, sweep.length > 0]).toEqual([true, true]);
+      expect([...queue, ...sweep].filter((text) => text.includes('"Storyline"'))).toEqual([]);
+    });
+
+    it('stays in the queue marked, refused and unrefunded, and is answerable once the takedown lifts', async () => {
+      charge(100);
+      const { id } = await submit(STRANGER, STRANGER_POST, 100);
+      expect(await queueMarks()).toEqual([[id, false]]);
+
+      setTakenDown(true);
+      expect(await queueMarks()).toEqual([[id, true]]);
+      for (const action of ['approve', 'decline'] as const)
+        await expect(
+          actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action })
+        ).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+      await expect(settleOrphanedContinuations()).resolves.toMatchObject({ settled: 0 });
+      expect(db.row('placement', { id })).toMatchObject({ status: 'pending' });
+      expect(moneyCalls().refunds).toEqual([]);
+
+      setTakenDown(false);
+      expect(await queueMarks()).toEqual([[id, false]]);
+      await expect(
+        actOnStorylineContinuation({ placementId: id, ownerId: OWNER, action: 'approve' })
+      ).resolves.toEqual({ settled: true, status: 'approved' });
+    });
+  });
+
   describe('a storyline the title scan holds as about a minor', () => {
     const PG13 = 2;
     const R = 4;
@@ -572,7 +629,6 @@ describe('the storyline continuation loop', () => {
         (await getPendingStorylineContinuations({ ownerId: OWNER, domainLevels: ALL_LEVELS }))
           .items;
 
-      /** Makes the settle that follows the takedown fail, as an outage would. */
       const failSettling = () => {
         const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
         dbMock.dbWrite.$queryRaw.mockImplementation(
@@ -705,7 +761,6 @@ describe('the storyline continuation loop', () => {
           `placement-${id}-holdFee`,
           `placement-${id}-holdPrincipal`,
         ]);
-        // Both holds came back whole: 30 and 70 of the 100 taken.
         expect(
           db
             .rows('placementTransaction')
@@ -773,7 +828,6 @@ describe('the storyline continuation loop', () => {
         expect(await queue()).toEqual([]);
       });
 
-      // One row's settle failing must not stop the rows after it.
       it('settles the rest when one continuation fails to', async () => {
         charge(100);
         const { id: first } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
@@ -877,9 +931,8 @@ describe('the storyline continuation loop', () => {
       });
     });
 
-    // The old rule let an owner decline, and keep the fee, once the chapter's
-    // post was deleted. They could never have accepted it, so it is refunded
-    // instead. Deliberate: if you restore the old decline, the fee comes back.
+    // Refunded rather than declined for a fee: the owner could never have accepted it. Restoring
+    // the old decline brings the fee back.
     it('refunds a continuation whose parent post was deleted, rather than letting it be declined for a fee', async () => {
       charge(100);
       const { id } = await submit(STRANGER, STRANGER_SECOND_POST, 100, COLLABORATOR_POST);
@@ -902,8 +955,8 @@ describe('the storyline continuation loop', () => {
 });
 
 describe('a continuation of a taken-down storyline', () => {
-  // Its chapters stay, but none can take a continuation any more: declining
-  // would pay the owner for something they could not accept.
+  // Its chapters stay, but none can take a continuation while it is down:
+  // declining would pay the owner for something they could not accept.
   it('cannot be declined for a fee', async () => {
     charge(100);
     const { id } = await submit(STRANGER, STRANGER_POST, 100);

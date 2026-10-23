@@ -215,9 +215,8 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
 });
 
 describe('createFreePlacement — a surface with no free tier', () => {
-  // A storyline may be priced at zero, and its zero-priced continuations are
-  // ordinary rows that spend nothing. A `free` row there would spend the
-  // placer's daily allowance, which is shared with stickers and remix galleries.
+  // A `free` row on a zero-priceable surface would spend the daily allowance shared with stickers
+  // and remix galleries.
   it('refuses a storyline before resolving anything', async () => {
     await expect(
       createFreePlacement({
@@ -465,6 +464,11 @@ describe('the advisory locks have exactly one call site', () => {
   // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
+  // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
+  // ingestion lock, so an article removal serialises with a recompute. The only lock in its transaction.
+  // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
+  // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
+  // transaction, for a decision's final update. The only lock in either transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
@@ -478,6 +482,8 @@ describe('the advisory locks have exactly one call site', () => {
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/support-membership-code.service.ts',
+    'services/text-scan/actions/csam-hold.ts',
+    'services/text-scan/csam-hold-decision.ts',
     'services/text-scan/prompt.ts',
   ];
 

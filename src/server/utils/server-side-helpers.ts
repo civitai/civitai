@@ -25,7 +25,8 @@ import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 
 export const getServerProxySSGHelpers = async (
-  ctx: GetServerSidePropsContext,
+  // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
+  ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
   session: Session | null,
   features: FeatureAccess
 ) => {
@@ -64,6 +65,41 @@ export const getServerProxySSGHelpers = async (
   });
   return ssg;
 };
+
+type SsgHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
+
+/**
+ * `adsGated` from a resolver's declared rating. `.red` is exempt from the rating check — it serves
+ * direct ads, no GAM auction, no policy center.
+ */
+export function resolveAdsGated(
+  result: { gating?: AdGatingDeclaration; suppressAds?: boolean },
+  features: FeatureAccess
+) {
+  return (
+    !!result.suppressAds ||
+    (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating))
+  );
+}
+
+/**
+ * The `trpcState` a page hands the client.
+ *
+ * Success-only: an errored prefetch would put a TRPCError instance in the dehydrated state, and
+ * the devalue write (TRPC_WRITE_DEVALUE) throws on non-POJOs — turning one failed prefetch into a
+ * page-wide SSR 500. Dropping errored queries lets the client refetch instead.
+ *
+ * Seed the serialize-attribution ctx (kill-switch-independent — this is the once-per-render SSR
+ * path, not the hot tRPC batch path) with the route so a devalue-write fallback during dehydrate
+ * attributes to it (`ssr:dehydrate:<route>`) instead of `unknown`.
+ */
+export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
+  return runWithSerializeCtxAlways({ path: ssrDehydrateSerializePath(url), type: 'ssr' }, () =>
+    ssg.dehydrate({
+      shouldDehydrateQuery: (query) => query.state.status === 'success',
+    })
+  );
+}
 
 export function createServerSideProps<P>({
   resolver,
@@ -130,36 +166,13 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
-    // policy center.
-    const adsGated =
-      !!result.suppressAds ||
-      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
+    const adsGated = resolveAdsGated(result, features);
 
     return {
       props: {
         ...(props ?? {}),
         adsGated,
-        // Success-only: an errored prefetch would put a TRPCError instance in the
-        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
-        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
-        // errored queries lets the client refetch instead.
-        //
-        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
-        // once-per-render SSR path, not the hot tRPC batch path) with the page
-        // route so a devalue-write fallback during dehydrate attributes to the
-        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
-        ...(ssg
-          ? {
-              trpcState: runWithSerializeCtxAlways(
-                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
-                () =>
-                  ssg.dehydrate({
-                    shouldDehydrateQuery: (query) => query.state.status === 'success',
-                  })
-              ),
-            }
-          : {}),
+        ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
         session: jsonSafeSession(session),
       } as NonNullable<P>,
     };

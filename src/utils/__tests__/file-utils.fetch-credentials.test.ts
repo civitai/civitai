@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchBlob } from '~/utils/file-utils';
+import { fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 
 /**
  * Pins the credential behavior of the shared media-fetch primitive.
@@ -42,6 +42,24 @@ describe('fetchBlob — fetch credentials', () => {
     expect(calledUrl).toBe(url);
     expect(options.credentials).toBe('omit');
     expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('returns an error response as a blob unless asked to require success', async () => {
+    fetchMock.mockImplementation(async () => new Response('not found', { status: 404 }));
+
+    expect(await fetchBlob('https://image.civitai.com/x.jpeg')).not.toBeNull();
+    expect(
+      await fetchBlob('https://image.civitai.com/x.jpeg', undefined, { requireOk: true })
+    ).toBeNull();
+  });
+
+  it('passes require-success through when fetching as a file', async () => {
+    fetchMock.mockImplementation(async () => new Response('not found', { status: 404 }));
+
+    expect(await fetchBlobAsFile('https://example.invalid/x.png')).not.toBeNull();
+    expect(
+      await fetchBlobAsFile('https://example.invalid/x.png', undefined, { requireOk: true })
+    ).toBeNull();
   });
 
   it('short-circuits a Blob input without calling fetch', async () => {

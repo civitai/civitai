@@ -7,6 +7,11 @@ import {
 } from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
+import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_GROUP_IDS,
+  USER_MENU_HEADER_GROUP,
+} from '~/shared/constants/user-menu-groups.constants';
 
 /*
  * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
@@ -865,6 +870,22 @@ const appsBuildActionSchema = z.object({
   }),
 });
 
+// User menu v2 item opens, collected to choose the default pins from use. Client-postable like
+// `AppsBuild_Action`: it feeds an internal ranking nobody benefits from inflating. Every field is
+// closed, so a tampered client cannot put text in the `details` column.
+const userMenuClickSchema = z.object({
+  type: z.literal('UserMenu_Click'),
+  details: z.object({
+    item: z.enum(USER_MENU_ITEM_IDS),
+    // The item's home group in the layout, also when it was opened from the Pinned section;
+    // `header` for the profile and Buzz rows above the menu. Null for a top-level item.
+    group: z.enum([...USER_MENU_GROUP_IDS, USER_MENU_HEADER_GROUP]).nullable(),
+    // Opened from the Pinned section, not merely an item that is pinned.
+    pinned: z.boolean(),
+    surface: z.enum(['desktop', 'mobile']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -891,6 +912,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   feedTagBarClickSchema,
   announcementClickSchema,
   appsBuildActionSchema,
+  userMenuClickSchema,
 ]);
 // What `track.addAction` parses: the action, with its whole JSON length capped at
 // `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through

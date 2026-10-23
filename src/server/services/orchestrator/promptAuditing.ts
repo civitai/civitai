@@ -19,8 +19,11 @@ import {
   isBlankAuditInput,
   isOverLengthRefusal,
   isSoftBlock,
+  MAX_AUDIT_PROMPT_LENGTH,
   type PromptTrigger,
   type PromptTriggerCategory,
+  type PromptTriggerField,
+  type PromptTriggerMatch,
 } from '~/utils/metadata/audit';
 
 // --- Blocked Prompt Store ---
@@ -37,6 +40,12 @@ export interface BlockedPromptEntry {
   category?: PromptTriggerCategory;
   matchedWord?: string;
   matchedRegex?: string;
+  matchedText?: string;
+  matchedField?: PromptTriggerField;
+  /** The NSFW-list text that opened the gate the matching rule needs. */
+  gateWord?: string;
+  /** Every rule that matched; the top-level fields are the first of these. */
+  matches?: PromptTriggerMatch[];
   imageId: number | null;
   remixOfId: number | null;
   // Base/source media attached to the blocked job, surfaced in the moderator
@@ -58,6 +67,7 @@ const GREEN_SFW_REDIRECT =
   'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
 
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
+const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
 
@@ -72,6 +82,59 @@ const truncateForRecord = (text: string | undefined) =>
   text != null && text.length > OVER_LENGTH_RECORDED_CHARS
     ? `${text.slice(0, OVER_LENGTH_RECORDED_CHARS)}… [truncated from ${text.length} chars]`
     : text;
+const TRUNCATED_RECORD = /… \[truncated from (\d+) chars\]$/;
+
+function hasOverLengthRecordShape(text: string | undefined): boolean {
+  const match = text != null ? TRUNCATED_RECORD.exec(text) : null;
+  if (!match) return false;
+  return (
+    Number(match[1]) > MAX_AUDIT_PROMPT_LENGTH &&
+    text!.length === OVER_LENGTH_RECORDED_CHARS + match[0].length
+  );
+}
+
+function triggerEvidence(trigger?: PromptTrigger) {
+  return {
+    category: trigger?.category,
+    matchedWord: trigger?.matchedWord,
+    matchedRegex: trigger?.matchedRegex,
+    matchedText: trigger?.matchedText,
+    matchedField: trigger?.matchedField,
+    gateWord: trigger?.gateWord,
+    matches: trigger?.matches,
+  };
+}
+
+/**
+ * The audit log does not record whether a row was a hard block, so re-audit it; an over-length
+ * refusal is told by its truncation record. Rows the audit no longer matches, and External rows,
+ * are kept without evidence.
+ */
+async function reauditSeededRow(row: {
+  prompt: string;
+  negativePrompt: string;
+  source: string;
+}): Promise<{ hardBlock: boolean; evidence?: PromptTrigger }> {
+  const overLengthShape =
+    hasOverLengthRecordShape(row.prompt) || hasOverLengthRecordShape(row.negativePrompt);
+  if (row.source === 'External') return { hardBlock: true };
+
+  try {
+    const negativePrompt =
+      row.negativePrompt === LEGACY_MISSING_NEGATIVE_PROMPT ? '' : row.negativePrompt;
+    const [prompt, negative] = await Promise.all([
+      stripBenignPhrases(normalizeText(row.prompt), BlocklistType.PromptBenignPhrase),
+      stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
+    ]);
+    // Profanity on, so a soft block recorded on the green domain re-audits as one.
+    const { success, triggers } = auditPromptEnriched(prompt ?? row.prompt, negative, true);
+    if (success || triggers.length === 0) return { hardBlock: !overLengthShape };
+    if (isSoftBlock(triggers)) return { hardBlock: false };
+    return { hardBlock: true, evidence: triggers[0] };
+  } catch {
+    return { hardBlock: !overLengthShape };
+  }
+}
 
 const RESET_MARKER = '__RESET__';
 
@@ -103,31 +166,38 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
     SELECT prompt, negativePrompt, source, remixOfId, inputImages, inputVideo, time
     FROM prohibitedRequests
     WHERE time > subtractDays(now(), ${BLOCKED_PROMPTS_WINDOW_DAYS}) AND userId = ${userId}
-    ORDER BY time ASC
+    ORDER BY time DESC
+    LIMIT ${SEED_MAX_ROWS}
   `;
 
-  if (data.length === 0) {
-    // No violations today, set reset marker
-    await sysRedis.lPush(key, RESET_MARKER);
-  } else {
-    // Add all violations (oldest first, so newest ends up at head)
-    for (const row of data) {
-      const entry: BlockedPromptEntry = {
-        prompt: row.prompt,
-        negativePrompt: row.negativePrompt,
-        source: row.source,
-        category: undefined,
-        matchedWord: undefined,
-        matchedRegex: undefined,
-        imageId: null,
-        remixOfId: row.remixOfId ?? null,
-        inputImages: row.inputImages?.length ? row.inputImages : undefined,
-        inputVideo: row.inputVideo || undefined,
-        time: row.time,
-      };
-      await sysRedis.rPush(key, JSON.stringify(entry));
-    }
+  // Past the mute threshold (plus a margin) more rows change nothing.
+  const seedCap = constants.imageGeneration.requestBlocking.muted + 2;
+  const hardBlocks: { row: (typeof data)[number]; evidence?: PromptTrigger }[] = [];
+  for (const [index, row] of data.entries()) {
+    if (hardBlocks.length >= seedCap) break;
+    // Re-auditing is synchronous regex work; hand the event loop back between batches.
+    if (index > 0 && index % 10 === 0) await new Promise((resolve) => setImmediate(resolve));
+    const { hardBlock, evidence } = await reauditSeededRow(row);
+    if (hardBlock) hardBlocks.push({ row, evidence });
   }
+
+  let seeded = 0;
+  for (const { row, evidence } of hardBlocks.reverse()) {
+    const entry: BlockedPromptEntry = {
+      prompt: row.prompt,
+      negativePrompt: row.negativePrompt,
+      source: row.source,
+      ...triggerEvidence(evidence),
+      imageId: null,
+      remixOfId: row.remixOfId ?? null,
+      inputImages: row.inputImages?.length ? row.inputImages : undefined,
+      inputVideo: row.inputVideo || undefined,
+      time: row.time,
+    };
+    await sysRedis.rPush(key, JSON.stringify(entry));
+    seeded++;
+  }
+  if (seeded === 0) await sysRedis.lPush(key, RESET_MARKER);
   await sysRedis.expire(key, BLOCKED_PROMPTS_TTL);
 }
 
@@ -440,6 +510,28 @@ export async function classifyPromptServer(
 }
 
 /**
+ * The external classifier alone, sent the same benign-stripped copy `classifyPromptServer` sends
+ * it. For text whose word rules are applied elsewhere, such as a training trigger word, where a
+ * soft word-rule hit passes. Fails open and records nothing, as there.
+ */
+export async function classifyPromptExternally(
+  prompt: string,
+  moderationSource?: ExternalModerationSource
+): Promise<Pick<PromptClassification, 'categories' | 'externalError'>> {
+  if (!prompt.trim()) return { categories: [], externalError: null };
+  const audited = await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase);
+  try {
+    const { flagged, categories } = await extModeration.moderatePrompt(
+      audited ?? prompt,
+      moderationSource
+    );
+    return { categories: flagged ? categories : [], externalError: null };
+  } catch (error) {
+    return { categories: [], externalError: { message: (error as Error)?.message } };
+  }
+}
+
+/**
  * Centralized prompt auditing function that handles both regex and external moderation checks.
  *
  * @param options - Audit options including prompt, userId, and isGreen flag
@@ -588,8 +680,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         prompt: prompt ?? '',
         negativePrompt: negativePrompt ?? '',
         source,
-        category: error.triggers[0]?.category,
-        matchedWord: error.triggers[0]?.matchedWord,
+        ...triggerEvidence(error.triggers[0]),
         imageId: imageId ?? null,
         remixOfId: remixOfId ?? null,
         inputImages,

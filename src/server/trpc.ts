@@ -8,7 +8,6 @@ import { requiresEmailVerification } from '~/server/common/email-verification-ga
 import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
 import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
 import type { NextApiRequest } from 'next';
-import semver from 'semver';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -26,8 +25,7 @@ import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-un
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -129,34 +127,7 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   return next({ ctx: { user, acceptableOrigin } });
 });
 
-// The CLIENT hash is a single global key (forced-client-update version/date
-// gating), identical for every user and procedure. needsUpdate runs on EVERY
-// web-client tRPC procedure, and tRPC batches multiple procedures per HTTP
-// request, so an uncached hGetAll here is ~1 sysRedis round-trip PER PROCEDURE
-// across all web traffic. Cache it in-process with a short TTL: gating a
-// "refresh your browser" banner tolerates a few seconds of staleness trivially,
-// and this collapses thousands of reads/s into ~1 read / TTL / pod. Only
-// successful reads are cached, so the fail-open behavior below is preserved.
-const CLIENT_CONFIG_TTL_MS = 5_000;
-let clientConfigCache: { value: Record<string, string>; expiresAt: number } | null = null;
-async function getClientConfigCached(): Promise<Record<string, string>> {
-  const now = Date.now();
-  if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
-  // Wall-clock deadline so a stalled/half-open sysRedis can't park this hGetAll for
-  // OS-keepalive minutes (the sys client has no socketTimeout, and a per-command
-  // timeout can't abort a written command). This read runs on EVERY web tRPC procedure
-  // (behind the 5s cache above); a timeout here is caught by needsUpdate's try/catch
-  // below and fails open (skips the update banner), never a 500.
-  const client = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
-  clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
-  return client;
-}
-
-// TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
-  const version = req?.headers['x-client-version'] as string;
-  const date = req?.headers['x-client-date'] as string;
-
   if (!isWebClient(req?.headers)) return false;
   // Fail open: if sysRedis is unreachable, don't force a client update —
   // every tRPC call runs through enforceClientVersion, so a throw here
@@ -168,16 +139,7 @@ async function needsUpdate(req?: NextApiRequest) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
-  const clientVersion = decodeRedisString(client.version);
-  if (clientVersion) {
-    if (!version || version === 'unknown') return true;
-    return semver.lt(version, clientVersion);
-  }
-  if (client.date) {
-    if (!date) return true;
-    return new Date(Number(date)) < new Date(client.date);
-  }
-  return false;
+  return clientNeedsUpdate(req?.headers, client);
 }
 
 const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
@@ -201,10 +163,9 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   //   });
   // }
   const result = await next();
-  if (await needsUpdate(ctx.req)) {
-    ctx.res?.setHeader('x-update-required', 'true');
-    ctx.cache.edgeTTL = 0;
-  }
+  // The header itself is set in the route's responseMeta: on a streamed batch the response head
+  // is already written by now, and setting it here throws.
+  if (await needsUpdate(ctx.req)) ctx.cache.edgeTTL = 0;
   return result;
 });
 

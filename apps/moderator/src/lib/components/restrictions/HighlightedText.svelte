@@ -6,25 +6,38 @@
     text: string;
     /** Highlighted by LITERAL, case-insensitive search. Never compiled to a regex — on these pages it
      *  originates from user-supplied prompt text. */
-    highlight?: string | null;
+    highlight?: string | string[] | null;
   } = $props();
 
   type Part = { text: string; hit: boolean };
 
   const parts = $derived.by((): Part[] => {
-    const needle = highlight?.trim();
-    if (!needle) return [{ text, hit: false }];
+    const needles = [highlight ?? []]
+      .flat()
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean)
+      // Longest first so a needle that contains another wins at the same position.
+      .sort((a, b) => b.length - a.length);
+    if (!needles.length) return [{ text, hit: false }];
 
     const haystack = text.toLowerCase();
-    const lower = needle.toLowerCase();
     const out: Part[] = [];
     let at = 0;
+    let cursor = 0;
     for (;;) {
-      const found = haystack.indexOf(lower, at);
+      let found = -1;
+      let len = 0;
+      for (const n of needles) {
+        const i = haystack.indexOf(n, cursor);
+        if (i !== -1 && (found === -1 || i < found)) {
+          found = i;
+          len = n.length;
+        }
+      }
       if (found === -1) break;
       if (found > at) out.push({ text: text.slice(at, found), hit: false });
-      out.push({ text: text.slice(found, found + needle.length), hit: true });
-      at = found + needle.length;
+      out.push({ text: text.slice(found, found + len), hit: true });
+      at = cursor = found + len;
     }
     if (!out.length) return [{ text, hit: false }];
     if (at < text.length) out.push({ text: text.slice(at), hit: false });

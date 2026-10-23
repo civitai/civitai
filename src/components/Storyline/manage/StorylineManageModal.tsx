@@ -17,7 +17,6 @@ import { trpc } from '~/utils/trpc';
 const showError = (title: string) => (error: { message: string }) =>
   showErrorNotification({ title, error: new Error(error.message) });
 
-/** The creator's controls for one storyline: settings and endorsed collaborators. */
 export default function StorylineManageModal({ storylineId }: { storylineId: number }) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();

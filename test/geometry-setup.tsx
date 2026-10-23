@@ -132,6 +132,7 @@ import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css';
+import '@civitai/components/styles.css';
 
 import React from 'react';
 import { afterEach, vi } from 'vitest';

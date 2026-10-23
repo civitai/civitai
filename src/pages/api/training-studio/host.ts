@@ -1,16 +1,7 @@
 import { env } from '~/env/server';
-import { OnboardingSteps } from '~/server/common/enums';
-import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import {
-  computeUserFeatureFlagsOverlay,
-  getFeatureFlagsLazy,
-  getFliptGatedEligibility,
-} from '~/server/services/feature-flags.service';
-import { getUserSettings } from '~/server/services/user.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
-import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
-import { Flags } from '~/shared/utils/flags';
+import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
 /**
  * Host side of the embedded Training Studio (docs/training-studio-web-component.md).
@@ -20,37 +11,11 @@ import { Flags } from '~/shared/utils/flags';
  * getOrchestratorToken already keeps. The orchestrator URL is NOT part of the response — see the
  * note at the `res.json` below.
  *
- * The token spends Buzz orchestrator-side, so it calls `requireFullScopeSession` first, then
- * mirrors `guardedProcedure`'s gates (trpc.ts: banned → onboarded → muted → email-verified)
- * plus the page's feature flag — keep them in step.
+ * The token spends Buzz orchestrator-side, so the caller must pass the Studio's gates first
+ * (`allowTrainingStudio`).
  */
 export default AuthedEndpoint(async (req, res, user) => {
-  if (!requireFullScopeSession(req, res)) return;
-  if (user.bannedAt)
-    return res
-      .status(403)
-      .json({ error: 'You cannot perform this action because your account has been banned' });
-  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz))
-    return res
-      .status(403)
-      .json({ error: 'You must complete the onboarding process before performing this action' });
-  if (user.muted)
-    return res
-      .status(403)
-      .json({ error: 'You cannot perform this action because your account has been restricted' });
-  if (requiresEmailVerification(user))
-    return res.status(403).json({ error: 'Verify your email address to do this' });
-  // Same merge the client provider performs (overlay over host flags) — keep them in step, or the
-  // page renders for a user this endpoint refuses.
-  const hostFlags = getFeatureFlagsLazy({ user, req });
-  const { features: userFeatures } = await getUserSettings(user.id);
-  const overlay = computeUserFeatureFlagsOverlay(
-    userFeatures,
-    hostFlags,
-    getFliptGatedEligibility({ user, req })
-  );
-  if (!{ ...hostFlags, ...overlay }.trainingStudioUi)
-    return res.status(403).json({ error: 'Training Studio is not available on this account' });
+  if (!(await allowTrainingStudio(req, res, user))) return;
 
   const token = await getOrchestratorToken(user.id, { req, res });
   // In ORCHESTRATOR_MODE=dev getOrchestratorToken returns the SHARED service credential, which must

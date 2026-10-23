@@ -34,7 +34,7 @@ const user = (over: Partial<SessionUser> = {}): SessionUser =>
     ...over,
   } as SessionUser);
 
-// `getFeatureFlags` memoizes per identity and host for 10s, so every read gets a fresh host.
+// `getFeatureFlags` memoizes per identity and host, so every read gets a fresh host.
 const storylinesFor = (who: SessionUser | undefined) =>
   !!getFeatureFlags({ user: who, host: `s${nextId++}.example` }).storylines;
 

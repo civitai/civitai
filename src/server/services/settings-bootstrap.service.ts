@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getActiveSiteAlerts } from '~/server/services/site-alert.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getBrowsingSettingAddons, getLiveNow } from '~/server/services/system-cache';
@@ -61,68 +62,93 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
   // `_app`'s hasAuthCookie carve-out exists to avoid.
   const session = await getServerAuthSession({ req, res });
+  return resolveSettingsBootstrapSeeds(req, session);
+}
+
+/** The bootstrap's `session`: a session with no user fields is "signed out", never a session. */
+export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAuthSession>>) {
+  return session?.user && Object.keys(session.user).length > 0 ? session : null;
+}
+
+/**
+ * Everything in the bootstrap after the session lookup, for an already-resolved session. Split out
+ * so a caller can decide on the session (e.g. a feature flag) before paying for the seeds.
+ */
+export async function resolveSettingsBootstrapSeeds(
+  req: AuthArgs['req'],
+  session: Awaited<ReturnType<typeof getServerAuthSession>>
+) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
   // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
-  const [settings, tosMeta, announcements, following, browsingSettingsAddons, liveNow, navBanners] =
-    await Promise.all([
-      // Content-settings view so SSR initialData matches the tRPC getSettings response
-      // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
-      // `useQuery({ initialData })` under a global `staleTime: Infinity`: any defined
-      // value is fresh from frame 0 and never refetched, and an empty one resolves
-      // showNsfw/blurNsfw off the JWT, which lags a user who just turned nsfw OFF.
-      // `undefined` leaves the query unseeded so it fetches and self-heals, matching
-      // what `_app` already does on its degraded path.
-      settle(getUserContentSettings(session?.user?.id ?? -1), undefined, 'getUserContentSettings'),
-      // The static per-domain ToS metadata. Resolved here because `content.service` reads
-      // `fs/promises`, which must never be imported into `_app`'s client-bundled graph. The
-      // show/hide decision is computed client-side against the seeded `user.getSettings`,
-      // so this is user-independent and we can resolve it for everyone (it's cheap +
-      // cached). Domain fallback matches createContext's
-      // `getRequestDomainColor(req) ?? 'blue'`.
-      // `undefined` on failure: `useToSUpdateModal` guards on it and simply
-      // doesn't prompt, which beats degrading the whole payload.
-      settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
-      // Seeds the ambient `announcement.getAnnouncements` query (fires on every
-      // bootstrap, anon + authed). Match the resolver byte-for-byte: its
-      // `applyRequestDomainColor` middleware overrides the client input with
-      // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
-      // value here. On failure fall back to undefined and let the client self-heal
-      // via a live fetch.
-      settle(
-        getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
-        undefined,
-        'getCurrentAnnouncements'
-      ),
-      // Seeds the ambient, auth-gated `user.getFollowingUsers` query (fires
-      // on every logged-in bootstrap wherever a follow/notify button mounts).
-      // `getUserFollows` is the same redis-cached fn the resolver calls, so the
-      // seed is byte-identical (a `number[]` of followed userIds). Anon never
-      // fires this query (`enabled: !!currentUser`), so seed authed-only.
-      session?.user
-        ? settle(getUserFollows(session.user.id), undefined, 'getUserFollows')
-        : Promise.resolve(undefined),
-      // Global, user-independent sysRedis reads.
-      //
-      // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
-      // `withSysReadDeadline` timeout and corrupt JSON all RETURN
-      // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
-      // sysRedis the client is seeded with the defaults, and because the provider
-      // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
-      // pinned for the session; the live config is only picked up on the next
-      // bootstrap. Telling "live config" apart from "failed open" would need a
-      // sentinel out of system-cache. `undefined` on the deadline path for the same
-      // reason the old `.catch` used it — react-query treats a `[]` seed as valid
-      // data and pins it as "no restrictions".
-      settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
-      settle(getLiveNow(), false, 'getLiveNow'),
-      // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
-      // the page. Session-only (no cookies), so the anonymous answer is the same for every
-      // anonymous caller, as the route's public cache header requires.
-      settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
-    ]);
+  const [
+    settings,
+    tosMeta,
+    announcements,
+    following,
+    browsingSettingsAddons,
+    liveNow,
+    navBanners,
+    siteAlerts,
+  ] = await Promise.all([
+    // Content-settings view so SSR initialData matches the tRPC getSettings response
+    // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
+    // `useQuery({ initialData })` under a global `staleTime: Infinity`: any defined
+    // value is fresh from frame 0 and never refetched, and an empty one resolves
+    // showNsfw/blurNsfw off the JWT, which lags a user who just turned nsfw OFF.
+    // `undefined` leaves the query unseeded so it fetches and self-heals, matching
+    // what `_app` already does on its degraded path.
+    settle(getUserContentSettings(session?.user?.id ?? -1), undefined, 'getUserContentSettings'),
+    // The static per-domain ToS metadata. Resolved here because `content.service` reads
+    // `fs/promises`, which must never be imported into `_app`'s client-bundled graph. The
+    // show/hide decision is computed client-side against the seeded `user.getSettings`,
+    // so this is user-independent and we can resolve it for everyone (it's cheap +
+    // cached). Domain fallback matches createContext's
+    // `getRequestDomainColor(req) ?? 'blue'`.
+    // `undefined` on failure: `useToSUpdateModal` guards on it and simply
+    // doesn't prompt, which beats degrading the whole payload.
+    settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
+    // Seeds the ambient `announcement.getAnnouncements` query (fires on every
+    // bootstrap, anon + authed). Match the resolver byte-for-byte: its
+    // `applyRequestDomainColor` middleware overrides the client input with
+    // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
+    // value here. On failure fall back to undefined and let the client self-heal
+    // via a live fetch.
+    settle(
+      getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
+      undefined,
+      'getCurrentAnnouncements'
+    ),
+    // Seeds the ambient, auth-gated `user.getFollowingUsers` query (fires
+    // on every logged-in bootstrap wherever a follow/notify button mounts).
+    // `getUserFollows` is the same redis-cached fn the resolver calls, so the
+    // seed is byte-identical (a `number[]` of followed userIds). Anon never
+    // fires this query (`enabled: !!currentUser`), so seed authed-only.
+    session?.user
+      ? settle(getUserFollows(session.user.id), undefined, 'getUserFollows')
+      : Promise.resolve(undefined),
+    // Global, user-independent sysRedis reads.
+    //
+    // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
+    // `withSysReadDeadline` timeout and corrupt JSON all RETURN
+    // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
+    // sysRedis the client is seeded with the defaults, and because the provider
+    // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
+    // pinned for the session; the live config is only picked up on the next
+    // bootstrap. Telling "live config" apart from "failed open" would need a
+    // sentinel out of system-cache. `undefined` on the deadline path for the same
+    // reason the old `.catch` used it — react-query treats a `[]` seed as valid
+    // data and pins it as "no restrictions".
+    settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
+    settle(getLiveNow(), false, 'getLiveNow'),
+    // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
+    // the page. Session-only (no cookies), so the anonymous answer is the same for every
+    // anonymous caller, as the route's public cache header requires.
+    settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    settle(getActiveSiteAlerts(), undefined, 'getActiveSiteAlerts'),
+  ]);
   return {
     settings,
     tosMeta,
@@ -131,7 +157,8 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
     browsingSettingsAddons,
     liveNow,
     navBanners,
-    session: session?.user && Object.keys(session.user).length > 0 ? session : null,
+    siteAlerts,
+    session: bootstrapSession(session),
   };
 }
 
@@ -172,6 +199,35 @@ function bootstrapHost(): string {
   }
 }
 
+type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<string, string>> };
+
+/**
+ * The request the settings bootstrap reads, built from a page's (or page-data endpoint's) own
+ * request. ONE builder for every in-process caller, so they cannot drift:
+ *
+ *   - URL: always `SETTINGS_BOOTSTRAP_PATH`, never the caller's. `getServerAuthSession` treats a
+ *     `?token=` query parameter as an API credential, and a page URL may carry an unrelated one —
+ *     it must never replace the cookie viewer.
+ *   - Headers and cookies: the caller's, so the session is the caller's.
+ *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
+ *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
+ *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
+ *   - Its own `req.context`, unless `context` is passed: whatever the session lookup records (the
+ *     credential) lands there, never on the caller's request by accident.
+ */
+export function settingsBootstrapRequest(
+  request: BootstrapSourceRequest,
+  { host, context }: { host?: string; context?: Record<string, unknown> } = {}
+): AuthArgs['req'] {
+  // The bootstrap reads only `authorization` and `host` from the headers (plus the parsed cookies).
+  return {
+    headers: { ...request.headers, host: host ?? bootstrapHost() },
+    cookies: request.cookies,
+    url: SETTINGS_BOOTSTRAP_PATH,
+    ...(context ? { context } : {}),
+  } as unknown as AuthArgs['req'];
+}
+
 /**
  * The bootstrap for a page that is being server-rendered, with no HTTP request to ourselves.
  *
@@ -195,16 +251,11 @@ function bootstrapHost(): string {
  * as "no bootstrap", NOT as "signed out".
  */
 export async function resolveSettingsBootstrapForRender(
-  request: IncomingMessage & { cookies?: Partial<Record<string, string>> }
+  request: BootstrapSourceRequest
 ): Promise<unknown> {
-  // Every other request field the bootstrap reads is the page's own, unchanged: it reads only
-  // `authorization` and `host` from the headers (plus the parsed cookies), and `fetch` forwarded
-  // `authorization` and `cookie` as-is.
-  const req = {
-    headers: { ...request.headers, host: bootstrapHost() },
-    cookies: request.cookies,
-    url: SETTINGS_BOOTSTRAP_PATH,
-  } as unknown as AuthArgs['req'];
+  // Every other request field the bootstrap reads is the page's own, unchanged: `fetch`
+  // forwarded `authorization` and `cookie` as-is.
+  const req = settingsBootstrapRequest(request);
   const res = {
     getHeader: () => undefined,
     setHeader: () => undefined,

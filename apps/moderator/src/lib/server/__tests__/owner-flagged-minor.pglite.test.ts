@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -75,7 +76,7 @@ INSERT INTO "ImageReport" VALUES (5, ${OWNER_FLAGGED});
 let pg: PGlite;
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
 });

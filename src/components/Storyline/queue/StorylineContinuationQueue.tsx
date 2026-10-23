@@ -21,7 +21,6 @@ const successCopy: Record<StorylineQueueAction, { title: string; message: string
   decline: { title: 'Declined', message: "It won't appear in your storyline." },
 };
 
-/** The storyline surface of the creator's placement queue page. */
 export function StorylineContinuationQueue() {
   const utils = trpc.useUtils();
   const queue = useStorylineQueue({ enabled: true });

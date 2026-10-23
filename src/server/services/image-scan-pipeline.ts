@@ -43,7 +43,10 @@ import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
-import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import {
+  deleteUserProfilePictureCache,
+  refreshProfilePicturesForImages,
+} from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
@@ -932,6 +935,7 @@ export async function applyIngestionSideEffects({
     // it so the next index pass re-evaluates visibility against the
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
+    await refreshProfilePicturesForImages([image.id]);
     return;
   }
 
@@ -951,6 +955,9 @@ export async function applyIngestionSideEffects({
       (image.metadata as MediaMetadata | undefined)?.profilePicture
     ) {
       await deleteUserProfilePictureCache(image.userId);
+    } else {
+      // A rescan of an image picked as an avatar after its upload can change its rating too.
+      await refreshProfilePicturesForImages([image.id]);
     }
 
     if (image.postId) {

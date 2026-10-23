@@ -21,6 +21,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
+import { PostEditModelLink } from '~/components/Post/EditV2/PostEditModelLink';
 import { postEditEventCard } from '~/components/Post/EditV2/post-edit-event-card.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
@@ -517,6 +518,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           View {postLabel}
         </Button>
       )}
+
+      <PostEditModelLink modelId={post.parentModelId} modelVersionId={post.modelVersionId} />
 
       <PlacementSpaceToggle level="post" entityId={post.id} />
 

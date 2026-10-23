@@ -21,7 +21,6 @@ export const PLACEMENT_SURFACE_TABS = [
 
 export type PlacementSurfaceTab = (typeof PLACEMENT_SURFACE_TABS)[number]['value'];
 
-/** The surfaces this viewer's flags let them open. A link to any other lands on stickers. */
 export function visiblePlacementSurfaceTabs(flags: {
   creatorPromotions?: boolean;
   storylines?: boolean;

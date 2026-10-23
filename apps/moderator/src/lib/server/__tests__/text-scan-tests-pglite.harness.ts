@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
@@ -34,7 +35,7 @@ function usePglite(schema: string): { pg: PGlite } {
   // One instance per file: PGlite takes seconds to boot, which times out a per-test hook when
   // files run in parallel.
   beforeAll(async () => {
-    handle.pg = await PGlite.create();
+    handle.pg = await freshPglite();
     await handle.pg.exec(schema);
   }, 60_000);
   beforeEach(() => handle.pg.exec(TRUNCATE_ALL));

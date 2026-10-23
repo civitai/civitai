@@ -5,6 +5,13 @@
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import {
+    deleteButtonState,
+    deleteButtonView,
+    holdButtonView,
+    type DeleteHold,
+  } from '$lib/legal-hold';
   import type { LayoutData } from './$types';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -31,6 +38,8 @@
     canToggleModerator,
     canBan,
     canPurge,
+    canDelete,
+    deleteHold,
   }: {
     identity: Identity;
     canAct: boolean;
@@ -38,13 +47,17 @@
     /** Ban and purge are separate grants, not one "enforcement" right: purge has no way back. */
     canBan: boolean;
     canPurge: boolean;
+    canDelete: boolean;
+    /** Anything but `clear` disables Delete account and Purge: a hold, or a status that could not be read. */
+    deleteHold: DeleteHold | null;
   } =
     $props();
 
 
   let version = $state(0);
-  let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
+  let confirming = $state<'ban' | 'unban' | 'purge' | 'delete' | null>(null);
   let purgeConfirm = $state('');
+  let deleteConfirm = $state('');
   let ruling = $state(emptyRulingDraft<ResolutionVerdict<'restriction'>>());
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
@@ -52,6 +65,17 @@
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : SSR_PENDING);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
+  const deleteButton = $derived(
+    deleteButtonState({ canDelete, deleted: !!identity.deletedAt, hold: deleteHold })
+  );
+  const deleteView = $derived(deleteButtonView(deleteButton));
+  // A deleted account can still be purged, so `deleted` does not hide this one.
+  const purgeView = $derived(
+    holdButtonView(
+      deleteButtonState({ canDelete: canPurge, deleted: false, hold: deleteHold }),
+      'Purge content'
+    )
+  );
 
   // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
   // in the main app refuses it, which is what this panel posts through. Without this the panel offered
@@ -72,6 +96,7 @@
     onSuccess: () => {
       confirming = null;
       purgeConfirm = '';
+      deleteConfirm = '';
       ruling = emptyRulingDraft();
       version += 1;
     },
@@ -182,9 +207,25 @@
         {/if}
       {/if}
 
-      {#if canPurge}
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
-          Purge content
+      {#if purgeView}
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={purgeView.disabled}
+          onclick={() => (confirming = 'purge')}
+        >
+          {purgeView.label}
+        </Button>
+      {/if}
+
+      {#if deleteView}
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={deleteView.disabled}
+          onclick={() => (confirming = 'delete')}
+        >
+          {deleteView.label}
         </Button>
       {/if}
     </div>
@@ -230,7 +271,7 @@
       </div>
     {/if}
 
-    {#if confirming === 'purge'}
+    {#if confirming === 'purge' && purgeView && !purgeView.disabled}
       <form method="POST" action="?/purgeContent" use:enhance={form.enhance} class="mt-4">
         <input type="hidden" name="userId" value={identity.id} />
         <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
@@ -252,6 +293,43 @@
                 purgeConfirm !== (identity.username ?? String(identity.id))}
             >
               {form.submitting ? 'Working…' : 'Purge all content'}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </form>
+    {:else if confirming === 'delete' && deleteButton === 'enabled'}
+      <form method="POST" action="?/deleteAccount" use:enhance={form.enhance} class="mt-4">
+        <input type="hidden" name="userId" value={identity.id} />
+        <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+          <p class="mb-2 text-sm text-white">
+            Delete the account <strong>{identity.username ?? identity.id}</strong> on its owner's behalf.
+            Their models move to the deleted-user account and their images are kept for 7 days unless
+            you choose otherwise below.
+          </p>
+          {#if identity.username !== null}
+            <label class="text-xs text-dark-2">
+              Type the username to confirm
+              <Input name="username" bind:value={deleteConfirm} class="mt-1" autocomplete="off" />
+            </label>
+          {/if}
+          <label class="mt-2 flex items-center gap-2 text-sm text-white">
+            <Checkbox name="removeModels" value="true" /> Delete their models too
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-sm text-white">
+            <Checkbox name="removeImages" value="true" /> Delete their images now (cannot be undone)
+          </label>
+          <div class="mt-2 flex gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              disabled={form.submitting ||
+                (identity.username !== null && deleteConfirm.trim() !== identity.username.trim())}
+            >
+              {form.submitting ? 'Working…' : 'Delete account'}
             </Button>
             <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
               Cancel

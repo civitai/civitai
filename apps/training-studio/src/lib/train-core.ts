@@ -14,7 +14,7 @@ import {
   type WorkflowCallback,
   type WorkflowStepTemplate,
   type WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -43,6 +43,7 @@ import {
   isRetiredBaseAir,
 } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
+import type { TrainingTextCheck } from '$lib/training-text';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -256,6 +257,12 @@ export class TrainingSubmitError extends Error {
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
 export class TrainingBatchValidationError extends Error {}
 
+export {
+  TrainingTextCheckError,
+  TrainingTextRefusedError,
+  type TrainingTextCheck,
+} from '$lib/training-text';
+
 function fail(field: string, why: string): never {
   throw new TrainingBatchValidationError(`${field} ${why}`);
 }
@@ -389,11 +396,19 @@ export function submitFailureReason(err: unknown): string {
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown, runIndex: number) => void } = {}
+  opts: SubmitOptions & {
+    checkText: TrainingTextCheck;
+    onRunError?: (err: unknown, runIndex: number) => void;
+  }
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+
+  // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
+  // sweep repeats one trigger word across runs; each distinct one is checked once.
+  for (const triggerWord of new Set(runs.map((run) => run.trigger)))
+    await opts.checkText({ triggerWord });
 
   // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
   const customModels = new Map<string, string>();
@@ -421,11 +436,25 @@ type EpochOutput = {
 
 // An epoch's trained-LoRA reference (`continueFrom`, the generate hand-off): the orchestrator resolves it
 // as a LoRA only when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is
-// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same
+// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/orchestration-client's `Air` (the same
 // builder the main app's stringifyAIR wraps) for a blob-backed epoch:
 // urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
 export const loraBlobAir = (ecosystem: string, blobKey: string) =>
   Air.stringify({ ecosystem, type: 'lora', source: 'orchestrator', id: 'blob', version: blobKey });
+
+// The orchestrator requires `continueFrom`'s AIR ecosystem to equal its own name for the training model's
+// ecosystem, which differs from the step's `ecosystem` input for these — sending the input name fails with
+// "continueFrom ecosystem 'mossImage' must match the training model ecosystem 'moss'". Every other
+// ai-toolkit ecosystem in the catalog passes as-is (checked against the orchestrator's whatif, 2026-10-21).
+const CONTINUE_FROM_ECOSYSTEM: Record<string, string> = {
+  flux2klein: 'flux2',
+  flux3klein: 'flux3',
+  mossImage: 'moss',
+  wan: 'wanvideo',
+};
+
+const continueFromAir = (ecosystem: string, blobKey: string) =>
+  loraBlobAir(CONTINUE_FROM_ECOSYSTEM[ecosystem] ?? ecosystem, blobKey);
 
 export interface ContinueOpts {
   workflowId: string;
@@ -442,7 +471,7 @@ async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
   { callbacks, traceMode = 'events' }: SubmitOptions
-): Promise<{ body: WorkflowTemplate; steps: number | undefined }> {
+): Promise<{ body: WorkflowTemplate; steps: number | undefined; triggerWord: string }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
   const { data: wf, error: getError } = await getWorkflow({
     client,
@@ -466,7 +495,7 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
-  const continueFrom = loraBlobAir(ecosystem, modelKey);
+  const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;
@@ -533,6 +562,7 @@ async function buildContinuation(
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
+    triggerWord: String(input.triggerWord ?? ''),
   };
 }
 
@@ -540,9 +570,11 @@ async function buildContinuation(
 export async function continueTraining(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  submitOpts: SubmitOptions = {}
+  submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body } = await buildContinuation(client, opts, submitOpts);
+  const { body, triggerWord } = await buildContinuation(client, opts, submitOpts);
+  // The source run may predate the check, so its trigger word is checked again before it trains again.
+  await submitOpts.checkText({ triggerWord });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id)
     throw new Error(

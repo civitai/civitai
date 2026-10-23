@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
+import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -42,6 +43,7 @@ export async function getImageReviewQueue({
   tagIds,
   excludedTagIds,
   browsingLevel,
+  userId,
   cursor,
   limit,
 }: {
@@ -49,6 +51,8 @@ export async function getImageReviewQueue({
   tagIds?: number[];
   excludedTagIds?: number[];
   browsingLevel: number;
+  /** One owner's images only. */
+  userId?: number;
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
@@ -115,6 +119,7 @@ export async function getImageReviewQueue({
         )}))`
       )
     )
+    .$if(userId != null, (qb) => qb.where('i.userId', '=', userId!))
     .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
     .orderBy('i.id', 'desc')
     .limit(limit + 1)
@@ -176,6 +181,97 @@ export async function getReviewQueueTags(
 // be held with no way to reach them.
 function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Blocked')[] {
   return needsReview === FLAG_KEPT_THROUGH_BLOCK ? ['Scanned', 'Blocked'] : ['Scanned'];
+}
+
+export const CSAM_QUEUE_USER_LIMIT = 500;
+
+/** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
+ *  the status is unknown rather than that this user is on a hold. */
+export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
+
+export type CsamQueueUser = {
+  userId: number;
+  username: string | null;
+  flagged: number;
+  /** Flagged and already removed, at any browsing level: what a bulk clear would clear. */
+  removed: number;
+  latestImageId: number;
+  /** Newest `reportSentAt` of the user's CSAM reports; null when none was sent. */
+  reportSentAt: Date | null;
+  /** Any CSAM report row for the user, sent or not. */
+  reported: boolean;
+  /** Why a bulk clear of this user's flags would be refused; empty when it would not be. */
+  heldBy: CsamQueueHoldReason[];
+};
+
+/** The CSAM review queue as one row per owning user, most flagged first. Same rows and browsing-level
+ *  filter as `getImageReviewQueue` for that queue. */
+export async function getCsamQueueByUser({
+  browsingLevel,
+}: {
+  browsingLevel: number;
+}): Promise<{ users: CsamQueueUser[]; truncated: boolean }> {
+  const groups = await dbRead
+    .selectFrom('Image as i')
+    .select([
+      'i.userId',
+      sql<number>`count(*)::int`.as('flagged'),
+      sql<number>`max(i.id)`.as('latestImageId'),
+    ])
+    .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
+    .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .where('i.ingestion', 'in', reviewQueueIngestion(FLAG_KEPT_THROUGH_BLOCK))
+    .groupBy('i.userId')
+    .orderBy(sql`count(*)`, 'desc')
+    .orderBy('i.userId')
+    .limit(CSAM_QUEUE_USER_LIMIT + 1)
+    .execute();
+
+  const truncated = groups.length > CSAM_QUEUE_USER_LIMIT;
+  const page = groups.slice(0, CSAM_QUEUE_USER_LIMIT);
+  const userIds = page.map((g) => g.userId);
+  if (!userIds.length) return { users: [], truncated };
+
+  const [users, reports, removed, holds, marker] = await Promise.all([
+    dbRead.selectFrom('User').select(['id', 'username']).where('id', 'in', userIds).execute(),
+    dbRead
+      .selectFrom('CsamReport')
+      .select(['userId', sql<Date | null>`max("reportSentAt")`.as('reportSentAt')])
+      .where('userId', 'in', userIds)
+      .groupBy('userId')
+      .execute(),
+    dbRead
+      .selectFrom('Image')
+      .select(['userId', sql<number>`count(*)::int`.as('count')])
+      .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+      .where('ingestion', '=', 'Blocked')
+      .where('userId', 'in', userIds)
+      .groupBy('userId')
+      .execute(),
+    getFlagClearHolds(userIds),
+    holdMarkerState(dbRead),
+  ]);
+  const reasons = (legs: FlagClearHoldLeg[] = []): CsamQueueHoldReason[] =>
+    marker === 'view'
+      ? legs
+      : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
+  const removedByUser = new Map(removed.map((r) => [r.userId, Number(r.count)]));
+  const usernames = new Map(users.map((u) => [u.id, u.username]));
+  const reportsByUser = new Map(reports.map((r) => [r.userId, r.reportSentAt]));
+
+  return {
+    users: page.map((g) => ({
+      userId: g.userId,
+      username: usernames.get(g.userId) ?? null,
+      flagged: Number(g.flagged),
+      removed: removedByUser.get(g.userId) ?? 0,
+      latestImageId: Number(g.latestImageId),
+      reportSentAt: reportsByUser.get(g.userId) ?? null,
+      reported: reportsByUser.has(g.userId),
+      heldBy: reasons(holds.get(g.userId)),
+    })),
+    truncated,
+  };
 }
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).

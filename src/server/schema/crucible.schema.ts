@@ -3,6 +3,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -344,6 +345,14 @@ export const getJudgingPairSchema = z.object({
     .optional(),
   browsingLevel: z.number().int().min(0).optional(),
   judgingSessionId: judgingSessionIdSchema,
+});
+
+export const crucibleEventTagSchema = eventTagSchema;
+
+export type SetCrucibleEventTagsSchema = z.infer<typeof setCrucibleEventTagsSchema>;
+export const setCrucibleEventTagsSchema = z.object({
+  id: z.number(),
+  eventTags: eventTagsSchema,
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted

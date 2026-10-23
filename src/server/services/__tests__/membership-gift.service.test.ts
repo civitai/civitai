@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dayjs from 'dayjs';
+import type { Stripe } from 'stripe';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Every asserted call in this file is one `membership-gift.service` spells as `dbWrite`.
@@ -108,6 +109,7 @@ import {
   recordGiftMonthConsumed,
   releaseArmedGiftMonth,
   restoreArmedGiftMonth,
+  restoreUndeliveredResidualMonths,
   revokeMembershipGift,
   sweepGiftArming,
 } from '~/server/services/membership-gift.service';
@@ -205,7 +207,9 @@ beforeEach(() => {
   mockStripe.subscriptions.create.mockResolvedValue({ id: 'sub_residual', status: 'active' });
   mockStripe.subscriptions.deleteDiscount.mockResolvedValue({});
   mockDbWrite.membershipGift.update.mockResolvedValue({});
+  mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.delete.mockResolvedValue({});
+  mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 1 });
   mockDbWrite.membershipGift.findMany.mockResolvedValue([]);
   mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
   mockCreateCustomer.mockResolvedValue('cus_recipient');
@@ -311,6 +315,17 @@ describe('createMembershipGiftCheckout', () => {
     expect(result).toMatchObject({ giftId: 'gift_1', sessionId: 'cs_1' });
   });
 
+  // Deliberate: do not widen to dynamic payment methods. The paid gate cannot see a debit
+  // reversed after it succeeded.
+  it('offers only card payment for a gift', async () => {
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+
+    await createMembershipGiftCheckout(input);
+
+    const sessionArgs = mockStripe.checkout.sessions.create.mock.calls[0][0];
+    expect(sessionArgs.payment_method_types).toEqual(['card']);
+  });
+
   it('deletes the pending row when session creation fails', async () => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
     mockStripe.checkout.sessions.create.mockRejectedValue(new Error('stripe down'));
@@ -327,7 +342,17 @@ describe('fulfillMembershipGift', () => {
       status: 'Fulfilled',
     });
     expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
-    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when a concurrent delivery fulfilled the gift first', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue(baseGift);
+    mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await fulfillMembershipGift({ giftId: 'gift_1' })).toEqual({ alreadyProcessed: true });
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockSendReceivedEmail).not.toHaveBeenCalled();
+    expect(mockSendSentEmail).not.toHaveBeenCalled();
   });
 
   it('queues the gift with its full months and touches NOTHING in Stripe', async () => {
@@ -336,8 +361,9 @@ describe('fulfillMembershipGift', () => {
     const result = await fulfillMembershipGift({ giftId: 'gift_1', paymentIntentId: 'pi_1' });
 
     expect(result).toMatchObject({ fulfilled: true, queued: true });
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: 'gift_1', status: 'Pending' },
         data: expect.objectContaining({ status: 'Fulfilled', monthsRemaining: 3 }),
       })
     );
@@ -915,6 +941,157 @@ describe('honorGiftResidualsForUser', () => {
     expect(await honorGiftResidualsForUser({ userId: 2 })).toEqual({ minted: 0 });
     expect(mockStripe.subscriptions.create).not.toHaveBeenCalled();
   });
+
+  it('gives back the owed months when the holder cancels their residual subscription', async () => {
+    // A 3-month residual cancelled in its first month: Stripe ends it at the period end, one
+    // month in. The gift was completed at mint, so without a restore the 2 months are gone.
+    const start = dayjs().subtract(1, 'month');
+    const completed = {
+      ...baseGift,
+      status: 'Completed',
+      monthsRemaining: 0,
+      monthsConsumed: 3,
+      stripeSubscriptionId: 'sub_residual',
+      stripeCouponId: 'gift_gift_1_residual',
+    };
+    mockDbWrite.membershipGift.findUnique.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length
+        ? { ...completed, status: 'Active', monthsRemaining: 2, monthsConsumed: 1 }
+        : completed
+    );
+    mockDbWrite.membershipGift.findMany.mockImplementation(async () =>
+      mockDbWrite.membershipGift.updateMany.mock.calls.length ? [{ id: 'gift_1' }] : []
+    );
+
+    await honorGiftResidualsForUser({
+      userId: 2,
+      endedSubscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith({
+      where: { id: 'gift_1', status: 'Completed', stripeSubscriptionId: 'sub_residual' },
+      data: { status: 'Active', monthsRemaining: 2, monthsConsumed: 1 },
+    });
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.duration_in_months).toBe(2);
+    // The first residual coupon is single-use and already redeemed.
+    expect(coupon.id).not.toBe('gift_gift_1_residual');
+    expect(mockStripe.subscriptions.create).toHaveBeenCalled();
+  });
+});
+
+const residualSub = ({
+  start,
+  endedAt,
+  metadata = { membershipGiftId: 'gift_1', residualMonths: '3' } as Record<string, string>,
+  cancellationComment = null as string | null,
+}: {
+  start: dayjs.Dayjs;
+  endedAt: dayjs.Dayjs;
+  metadata?: Record<string, string>;
+  cancellationComment?: string | null;
+}) =>
+  ({
+    id: 'sub_residual',
+    status: 'canceled',
+    start_date: start.unix(),
+    ended_at: endedAt.unix(),
+    canceled_at: endedAt.unix(),
+    cancellation_details: { comment: cancellationComment },
+    discount: { coupon: { id: 'gift_gift_1_residual', duration_in_months: 3 } },
+    metadata,
+  } as unknown as Stripe.Subscription);
+
+describe('restoreUndeliveredResidualMonths', () => {
+  const start = dayjs().subtract(2, 'month');
+
+  beforeEach(() => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Completed',
+      monthsConsumed: 3,
+      stripeSubscriptionId: 'sub_residual',
+      stripeCouponId: 'gift_gift_1_residual',
+    });
+  });
+
+  it('counts the first month as used even when cancelled minutes after the mint', async () => {
+    // Its invoice already granted the month; giving it back would let cancel-and-re-mint
+    // repeat forever.
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(4, 'minute') }),
+    });
+    expect(result).toMatchObject({ restored: 2 });
+  });
+
+  it('does not count the next period as started when the end lands just past a boundary', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month').add(30, 'second') }),
+    });
+    expect(result).toMatchObject({ restored: 2 });
+  });
+
+  it('counts a period cut short as used', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(2, 'month').subtract(2, 'day') }),
+    });
+    expect(result).toMatchObject({ restored: 1 });
+  });
+
+  it('restores nothing when the subscription ran its full course', async () => {
+    // It ends at the cancel_at set at mint, seconds before start + months.
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(3, 'month').subtract(5, 'second') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the months off the coupon for a residual minted before they were recorded', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({
+        start,
+        endedAt: start.add(2, 'month'),
+        metadata: { membershipGiftId: 'gift_1' },
+      }),
+    });
+    expect(result).toMatchObject({ restored: 1 });
+  });
+
+  it('does not restore a residual ended by a refund or chargeback', async () => {
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({
+        start,
+        endedAt: start.add(1, 'day'),
+        cancellationComment: 'membership-gift-revoked',
+      }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not restore for a holder whose account was banned', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      ...baseGift,
+      status: 'Completed',
+      stripeSubscriptionId: 'sub_residual',
+      holder: { id: 2, bannedAt: new Date(), deletedAt: null },
+    });
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op once the gift has moved past that subscription', async () => {
+    mockDbWrite.membershipGift.updateMany.mockResolvedValue({ count: 0 });
+    const result = await restoreUndeliveredResidualMonths({
+      subscription: residualSub({ start, endedAt: start.add(1, 'month') }),
+    });
+    expect(result).toEqual({ restored: 0 });
+    expect(mockStripe.coupons.del).not.toHaveBeenCalled();
+  });
 });
 
 describe('sweepGiftArming', () => {
@@ -1016,7 +1193,9 @@ describe('revokeMembershipGift', () => {
 
     await revokeMembershipGift({ paymentIntentId: 'pi_1', reason: 'refund' });
 
-    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual');
+    expect(mockStripe.subscriptions.del).toHaveBeenCalledWith('sub_residual', {
+      cancellation_details: { comment: 'membership-gift-revoked' },
+    });
   });
 
   it('is idempotent once revoked', async () => {

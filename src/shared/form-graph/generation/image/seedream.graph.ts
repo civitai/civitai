@@ -33,6 +33,8 @@ const seedreamVersionOptions = [
 ];
 
 const seedreamAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+/** 2K sizes: the presets send `resolution: '2K'` because the toggle on v4.5 and v5.0-lite defaults to 4K. */
+export const seedreamAspectRatios2K = getAspectRatioOptions('2K', seedreamAspectRatioList);
 
 const seedreamResolutionOptions = [
   { label: '2K', value: '2K' },

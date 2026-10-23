@@ -32,6 +32,8 @@ export interface PlannerPost {
   cover: { url: string; type: 'image' | 'video' | 'audio' } | null;
   /** Set when the post goes live with a scheduled release and so moves with it. */
   release: PlannerRelease | null;
+  /** The version the post is attached to, for labelling; null when it has none. */
+  model: { name: string; versionName: string } | null;
 }
 
 export interface PlannerMedia {

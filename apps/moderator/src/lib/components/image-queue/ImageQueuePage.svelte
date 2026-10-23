@@ -16,7 +16,8 @@
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import CsamQueueTabs from './CsamQueueTabs.svelte';
   import { isFlagOnlyRemaining } from '$lib/image-review';
   import { reportDetailEntries, reportedPlacementId } from '$lib/reports';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
@@ -203,6 +204,20 @@
   {itemKeys}
   {selected}
 />
+
+{#if data.view === 'csam'}
+  {@const filteredUserId = data.kind === 'review' ? data.userId : null}
+  <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
+    <CsamQueueTabs active="all" level={data.level} />
+    {#if filteredUserId}
+      <span class="text-dark-2">
+        One user's images (#{filteredUserId}).
+        <a href={csamReportUrl(data.civitaiUrl, filteredUserId)} target="_blank" rel="noreferrer" class="link">Report page</a>
+        · <a href={`/images/csam?by=user&level=${data.level}`} class="link">Back to users</a>
+      </span>
+    {/if}
+  </div>
+{/if}
 
 {#snippet userHeader(item: {
   userId: number;
@@ -483,6 +498,15 @@
         <div class="flex flex-wrap gap-1">
           <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
           {#if isFlagOnlyRemaining(item)}<Badge class="bg-muted">Removed</Badge>{/if}
+        </div>
+        <div class="flex gap-2 text-xs">
+          <a href={`/images/csam?userId=${item.userId}&level=${data.level}`} class="link">This user's images</a>
+          <a
+            href={`${csamReportUrl(data.civitaiUrl, item.userId)}?imageId=${item.id}`}
+            target="_blank"
+            rel="noreferrer"
+            class="link">Report page</a
+          >
         </div>
       {/if}
       <ReviewActions

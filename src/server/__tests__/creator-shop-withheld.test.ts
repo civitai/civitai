@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { CosmeticShopItemHistoryEntry } from '~/server/schema/cosmetic-shop.schema';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as CreatorShopLabels from '~/server/services/creator-shop-labels.service';
 import type * as NotificationService from '~/server/services/notification.service';
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -13,12 +14,22 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(),
 }));
+// The label store's own behaviour is covered on real Postgres in creator-shop-labels.behavior.test.ts.
+vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShopLabels>()),
+  recordShopVerdict: vi.fn(async () => true),
+  excludeDeletedShopListing: vi.fn(async () => true),
+}));
 
 const { isListingDisplayable } = await import('~/server/services/creator-shop.data');
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
 const { CosmeticFlag } = await import('~/shared/constants/cosmetic-flags.constants');
+const { excludeDeletedShopListing, recordShopVerdict } = await import(
+  '~/server/services/creator-shop-labels.service'
+);
+const { deleteCosmeticShopItem } = await import('~/server/services/cosmetic-shop.service');
 const {
   deleteCreatorShopItem,
   reviewCreatorShopItem,
@@ -26,7 +37,9 @@ const {
   unarchiveCreatorShopItem,
   updateCreatorShopItem,
 } = await import('~/server/services/creator-shop.service');
-const { cosmeticEntityCaches, userCosmeticCache } = await import('~/server/redis/caches');
+const { cosmeticCache, cosmeticEntityCaches, userCosmeticCache } = await import(
+  '~/server/redis/caches'
+);
 
 const CREATOR = 11;
 const BUYER = 12;
@@ -325,6 +338,51 @@ describe('withholding takes the cosmetic off everyone', () => {
     }
   );
 
+  it('records the label inside the verdict, and sweeps after both commit', async () => {
+    const order: string[] = [];
+    vi.mocked(recordShopVerdict).mockClear();
+    vi.mocked(recordShopVerdict).mockImplementationOnce(async () => {
+      order.push('label');
+      return true;
+    });
+    const write = dbMock.dbWrite.cosmeticShopItem.update.getMockImplementation()!;
+    dbMock.dbWrite.cosmeticShopItem.update.mockImplementationOnce(async (...args: never[]) => {
+      order.push('verdict');
+      return write(...args);
+    });
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
+      const result = await fn(dbMock.dbWrite);
+      order.push('commit');
+      return result;
+    });
+    dbMock.dbWrite.userCosmetic.updateMany.mockImplementationOnce(async () => {
+      order.push('sweep');
+      return { count: wearers.length };
+    });
+
+    await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
+
+    expect(order).toEqual(['verdict', 'label', 'commit', 'sweep']);
+    expect(recordShopVerdict).toHaveBeenCalledTimes(1);
+    expect(recordShopVerdict).toHaveBeenCalledWith(
+      dbMock.dbWrite,
+      42,
+      expect.objectContaining({ action: 'request-changes', moderatorId: MOD })
+    );
+  });
+
+  // The search document shows what the user wears, not what is placed on their content, and the
+  // users index re-pulls an existing user only when their id is queued.
+  it('queues the search documents of the users who were wearing it, and only them', async () => {
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'reject' });
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([BUYER]);
+  });
+
   it('re-approval grants without putting it back on anyone', async () => {
     await reviewCreatorShopItem({ reviewerId: MOD, id: 42, action: 'request-changes' });
     expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledTimes(1);
@@ -415,6 +473,69 @@ describe('equipped cosmetics shown to other users', () => {
     const worn = await userCosmeticCache.fetch([BUYER]);
 
     expect(worn[BUYER].cosmetics.map((c) => c.cosmeticId)).toEqual([OTHER_COSMETIC]);
+  });
+});
+
+describe('decorations placed on content, shown to other users', () => {
+  const CREATOR_IMAGE = IMAGE;
+  const BUYER_IMAGE = IMAGE + 1;
+  const SHOP_FRAME_IMAGE = IMAGE + 2;
+  // Placed before withholding existed, so no sweep took them off: the creator's own image and a
+  // buyer's (withheld is per cosmetic, not per holder), beside a shop frame with no creator.
+  const placed = () =>
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { cosmeticId: COSMETIC, equippedToId: CREATOR_IMAGE, userData: null, createdById: CREATOR },
+      { cosmeticId: COSMETIC, equippedToId: BUYER_IMAGE, userData: null, createdById: CREATOR },
+      {
+        cosmeticId: OTHER_COSMETIC,
+        equippedToId: SHOP_FRAME_IMAGE,
+        userData: null,
+        createdById: null,
+      },
+    ] as never);
+  const frame = (id: number) => ({ id, name: 'Frame', type: 'ContentDecoration', data: {} });
+
+  let fetchCosmetics: typeof cosmeticCache.fetch;
+  beforeEach(() => {
+    fetchCosmetics = cosmeticCache.fetch;
+    cosmeticCache.fetch = (async () => ({
+      [COSMETIC]: frame(COSMETIC),
+      [OTHER_COSMETIC]: frame(OTHER_COSMETIC),
+    })) as never;
+    dbMock.dbWrite.$queryRaw.mockReset();
+  });
+  afterEach(() => {
+    cosmeticCache.fetch = fetchCosmetics;
+  });
+
+  it("leave out a withheld cosmetic, on the creator's content and a buyer's", async () => {
+    placed();
+
+    const frames = await cosmeticEntityCaches.Image.fetch([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+
+    expect(Object.keys(frames).map(Number)).toEqual([SHOP_FRAME_IMAGE]);
+  });
+
+  it('keep a published one', async () => {
+    storedListing = listingRow(LIVE);
+    placed();
+
+    const frames = await cosmeticEntityCaches.Image.fetch([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+
+    expect(Object.keys(frames).map(Number).sort()).toEqual([
+      CREATOR_IMAGE,
+      BUYER_IMAGE,
+      SHOP_FRAME_IMAGE,
+    ]);
+    expect(frames[CREATOR_IMAGE]).not.toHaveProperty('createdById');
   });
 });
 
@@ -730,6 +851,40 @@ describe('a moderator deleting a listing', () => {
     expect(deleted).toBe(true);
     await equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC });
     expect(cosmetics.find((c) => c.id === COSMETIC)?.flags).toBe(0);
+  });
+
+  it.each([
+    ['the creator shop', () => deleteCreatorShopItem({ id: 42, userId: MOD, isModerator: true })],
+    ['the official shop', () => deleteCosmeticShopItem({ id: 42 })],
+  ])('takes a listing deleted from %s out of training in the delete', async (_label, remove) => {
+    storedListing = listingRow(LIVE);
+    dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockResolvedValue({
+      id: 42,
+      _count: { purchases: 0 },
+    });
+    const order: string[] = [];
+    vi.mocked(excludeDeletedShopListing).mockClear();
+    vi.mocked(excludeDeletedShopListing).mockImplementationOnce(async () => {
+      order.push('exclude');
+      return true;
+    });
+    const write = dbMock.dbWrite.cosmeticShopItem.delete.getMockImplementation()!;
+    dbMock.dbWrite.cosmeticShopItem.delete.mockImplementationOnce((...args: never[]) => {
+      order.push('delete');
+      return write(...args);
+    });
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
+      order.push('begin');
+      const result = await fn(dbMock.dbWrite);
+      order.push('commit');
+      return result;
+    });
+
+    await remove();
+
+    expect(order).toEqual(['begin', 'delete', 'exclude', 'commit']);
+    expect(excludeDeletedShopListing).toHaveBeenCalledTimes(1);
+    expect(excludeDeletedShopListing).toHaveBeenCalledWith(dbMock.dbWrite, 42);
   });
 
   it('never withholds a cosmetic no creator made, whatever its flags say', async () => {

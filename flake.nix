@@ -137,7 +137,7 @@
       #
       # The SERVERS are docker-compose's job (docker-compose.base.yml), not
       # nix's -- four postgres, two redis, minio, meilisearch, clickhouse and
-      # maildev. What the shell provides is the matching CLIENTS, because you
+      # mailpit. What the shell provides is the matching CLIENTS, because you
       # talk to those containers by hand constantly:
       #
       #   psql              -> the `db` container on :15432

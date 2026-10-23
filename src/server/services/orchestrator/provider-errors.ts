@@ -1,3 +1,5 @@
+import { MATURE_SOURCE_HINT } from '~/shared/constants/mature-source.constants';
+
 // Provider generation errors. `sanitizeProviderError` decides what is safe to show a user;
 // `providerNameMap` brands the message with the provider behind an engine id.
 
@@ -111,6 +113,16 @@ export function sanitizeProviderError(rawMessage: string, engine?: string): stri
 // bracket rule in UNSAFE_PATTERNS would redact the whole refusal for that token alone.
 const PROVIDER_INDEX_TOKEN = /\s*'?\b\w+\[\d+\]'?/g;
 
+const CONTENT_FILTER_REFUSAL = "The provider's content filter rejected this request.";
+
+/** Flux 3 Video's provider rejects mature source images; other engines are not pointed at H3. */
+function isFlux3ImageToVideoStep(step: unknown) {
+  const s = step as { $type?: unknown; input?: { engine?: unknown; operation?: unknown } } | null;
+  return (
+    s?.$type === 'videoGen' && s.input?.engine === 'flux' && s.input.operation !== 'textToVideo'
+  );
+}
+
 /**
  * Sanitised, user-facing errors for a failed step. A provider content refusal
  * (`externalTOSViolation`) keeps its reason; every other message is sanitised unchanged.
@@ -118,12 +130,26 @@ const PROVIDER_INDEX_TOKEN = /\s*'?\b\w+\[\d+\]'?/g;
 export function sanitizeStepErrors(step: unknown, engine?: string): string[] {
   const output = (step as { output?: { externalTOSViolation?: unknown; message?: unknown } } | null)
     ?.output;
+  const refused = output?.externalTOSViolation === true;
   const refusal =
     output && 'externalTOSViolation' in output && typeof output.message === 'string'
       ? output.message.trim()
       : undefined;
 
-  return extractStepErrors(step).map((msg) =>
+  const raw = extractStepErrors(step);
+  const errors = raw.map((msg) =>
     sanitizeProviderError(msg === refusal ? msg.replace(PROVIDER_INDEX_TOKEN, '') : msg, engine)
   );
+  if (!refused || !isFlux3ImageToVideoStep(step)) return errors;
+
+  // A refusal too unsafe to show reads as a system error, which would contradict the hint.
+  const refusalIndex = refusal ? raw.indexOf(refusal) : -1;
+  const shown =
+    refusalIndex >= 0 && isLikelySafeMessage(refusal!.replace(PROVIDER_INDEX_TOKEN, ''))
+      ? errors[refusalIndex]
+      : CONTENT_FILTER_REFUSAL;
+  const withHint = `${shown} ${MATURE_SOURCE_HINT}`;
+  return refusalIndex >= 0
+    ? errors.map((msg, i) => (i === refusalIndex ? withHint : msg))
+    : [...errors, withHint];
 }

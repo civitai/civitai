@@ -17,7 +17,6 @@ export const isStorylineNotAvailable = (error: { message: string } | null | unde
 const showError = (title: string) => (error: { message: string }) =>
   showErrorNotification({ title, error: new Error(error.message) });
 
-/** The storyline's price, for its owner. */
 export function useStorylineSpace(
   storylineId: number,
   { enabled }: { enabled: boolean }
@@ -52,7 +51,6 @@ export function useStorylineSpace(
   };
 }
 
-/** What a contributor is told before submitting: the price, and whether they may continue. */
 export function useStorylineContinueTerms(
   parentPostId: number,
   { enabled }: { enabled: boolean }
@@ -118,7 +116,6 @@ export function useSubmitStorylineContinuation({
   };
 }
 
-/** The owner adding one of their own posts as the next chapter: no review, no price. */
 export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
@@ -139,7 +136,6 @@ export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => vo
   };
 }
 
-/** The owner joining an existing chapter on as a way on from another, so two branches rejoin. */
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
@@ -160,7 +156,6 @@ export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }
   };
 }
 
-/** Continuations waiting on the viewer's storylines, one page at a time. */
 export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   unavailable: boolean;
   rows: StorylineQueueRow[];
@@ -186,7 +181,7 @@ export function useStorylineQueue({ enabled }: { enabled: boolean }): {
   };
 }
 
-/** Accept or decline one continuation. Rejects with the server's message on refusal. */
+/** Rejects with the server's message on refusal. */
 export function useActOnStorylineContinuation(): {
   act: (input: { placementId: number; action: 'approve' | 'decline' }) => Promise<void>;
 } {
@@ -198,7 +193,6 @@ export function useActOnStorylineContinuation(): {
   };
 }
 
-/** What became of a submitted continuation, from the contributor's own list (read uncached). */
 export async function readSubmitOutcome(
   id: number,
   awaitingScan: boolean,

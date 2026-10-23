@@ -23,6 +23,7 @@ import {
   submitCreatorShopItemSchema,
   submitCreatorShopPackSchema,
   submitMysteryPackSchema,
+  refundShopPurchasesSchema,
   takedownCosmeticShopItemSchema,
   updateCreatorShopPackSchema,
   updateCreatorShopItemSchema,
@@ -61,12 +62,14 @@ import {
   updateCreatorShopPack,
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { refundShopPurchases } from '~/server/services/creator-shop-withdrawn-refund.service';
 import {
   lowerMysteryPackPrice,
   reviseMysteryPack,
   submitMysteryPack,
   withdrawMysteryPackRevision,
 } from '~/server/services/creator-mystery-pack.service';
+import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
 import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
@@ -342,6 +345,12 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('cosmeticSimilarity'))
     .input(getSimilarCosmeticsSchema)
     .query(({ input }) => getSimilarCosmetics(input)),
+  getMysteryPackReview: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getByIdSchema)
+    .query(({ input, ctx }) =>
+      getMysteryPackReview({ listingId: input.id, stickersEnabled: ctx.features.stickers })
+    ),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
@@ -357,5 +366,9 @@ export const creatorShopRouter = router({
   takedownItem: moderatorProcedure
     .input(takedownCosmeticShopItemSchema)
     .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
+  // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout.
+  refundPurchases: moderatorProcedure
+    .input(refundShopPurchasesSchema)
+    .mutation(({ input, ctx }) => refundShopPurchases({ ...input, moderatorId: ctx.user.id })),
   // #endregion
 });

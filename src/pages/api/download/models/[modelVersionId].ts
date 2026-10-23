@@ -9,6 +9,7 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
 import { fetchDownloadCount } from '~/server/utils/download-count';
@@ -52,6 +53,37 @@ function logSplitQueryRepair(req: NextApiRequest) {
     type: 'info',
     message: 'split-query-repaired',
     keys: Object.keys(req.query),
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+/** A file this large can still be downloading when a short-lived link expires. */
+const LARGE_FILE_KB = 1024 * 1024;
+const SMALL_FILE_EXPIRY_SAMPLE_RATE = 0.01;
+
+/** How long the link a download was sent to has left. Never the link itself: it carries a signature. */
+function logUrlExpiry({
+  fileId,
+  sizeKB,
+  urlExpiresAt,
+}: {
+  fileId: number;
+  sizeKB: number;
+  urlExpiresAt: Date;
+}) {
+  const large = sizeKB >= LARGE_FILE_KB;
+  if (!large && Math.random() >= SMALL_FILE_EXPIRY_SAMPLE_RATE) return;
+  const expiresAt = Number.isNaN(urlExpiresAt.getTime()) ? null : urlExpiresAt;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'url-expiry',
+    fileId,
+    sizeKB,
+    expiresAt: expiresAt?.toISOString() ?? null,
+    remainingSeconds: expiresAt ? Math.round((expiresAt.getTime() - Date.now()) / 1000) : null,
+    sampleRate: large ? 1 : SMALL_FILE_EXPIRY_SAMPLE_RATE,
   }).catch(() => {
     // swallow logging failure
   });
@@ -285,13 +317,16 @@ export default PublicEndpoint(
           });
         }
 
-        // Increment download count for user
-        await downloadLimiter.increment(userKey);
+        // Increment download count for user. A resume re-enters here for the same file, so only the
+        // first request for a file and repeats past the free allowance count.
+        if (await countsTowardDownloadLimit(userKey, fileResult.fileId))
+          await downloadLimiter.increment(userKey);
       } catch (error) {
         // Don't return error to user
         console.error(error);
       }
 
+      logUrlExpiry(fileResult);
       // Redirect to download url
       res.redirect(fileResult.url);
     } catch (error) {

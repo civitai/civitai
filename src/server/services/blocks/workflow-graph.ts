@@ -255,12 +255,20 @@ export function blockStepGenerations(stepType: string, input: unknown, args: unk
  * of checking only part of it.
  */
 export function collectBlockStepTypes(stepType: string, input: unknown): string[] | null {
-  const types: string[] = [];
+  return collectBlockStepTemplates(stepType, input)?.map((step) => step.$type) ?? null;
+}
+
+/** `collectBlockStepTypes` with each step's input: the step itself, then each `repeat` template. */
+export function collectBlockStepTemplates(
+  stepType: string,
+  input: unknown
+): Array<{ $type: string; input: unknown }> | null {
+  const steps: Array<{ $type: string; input: unknown }> = [];
   let currentType = stepType;
   let currentInput = input;
   for (let depth = 0; depth <= REPEAT_NESTING_MAX; depth += 1) {
-    types.push(currentType);
-    if (!isRepeatStepType(currentType)) return types;
+    steps.push({ $type: currentType, input: currentInput });
+    if (!isRepeatStepType(currentType)) return steps;
     const repeat = readRepeatInput(currentInput);
     if (!repeat) return null;
     currentType = repeat.template.$type;

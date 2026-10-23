@@ -8,7 +8,6 @@ import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Availability, MetricTimeframe, ModelStatus } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '../common/constants';
-import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';
 
@@ -41,6 +40,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   description: true,
+  sfwName: true,
+  sfwDescription: true,
+  coverImageId: true,
+  sfwCoverImageId: true,
   poi: true,
   minor: true,
   sfwOnly: true,
@@ -70,6 +73,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       ownershipProcessing: true,
     },
   },
+  // `profilePicture` and `cosmetics` are filled from cache by `getModelHandler`.
   user: {
     select: {
       id: true,
@@ -79,24 +83,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       // TODO.leaderboard: uncomment when migration is done
       // leaderboardShowcase: true,
       rank: { select: { leaderboardRank: true } },
-      profilePicture: {
-        select: profileImageSelect,
-      },
-      cosmetics: {
-        where: { equippedAt: { not: null }, equippedToId: null },
-        select: {
-          data: true,
-          cosmetic: {
-            select: {
-              id: true,
-              data: true,
-              type: true,
-              source: true,
-              name: true,
-            },
-          },
-        },
-      },
     },
   },
   modelVersions: {
@@ -189,6 +175,9 @@ export type AssociatedResourceModel = Prisma.ModelGetPayload<typeof associatedRe
 export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
+  sfwName: true,
+  coverImageId: true,
+  sfwCoverImageId: true,
   type: true,
   nsfw: true,
   nsfwLevel: true,

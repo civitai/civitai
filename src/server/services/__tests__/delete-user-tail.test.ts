@@ -10,6 +10,12 @@ import type * as UserRestrictionService from '~/server/services/user-restriction
 import { userBasicCache, userFollowsCache } from '~/server/redis/caches';
 import { usersSearchIndex } from '~/server/search-index';
 
+// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
+
 /**
  * `deleteUser` commits the soft delete, then ran three unguarded awaits (follow-cache bust,
  * search-index queue, basic-data refresh) AHEAD of the subscription cancels and

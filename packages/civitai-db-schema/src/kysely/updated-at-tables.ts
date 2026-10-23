@@ -42,6 +42,8 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'CommentReaction',
   'CommentV2',
   'CommentV2Reaction',
+  'CommentV3',
+  'CommentV3Reaction',
   'Cosmetic',
   'CosmeticShopPurchaseClaim',
   'Crucible',

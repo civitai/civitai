@@ -96,15 +96,7 @@ export function chunkPosts<T extends { images: unknown[] }>(
   return chunks;
 }
 
-/** Fisher–Yates with the supplied rng so a test can pin the order. */
-export function shuffle<T>(items: T[], rng: Rng = Math.random): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
+export { shuffle } from '@civitai/shared/post-scheduling';
 
 export type EveryUnit = 'minutes' | 'hours' | 'days';
 export const EVERY_UNIT_MINUTES: Record<EveryUnit, number> = { minutes: 1, hours: 60, days: 1440 };
@@ -325,17 +317,26 @@ export function toBatchImage(media: UploadedMedia, extraResourceIds: number[]) {
   };
 }
 
-/** The copy-deck wording for a `scheduleBatch` refusal; anything unrecognised is shown as sent. */
-export function describeServerError(message: string): string {
+/** The per-creator schedule lock is held, by an earlier attempt that is still running. */
+export function isScheduleBusy(message: string): boolean {
+  return /another scheduling request is still running/i.test(message);
+}
+
+/** The copy-deck wording for a `scheduleBatch` refusal; anything unrecognised is shown as sent.
+ *  `createdCount` is how many posts earlier calls of this batch already created. */
+export function describeServerError(message: string, createdCount = 0): string {
   const day = message.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  const outcome = createdCount
+    ? `${createdCount} ${createdCount === 1 ? 'post was' : 'posts were'} created before this.`
+    : 'Nothing was created.';
   if (/daily limit/i.test(message))
     return `Your schedule hit the daily limit${
       day ? ` on ${day}` : ''
-    }. Nothing was created — adjust and try again.`;
+    }. ${outcome} Adjust and try again.`;
   if (/too close|minutes between them|minutes from post/i.test(message))
-    return `Two posts would be too close together${day ? ` on ${day}` : ''}. Nothing was created.`;
+    return `Two posts would be too close together${day ? ` on ${day}` : ''}. ${outcome}`;
   if (/minutes from now|months out/i.test(message))
-    return `Some dates fell outside the ${POST_MINIMUM_SCHEDULE_MINUTES}-minute to 3-month window. Nothing was created.`;
+    return `Some dates fell outside the ${POST_MINIMUM_SCHEDULE_MINUTES}-minute to 3-month window. ${outcome}`;
   return message;
 }
 

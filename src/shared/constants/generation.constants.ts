@@ -1,22 +1,14 @@
-import type { WorkflowStatus } from '@civitai/client';
 import type {
   ComfySampler,
   ComfyScheduler,
   SdCppSampleMethod,
   SdCppSchedule,
+  WorkflowStatus,
 } from '@civitai/orchestration-client';
-import { Scheduler } from '@civitai/client';
+import { Scheduler } from '@civitai/orchestration-client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  maxUpscaleSize,
-  minDownscaleSize,
-  maxRandomSeed,
-} from '~/server/common/constants';
-import type { GenerationLimits } from '~/server/schema/generation.schema';
+import { maxUpscaleSize, minDownscaleSize, maxRandomSeed } from '~/server/common/constants';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -26,12 +18,8 @@ import {
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import {
-  MEGAPIXEL,
-  findClosestAspectRatio,
-  type CustomDimensionLimits,
-} from '~/utils/aspect-ratio-helpers';
-import { findClosest, getRatio } from '~/utils/number-helpers';
+import { MEGAPIXEL, type CustomDimensionLimits } from '~/utils/aspect-ratio-helpers';
+import { findClosest } from '~/utils/number-helpers';
 
 // Response header the orchestrator router sets when the generation client is behind; UpdateRequiredWatcher
 // reads it to prompt a refresh. (Rehomed from the deleted auth.constants.ts — it's a generation signal.)
@@ -207,16 +195,6 @@ export const clampToRange = (value: number | undefined, range: SliderRange) =>
 /** Kept out of model metrics and stripped from remixes: the user never chose these LoRAs. */
 export const allInjectableResourceIds = [sdxlDraftMode, sd1DraftMode].map((x) => x.loraVersionId);
 // #endregion
-
-export const whatIfQueryOverrides = {
-  prompt: '',
-  negativePrompt: '',
-  seed: null,
-  // image: undefined,
-  nsfw: false,
-  cfgScale: generation.defaultValues.cfgScale,
-  remixSimilarity: 1,
-};
 
 export const samplers = [
   'Euler a',
@@ -439,63 +417,6 @@ export function getResourceGenerationType(
 ) {
   return getBaseModelMediaType(baseModel);
 }
-
-export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
-  params: T,
-  limits?: GenerationLimits
-) {
-  // if (params.sampler) {
-  //   params.sampler = (generation.samplers as string[]).includes(params.sampler)
-  //     ? params.sampler
-  //     : generation.defaultValues.sampler;
-  // }
-
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
-  }
-
-  if (!params.aspectRatio && params.width && params.height) {
-    params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
-    if (getIsFlux(params.baseModel))
-      params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
-  }
-
-  // handle SDXL ClipSkip
-  // I was made aware that SDXL only works with clipSkip 2
-  // if that's not the case anymore, we can rollback to just setting
-  // this for Pony resources -Manuel
-  const isSDXL = getIsSdxl(params.baseModel);
-  if (isSDXL) params.clipSkip = 2;
-
-  if (limits) {
-    if (params.steps) params.steps = Math.min(params.steps, 50);
-    if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
-  }
-  return params;
-}
-
-export function getSizeFromAspectRatio(
-  aspectRatio: string,
-  baseModel?: string,
-  modelVersionId?: number
-) {
-  const aspectRatios = getGenerationConfig(baseModel, modelVersionId).aspectRatios;
-
-  return (
-    aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
-    generationConfig.SD1.aspectRatios[0]
-  );
-}
-
-export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
-  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const result = findClosestAspectRatio({ width, height }, aspectRatios) ?? aspectRatios[0];
-  return result ? getRatio(result.width, result.height) : '1:1';
-};
 
 export function getWorkflowDefinitionFeatures(workflow?: {
   features?: WorkflowDefinition['features'];
@@ -875,13 +796,9 @@ export const fluxUltraAspectRatios = [
   { label: '9:16', width: 1536, height: 2752 },
   { label: '9:21', width: 1344, height: 3136 },
 ];
-const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
+const fluxUltraFallbackAspectRatioIndex = 4;
 
 export const fluxModelId = 618692;
-export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
-  return modelId === fluxModelId && fluxMode === fluxUltraAir;
-}
-
 export function getIsFluxKrea({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
   return modelId === fluxModelId && fluxMode === fluxKreaAir;
 }
@@ -890,23 +807,11 @@ export function getIsPonyV7(id: number) {
   return id === 2152373;
 }
 
-export function getSizeFromFluxUltraAspectRatio(value: number) {
-  return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
-}
-
-/** The label form `Flux1ProUltraImageGenInput.aspectRatio` takes, vs the index the sibling returns. */
 export function getClosestFluxUltraAspectRatioLabel(width = 1024, height = 1024) {
   const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
   const index = ratios.indexOf(findClosest(ratios, width / height));
-  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex])
+  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[fluxUltraFallbackAspectRatioIndex])
     .label;
-}
-
-export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
-  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? defaultFluxUltraAspectRatioIndex}`;
 }
 
 type GetUpscaleFactorProps = {
@@ -963,3 +868,25 @@ function getUpperLowerLimits(value: number) {
 /** The generator's prompt cap. Here so the server's prompt comparison can bound its
  * input without importing the generation graph. */
 export const MAX_PROMPT_LENGTH = 6000;
+
+/** The model types a version may flag as a turbo variant. */
+export const TURBO_VARIANT_MODEL_TYPES: readonly ModelType[] = ['LORA', 'LoCon', 'DoRA'];
+
+/** The strength a LoRA may be generated at when its version sets no narrower range. */
+export const LORA_STRENGTH_BOUNDS = { min: -1, max: 2 } as const;
+
+/** A resource's strength settings when its version sets none. */
+export const DEFAULT_STRENGTH_RANGE = { ...LORA_STRENGTH_BOUNDS, default: 1 } as const;
+
+/** No range (form state saved before the settings shape) or equal bounds (a version that set none) both mean the full range. */
+export const strengthSliderBounds = (range: { min: number; max: number } | null | undefined) =>
+  !range || range.min === range.max ? LORA_STRENGTH_BOUNDS : { min: range.min, max: range.max };
+
+/** A weight carried onto another version stays, but inside that version's range. */
+export const clampStrength = (
+  strength: number,
+  range: { min: number; max: number } | null | undefined
+) => {
+  const bounds = strengthSliderBounds(range);
+  return Math.min(bounds.max, Math.max(bounds.min, strength));
+};

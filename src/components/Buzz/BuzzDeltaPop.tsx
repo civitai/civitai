@@ -24,10 +24,7 @@ function PopLine({
   useEffect(() => setValue(total), [total]);
 
   return (
-    <span
-      data-buzz-type={type}
-      className={clsx(classes.line, classes[type], direction === 'credit' && classes.credit)}
-    >
+    <span data-buzz-type={type} className={clsx(classes.line, classes[type])}>
       {direction === 'debit' ? '−' : '+'}
       <CustomNumberFlow value={value} />
     </span>

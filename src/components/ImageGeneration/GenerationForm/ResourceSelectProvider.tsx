@@ -62,6 +62,7 @@ type ResourceSelectState = Omit<
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
   turboPinned: boolean;
+  excludeTurbo: boolean;
   sort: ResourceSort;
   setSort: React.Dispatch<React.SetStateAction<ResourceSort>>;
   categoryTag?: string;
@@ -138,6 +139,7 @@ export function ResourceSelectProvider({
   const [turboChip, setTurboChip] = useState(false);
   const turboPinned = !!props.options?.turboOnly;
   const turboOnly = turboPinned || turboChip;
+  const excludeTurbo = !!props.options?.excludeTurbo;
   // Not persisted: the chip renders only where `showsPricingFilter` allows, but `hidePaid` is sent
   // on every select source — a remembered `true` would filter a picker with no chip to clear it.
   const [hidePaid, setHidePaid] = useState(false);
@@ -242,6 +244,7 @@ export function ResourceSelectProvider({
         filters,
         setFilters,
         turboPinned,
+        excludeTurbo,
         sort,
         setSort,
         categoryTag,

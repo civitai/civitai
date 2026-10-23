@@ -695,7 +695,7 @@ export async function createChallengeWinner(
 export async function getChallengeWinners(
   challengeId: number,
   // On the green (SFW) site, null out any winner thumbnail whose real image level isn't SFW.
-  // Optional so internal callers (e.g. buildChallengeDetail, already domain/cover-gated) can skip it.
+  // Optional for callers with no site viewer, such as the moderator edit view.
   green?: { isGreen?: boolean; viewerId?: number }
 ): Promise<
   Array<{

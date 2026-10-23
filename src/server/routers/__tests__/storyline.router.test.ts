@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
@@ -17,7 +18,7 @@ const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  // Straight through to the origin; caching is not what these tests are about.
+  // Straight through to the origin.
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
   setFetchThroughCache: vi.fn(),
 }));
@@ -68,7 +69,6 @@ function callerFor(
 
 const notBanned = { bannedAt: null, deletedAt: null };
 
-/** A storyline whose first chapter is rated X, with a ceiling of X. */
 const xStory = {
   id: 10,
   userId: OWNER,
@@ -255,9 +255,10 @@ describe('storyline router: canon ahead', () => {
     r.storyline.findUnique.mockResolvedValue(xStory as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     // The canon walk; the chapters' first images are none.
-    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
       Promise.resolve(
-        strings.join('?').includes('WITH RECURSIVE main')
+        // The walk is a nested fragment, so the SQL is read composed.
+        Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('WITH RECURSIVE main')
           ? [
               { id: 2, postId: 102, depth: 1, parentIds: [] },
               { id: 3, postId: 103, depth: 2, parentIds: [] },

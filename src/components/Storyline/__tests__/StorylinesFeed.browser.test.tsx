@@ -7,9 +7,8 @@ import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevel
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
- * The storylines feed: what the server lists, in its order, each card showing the cover, open flag
- * and price the server sends, and the filter and sort passed through to the server rather than
- * applied here (the server is what applies the reader's browsing level).
+ * The filter and sort are passed through to the server rather than applied here: the server is what
+ * applies the reader's browsing level.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -224,7 +223,6 @@ describe('StorylinesFeed', () => {
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
 
     await page.getByRole('button', { name: 'Filters' }).click();
-    // A popover on desktop, not the phone drawer.
     await expect.element(page.getByRole('dialog')).toBeVisible();
     expect(page.getByRole('dialog').element().closest('.mantine-Popover-dropdown')).not.toBeNull();
     await page.getByRole('dialog').getByText(label, { exact: true }).click();

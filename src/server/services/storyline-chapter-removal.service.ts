@@ -1,10 +1,9 @@
 import type { Prisma } from '@prisma/client';
 
 /**
- * Marks the chapters that removed placements added as removed, for the placement layer's removal
- * paths (an owner removing one, a moderator removing one or all of a user's). Called inside the
- * removal's own transaction, so it imports nothing from the placement layer and touches
- * Postgres only through `tx`.
+ * Marks the chapters that removed placements added as removed. Called inside the moderator
+ * takedown's own transaction (`takeDownApproved`), so it imports nothing from the placement layer
+ * and touches Postgres only through `tx`.
  *
  * Idempotent: a chapter already marked keeps its first `removedAt`, and a placement that never
  * became a chapter (pending, declined, expired) matches nothing. Returns how many were marked.

@@ -30,6 +30,7 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 
 const DATE = 'MMM D, YYYY h:mm A';
@@ -106,6 +107,7 @@ function DisputeWindow({ deal, until }: { deal: ServiceDealView; until: Date }) 
 
 export function ServiceDealPage({ dealId }: { dealId: number }) {
   const { deal, isLoading } = useServiceDeal(dealId);
+  const features = useFeatureFlags();
   const state = dealPageState({ isLoading, hasDeal: !!deal });
 
   if (state.kind === 'loading')
@@ -130,6 +132,25 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
             <Anchor component={NextLink} href={`/user/${deal.seller.username}/shop`} inherit>
               {deal.seller.username}&apos;s shop
             </Anchor>
+            {/* With Services off, the list and the manage tab are gone; the deal page stays. */}
+            {features.creatorServices && deal.viewerRole !== 'moderator' && (
+              <>
+                {' · '}
+                <Anchor
+                  component={NextLink}
+                  href={
+                    deal.viewerRole === 'buyer'
+                      ? '/services/deals'
+                      : `/user/${deal.seller.username}/shop/manage?tab=services`
+                  }
+                  inherit
+                >
+                  {deal.viewerRole === 'buyer'
+                    ? 'See all your requests'
+                    : 'See all requests to you'}
+                </Anchor>
+              </>
+            )}
           </Text>
           <Group gap="sm" wrap="wrap">
             <Title order={1} size="h2">

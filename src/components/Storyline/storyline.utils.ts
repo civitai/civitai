@@ -7,7 +7,6 @@ export type StorylineSourcePost = {
   publishedAt?: Date | null;
 };
 
-/** Whether a post is already a chapter, and of which storyline. */
 export function useStorylineForPost(postId: number, { enabled = true } = {}) {
   const { data, isLoading } = trpc.storyline.getForPosts.useQuery(
     { postIds: [postId] },

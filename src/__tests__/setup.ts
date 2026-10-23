@@ -50,69 +50,74 @@ vi.mock('~/server/redis/client', async () => ({
   withSysReadDeadline: redisMock.withSysReadDeadline,
 }));
 
-// Mock @civitai/client to avoid ESM resolution issues
-vi.mock('@civitai/client', () => ({
-  // Enums
-  BuzzClientAccount: { System: 'System', User: 'User' },
-  TransactionType: { Credit: 'Credit', Debit: 'Debit' },
-  Priority: { Normal: 'Normal', High: 'High' },
-  NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
-  WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
-  KlingMode: {},
-  KlingModel: {},
-  MiniMaxVideoGenModel: {},
-  HaiperVideoGenModel: {},
-  ViduVideoGenStyle: {},
-  Veo3Version: {},
-  Scheduler: {
-    EULER_A: 'EULER_A',
-    EULER: 'EULER',
-    LMS: 'LMS',
-    HEUN: 'HEUN',
-    DP_M2: 'DP_M2',
-    DP_M2A: 'DP_M2A',
-    DP_M2SA: 'DP_M2SA',
-    DP_M2M: 'DP_M2M',
-    DPMSDE: 'DPMSDE',
-    DPM_FAST: 'DPM_FAST',
-    DPM_ADAPTIVE: 'DPM_ADAPTIVE',
-    LMS_KARRAS: 'LMS_KARRAS',
-    DP_M2_KARRAS: 'DP_M2_KARRAS',
-    DP_M2A_KARRAS: 'DP_M2A_KARRAS',
-    DP_M2SA_KARRAS: 'DP_M2SA_KARRAS',
-    DP_M2M_KARRAS: 'DP_M2M_KARRAS',
-    DPMSDE_KARRAS: 'DPMSDE_KARRAS',
-    DP_M3MSDE: 'DP_M3MSDE',
-    DDIM: 'DDIM',
-    PLMS: 'PLMS',
-    UNI_PC: 'UNI_PC',
-    LCM: 'LCM',
-    UNDEFINED: 'UNDEFINED',
-  },
-  TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
-  // Functions
-  createCivitaiClient: vi.fn(),
-  getWorkflow: vi.fn(),
-  submitWorkflow: vi.fn(),
-  getResource: vi.fn(),
-  invalidateResource: vi.fn(),
-  handleError: vi.fn(),
-  invokeImageUploadStepTemplate: vi.fn(),
-  // Misc
-  Air: class Air {
-    static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
-    static stringify = vi.fn(() => '');
-    // Copied VERBATIM from node_modules/@civitai/client/dist/utils/Air.js (ESM-only,
-    // so not importable here). An approximation lets AIR tests pass against a parser
-    // production does not run.
-    static parseSafe = vi.fn(
-      (identifier: string) =>
-        identifier.match(
-          /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
-        )?.groups
-    );
-  },
-}));
+// The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
+// it; a test that drives the submit path mocks the package itself with `civitai-client.stub`.
+function orchestratorClientMock() {
+  return {
+    // Enums
+    BuzzClientAccount: { System: 'System', User: 'User' },
+    TransactionType: { Credit: 'Credit', Debit: 'Debit' },
+    Priority: { Normal: 'Normal', High: 'High' },
+    NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
+    WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
+    KlingMode: {},
+    KlingModel: {},
+    MiniMaxVideoGenModel: {},
+    HaiperVideoGenModel: {},
+    ViduVideoGenStyle: {},
+    Veo3Version: {},
+    Scheduler: {
+      EULER_A: 'EULER_A',
+      EULER: 'EULER',
+      LMS: 'LMS',
+      HEUN: 'HEUN',
+      DP_M2: 'DP_M2',
+      DP_M2A: 'DP_M2A',
+      DP_M2SA: 'DP_M2SA',
+      DP_M2M: 'DP_M2M',
+      DPMSDE: 'DPMSDE',
+      DPM_FAST: 'DPM_FAST',
+      DPM_ADAPTIVE: 'DPM_ADAPTIVE',
+      LMS_KARRAS: 'LMS_KARRAS',
+      DP_M2_KARRAS: 'DP_M2_KARRAS',
+      DP_M2A_KARRAS: 'DP_M2A_KARRAS',
+      DP_M2SA_KARRAS: 'DP_M2SA_KARRAS',
+      DP_M2M_KARRAS: 'DP_M2M_KARRAS',
+      DPMSDE_KARRAS: 'DPMSDE_KARRAS',
+      DP_M3MSDE: 'DP_M3MSDE',
+      DDIM: 'DDIM',
+      PLMS: 'PLMS',
+      UNI_PC: 'UNI_PC',
+      LCM: 'LCM',
+      UNDEFINED: 'UNDEFINED',
+    },
+    TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
+    // Functions
+    createCivitaiClient: vi.fn(),
+    getWorkflow: vi.fn(),
+    submitWorkflow: vi.fn(),
+    updateWorkflow: vi.fn(),
+    getResource: vi.fn(),
+    invalidateResource: vi.fn(),
+    handleError: vi.fn(),
+    invokeImageUploadStepTemplate: vi.fn(),
+    // Misc
+    Air: class Air {
+      static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
+      static stringify = vi.fn(() => '');
+      // Copied VERBATIM from node_modules/@civitai/orchestration-client/dist/utils/Air.js (ESM-only,
+      // so not importable here). An approximation lets AIR tests pass against a parser
+      // production does not run.
+      static parseSafe = vi.fn(
+        (identifier: string) =>
+          identifier.match(
+            /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
+          )?.groups
+      );
+    },
+  };
+}
+vi.mock('@civitai/orchestration-client', orchestratorClientMock);
 
 // App Blocks: provision a real RSA keypair so BlockTokenService can sign and
 // tests can verify against the matching public key. The public PEM is

@@ -24,6 +24,7 @@ import type * as SystemCache from '~/server/services/system-cache';
 import type * as ContentService from '~/server/services/content.service';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as RedisCaches from '~/server/redis/caches';
+import type * as SiteAlertService from '~/server/services/site-alert.service';
 
 const h = vi.hoisted(() => ({
   contentSettings: vi.fn(),
@@ -32,6 +33,7 @@ const h = vi.hoisted(() => ({
   follows: vi.fn(),
   addons: vi.fn(),
   navBanners: vi.fn(),
+  siteAlerts: vi.fn(),
   session: vi.fn(),
   tos: vi.fn(async (_: { domainColor: string }) => undefined as unknown),
 }));
@@ -77,6 +79,10 @@ vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
 }));
 // Its only export. Loading the real module pulls the whole event engine into this graph.
 vi.mock('~/server/services/nav-banner.service', () => ({ getNavBanners: h.navBanners }));
+vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof SiteAlertService>()),
+  getActiveSiteAlerts: h.siteAlerts,
+}));
 vi.mock('~/server/services/content.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ContentService>()),
   getTosMeta: h.tos,
@@ -273,6 +279,7 @@ describe('settings bootstrap during a server render', () => {
     h.follows.mockResolvedValue([7]);
     h.addons.mockResolvedValue([{ id: 'a' }]);
     h.navBanners.mockResolvedValue([]);
+    h.siteAlerts.mockResolvedValue({ version: 7, alerts: [] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -302,6 +309,7 @@ describe('settings bootstrap during a server render', () => {
       browsingSettingsAddons: [{ id: 'a' }],
       liveNow: true,
       navBanners: [],
+      siteAlerts: { version: 7, alerts: [] },
       session: { user: { id: 42, username: 'x' } },
     });
   });

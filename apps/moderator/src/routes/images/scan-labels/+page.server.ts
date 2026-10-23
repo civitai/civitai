@@ -10,6 +10,8 @@ import {
   claimNext,
   getCounters,
   getOpenFlaggerVersions,
+  isControlFlaggerVersion,
+  getVotedItemOwner,
   type VoteChoice,
 } from '$lib/server/scan-label.service';
 import {
@@ -21,7 +23,11 @@ import {
 } from '$lib/scan-labels';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const query = parseQuery(url, scanLabelFiltersSchema);
+  const parsed = parseQuery(url, scanLabelFiltersSchema);
+  const query =
+    parsed.version && (await isControlFlaggerVersion(parsed.version))
+      ? { ...parsed, version: undefined }
+      : parsed;
   const filters = toFilters(query);
   const userId = locals.user.id;
   const card = await claimNext(userId, filters);
@@ -88,6 +94,10 @@ export const actions: Actions = {
         isModerationBlocked,
       }
     ).catch((e) => console.error('scan label block sweep failed', e));
-    return { voted: true };
+    const owner = await getVotedItemOwner(input.itemId, locals.user.id).catch((e) => {
+      console.error('scan label owner read failed', e);
+      return null;
+    });
+    return { voted: true, owner };
   },
 };

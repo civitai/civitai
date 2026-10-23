@@ -130,6 +130,7 @@ function world(): World {
       PostReaction: rows(USER, 'postId', [30]),
       BountyEntryReaction: rows(USER, 'bountyEntryId', [40, 41]),
       CommentV2Reaction: [...rows(USER, 'commentId', [50]), ...rows(OTHER, 'commentId', [50], 100)],
+      CommentV3Reaction: [...rows(USER, 'commentId', [55]), ...rows(OTHER, 'commentId', [55], 100)],
       CommentReaction: rows(USER, 'commentId', [60]),
       ResourceReviewReaction: rows(USER, 'reviewId', [70]),
       ClubPostReaction: rows(USER, 'clubPostId', [75]),
@@ -156,6 +157,7 @@ describe('removeUserReactions', () => {
         PostReaction: 1,
         BountyEntryReaction: 2,
         CommentV2Reaction: 1,
+        CommentV3Reaction: 1,
         CommentReaction: 1,
         ResourceReviewReaction: 1,
         ClubPostReaction: 1,
@@ -172,6 +174,7 @@ describe('removeUserReactions', () => {
     expect(tables.ImageReaction).toHaveLength(1);
     expect(tables.ArticleReaction).toHaveLength(1);
     expect(tables.CommentV2Reaction).toHaveLength(1);
+    expect(tables.CommentV3Reaction).toHaveLength(1);
   });
 
   it('queues the Postgres metric recompute once per table, for each distinct entity', async () => {
@@ -279,6 +282,7 @@ describe('countUserReactions', () => {
       PostReaction: 1,
       BountyEntryReaction: 2,
       CommentV2Reaction: 1,
+      CommentV3Reaction: 1,
       CommentReaction: 1,
       ResourceReviewReaction: 1,
       ClubPostReaction: 0,

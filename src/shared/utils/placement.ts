@@ -176,8 +176,6 @@ export const PLACEMENT_LEDGER_TEXT: Record<
     toPlatform: 'Platform share of a model promotion',
     forfeit: 'Forfeited model promotion',
   },
-  // Only a storyline priced above zero writes any of these. A zero-priced
-  // continuation moves no Buzz, so it has no ledger rows at all.
   storyline: {
     holdFee: 'Storyline continuation fee, held while the creator decides',
     holdPrincipal: 'Storyline continuation, held while the creator decides',
@@ -309,18 +307,12 @@ export const PLACEMENT_SURFACES = {
     allowedModes: ['off', 'review'],
   },
   /**
-   * A continuation of someone's storyline, submitted for the storyline's
-   * creator to accept. The one surface whose price may be zero.
+   * A continuation of someone's storyline, submitted for the storyline's creator to accept. The one
+   * surface whose price may be zero, so it has no free tier: see `placementSurfaceAllowsZeroPrice`.
    *
-   * Zero is the default, and it is a different thing from the free tier the
-   * other surfaces have. A free placement spends one of the creator's scarce
-   * free slots and the placer's one-a-day allowance, because on those surfaces
-   * the price is the spam gate and free is the exception to it. Here free is the
-   * norm, so a zero-priced continuation is an ordinary placement that costs nothing:
-   * written with `free: false` and `amount: 0`, it holds no slot, spends no
-   * allowance and takes no escrow. What bounds it instead is the per-owner
-   * pending cap (enforced under a lock, since a spammer pays nothing to race
-   * it), the owner's review, and the storyline's rating ceiling.
+   * With no price to act as the spam gate, what bounds it instead is the per-owner pending cap
+   * (enforced under a lock, since a spammer pays nothing to race it), the owner's review, and the
+   * storyline's rating ceiling.
    */
   storyline: {
     label: 'storylines',
@@ -328,9 +320,8 @@ export const PLACEMENT_SURFACES = {
     // a post, and forks happen only at its end.
     targets: ['post'],
     defaultMode: 'review',
-    // Free to continue unless the creator chooses to charge. Same decision as
-    // the mode, per the sticker note: the default is reachable because 0 is a
-    // price `setPlacementSpace` accepts on this surface.
+    // Same decision as the mode, per the sticker note: 0 is a price `setPlacementSpace` accepts on
+    // this surface, so the default is reachable.
     defaultPrice: 0,
     trackMinPrice: 0,
     // 🔴 Zero on THIS surface only, and that is the whole relaxation. Every other
@@ -338,18 +329,14 @@ export const PLACEMENT_SURFACES = {
     // `keeps the price floor on every surface that has one` fails if this value
     // spreads. See the surface note above for what gates a storyline instead.
     serverMinPrice: 0,
-    // Platform-fixed, like the remix gallery. Only bites on a priced storyline:
-    // the fee is a share of what was held, and a zero-priced one holds nothing.
+    // Platform-fixed, like the remix gallery. Only bites on a priced storyline.
     defaultDeclineFeeRate: 0.3,
     hostDeclineFeePercent: null,
     defaultSellerShare: 0,
     defaultPlatformShare: 0,
-    // A creator reads a story chapter before answering, which takes longer than
-    // glancing at a sticker. Seven days, inside the operator ceiling.
+    // Longer than the other surfaces: a creator reads a chapter before answering.
     expiryHours: 24 * 7,
-    // No free tier: the price itself can be zero. `createFreePlacement` refuses
-    // this surface outright, so a creator who stores slots here gets nothing
-    // from them and no placer can spend their daily allowance on a storyline.
+    // `createFreePlacement` refuses this surface, so free slots here would do nothing.
     defaultFreeSlots: 0,
     maxPendingPerOwner: 10,
     // Never `auto`: a continuation is user-uploaded media added to someone
@@ -429,15 +416,11 @@ export const surfaceAcceptsTarget = (surface: PlacementSurface, target: string) 
   (PLACEMENT_SURFACES[surface].targets as readonly string[]).includes(target);
 
 /**
- * Whether a creator may price this surface at zero, which also means it has no
- * free tier.
+ * Whether a creator may price this surface at zero, which also means it has no free tier.
  *
- * Derived from the floor rather than stored beside it, so the two cannot
- * disagree: a surface that may charge nothing has no use for scarce free slots
- * or a daily allowance, and a surface with a floor needs both. The free path
- * refuses these surfaces, and a zero-priced placement on one is written as an
- * ordinary placement of amount 0 that neither counts against the allowance nor
- * holds a slot.
+ * Derived from the floor rather than stored beside it, so the two cannot disagree. A zero-priced
+ * placement is an ordinary placement of amount 0 (`free: false`): it holds no slot, spends no
+ * allowance and takes no escrow, and `createFreePlacement` refuses these surfaces.
  */
 export const placementSurfaceAllowsZeroPrice = (surface: PlacementSurface) =>
   PLACEMENT_SURFACES[surface].serverMinPrice === 0;

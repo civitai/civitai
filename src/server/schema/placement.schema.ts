@@ -18,6 +18,7 @@ import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
+  STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
 
 export const placementSurfaceSchema = z.enum(
@@ -110,6 +111,9 @@ export const placementSpaceSchema = z
       .object({
         maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
         contentRule: z.enum(['atOrBelow', 'any']),
+        // At least one: switching every type off is the mode's "No stickers", and
+        // a second way to say it would leave two states that mean the same thing.
+        mediaTypes: z.array(z.enum(STICKER_MEDIA_TYPES)).min(1),
       })
       .partial()
       .optional(),
@@ -379,10 +383,6 @@ export const getPendingStickerPlacementsSchema = z.object({
 export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
 });
-
-// ---------------------------------------------------------------------------
-// Storyline continuations
-// ---------------------------------------------------------------------------
 
 const storylineSpaceModeSchema = z.enum(['off', 'review']);
 

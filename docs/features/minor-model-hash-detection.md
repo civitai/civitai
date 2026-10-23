@@ -26,7 +26,7 @@ Both unattended paths are behind one Flipt kill switch and ship **default-off**.
 | `src/pages/models/[id]/[[...slug]].tsx` | Owner-facing alert on the model page |
 | `src/server/jobs/minor-hash-sweep.ts` | Nightly sweep job (`45 3 * * *`) |
 | `src/pages/api/admin/temp/minor-hash-sweep.ts` | Backfill + rollback endpoint (`WEBHOOK_TOKEN`) |
-| `src/pages/moderator/minor-hash-matches.tsx` | Moderator review page (two tabs) |
+| `apps/moderator/src/routes/models/flags/` | Moderator review: Model Flags, three tabs (see [moderator-model-flags.md](moderator-model-flags.md)) |
 | `src/server/routers/moderator/index.ts` | `moderator.models.*` procedures |
 | `src/server/schema/minor-hash.schema.ts` | Zod inputs |
 | `src/server/flipt/client.ts` | `FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG` |
@@ -190,14 +190,14 @@ A clear stamp only restrains the automation. A moderator can still flag the mode
 
 ## Moderator review page
 
-`/moderator/minor-hash-matches` (mod nav). Two tabs:
+Model Flags in the moderator app (`/models/flags`; the main app's `/moderator/minor-hash-matches` redirects to it). The two queues below live in its **Needs review** (file matches, nothing applied) and **Auto-flagged** (hash flags, applied) tabs:
 
-**Pending review** — different-uploader matches (`queryMinorHashMatches`). Actions: **Set as Minor**
+**File matches** in Needs review (was Pending review; chip "hash", shown to holders of `modelFlags.fileMatches.decide`) — different-uploader matches (`queryMinorHashMatches`). Actions: **Set as Minor**
 (`model.setMinor`, a manual flag — snapshotted, so undoable, but only by a targeted rollback) or
 **Dismiss** (`dismissMinorHashMatch`, writes `Model.meta.minorHashDismissed`; dismissed models are
 excluded from the queue).
 
-**Auto-flagged** — models the scan hook flagged that no moderator has signed off yet
+**Auto-flagged** (hash flags) — models the scan hook flagged that no moderator has signed off yet
 (`queryAutoFlaggedMinorModels`: `source='auto'`, not human-confirmed, not accepted, and flagged within
 `AUTO_FLAG_REVIEW_WINDOW_DAYS` (30)), newest first. Past the window an unreviewed flag is accepted unless
 it has an appeal. Actions:
@@ -231,8 +231,8 @@ a human `appealGranted` and a later scan detects it on text with a *different* h
 nothing, notifies nobody and changes no restrictions: it writes
 `meta.textScanFlags[label].redetected` (workflow, reason, names, hash) and leaves the grant in
 place. A first-detection hold from review mode writes the same marker with `kind: 'first'`. The same
-hash stays blocked as before. The moderator app lists these on `/models/held-detections` (badged
-Re-detected, beside first detections held by review mode — see `minor-detection-review.md`), with
+hash stays blocked as before. The moderator app lists these on the Needs review tab, `/models/flags/needs-review` (badged
+"text scan · re-detection", beside first detections held by review mode — see `minor-detection-review.md`), with
 the prior clear (who, when, via). **Flag** (the API's keep) calls
 `/api/mod/minor-flag/resolve-redetection` and applies the flag exactly as the scan would have (owner
 notice included) and records `appealUpheld`; **Don't flag** (the API's dismiss) stamps a new
@@ -267,10 +267,8 @@ Both use the same sentence, and both are deliberately vague:
 It names no hash, no matched model, and no source, and it does not enumerate the restrictions
 applied. Each of those details would tell a repeat uploader exactly which bytes to change. The
 Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in the moderator
-app's Model Flag Appeals page (`/models/flag-appeals`, which calls `/api/mod/minor-flag/resolve-appeal`).
-Appeals there cover minor flags from any source and real-person flags, so they are not a tab of this queue. Past the window, the moderator app's
-`/models/minor-hash-matches?q=<modelId>` lookup still offers Revert / Keep flagged for any model with a
-flag snapshot.
+app's Appeals tab (`/models/flags/appeals`, which calls `/api/mod/minor-flag/resolve-appeal`).
+Appeals there cover minor flags from any source and real-person flags, so they are not a tab of this queue. Past the window the flag is presumed correct and leaves the Auto-flagged tab; the moderator app no longer has a lookup that offers Revert for an older flag.
 
 **Notification** — `model-flagged-minor` (`minor-flag.notifications.ts`), `NotificationCategory.System`,
 `toggleable: false`. It polls for a snapshot whose `at` is newer than the job cursor, gated on:

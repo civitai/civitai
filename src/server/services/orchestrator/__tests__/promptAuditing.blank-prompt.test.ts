@@ -139,7 +139,7 @@ describe('classifyPromptServer — empty prompt, non-empty negative prompt', () 
       negativePrompt: POI_NEGATIVE,
       isGreen: false,
     });
-    expect(verdict).toEqual({
+    expect(verdict).toMatchObject({
       outcome: 'hard',
       source: 'regex',
       triggers: [
@@ -147,6 +147,7 @@ describe('classifyPromptServer — empty prompt, non-empty negative prompt', () 
           category: 'poi',
           message: 'Negative prompt cannot include celebrity names',
           matchedWord: 'tom cruise',
+          matchedField: 'negativePrompt',
         },
       ],
       blockedFor: ['Negative prompt cannot include celebrity names'],

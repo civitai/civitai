@@ -78,6 +78,9 @@ const { RESOURCE_INTENT_TAGS_SPEC_HASH } = await import(
   '~/server/services/resource-intent-tags/spec'
 );
 const { RESOURCE_INTENT_COOC_SPEC } = await import('~/server/services/resource-intent-cooc/spec');
+const { RESOURCE_INTENT_V1_GATE_SPEC_HASH, V1_TAGS_MIN_ECOSYSTEM_RESOURCES } = await import(
+  '~/server/services/resource-intent-tags/gate'
+);
 const { CoocCountAccumulator } = await import('~/server/services/resource-intent-cooc/build');
 const { loadScores } = await import('~/server/services/resource-intent-cooc/score');
 
@@ -103,8 +106,11 @@ const VOCAB = 'd'.repeat(64);
 
 /**
  * Three tags: `zephyr` (SDXL-leaning, two add-ons), `velvet` (explicit, one Illustrious add-on) and
- * `lantern` (Illustrious-leaning, the same add-on). Model ids are distinct from version ids.
+ * `lantern` (Illustrious-leaning, the same add-on). Model ids are distinct from version ids. Untagged
+ * add-ons published for both ecosystems fill each one's pool past the floor a tag-chosen ecosystem
+ * needs, so they rank nothing but keep both ecosystems choosable.
  */
+const CATALOGUE_FILL = V1_TAGS_MIN_ECOSYSTEM_RESOURCES;
 function tagIndex(ecosystemUsers = [200, 150]): TagIndex {
   const vocabulary = [
     { key: 'zephyr', idf: 2, near: [], explicit: false },
@@ -139,7 +145,12 @@ function tagIndex(ecosystemUsers = [200, 150]): TagIndex {
       [2, new Map([[1, 10]])],
     ]),
     kinds: {
-      addon: kind([101, 102, 103], [[0], [0], [1]], [0, 2, 3, 4], [0, 1, 2, 2]),
+      addon: kind(
+        [101, 102, 103, ...Array.from({ length: CATALOGUE_FILL }, (_, i) => 1000 + i)],
+        [[0], [0], [1], ...Array.from({ length: CATALOGUE_FILL }, () => [0, 1])],
+        [0, 2, 3, 4],
+        [0, 1, 2, 2]
+      ),
       checkpoint: kind([201], [[0]], [0, 1, 1, 1], [0]),
     },
   };
@@ -260,7 +271,7 @@ const ids = (r: { suggestions: { versionId: number }[] }) => r.suggestions.map((
 describe('cache key', () => {
   const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
 
-  it('🔴 carries the arm, the request, the snapshot, the tags spec and the stage-1 spec, in order', () => {
+  it('🔴 carries the arm, the request, the snapshot, the tags spec, the gate spec and the stage-1 spec, in order', () => {
     expect(v1TagsCacheKey({ ...base, snapshot: SNAPSHOT_SHA, tagsSpecHash: 'e'.repeat(64) })).toBe(
       keyOf([
         'v1_tags',
@@ -271,6 +282,7 @@ describe('cache key', () => {
         'addon',
         SNAPSHOT_SHA,
         'e'.repeat(64),
+        RESOURCE_INTENT_V1_GATE_SPEC_HASH,
         RESOURCE_INTENT_SPEC_HASH,
       ])
     );
@@ -371,7 +383,8 @@ describe('served v1_tags', () => {
   it('without a baseModel: the tag-derived ecosystem gates the list and the top ecosystems are returned', async () => {
     mockStage1();
     const result = await getResourceIntent({ prompt: 'zephyr' }, V1);
-    expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({ baseModel: 'SDXL 1.0' });
+    const { baseModel } = mockV1Candidates.mock.calls[0][0] as { baseModel: Map<string, string[]> };
+    expect(baseModel.get('LORA')).toEqual(expect.arrayContaining(['SDXL 1.0', 'SDXL Lightning']));
     expect(result.ecosystems).toEqual(['SDXL 1.0', 'Illustrious']);
   });
 
@@ -609,6 +622,21 @@ describe('served v1_tags cache hit', () => {
 
 describe('🔴 the shadow beside another arm', () => {
   const SHADOW = { ...CTX, poolMerge: true, v1Shadow: true };
+
+  it('gates as the served arm does: the tag-chosen ecosystem by its gate, a caller baseModel exactly', async () => {
+    mockStage1();
+    await getResourceIntent({ prompt: 'zephyr' }, SHADOW);
+    await flush();
+    const tagChosen = mockV1Candidates.mock.calls[0][0] as { baseModel: Map<string, string[]> };
+    expect(tagChosen.baseModel.get('LORA')).toEqual(expect.arrayContaining(['SDXL Lightning']));
+    expect(shadowRow()).toMatchObject({ shadowSuggestionIds: V1_IDS, ecosystemSource: 'tags' });
+
+    mockInsert.mockClear();
+    mockStage1();
+    await getResourceIntent({ prompt: 'zephyr', baseModel: 'SDXL 1.0' }, SHADOW);
+    await flush();
+    expect(mockV1Candidates.mock.calls[1][0]).toMatchObject({ baseModel: 'SDXL 1.0' });
+  });
 
   it('records the v1 list it would have served, and serves the POOL_MERGE list unchanged', async () => {
     mockStage1();

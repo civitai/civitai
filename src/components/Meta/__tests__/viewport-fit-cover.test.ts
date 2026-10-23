@@ -82,6 +82,9 @@ const INSET_CONSUMERS = [
   // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
   'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
+  // The phone account menu's sheet: starts under the header plus the top inset and pads its
+  // bottom by the home indicator's, because it is `fixed` and the page pads only `#__next`.
+  'src/components/AppLayout/AppHeader/UserMenuV2/UserMenuMobile.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
   'src/components/Consent/ConsentBanner.tsx',
@@ -429,7 +432,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   });
 
   /**
-   * The eight global stylesheets `_app.tsx` loads, in its own order. Order
+   * The nine global stylesheets `_app.tsx` loads, in its own order. Order
    * matters and is asserted with them: globals.css is imported FIRST, which is
    * why the drawer rule needs a doubled class to win a same-layer source-order
    * tie against Mantine's own `top: 0`.
@@ -443,6 +446,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     '@mantine/nprogress/styles.layer.css',
     '@mantine/tiptap/styles.layer.css',
     'mantine-react-table/styles.css',
+    '@civitai/components/styles.css',
   ];
 
   /**
@@ -469,6 +473,9 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     ['@mantine/nprogress/styles.layer.css', 1, 0],
     ['@mantine/tiptap/styles.layer.css', 0, 1],
     ['mantine-react-table/styles.css', 1, 9],
+    // The package ships a REAL root `styles.css` (byte-identical to `dist/components.css`, which is
+    // what the `exports` alias resolves to), so the path under node_modules is the import spec.
+    ['@civitai/components/styles.css', 1, 0],
     ['draft-js/dist/Draft.css', 0, 0],
   ];
 

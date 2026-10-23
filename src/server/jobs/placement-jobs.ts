@@ -102,11 +102,6 @@ export const startReadyRemixSubmissionClocksJob = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-/**
- * Storyline continuations submitted before their post was finished, admitted
- * to the owner's queue (or refunded) once it is. Until this runs the owner
- * cannot see them.
- */
 export const startReadyStorylineContinuationsJob = createJob(
   'storyline-continuation-readiness',
   '*/5 * * * *',
@@ -115,8 +110,8 @@ export const startReadyStorylineContinuationsJob = createJob(
       'storyline-continuation-readiness',
       jobContext,
       () => startReadyStorylineContinuations({ limit: BATCH }),
-      // Rows that LEFT the set: admitted or refunded. A row still selected
-      // after a pass (a transient failure) must not keep the drain going.
+      // Drains on rows that left the set, not rows selected:
+      // see `startReadyRemixSubmissionClocksJob`.
       (result) => result.started + result.refunded
     );
 
@@ -130,10 +125,6 @@ export const startReadyStorylineContinuationsJob = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-/**
- * Priced storyline continuations whose holds never all landed, settled as an
- * expiry so what was taken returns and the row leaves the owner's queue.
- */
 export const settleStaleUnfundedContinuationsJob = createJob(
   'storyline-continuation-unfunded',
   '*/10 * * * *',
@@ -156,9 +147,8 @@ export const settleStaleUnfundedContinuationsJob = createJob(
 );
 
 /**
- * Pending storyline continuations whose parent is no longer a live chapter
- * (removed, or its post deleted), refunded in full. A takedown runs this
- * itself; this finishes what a failed run left, and covers deleted posts.
+ * A takedown settles these itself; this job finishes what a failed run left, and covers
+ * deleted posts.
  */
 export const settleOrphanedContinuationsJob = createJob(
   'storyline-continuation-orphaned',

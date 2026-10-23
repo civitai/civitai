@@ -21,7 +21,8 @@ import type * as PlacementService from '~/server/services/placement.service';
  * Opt-in via `STORYLINE_SQL_TEST_DATABASE_URL`, which must point at a THROWAWAY database: the
  * suite drops and recreates the public schema. It deliberately does NOT fall back to
  * `DATABASE_URL`, which names a real environment in any checkout that has one. Before wiping, it
- * refuses a database holding any table it does not create, or more than 100 rows in a table.
+ * refuses a database holding any table it does not create, or more rows in a table than the suite
+ * writes.
  *
  *   docker run -d --rm --name pg-storyline-sql -e POSTGRES_PASSWORD=postgres \
  *     -e POSTGRES_DB=storyline -p 127.0.0.1:54331:5432 postgres:16-alpine
@@ -350,7 +351,6 @@ async function assertThrowaway(prisma: PrismaClient) {
   }
 }
 
-/** Wipes and seeds the database, after the guard has passed it. */
 async function seed(prisma: PrismaClient) {
   await assertThrowaway(prisma);
   for (const statement of [...SCHEMA, ...FIXTURE]) await prisma.$executeRawUnsafe(statement);

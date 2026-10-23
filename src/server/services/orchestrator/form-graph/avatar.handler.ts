@@ -1,4 +1,4 @@
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';

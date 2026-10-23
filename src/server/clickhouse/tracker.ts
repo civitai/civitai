@@ -310,6 +310,10 @@ export const ActionType = [
   // `Feed_TagBar_Click` is the existing precedent for a type whose `details` carries the
   // discriminator (`action: 'select' | 'clear'`).
   'AppsBuild_Action',
+  // User menu v2: one row per item opened from the menu, so default pins can be chosen from use.
+  // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
+  // tracker restart in migrations/README.md); the item, group and section ride in `details`.
+  'UserMenu_Click',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

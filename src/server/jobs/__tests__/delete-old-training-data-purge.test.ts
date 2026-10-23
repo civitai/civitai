@@ -64,6 +64,7 @@ const row = (mf_id: number, url = `https://example.invalid/bucket/key-${mf_id}`)
   mf_id,
   job_id: `job-${mf_id}`,
   url,
+  held: false,
 });
 
 const DELETED = { deleted: true } as const;

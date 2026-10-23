@@ -25,7 +25,6 @@
 </script>
 
 <ReportQueueColumn
-  title={data.labels.title}
   basePath={reportPath(data.queueType)}
   queue={data}
   items={data.items}

@@ -1,10 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
+import { resolveEntityAppeal } from '~/server/services/report.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { storylineTextScanSubject } from '~/server/services/text-scan/profiles/storyline.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { RESCAN_LIFT_APPEAL_NOTE, RESCAN_LIFT_APPEAL_REASON } from '~/shared/utils/appeal';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export const STORYLINE_TITLE_MODERATED = 'storyline-title-moderated';
 
@@ -27,6 +31,35 @@ export async function liftScanTakedown(
     }),
   ]);
   return alone.count + underModerator.count;
+}
+
+/**
+ * Approves the owner's open appeal of a takedown that has been lifted, which also notifies them.
+ * Call it only once the storyline is back up: approving says it is. The lift has already landed,
+ * so a failure here is logged and not thrown: failing a moderator's request would send them back
+ * to a lift that now answers "not taken down by its title scan". The appeal stays on the
+ * title-appeals page, where a grant with nothing left to lift closes it.
+ */
+export async function approveAppealOfLift(
+  id: number,
+  by: { resolvedReason: string; internalNotes: string; userId?: number }
+) {
+  try {
+    await resolveEntityAppeal({
+      ids: [id],
+      entityType: EntityType.Storyline,
+      status: AppealStatus.Approved,
+      ...by,
+    });
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-lift-appeal-close',
+      type: 'error',
+      message: 'takedown lifted, but its open appeal was not closed',
+      storylineId: id,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
 }
 
 /** `source` keys the notice: one per scan verdict, or per moderator action. */
@@ -137,6 +170,18 @@ export async function applyStorylineTextScan({
       );
   } else if (current && outcome.poi && outcome.minor) {
     // Pinned to the title read above: a rename landing mid-apply leaves the lift to its own scan.
-    await liftScanTakedown(entityId, { where: { title: before.title } });
+    const lifted = await liftScanTakedown(entityId, { where: { title: before.title } });
+    // A moderator's takedown still holding keeps the appeal open, as a direct lift does.
+    if (lifted) {
+      const after = await dbWrite.storyline.findUnique({
+        where: { id: entityId },
+        select: { tosViolation: true },
+      });
+      if (after && !after.tosViolation)
+        await approveAppealOfLift(entityId, {
+          resolvedReason: RESCAN_LIFT_APPEAL_REASON,
+          internalNotes: RESCAN_LIFT_APPEAL_NOTE,
+        });
+    }
   }
 }

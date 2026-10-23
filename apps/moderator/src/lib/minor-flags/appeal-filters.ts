@@ -1,30 +1,32 @@
-export const APPEAL_SOURCES = ['all', 'text-scan', 'hash', 'moderator', 'none'] as const;
-export const APPEAL_FLAGS = ['all', 'minor', 'poi', 'unflagged'] as const;
+export const APPEAL_SOURCES = ['all', 'text-scan', 'hash', 'moderator'] as const;
+export const APPEAL_FLAGS = ['all', 'minor', 'poi'] as const;
 export const APPEAL_SORTS = ['oldest', 'newest', 'flagged'] as const;
 
 export type AppealSource = (typeof APPEAL_SOURCES)[number];
 export type AppealFlag = (typeof APPEAL_FLAGS)[number];
 export type AppealSort = (typeof APPEAL_SORTS)[number];
+/** Where a row's flag came from. `none` is a row label only, not a filter: those appeals list under All. */
+export type FlagSourceKey = Exclude<AppealSource, 'all'> | 'none';
 
 export type AppealFilters = { source: AppealSource; flag: AppealFlag; sort: AppealSort };
 
 export const DEFAULT_APPEAL_FILTERS: AppealFilters = { source: 'all', flag: 'all', sort: 'oldest' };
 
-/** The `Model.meta.minorFlagSnapshot.source` value each filter option selects. `none` is every
- *  snapshot value outside this set, including no snapshot at all. */
+/** The `Model.meta.minorFlagSnapshot.source` value each filter option selects. Any other value,
+ *  including no snapshot at all, is `none`. */
 export const SNAPSHOT_SOURCE = {
   'text-scan': 'text-scan',
   hash: 'auto',
   moderator: 'manual',
 } as const;
 
-export const sourceKey = (snapshotSource: string | null): Exclude<AppealSource, 'all'> => {
+export const sourceKey = (snapshotSource: string | null): FlagSourceKey => {
   for (const key of Object.keys(SNAPSHOT_SOURCE) as (keyof typeof SNAPSHOT_SOURCE)[])
     if (SNAPSHOT_SOURCE[key] === snapshotSource) return key;
   return 'none';
 };
 
-export const SOURCE_LABELS: Record<AppealSource, string> = {
+export const SOURCE_LABELS: Record<AppealSource | FlagSourceKey, string> = {
   all: 'All',
   'text-scan': 'Text scan',
   hash: 'Hash match',
@@ -36,7 +38,6 @@ export const FLAG_LABELS: Record<AppealFlag, string> = {
   all: 'All',
   minor: 'Minor',
   poi: 'Real person',
-  unflagged: 'No longer flagged',
 };
 
 export const SORT_LABELS: Record<AppealSort, string> = {
@@ -50,7 +51,7 @@ export const SORT_LABELS: Record<AppealSort, string> = {
 export const effectiveSource = (
   snapshotSource: string | null,
   confirmedFrom: string | null
-): Exclude<AppealSource, 'all'> => {
+): FlagSourceKey => {
   const key = sourceKey(snapshotSource);
   if (key !== 'moderator') return key;
   const origin = sourceKey(confirmedFrom);
@@ -69,10 +70,7 @@ export const sourceLabel = (
 };
 
 export const matchesFlag = (flag: AppealFlag, state: { minor: boolean; poi: boolean }): boolean =>
-  flag === 'all' ||
-  (flag === 'minor' && state.minor) ||
-  (flag === 'poi' && state.poi) ||
-  (flag === 'unflagged' && !state.minor && !state.poi);
+  flag === 'all' || (flag === 'minor' && state.minor) || (flag === 'poi' && state.poi);
 
 export type AppealGroup = { source: string | null; minor: boolean; poi: boolean; count: number };
 
@@ -89,7 +87,7 @@ export function appealFacets(groups: AppealGroup[], filters: AppealFilters): App
     const key = sourceKey(g.source);
     if (matchesFlag(filters.flag, g)) {
       source.all += g.count;
-      source[key] += g.count;
+      if (key !== 'none') source[key] += g.count;
     }
     if (filters.source === 'all' || filters.source === key) {
       for (const f of APPEAL_FLAGS) if (matchesFlag(f, g)) flag[f] += g.count;

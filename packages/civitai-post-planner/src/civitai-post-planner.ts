@@ -49,6 +49,7 @@ import {
   drawerPost,
   hasMature,
   isScheduled,
+  isSelectable,
   modelFilterOptions,
   moveIssues,
   neighbours,
@@ -405,11 +406,15 @@ export class CivitaiPostPlanner extends CivitaiElement {
 
   #toggleSelected(id: number): void {
     const post = this.#posts.find((p) => p.id === id);
-    if (!post || post.release || !this.#isScheduled(post)) return;
+    if (!post || !isSelectable(post, this._now)) return;
     const next = new Set(this._selectedIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     this._selectedIds = next;
+  }
+
+  get #selectableIds(): number[] {
+    return this.#visiblePosts.filter((p) => isSelectable(p, this._now)).map((p) => p.id);
   }
 
   /** `quiet` skips the per-move toast and undo, for a caller that reports a whole batch at once. */
@@ -793,6 +798,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
       if (!this._selectMode) this._selectedIds = new Set();
     },
     clearSelection: () => (this._selectedIds = new Set()),
+    selectAll: () => (this._selectedIds = new Set(this.#selectableIds)),
     toggleSelected: (id) => this.#toggleSelected(id),
     toggleUnblur: (id) => this.#toggleUnblur(id),
     open: (post, at) => this.#open(post, at),
@@ -900,7 +906,11 @@ export class CivitaiPostPlanner extends CivitaiElement {
             context,
           })}
           ${this._selectMode
-            ? renderBulkBar({ selectedIds: this._selectedIds, actions: this.#actions })
+            ? renderBulkBar({
+                selectedIds: this._selectedIds,
+                selectableIds: this.#selectableIds,
+                actions: this.#actions,
+              })
             : nothing}
           ${this.#dialogs(posts)}
         </div>

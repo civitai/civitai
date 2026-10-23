@@ -132,12 +132,21 @@ function declineMessage(details: Record<string, unknown>) {
   return `${declined}. They kept ${fee} Buzz${rest}.`;
 }
 
+/**
+ * "image" unless the row says video. A notification created before `mediaType`
+ * rode in `details` has none, and an image is what it was written about.
+ */
+export const stickerTargetNoun = (mediaType: unknown) =>
+  mediaType === 'video' ? 'video' : 'image';
+
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
     displayName: 'Sticker awaiting your review',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.placerUsername} wants to place a sticker on your image for ${details.amount} Buzz`,
+      message: `${details.placerUsername} wants to place a sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )} for ${details.amount} Buzz`,
       // The queue, not `/images/${details.imageId}` — see the note at the top of
       // this file. Static, because the whole point is the rows this owner has
       // not seen; a per-placement URL would land them back on one image.
@@ -153,10 +162,12 @@ export const placementNotifications = createNotificationProcessor({
             'imageId', p."targetId",
             'placerId', p."placerId",
             'placerUsername', u.username,
-            'amount', p.amount
+            'amount', p.amount,
+            'mediaType', i.type::text
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
           -- Paid rows only. A free one carries amount 0, so without this it
@@ -217,7 +228,9 @@ export const placementNotifications = createNotificationProcessor({
     displayName: 'Free sticker awaiting your review',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.placerUsername} wants to place a free sticker on your image`,
+      message: `${details.placerUsername} wants to place a free sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )}`,
       // Same queue as the paid one: a free placement holds a slot and expires
       // the same way, and splitting the two destinations would teach an owner
       // two different routes for one job.
@@ -232,10 +245,12 @@ export const placementNotifications = createNotificationProcessor({
             'placementId', p.id,
             'imageId', p."targetId",
             'placerId', p."placerId",
-            'placerUsername', u.username
+            'placerUsername', u.username,
+            'mediaType', i.type::text
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
           AND p.free = true
@@ -823,7 +838,9 @@ export const placementNotifications = createNotificationProcessor({
     displayName: 'A sticker was accepted on your image automatically',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.placerUsername} placed a sticker on your image`,
+      message: `${details.placerUsername} placed a sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )}`,
       // The revealing URL, not the queue: this sticker is live on the image and
       // there is nothing to review. Placed stickers are hidden by default, so the
       // plain URL would land the owner on work that looks untouched.
@@ -838,10 +855,12 @@ export const placementNotifications = createNotificationProcessor({
             'placementId', p.id,
             'imageId', p."targetId",
             'placerId', p."placerId",
-            'placerUsername', u.username
+            'placerUsername', u.username,
+            'mediaType', i.type::text
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
         -- A row means SUBSCRIBED for this type, so the join IS the filter and an
         -- owner with no row gets nothing. Inner, deliberately: a LEFT JOIN here
         -- restricts no one and would send this to every creator on the site.

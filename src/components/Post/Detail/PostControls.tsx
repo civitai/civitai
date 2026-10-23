@@ -34,7 +34,6 @@ export function PostControls({
   postId: number;
   userId: number;
   isModelVersionPost?: number | null;
-  /** Enables the owner's "Make this chapter 1 of a storyline" entry. */
   storylinePost?: StorylineSourcePost;
   children: React.ReactElement;
 }) {

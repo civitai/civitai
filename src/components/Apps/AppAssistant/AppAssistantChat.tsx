@@ -4,6 +4,7 @@ import { Alert, Center, Loader } from '@mantine/core';
 import type {
   BeforeSendDetail,
   ChatMcpServer,
+  ChatRemoteRunner,
   ChatSubagents,
   ChatTool,
   ChatToolGate,
@@ -27,6 +28,7 @@ import {
   listenReplyResume,
 } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { AssistantTokenProvider } from '~/components/Apps/AppAssistant/assistantToken';
+import { applyRemoteRunner } from '~/components/Apps/AppAssistant/remoteRunner';
 import { appAssistantHoldsScopes } from '~/shared/constants/app-assistant.constants';
 import classes from './AppAssistant.module.scss';
 
@@ -55,6 +57,11 @@ export interface AppAssistantChatProps {
   onChatChange?: (chatId: string | null) => void;
   /** Read-only subagents, read once when the chat starts; unset keeps them off. */
   subagents?: ChatSubagents;
+  /**
+   * Replies run on App Assistant's server runner (`runner="remote"`), read once when the chat starts;
+   * unset keeps them in the browser, exactly as before.
+   */
+  remoteRunner?: ChatRemoteRunner;
 }
 
 export function AppAssistantChat({
@@ -70,10 +77,12 @@ export function AppAssistantChat({
   onReplyResume,
   onChatChange,
   subagents,
+  remoteRunner,
 }: AppAssistantChatProps) {
   const ref = useRef<HTMLElement>(null);
-  // The page's flag cannot change while it is open, so this is read once, at setup.
+  // The page's flags cannot change while it is open, so these are read once, at setup.
   const subagentsAtStart = useRef(subagents);
+  const remoteRunnerAtStart = useRef(remoteRunner);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,6 +107,9 @@ export function AppAssistantChat({
       // Set after upgrade: a property assigned before would shadow the element's accessor.
       const el = ref.current as CivitaiChat;
       el.mcp = APP_ASSISTANT_MCP;
+      // Never assigned while off, so the chat runs replies in the browser exactly as without it. Set
+      // before `app`, which starts the chat on the runner it names.
+      applyRemoteRunner(el, remoteRunnerAtStart.current);
       const initialSubagents = subagentsAtStart.current;
       // Never assigned while off, so the chat runs exactly as it does without the feature.
       if (initialSubagents) el.subagents = initialSubagents;
@@ -163,7 +175,7 @@ export function AppAssistantChat({
     // The chat it opened on start can be announced before this listens.
     const opened = (el as CivitaiChat).chatId;
     if (opened) onChatChange(opened);
-    return listenChatChange(el, onChatChange);
+    return listenChatChange(el, onChatChange, opened ?? undefined);
   }, [ready, onChatChange]);
 
   if (error)

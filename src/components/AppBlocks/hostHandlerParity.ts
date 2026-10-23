@@ -515,7 +515,8 @@ export const INVENTORY = {
   // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
   //
   // The `bytes` variant (an app's own image, no picker) is the same type and the same reply, so
-  // it needs no entry either.
+  // it needs no entry either. Nor does `purpose: 'trainingData'` (several training images,
+  // `selected: { images }`): same type, same reply key.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
@@ -890,13 +891,13 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
-  // Prepare the dataset a `kind:'training'` body names — see
-  // `prepareTrainingDatasetGate.ts`. The host calls `blocks.prepareTrainingDataset`
-  // with the page token, which the block's own origin cannot reach. REQUEST-style.
+  // REMOVED: training images are uploaded through OPEN_IMAGE_UPLOAD { purpose:
+  // 'trainingData' }. The page host still answers it, with the fixed error `removed`,
+  // so an older bundle fails at once instead of hanging. REQUEST-style.
   PREPARE_TRAINING_DATASET: {
     request: true,
     reply: 'TRAINING_DATASET_RESULT',
-    replyKeys: ['result'],
+    replyKeys: [],
     errorKeys: ['error'],
     IframeHost:
       'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error',

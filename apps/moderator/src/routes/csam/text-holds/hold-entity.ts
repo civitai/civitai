@@ -1,16 +1,23 @@
-import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+import { shortAge } from '$lib/format';
+import {
+  chatAuditChatUrl,
+  commentV2Url,
+  entityUrl,
+  modelCommentUrl,
+  userLookupUrl,
+  userUrl,
+} from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
-/** The entity types the main app records csam holds for. */
+/** The entity types whose text-scan profile requests the csam label, so the only ones a hold can exist for. */
 export const CSAM_HOLD_ENTITY_TYPES = [
   'Model',
   'Post',
+  'Article',
   'ChatMessage',
   'Comment',
   'CommentV2',
-  'ResourceReview',
-  'User',
   'UserProfile',
 ] as const;
 
@@ -19,11 +26,10 @@ export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
 export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   Model: 'Model',
   Post: 'Post',
+  Article: 'Article',
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
-  ResourceReview: 'Review',
-  User: 'Account',
   UserProfile: 'Profile',
 };
 
@@ -56,6 +62,18 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
+/** A duplicate pending hold the one-hold-per-entity migration closed; nobody ruled on it. */
+export const SUPERSEDED_OUTCOME = 'Superseded by a newer scan';
+
+export function decisionLabel(hold: { status: string; decision: string | null }): string {
+  if (hold.decision === 'superseded') return SUPERSEDED_OUTCOME;
+  const outcome =
+    hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
+      ? CSAM_HOLD_OUTCOMES[hold.decision as CsamHoldDecision]
+      : null;
+  return outcome ?? (hold.status === 'Dismissed' ? 'Dismissed' : 'Removed');
+}
+
 /** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
@@ -64,6 +82,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'UserProfile',
   'Post',
   'Model',
+  'Article',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
@@ -74,15 +93,128 @@ const isCsamHoldEntityType = (value: string): value is CsamHoldEntityType =>
 export const entityLabel = (entityType: string) =>
   isCsamHoldEntityType(entityType) ? CSAM_HOLD_ENTITY_LABELS[entityType] : entityType;
 
-const PREVIEW_LENGTH = 90;
+/** The decision keys in key order: digit `n + 1` picks index `n`. */
+export const CSAM_HOLD_KEY_ORDER = [
+  'dismiss',
+  'remove',
+  'remove_strike',
+  'remove_ban',
+  'remove_ban_report',
+] as const satisfies readonly CsamHoldDecision[];
 
-/** One line of the held text, so holds by one author are told apart in the list. */
-export function holdPreview(text: string): string {
-  // By code point, so the cut never splits a surrogate pair.
-  const chars = Array.from(text.replace(/\s+/g, ' ').trim());
-  return chars.length > PREVIEW_LENGTH
-    ? `${chars.slice(0, PREVIEW_LENGTH).join('').trimEnd()}…`
-    : chars.join('');
+export function holdDecisionEnabled(
+  hold: { entityType: string; status: string; userId: number | null },
+  grants: { canDecide: boolean; canStrike: boolean; canBan: boolean }
+): boolean[] {
+  if (!grants.canDecide || hold.status !== 'Pending') return [];
+  const removable = canRemoveHeld(hold.entityType);
+  const hasAuthor = hold.userId !== null;
+  const gate = (needsGrant: boolean) => removable && hasAuthor && needsGrant;
+  return CSAM_HOLD_KEY_ORDER.map((decision) => {
+    switch (decision) {
+      case 'dismiss':
+        return true;
+      case 'remove':
+        return removable;
+      case 'remove_strike':
+        return gate(grants.canStrike);
+      case 'remove_ban':
+      case 'remove_ban_report':
+        return gate(grants.canBan);
+    }
+  });
+}
+
+export const CSAM_HOLD_CONFIRMS: Partial<
+  Record<CsamHoldDecision, { label: string; title: string; description: string }>
+> = {
+  remove_strike: {
+    label: 'Remove content + strike',
+    title: 'Remove the content and strike the author?',
+    description: 'The content is taken down and the author receives a strike and a notification.',
+  },
+  remove_ban: {
+    label: 'Remove content + ban',
+    title: 'Remove the content and ban the author?',
+    description:
+      'The content is taken down and the account is banned, which also removes its other content.',
+  },
+  remove_ban_report: {
+    label: 'Remove content + ban + NCMEC report',
+    title: 'Remove, ban and file an NCMEC report?',
+    description:
+      'The content is taken down and the account is banned. The CSAM report form then opens for the author so you can file the report.',
+  },
+};
+
+const MIN_PHRASE = 2;
+// A quote that never closes would otherwise run on to the next quote mark and highlight the text between.
+const MAX_PHRASE = 120;
+const WORD = '\\p{L}\\p{N}';
+// A quote opens after a non-word character and closes before one, so an apostrophe inside a word
+// ("author's", "isn't") is not one.
+const QUOTED = [
+  `(?<![${WORD}])'([^'\\n]{1,${MAX_PHRASE}}?)'(?![${WORD}])`,
+  `"([^"\\n]{1,${MAX_PHRASE}}?)"`,
+  `“([^”\\n]{1,${MAX_PHRASE}}?)”`,
+  `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
+];
+
+export function quotedPhrases(reason: string): string[] {
+  const found = new Set<string>();
+  for (const source of QUOTED)
+    for (const match of reason.matchAll(new RegExp(source, 'gu'))) {
+      const phrase = match[1].trim();
+      if (phrase.length >= MIN_PHRASE) found.add(phrase);
+    }
+  return [...found];
+}
+
+export function holdTitle(hold: {
+  entityType: string;
+  entityId: number;
+  title: string | null;
+  username: string | null;
+  userId: number | null;
+}): string {
+  switch (hold.entityType) {
+    case 'ChatMessage':
+      return 'Chat';
+    case 'Comment':
+    case 'CommentV2':
+      return 'Comment';
+    case 'UserProfile':
+      return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
+    default:
+      return hold.title?.trim() || `${entityLabel(hold.entityType)} #${hold.entityId}`;
+  }
+}
+
+/** A pending row shows the newest event: when its text was last replaced, else when it was held. */
+export function holdMeta(
+  hold: {
+    status: string;
+    createdAt: Date;
+    decidedAt: Date | null;
+    textUpdatedAt?: Date | string | null;
+  },
+  now = Date.now()
+): string {
+  if (hold.status === 'Pending' || !hold.decidedAt)
+    return hold.textUpdatedAt
+      ? `text updated ${shortAge(hold.textUpdatedAt, now)}`
+      : `held ${shortAge(hold.createdAt, now)}`;
+  return `decided ${shortAge(hold.decidedAt, now)}`;
+}
+
+export function splitEmptyTypes<T extends string>(
+  types: readonly T[],
+  counts: Record<string, number> | null,
+  selected: string | null
+): { shown: T[]; empty: T[] } {
+  if (!counts) return { shown: [...types], empty: [] };
+  const shown = types.filter((t) => (counts[t] ?? 0) > 0 || t === selected);
+  return { shown, empty: types.filter((t) => !shown.includes(t)) };
 }
 
 type HoldRef = {
@@ -91,17 +223,20 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
+  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment`: its deep link needs the model id,
- *  which the hold does not record. */
+/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'Comment':
+      return hold.commentModelId
+        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
+        : null;
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
-    case 'User':
     case 'UserProfile':
       if (hold.username) return userUrl(civitaiUrl, hold.username);
       return hold.userId ? userLookupUrl(hold.userId) : null;

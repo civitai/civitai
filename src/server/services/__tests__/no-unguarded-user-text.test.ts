@@ -20,10 +20,12 @@ import { describe, expect, it } from 'vitest';
  * this map, green, while `sources[].alias` went unscanned. A per-writer count says a writer was
  * guarded; it never says it was guarded completely.
  *
- * Three review passes each found writers the previous pass missed, so the enumeration should be
- * assumed OPEN. It is tracked as ClickUp 868kz1yt1: walk the write call sites once, then every
- * writer either calls the guard and appears below, or carries a stated reason it does not. Until
- * that lands, a green run here means "what is listed is still wired", nothing wider.
+ * Three review passes each found writers the previous pass missed, so in 2026-10 the writers were
+ * enumerated by walking every Prisma and raw-SQL write call site under `src/server` instead of
+ * by reading the router tree. That walk is a snapshot, not a guarantee: a writer added after it
+ * is invisible here until someone lists it, so a green run still means "what is listed is still
+ * wired", nothing wider. Writers whose text a moderator reviews before it is shown were decided
+ * separately, as a product decision, and are not listed here.
  *
  * 868kw6t61. Nine surfaces called `throwOnBlockedLinkDomain` and stopped there, so they enforced
  * one of the two blocklists over the raw stored string while comments ran both over several
@@ -51,24 +53,46 @@ const BANNED = 'throwOnBlockedLinkDomain';
  * green, and that second call is the one with no user in the loop to notice.
  */
 const SURFACES: Record<string, number> = {
+  'src/server/routers/blocks.router.ts': 1,
+  'src/server/routers/comics.router.ts': 7,
+  'src/server/routers/oauth-client.router.ts': 2,
+  'src/server/services/answer.service.ts': 1,
   'src/server/services/apps/shared-content-safety.ts': 1,
   'src/server/services/article.service.ts': 3,
+  'src/server/services/blocks/app-listing-assets.service.ts': 2,
+  'src/server/services/blocks/app-listing-review.service.ts': 1,
+  'src/server/services/blocks/block-post.service.ts': 1,
+  'src/server/services/blocks/offsite-listing.service.ts': 4,
   'src/server/services/blurb.service.ts': 2,
   'src/server/services/bounty.service.ts': 3,
   'src/server/services/bountyEntry.service.ts': 1,
+  'src/server/services/challenge.service.ts': 1,
   'src/server/services/collection.service.ts': 1,
   'src/server/services/cosmetic-shop.service.ts': 3,
   'src/server/services/creator-announcement.service.ts': 1,
+  'src/server/services/creator-mystery-pack.service.ts': 1,
+  'src/server/services/creator-service-deal-file.service.ts': 1,
+  'src/server/services/creator-service-deal.service.ts': 2,
+  'src/server/services/creator-service.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
   'src/server/services/creator-shop.service.ts': 2,
   'src/server/services/crucible.service.ts': 2,
-  'src/server/services/model-version.service.ts': 4,
+  'src/server/services/image.service.ts': 2,
+  'src/server/services/membership-gift.service.ts': 1,
+  'src/server/services/model-file.service.ts': 2,
+  // `upsertModelVersion` holds 3: the description before and after blurb expansion, and the
+  // name/trained-words diff against the stored row.
+  'src/server/services/model-version.service.ts': 5,
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
-  'src/server/services/post.service.ts': 2,
+  'src/server/services/post.service.ts': 3,
+  'src/server/services/question.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
+  'src/server/services/sticker-placement.service.ts': 1,
+  'src/server/services/storyline.service.ts': 2,
+  'src/server/services/tag.service.ts': 1,
   // 4: the two writers below, plus the template path's alias scan — a batch call and
   // a per-alias one, which runs only to find which alias the batch refused.
   'src/server/services/user-hub.service.ts': 4,
@@ -106,20 +130,53 @@ const LINK_ONLY_ALLOWED: Record<string, string> = {
  * with a test behind it reads as a decision somebody made. Make it one.
  */
 const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
+  'src/server/routers/blocks.router.ts': { createPostFromApp: 1 },
+  'src/server/routers/comics.router.ts': {
+    createChapter: 1,
+    createProject: 1,
+    createReference: 1,
+    smartCreateChapter: 1,
+    updateChapter: 1,
+    updateProject: 1,
+    updateReference: 1,
+  },
+  'src/server/routers/oauth-client.router.ts': { create: 1, update: 1 },
+  'src/server/services/answer.service.ts': { upsertAnswer: 1 },
   'src/server/services/apps/shared-content-safety.ts': { assertSharedTextSafe: 1 },
   'src/server/services/article.service.ts': {
     applyArticleContentChange: 1,
     upsertArticle: 2,
   },
+  'src/server/services/blocks/app-listing-assets.service.ts': {
+    addListingScreenshot: 1,
+    updateListingScreenshotCaption: 1,
+  },
+  'src/server/services/blocks/app-listing-review.service.ts': { upsertAppListingReview: 1 },
+  'src/server/services/blocks/block-post.service.ts': { previewBlockPost: 1 },
+  'src/server/services/blocks/offsite-listing.service.ts': {
+    submitExternalListing: 1,
+    submitListingRevision: 1,
+    updateListing: 1,
+    updateRevisionDraft: 1,
+  },
   'src/server/services/blurb.service.ts': { createBlurb: 1, updateBlurbContent: 1 },
   'src/server/services/bounty.service.ts': { applyBountyContentChange: 1, upsertBounty: 2 },
   'src/server/services/bountyEntry.service.ts': { upsertBountyEntry: 1 },
+  'src/server/services/challenge.service.ts': { upsertUserChallenge: 1 },
   'src/server/services/collection.service.ts': { upsertCollection: 1 },
   'src/server/services/cosmetic-shop.service.ts': {
     applyCosmeticShopItemContentChange: 1,
     upsertCosmeticShopItem: 2,
   },
   'src/server/services/creator-announcement.service.ts': { upsertCreatorAnnouncement: 1 },
+  'src/server/services/creator-mystery-pack.service.ts': { submitMysteryPack: 1 },
+  'src/server/services/creator-service-deal-file.service.ts': { requestServiceDealUpload: 1 },
+  // `assertDealText` is the shared check every deal-event comment writer calls.
+  'src/server/services/creator-service-deal.service.ts': {
+    assertDealText: 1,
+    requestServiceDeal: 1,
+  },
+  'src/server/services/creator-service.service.ts': { upsertServiceOffering: 1 },
   'src/server/services/creator-shop-pack.service.ts': {
     submitCreatorShopPack: 1,
     updateCreatorShopPack: 1,
@@ -129,21 +186,28 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateCreatorShopItem: 1,
   },
   'src/server/services/crucible.service.ts': { createCrucible: 1, updateCrucible: 1 },
+  'src/server/services/image.service.ts': { updateImageTechniques: 1, updateImageTools: 1 },
+  'src/server/services/membership-gift.service.ts': { createMembershipGiftCheckout: 1 },
+  'src/server/services/model-file.service.ts': { createFile: 1, updateFile: 1 },
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
     upsertExplorationPrompt: 1,
-    upsertModelVersion: 2,
+    upsertModelVersion: 3,
   },
   'src/server/services/model.service.ts': { applyModelContentChange: 1, upsertModel: 2 },
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
-  'src/server/services/post.service.ts': { createPost: 1, updatePost: 1 },
+  'src/server/services/post.service.ts': { addPostTag: 1, createPost: 1, updatePost: 1 },
+  'src/server/services/question.service.ts': { upsertQuestion: 1 },
   'src/server/services/rating-review.service.ts': { createRatingReview: 1 },
   'src/server/services/resourceReview.service.ts': {
     createResourceReview: 1,
     updateResourceReview: 1,
     upsertResourceReview: 1,
   },
+  'src/server/services/sticker-placement.service.ts': { createStickerPlacement: 1 },
+  'src/server/services/storyline.service.ts': { createStoryline: 1, updateStoryline: 1 },
+  'src/server/services/tag.service.ts': { findOrCreateTagsByName: 1 },
   'src/server/services/user-hub.service.ts': {
     addUserHubSource: 1,
     upsertUserHub: 1,
@@ -197,6 +261,37 @@ function importedNames(
       if (importedName === exported) names.push(element.name.text);
     }
   });
+
+  // `const { x } = await import('…/blocklist.service')`, the lazy form routers use to keep a
+  // service off their cold-start path. It binds a name exactly as a static import does, so
+  // skipping it would hide a dynamic import of the banned function from the sweep below.
+  if (kind !== 'namespace') {
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isObjectBindingPattern(node.name) &&
+        node.initializer
+      ) {
+        let init: ts.Expression = node.initializer;
+        if (ts.isAwaitExpression(init)) init = init.expression;
+        const [specifier] = ts.isCallExpression(init) ? init.arguments : [];
+        if (
+          ts.isCallExpression(init) &&
+          init.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          specifier &&
+          ts.isStringLiteral(specifier) &&
+          specifier.text.includes(BLOCKLIST_MODULE)
+        ) {
+          for (const element of node.name.elements) {
+            const importedName = (element.propertyName ?? element.name).getText();
+            if (importedName === exported) names.push(element.name.getText());
+          }
+        }
+      }
+      node.forEachChild(visit);
+    };
+    visit(source);
+  }
   return names;
 }
 
@@ -225,6 +320,11 @@ function callsByFunction(source: ts.SourceFile, names: string[]): Map<string, nu
       // bumps it a line below. Bumping here too made every `export const x = async () => {}`
       // writer read as depth 2, i.e. as if its guard were buried in a callback.
       if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) scope = node.name.getText();
+    } else if (ts.isPropertyAssignment(node) && ts.isCallExpression(node.initializer)) {
+      // A tRPC procedure, `createProject: procedure.input(...).mutation(async () => {...})`: the
+      // writer is named by its router key. Without this every procedure in a router reads as
+      // `<module>`, and a call moved between two procedures would change nothing here.
+      scope = node.name.getText();
     } else if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
       // An anonymous callback — a `.map`, a transaction body. It does not rename the scope, but
       // it does bury it, and `depth` is what makes that visible below.

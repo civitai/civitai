@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@civitai/client', () => ({ submitWorkflow: vi.fn(), PutObjectCommand: class {} }));
+vi.mock('@civitai/orchestration-client', () => ({
+  submitWorkflow: vi.fn(),
+  PutObjectCommand: class {},
+}));
 // `default` mirrors the named export: the package is pre-bundled for CJS interop, so consumers
 // resolve through `default`.
 vi.mock('@aws-sdk/client-s3', () => {

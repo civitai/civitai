@@ -49,6 +49,18 @@ export function getStorylineAppealRefusal(storyline: {
   return null;
 }
 
+/**
+ * Recorded on an appeal approved because a moderator lifted the title-scan takedown directly, so
+ * the audit trail and overturn counts can tell it from an appeal that was reviewed.
+ */
+export const DIRECT_LIFT_APPEAL_REASON = 'lifted-by-moderator';
+export const DIRECT_LIFT_APPEAL_NOTE =
+  'Approved by a moderator lifting the title-scan takedown directly, not an appeal review.';
+/** The same, for a takedown a clean rescan of the title lifted. */
+export const RESCAN_LIFT_APPEAL_REASON = 'lifted-by-rescan';
+export const RESCAN_LIFT_APPEAL_NOTE =
+  'Approved because a clean rescan of the title lifted the takedown, not an appeal review.';
+
 // apps/moderator also sends closed-owner-deleted and reviewed-*; it mirrors these strings.
 export type OrphanedAppealOutcome =
   | 'under-review'

@@ -6,13 +6,6 @@ import type * as QueriesMod from '~/components/Storyline/storyline.queries';
 import type * as RoutedDialogLinkMod from '~/components/Dialog/RoutedDialogLink';
 import { StorylinePage } from '~/components/Storyline/StorylinePage';
 
-/**
- * The storyline page: the canon path in the server's order with its forks, a chapter the reader
- * may not see shown as unavailable rather than dropped, the cast, chapter 1's thread as the
- * discussion, and Continue offered from the end of the path, with the price this reader would pay
- * said in a chip before they press it.
- */
-
 const AUTHORS = {
   10: 'Sillycat83',
   11: 'tehalex86',
@@ -42,7 +35,6 @@ const chapter = (
   childCount,
   firstImage: postId ? image(postId) : null,
 });
-/** The first image the server picked for a chapter's post. */
 const image = (postId: number) => ({ id: postId * 10, url: `first-of-${postId}`, type: 'image' });
 
 const STORYLINE = {
@@ -195,7 +187,6 @@ const heading = () => page.getByRole('heading', { name: 'The Patch', level: 1 })
 const stopElements = () =>
   page.getByRole('region', { name: 'Chapters' }).getByTestId('storyline-chapter').elements();
 const stops = () => stopElements().map((li) => li.textContent);
-/** The image each thumb under `root` shows, in order. */
 const thumbs = (root: Element) =>
   [...root.querySelectorAll('[data-testid="storyline-thumb"]')].map((n) => ({
     image: n.getAttribute('data-image'),
@@ -234,7 +225,6 @@ describe('StorylinePage', () => {
       '3This chapter is hidden by your browsing level',
       '4Chapter 4Framedtehalex86Endorsed',
     ]);
-    // Each chapter shows its own first image as a 4:5 thumb; a hidden chapter shows none.
     expect(
       stopElements().map((li) => {
         const own = li.cloneNode(true) as HTMLElement;
@@ -426,7 +416,6 @@ describe('StorylinePage', () => {
     ).toHaveLength(0);
   });
 
-  // Manage is the only way into the storyline's settings, and only its owner may use them.
   test('the owner can open Manage', async () => {
     mocks.storyline = { ...STORYLINE, viewerRole: 'owner' };
     renderWithProviders(<StorylinePage id={2} />);
@@ -545,12 +534,11 @@ describe('StorylinePage', () => {
     const branchStop = branch.element().closest('[data-testid="storyline-lane-node"]')!;
     expect(parseFloat(rowTop(branchStop))).toBeGreaterThan(parseFloat(rowTop(stopElements()[1])));
     expect(parseFloat(rowTop(branchStop))).toBeLessThan(parseFloat(rowTop(stopElements()[3])));
-    // Where it forks and whose path joins back. The harness frame is phone width, so the fork
-    // band has its short copy.
+    // The harness frame is phone width, so the fork band has its short copy.
     expect(testIds('storyline-fork')).toEqual(['Forks after ch 2 · 2 paths']);
     expect(testIds('storyline-rejoin')).toEqual(["tehalex86's path joins here"]);
 
-    // Every tile opens the reader over the page; chapter 4 on the canon route through chapter 3.
+    // Chapter 4 opens on the canon route, through chapter 3.
     (branch.element() as HTMLElement).click();
     expect(mocks.openDialog).toHaveBeenLastCalledWith({
       name: 'imageDetail',

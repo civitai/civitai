@@ -208,7 +208,6 @@ function render(element: React.ReactElement) {
   return container;
 }
 
-/** Renders a hook and hands back what it returned on the latest render. */
 function renderHook<T>(useHook: () => T) {
   const result = { current: undefined as T };
   function Probe() {
@@ -440,7 +439,6 @@ describe('StorylineManageModal status change', () => {
     expect(spies.mutate).toEqual([
       { proc: 'storylineUpdate', input: { id: 3, status: 'Complete' } },
     ]);
-    // No count disc on the Collaborators tab when there are none.
     const tab = [...document.body.querySelectorAll('[role="tab"]')].find((node) =>
       node.textContent?.includes('Collaborators')
     );

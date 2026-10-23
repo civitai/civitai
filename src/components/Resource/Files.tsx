@@ -139,6 +139,8 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     linkedComponents,
     onDrop,
     dropzoneConfig,
+    sequentialUploads,
+    setSequentialUploads,
     baseModel,
     modelVersionId,
     addLinkedComponent,
@@ -322,6 +324,16 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             The main model files users will download. We&apos;ll show the best match based on their
             preferences.
           </Text>
+          {primary.maxFiles > 1 && (
+            <Switch
+              mt="sm"
+              size="xs"
+              label="Upload files one at a time"
+              description="Each file finishes and is saved before the next one starts. Slower, but if an upload fails the files already finished are kept."
+              checked={sequentialUploads}
+              onChange={(e) => setSequentialUploads(e.currentTarget.checked)}
+            />
+          )}
         </Card.Section>
         <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (

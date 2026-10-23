@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 
 export type GetPaginatedCosmeticShopItemInput = z.infer<typeof getPaginatedCosmeticShopItemInput>;
 export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
@@ -42,13 +43,20 @@ export type CosmeticShopItemHistoryEntry = z.infer<typeof cosmeticShopItemHistor
 export const cosmeticShopItemHistoryEntry = z.object({
   at: z.string(),
   userId: z.number(),
-  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown']),
+  kind: z.enum(['submitted', 'edited', 'reviewed', 'takedown', 'refunded']),
   // Status the item landed in after this event.
   status: z.string().optional(),
   // Review verdict for `reviewed` entries: approve | reject | request-changes | revert.
   action: z.string().optional(),
   note: z.string().optional(),
   changes: z.array(cosmeticShopItemHistoryChange).optional(),
+});
+
+const withdrawnRefundTerms = z.object({
+  trigger: z.enum(['reject', 'archive', 'manual']),
+  clawback: z.boolean(),
+  userId: z.number(),
+  at: z.string(),
 });
 
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
@@ -123,6 +131,13 @@ export const cosmeticShopItemMeta = z.object({
       at: z.string(),
     })
     .optional(),
+  // Set when a moderator rejects the item or it is archived while withheld: purchases made up to
+  // `at` that are still unrefunded get refunded and the creator's payouts reversed. Both writers
+  // set `clawback: true`; a manual refund stamps the same terms on the purchase row only, with
+  // `clawback` chosen by the moderator. The terms stay explicit because they are copied onto
+  // purchase rows and finished as stored. The withdrawn-refund job retries from it; approval and
+  // restore clear it.
+  withdrawnRefund: withdrawnRefundTerms.optional(),
   // Append-only (capped) log of submissions, creator edits, review verdicts and
   // takedowns, so a re-review can see what changed and what was decided before.
   // Absent on items that predate it — the UI shows an empty state rather than
@@ -152,6 +167,14 @@ export const cosmeticPurchaseMeta = z.object({
   // Kept by the platform (no recipient), so nothing to claw back — recorded for
   // the takedown summary and for reconciliation.
   platformCut: z.number().optional(),
+  // Stamped before a withdrawn-item refund moves any money for this purchase: the terms it is
+  // finished on, even if the item's own marker is cleared before it is.
+  withdrawnRefund: withdrawnRefundTerms.optional(),
+  // A box purchase whose draw a takedown revoked: flagged refunded when claimed, with the Buzz owed
+  // until `paidAt`. A re-run of that takedown pays any still owed.
+  takedownRefund: z
+    .object({ shopItemId: z.number(), at: z.string(), paidAt: z.string().optional() })
+    .optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -208,6 +231,9 @@ export const cosmeticShopSectionMeta = z.object({
   // Renders the sitewide community-cosmetics feed in place of hand-picked
   // items, so mods control the hub's placement/banner/copy like any section.
   communityHub: z.boolean().optional(),
+  // Shop items carrying this event tag join the section on their own, after its hand-picked items,
+  // so an event's approved cosmetics need not be placed one by one. Blank clears it.
+  eventTag: z.union([z.literal('').transform(() => undefined), eventTagSchema]).optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
@@ -220,6 +246,18 @@ export const upsertCosmeticShopSectionInput = z.object({
   image: comfylessImageSchema.nullish(),
   published: z.boolean().optional(),
   meta: cosmeticShopSectionMeta.optional(),
+});
+
+export type SetShopItemEventTagsInput = z.infer<typeof setShopItemEventTagsInput>;
+export const setShopItemEventTagsInput = z.object({
+  shopItemId: z.number().int().positive(),
+  eventTags: eventTagsSchema,
+});
+
+export type ShopItemSectionInput = z.infer<typeof shopItemSectionInput>;
+export const shopItemSectionInput = z.object({
+  shopItemId: z.number().int().positive(),
+  sectionId: z.number().int().positive(),
 });
 
 export type UpdateCosmeticShopSectionsOrderInput = z.infer<

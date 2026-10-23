@@ -86,4 +86,18 @@ describe('deleteCreatorShopItem', () => {
     expect(mocks.userCosmeticDeleteMany).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 42, purchases: 3 });
   });
+
+  // Deleting the listing would leave the box, its pending edit and every held box behind.
+  it("refuses a mystery pack's listing, leaving it in place", async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...shopItemRow,
+      cosmeticId: null,
+      cosmetic: null,
+      itemDefinitionId: 900,
+    });
+    await expect(deleteCreatorShopItem({ userId: 999, isModerator: true, id: 42 })).rejects.toThrow(
+      /reject or revert the pack/
+    );
+    expect(mocks.shopItemDelete).not.toHaveBeenCalled();
+  });
 });

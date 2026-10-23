@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
@@ -156,6 +157,11 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
+  // `name` is the uploaded file name, which some model types publish as the download name.
+  await throwOnBlockedUserContent([data.overrideName, data.name], {
+    isModerator,
+    surface: 'model-file',
+  });
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
     where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
@@ -203,6 +209,15 @@ export async function updateFile({
     select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
+
+  // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
+  // would leave a file whose name trips a list impossible to edit in any other way.
+  const changedNames = [
+    inputData.overrideName !== modelFile.overrideName ? inputData.overrideName : undefined,
+    inputData.name !== modelFile.name ? inputData.name : undefined,
+  ].filter(Boolean);
+  if (changedNames.length)
+    await throwOnBlockedUserContent(changedNames, { isModerator, surface: 'model-file' });
 
   assertFileTypeChangeAllowed(modelFile, inputData.type);
 

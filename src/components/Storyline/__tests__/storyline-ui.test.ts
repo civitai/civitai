@@ -217,9 +217,10 @@ describe('storylineCeilingImpact', () => {
     ).toBe(false);
   });
 
-  // Must agree with the server, or the picker offers a ceiling the server refuses. The server's
-  // `firstChapterFloor` (storyline.service.ts, module-private) refuses when the root's highest
-  // bit is above the ceiling, and getChapterLevels sends null wherever that floor is null.
+  // Must agree with the server, or the picker offers a ceiling the server refuses:
+  // assertCeilingKeepsFirstChapter refuses when firstChapterFloor (the root's highest bit,
+  // module-private) is above the ceiling, and getStorylineChapterLevels sends null wherever that
+  // floor is null.
   test('agrees with the server floor for every ceiling and root level', () => {
     const roots = [
       NsfwLevel.PG,

@@ -39,8 +39,18 @@ import {
   type TagIndexServing,
 } from '~/server/services/resource-intent-tags/holder';
 import {
+  ecosystemBaseModelGate,
+  gateEligibleEcosystems,
+  modalityEligibleEcosystems,
+  RESOURCE_INTENT_V1_GATE_SPEC_HASH,
+  V1_TAGS_REQUEST_MEDIA_TYPE,
+} from '~/server/services/resource-intent-tags/gate';
+import {
   scoreTagRequest,
+  TAG_SCORE_PARAMS,
+  type TagIndex,
   type TagKind,
+  type TagRequest,
   type TagScoreResult,
 } from '~/server/services/resource-intent-tags/score';
 import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
@@ -292,8 +302,9 @@ export function resourceIntentCacheKey(input: {
 /**
  * The v1_tags arm's key. `snapshot` is the held tag index's payload sha256 (which covers its
  * vocabulary and tables), or `COOC_FALLBACK_SNAPSHOT_KEY` when none is held; `tagsSpecHash` is
- * `RESOURCE_INTENT_TAGS_SPEC_HASH` ('' when none is held). The stage-1 hash is the last term, which
- * ends no other mode's key, so no other key can equal one of these.
+ * `RESOURCE_INTENT_TAGS_SPEC_HASH` ('' when none is held); `RESOURCE_INTENT_V1_GATE_SPEC_HASH` covers
+ * the request-time gate and floor, which neither of those does. The stage-1 hash is the last term,
+ * which ends no other mode's key, so no other key can equal one of these.
  */
 export function v1TagsCacheKey(input: {
   prompt: string;
@@ -312,6 +323,7 @@ export function v1TagsCacheKey(input: {
     'addon',
     input.snapshot,
     input.tagsSpecHash,
+    RESOURCE_INTENT_V1_GATE_SPEC_HASH,
     RESOURCE_INTENT_SPEC_HASH,
   ];
   const hash = createHash('sha256').update(terms.join('|')).digest('hex');
@@ -441,10 +453,31 @@ export type V1FallbackReason =
 /** Resolves after the current turn's microtasks, i.e. after the route has written the response. */
 const afterResponse = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+const v1ModelTypes = (kind: TagKind) =>
+  kind === 'checkpoint' ? (['Checkpoint'] as const) : RESOURCE_INTENT_COOC_SPEC.addonTypes;
+
+/**
+ * The v1 score. A caller's baseModel is the ecosystem and the tags choose none (`scoreTagRequest`);
+ * without one, the tags choose only an ecosystem with enough resources under its gate whose base
+ * model generates the request's media type.
+ */
+function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
+  const gated = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
+  const modality = modalityEligibleEcosystems(index, V1_TAGS_REQUEST_MEDIA_TYPE);
+  const rankable = new Set([...gated].filter((id) => modality.has(id)));
+  return scoreTagRequest(index, req, TAG_SCORE_PARAMS, rankable);
+}
+
 /** The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list. */
 async function listV1Tags(
   score: TagScoreResult,
-  req: { kind: TagKind; browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+  req: {
+    kind: TagKind;
+    baseModel: string | undefined;
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+  }
 ): Promise<{
   entries: ResourceIntentShortlistEntry[];
   suggestions: ResourceIntentSuggestion[];
@@ -456,11 +489,14 @@ async function listV1Tags(
       suggestions: [],
       fallbackReason: score.status === 'ok' ? 'unknown_ecosystem' : score.status,
     };
+  const modelTypes = v1ModelTypes(req.kind);
   const entries = await findRankedCandidates({
     maxModels: V1_TAGS_LIST_MODELS,
     modelIds: score.candidates.map((c) => c.modelId),
-    modelTypes: req.kind === 'checkpoint' ? ['Checkpoint'] : RESOURCE_INTENT_COOC_SPEC.addonTypes,
-    baseModel: score.ecosystem,
+    modelTypes,
+    baseModel: req.baseModel
+      ? score.ecosystem
+      : ecosystemBaseModelGate(score.ecosystem, modelTypes),
     browsingLevel: req.browsingLevel,
     coverage: req.coverage,
     cap: req.cap,
@@ -517,12 +553,8 @@ async function v1TagsShadow(
   try {
     const serving = await tagIndexSnapshotHolder().resolve();
     if (!serving.snapshot) return columns({ shadowReason: serving.fallbackReason });
-    const req = { kind, browsingLevel: ctx.browsingLevel };
-    const score = scoreTagRequest(serving.snapshot.index, {
-      ...req,
-      prompt: input.prompt,
-      baseModel: input.baseModel,
-    });
+    const req = { kind, browsingLevel: ctx.browsingLevel, baseModel: input.baseModel };
+    const score = scoreV1Tags(serving.snapshot.index, { ...req, prompt: input.prompt });
     tags = v1TagColumns(serving.snapshot, score, input.baseModel);
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     const listed = await listV1Tags(score, { ...req, coverage, cap });
@@ -787,7 +819,7 @@ export async function getResourceIntent(
       if (arm === 'v1_tags') {
         // Role-free: stage 1 runs only for `intent`/`criteria` (and the fallback's role filter).
         if (tagServing?.snapshot) {
-          tagScore = scoreTagRequest(tagServing.snapshot.index, {
+          tagScore = scoreV1Tags(tagServing.snapshot.index, {
             prompt: input.prompt,
             baseModel: input.baseModel,
             kind: 'addon',
@@ -795,6 +827,7 @@ export async function getResourceIntent(
           });
           const listed = await listV1Tags(tagScore, {
             kind: 'addon',
+            baseModel: input.baseModel,
             browsingLevel: ctx.browsingLevel,
             coverage,
             cap,

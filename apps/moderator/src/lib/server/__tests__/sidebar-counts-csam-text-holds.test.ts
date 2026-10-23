@@ -30,8 +30,9 @@ vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
 vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));
 vi.mock('../minor-hash.service', () => ({
   getMinorFlagAppealGroups: async () => [{ count: 4 }],
-  getMinorQueueCounts: async () => ({ pending: 1, auto: 2 }),
-  getRedetectedCount: async () => 5,
+  getMinorQueueCounts: async () => ({ pending: 1, pendingWithDetection: 0 }),
+  getHeldDetectionModelCount: async () => 5,
+  getFlaggedCount: async () => 0,
 }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview: async () => 0 }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals: async () => 0 }));
@@ -44,13 +45,13 @@ beforeEach(() => vi.clearAllMocks());
 describe('sidebar count csamTextHolds', () => {
   it('is the pending csam hold total', async () => {
     countPendingCsamHolds.mockResolvedValue(3);
-    expect(await getSidebarCounts()).toMatchObject({ csamTextHolds: 3, heldDetections: 5 });
+    expect(await getSidebarCounts()).toMatchObject({ csamTextHolds: 3, modelFlagsAppeals: 4 });
   });
 
   it('is dropped, without blanking the other badges, when its query fails', async () => {
     countPendingCsamHolds.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
     expect(counts).not.toHaveProperty('csamTextHolds');
-    expect(counts).toMatchObject({ heldDetections: 5, modelFlagAppeals: 4 });
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
 });

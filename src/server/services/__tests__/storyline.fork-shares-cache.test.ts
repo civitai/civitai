@@ -9,11 +9,10 @@ import { NsfwLevel } from '~/server/common/enums';
 /**
  * A reader's choice shows in the very next shares read, through the real fork-count cache.
  *
- * The page reads children and shares in one batch, and both refill the fork-count key. Marking
- * the key stale on a choice let the read that lost the refill lock be served the count from
- * before the choice (a reader saw "0 of 1" for their own choice). The choice now writes the new
- * counts through, so no read after it depends on winning the lock. This test holds the lock for
- * another reader and reads straight after the choice.
+ * The page reads children and shares in one batch and both refill the fork-count key, so a choice
+ * writes the new counts through instead of marking the key stale: a read that loses the refill lock
+ * would otherwise be served the count from before the choice. This test holds the lock for another
+ * reader and reads straight after.
  */
 
 const logSysRedisFailOpen = vi.hoisted(() => vi.fn());

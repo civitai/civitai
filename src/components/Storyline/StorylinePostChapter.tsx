@@ -129,8 +129,6 @@ export function StorylinePostNext({ postId }: { postId: number }) {
         chapterId={end.chapterId}
         storylineId={path.storyline.id}
         chapterDepth={entry.depth}
-        // As in the viewer: a chapter readers see as a tombstone (an author's own post above the
-        // story's rating) says so, and is not continued.
         chapterTombstone={end.tombstone}
         parentPostId={end.post?.id}
         isOwner={!!currentUser && currentUser.id === path.storyline.userId}

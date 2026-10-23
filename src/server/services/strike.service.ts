@@ -569,11 +569,6 @@ export async function evaluateStrikeEscalation(
  *
  * Writes the acceptance timestamp ITSELF: the modal fires its own settings write without awaiting it,
  * so acceptance is not guaranteed recorded by the time this returns.
- *
- * The release reads and decides INSIDE a write transaction that first locks the account row, the row
- * strike escalation writes. Deciding on the replica, or before the lock, loses whatever happened in
- * between — a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale
- * `meta` write, leaving the account unmuted at three points and absent from the review queue.
  */
 export async function acceptTosAfterMute({
   userId,
@@ -592,6 +587,18 @@ export async function acceptTosAfterMute({
       : { tosLastSeenDate: now, tosAcceptedHash: resolveTosHash(tos.hash) }),
   });
 
+  return releaseStrikeMuteOnTosAcceptance(userId);
+}
+
+/**
+ * Reads and decides INSIDE a write transaction that first locks the account row, the row strike
+ * escalation writes. Deciding on the replica, or before the lock, loses whatever happened in between —
+ * a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale `meta`
+ * write, leaving the account unmuted at three points and absent from the review queue.
+ */
+export async function releaseStrikeMuteOnTosAcceptance(
+  userId: number
+): Promise<{ unmuted: boolean; reason?: string }> {
   const result = await dbWrite.$transaction(
     async (tx): Promise<{ unmuted: boolean; reason?: string }> => {
       // Locked before anything is read, so a strike landing mid-call waits and is counted.

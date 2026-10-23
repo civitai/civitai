@@ -12,6 +12,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | NSFW Filtering | [docs/features/nsfw-filtering.md](nsfw-filtering.md) |
 | Image Rating and Visibility | [docs/features/image-rating.md](image-rating.md) |
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
+| Moderator app: Model Flags (appeals, flagged, file matches) | [docs/features/moderator-model-flags.md](moderator-model-flags.md) |
 | CSAM text holds queue (moderator app) | [docs/features/text-scan-csam-holds.md](text-scan-csam-holds.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
@@ -35,3 +36,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Avatar Gen (portrait to stylised avatar workflow)            | [docs/features/avatar-gen.md](avatar-gen.md)                                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
+| Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |

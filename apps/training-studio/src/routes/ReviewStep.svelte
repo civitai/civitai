@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
@@ -102,6 +103,9 @@
   let starting = $state(false);
   let startError = $state('');
 
+  // Moderators can switch training off on the main app; the flow's banner carries their message.
+  const trainingDisabled = $derived(serviceStatus.value?.available === false);
+
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
   const needsAttestation = $derived(buzzMode.value === 'green');
@@ -125,6 +129,14 @@
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
   let openAdv = $state(-1);
+
+  // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
+  // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
+  const advancedAcknowledged = (i: number) =>
+    acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
+  const fieldLocked = (i: number, field: ParamField) =>
+    field !== 'epochs' && !advancedAcknowledged(i);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
   const GUIDANCE_HELP =
@@ -355,7 +367,7 @@
   function start() {
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (starting || total == null || (needsAttestation && !attestSfw)) return;
+    if (starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)) return;
     const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
     if (spend) {
       confirmSpend = spend;
@@ -366,7 +378,7 @@
   }
 
   async function reallyStart() {
-    if (starting) return;
+    if (starting || trainingDisabled) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
@@ -420,6 +432,7 @@
   {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
+  {@const unacknowledged = fieldLocked(i, f.field)}
   <div
     class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
@@ -440,11 +453,13 @@
         <Checkbox
           aria-label={PARAM_LABELS[f.field]}
           bind:checked={() => Boolean(paramsAt(i)[f.field]), (v) => setField(i, f.field, v === true)}
+          disabled={unacknowledged}
         />
       </div>
     {:else if f.kind === 'select'}
       <Select.Root
         type="single"
+        disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
         <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
@@ -465,7 +480,7 @@
         aria-label={PARAM_LABELS[f.field]}
         bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
-        disabled={locked}
+        disabled={locked || unacknowledged}
         class="h-7 font-mono"
       />
     {/if}
@@ -599,6 +614,34 @@
                 <span class="font-mono text-xs text-dark-2">
                   seeded with {card.name}'s recommended values — hover (i) for what each does
                 </span>
+              </div>
+              <div class="mb-3 flex items-start gap-2.5 rounded-lg border border-buzz/30 bg-buzz/5 p-3">
+                <IconAlertTriangle size={16} stroke={2} class="mt-0.5 shrink-0 text-buzz" />
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-dark-0">
+                    Editing advanced parameters forfeits your refund
+                  </span>
+                  <span class="text-xs leading-snug text-dark-2">
+                    These defaults are tuned for your selected model. If you change them and the
+                    result is poor, the training is non-refundable. Steps and Checkpoints are not
+                    affected.
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <Checkbox
+                      id="acknowledge-advanced-{run.id}"
+                      bind:checked={
+                        () => advancedAcknowledged(i),
+                        (v) => (acknowledgedAdvanced[runParamsKey(run)] = v === true)
+                      }
+                    />
+                    <label
+                      for="acknowledge-advanced-{run.id}"
+                      class="cursor-pointer text-xs text-dark-1"
+                    >
+                      I understand and want to edit the advanced parameters
+                    </label>
+                  </div>
+                </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
                 {#each CORE_FIELDS as f, k (f.field)}
@@ -805,7 +848,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting || total == null || (needsAttestation && !attestSfw)}
+      disabled={starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -814,7 +857,11 @@
         {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
       {/if}
     </Button>
-    {#if startError}
+    {#if trainingDisabled}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        Training is currently disabled — see the notice above.
+      </p>
+    {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if total == null && !quoting}
       <p class="mt-2 text-center font-mono text-xs text-dark-2">

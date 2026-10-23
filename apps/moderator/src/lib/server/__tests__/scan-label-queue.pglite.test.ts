@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,9 +30,15 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions, sourceOrder } = await import(
-  '../scan-label.service'
-);
+const {
+  claimNext,
+  castVote,
+  getCounters,
+  getOpenFlaggerVersions,
+  getVotedItemOwner,
+  isControlFlaggerVersion,
+  sourceOrder,
+} = await import('../scan-label.service');
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
 const KEEP = { block: false } as const;
@@ -57,12 +64,14 @@ const later = (ms: number) => new Date(NOW.getTime() + ms);
 let pg: PGlite;
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(`
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL DEFAULT 'u', "type" TEXT NOT NULL DEFAULT 'image',
-      "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT
+      "name" TEXT, "width" INTEGER, "height" INTEGER, "pHash" BIGINT,
+      "userId" INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
   `);
   for (const sql of MIGRATIONS) await pg.exec(sql);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(pg) });
@@ -162,6 +171,42 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+
+  describe('control samples stay blind', () => {
+    const CONTROL_VERSION = 'control-sample@2026-10-17';
+    beforeEach(async () => {
+      await seedItem(1, { version: 'scan@1' });
+      await seedItem(2, { version: CONTROL_VERSION, sources: ['control-sample'] });
+    });
+
+    it('never lists the control version as a filter', async () => {
+      expect(await getOpenFlaggerVersions()).toEqual(['scan@1']);
+    });
+
+    it('serves and counts no control item when the control version is the filter', async () => {
+      expect(await claimNext(1, { flaggerVersion: CONTROL_VERSION }, NOW)).toBeNull();
+      expect((await getCounters(1, { flaggerVersion: CONTROL_VERSION }, NOW)).openInFilter).toBe(0);
+    });
+
+    it('still reaches a control item by its scanner flag', async () => {
+      // A control item that a scan later flags too keeps its control lane.
+      await pg.query(
+        `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+         SELECT id, 'orchestrator-scan', 'scan@2', 'wf-2-scan', '2026-10-13T08:00:00Z'
+         FROM "ScanLabelItem" WHERE "imageId" = 2`
+      );
+      expect((await getOpenFlaggerVersions()).sort()).toEqual(['scan@1', 'scan@2']);
+      expect((await claimNext(1, { flaggerVersion: 'scan@2' }, NOW))!.imageId).toBe(2);
+      // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
+      expect(await isControlFlaggerVersion('scan@2')).toBe(false);
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+    });
+
+    it('recognises the control version, and only it', async () => {
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+      expect(await isControlFlaggerVersion('scan@1')).toBe(false);
+    });
   });
 });
 
@@ -413,6 +458,56 @@ describe('outcome', () => {
       unanimous: false,
       status: 'decided',
     });
+  });
+});
+
+describe('owner reveal', () => {
+  const OWNER = 500;
+  const ownedItem = async (imageId: number, owner = OWNER) => {
+    const itemId = await seedItem(imageId);
+    await pg.query(`UPDATE "Image" SET "userId" = $1 WHERE id = $2`, [owner, imageId]);
+    return itemId;
+  };
+  beforeEach(async () => {
+    await pg.query(`INSERT INTO "User" ("id", "username") VALUES (1, 'voter'), ($1, 'uploader')`, [
+      OWNER,
+    ]);
+  });
+
+  it('serves the card with no owner in it', async () => {
+    await ownedItem(1);
+    const card = await claimNext(1, {}, NOW);
+    expect(Object.keys(card!).sort()).toEqual(
+      ['itemId', 'imageId', 'url', 'type', 'name', 'width', 'height', 'leaseExpiresAt'].sort()
+    );
+  });
+
+  it('names the image owner, not the moderator who voted', async () => {
+    const it1 = await ownedItem(7);
+    await claimNext(1, {}, NOW);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 1)).toEqual({
+      imageId: 7,
+      ownerId: OWNER,
+      ownerUsername: 'uploader',
+    });
+  });
+
+  it('keeps the id of an owner whose account row is gone', async () => {
+    const it1 = await ownedItem(7, 501);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 1)).toEqual({
+      imageId: 7,
+      ownerId: 501,
+      ownerUsername: null,
+    });
+  });
+
+  it('reveals nothing to a moderator who has not voted on the item', async () => {
+    const it1 = await ownedItem(7);
+    await claimNext(2, {}, NOW);
+    await castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1 }, NOW);
+    expect(await getVotedItemOwner(it1, 2)).toBeNull();
   });
 });
 

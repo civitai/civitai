@@ -1,11 +1,6 @@
 import type { SessionUser } from '~/types/session';
-import {
-  commonAspectRatios,
-  grokSizes,
-  nanoBananaProSizes,
-  qwenSizes,
-  seedreamSizes,
-} from '~/server/common/constants';
+import { resolveAspectRatioLabel } from '~/shared/form-graph/generation/defs';
+import { PRESET_MODEL_GRAPH_SIZES, type PresetSize } from '~/shared/generation/preset-sizes';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import {
   buildGenerationContext,
@@ -29,7 +24,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
  * submit/what-if wrappers so callers don't duplicate them.
  */
 
-export type PresetSize = { label: string; width: number; height: number };
+export type { PresetSize };
 
 export type PresetModelConfig = {
   engine: string;
@@ -45,13 +40,9 @@ export type PresetModelConfig = {
   img2imgVersionId?: number;
   maxReferenceImages: number;
   sizes: PresetSize[];
+  /** Sent to the graph when its default differs from the resolution `sizes` are listed at. */
+  resolution?: string;
 };
-
-const OPENAI_SIZES: PresetSize[] = [
-  { label: '1:1', width: 1024, height: 1024 },
-  { label: '3:2', width: 1536, height: 1024 },
-  { label: '2:3', width: 1024, height: 1536 },
-];
 
 /**
  * Registry of preset models keyed by the app-facing baseModel name. This is the
@@ -67,7 +58,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'NanoBanana',
     versionId: 2725610,
     maxReferenceImages: 7,
-    sizes: nanoBananaProSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.NanoBanana2,
   },
   NanoBanana: {
     engine: 'gemini',
@@ -75,7 +66,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'NanoBanana',
     versionId: 2436219,
     maxReferenceImages: 7,
-    sizes: nanoBananaProSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.NanoBanana,
   },
   Flux2: {
     engine: 'flux2',
@@ -83,7 +74,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'Flux2',
     versionId: 2439067,
     maxReferenceImages: 7,
-    sizes: commonAspectRatios,
+    sizes: PRESET_MODEL_GRAPH_SIZES.Flux2,
   },
   Seedream: {
     engine: 'seedream',
@@ -91,7 +82,8 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'Seedream',
     versionId: 2470991,
     maxReferenceImages: 7,
-    sizes: seedreamSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.Seedream,
+    resolution: '2K',
   },
   OpenAI: {
     engine: 'openai',
@@ -99,7 +91,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'OpenAI',
     versionId: 2512167,
     maxReferenceImages: 7,
-    sizes: OPENAI_SIZES,
+    sizes: PRESET_MODEL_GRAPH_SIZES.OpenAI,
   },
   OpenAI2: {
     // gpt-image-2 — different API shape than v1/v1.5. Resolved by the openai
@@ -110,7 +102,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'OpenAI',
     versionId: 2880272,
     maxReferenceImages: 7,
-    sizes: OPENAI_SIZES,
+    sizes: PRESET_MODEL_GRAPH_SIZES.OpenAI2,
   },
   OpenAI25Flare: {
     engine: 'openai',
@@ -118,7 +110,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'OpenAI',
     versionId: 3311434,
     maxReferenceImages: 7,
-    sizes: OPENAI_SIZES,
+    sizes: PRESET_MODEL_GRAPH_SIZES.OpenAI25Flare,
   },
   OpenAI25Sunburst: {
     engine: 'openai',
@@ -126,7 +118,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'OpenAI',
     versionId: 3311436,
     maxReferenceImages: 7,
-    sizes: OPENAI_SIZES,
+    sizes: PRESET_MODEL_GRAPH_SIZES.OpenAI25Sunburst,
   },
   Qwen: {
     engine: 'qwen',
@@ -135,7 +127,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     versionId: 2552908,
     img2imgVersionId: 2558804,
     maxReferenceImages: 3,
-    sizes: qwenSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.Qwen,
   },
   SeedreamLite: {
     engine: 'seedream',
@@ -143,7 +135,8 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'Seedream',
     versionId: 2720141,
     maxReferenceImages: 7,
-    sizes: seedreamSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.SeedreamLite,
+    resolution: '2K',
   },
   Grok: {
     engine: 'grok',
@@ -151,7 +144,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     ecosystem: 'Grok',
     versionId: 2738377,
     maxReferenceImages: 7,
-    sizes: grokSizes,
+    sizes: PRESET_MODEL_GRAPH_SIZES.Grok,
   },
 };
 
@@ -174,17 +167,12 @@ export function findPresetModelConfigByVersionId(versionId: number): PresetModel
   );
 }
 
-/**
- * Pick the dimensions for an aspect-ratio label from a model's `sizes`, falling
- * back to a portrait option and finally the first size. These dimensions are
- * used for stored panel metadata / display; the graph itself derives the
- * submitted dimensions from the aspect-ratio string.
- */
+/** Stored panel metadata only, resolved by the graph's own rule so the record matches the image. */
 export function pickAspectRatioSize(aspectRatio: string, sizes: PresetSize[]): PresetSize {
-  return (
-    sizes.find((s) => s.label === aspectRatio) ??
-    sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
-    sizes[0]
+  return resolveAspectRatioLabel(
+    aspectRatio,
+    sizes,
+    sizes.find((s) => s.value === '1:1') ?? sizes[0]
   );
 }
 
@@ -214,6 +202,7 @@ export function buildPresetGraphInput({
   images,
   ecosystem,
   versionId,
+  resolution,
 }: {
   prompt?: string;
   aspectRatio: string;
@@ -221,6 +210,7 @@ export function buildPresetGraphInput({
   images?: { url: string; width: number; height: number }[] | null;
   ecosystem: string;
   versionId: number;
+  resolution?: string;
 }): Record<string, unknown> {
   const input: Record<string, unknown> = {
     workflow: 'txt2img',
@@ -229,6 +219,7 @@ export function buildPresetGraphInput({
     aspectRatio,
     quantity,
   };
+  if (resolution) input.resolution = resolution;
   // Omit empty prompt so what-if's `cost-estimation` fallback can apply.
   if (prompt) input.prompt = prompt;
   // Presence of images is what drives the txt2img → img2img:edit promotion.
@@ -294,6 +285,7 @@ export async function submitPresetImageGen({
     images: cappedImages,
     ecosystem: modelConfig.ecosystem,
     versionId,
+    resolution: modelConfig.resolution,
   });
 
   const { externalCtx } = await buildGenerationContext(
@@ -348,6 +340,7 @@ export async function whatIfPresetImageGen({
     images: cappedImages && cappedImages.length > 0 ? cappedImages : null,
     ecosystem: modelConfig.ecosystem,
     versionId,
+    resolution: modelConfig.resolution,
   });
 
   const { externalCtx } = await buildGenerationContext(

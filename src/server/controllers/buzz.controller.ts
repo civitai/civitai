@@ -167,6 +167,8 @@ export async function createBuzzTipTransactionHandler({
     const blocked = await amIBlockedByUser({
       userId: fromAccountId,
       targetUserId: input.toAccountId,
+      // A write path: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) {
       throw throwBadRequestError('You cannot send Buzz to a user that has blocked you');

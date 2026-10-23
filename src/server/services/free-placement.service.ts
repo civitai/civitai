@@ -176,11 +176,9 @@ export async function createFreePlacement({
   sellerId,
   data,
 }: CreateFreePlacement) {
-  // A surface that may be priced at zero has no free tier. Its zero-priced
-  // placements are ordinary rows of amount 0 that spend neither a slot nor the
-  // daily allowance; a `free` row on it would spend both, and the allowance is
-  // shared with every other surface — so continuing a story would quietly cost
-  // the placer today's free sticker. Refused before any I/O.
+  // A surface that may be priced at zero has no free tier: a `free` row on it would spend a slot
+  // and the daily allowance, which every surface shares, so continuing a story would quietly
+  // cost the placer today's free sticker. Refused before any I/O.
   if (placementSurfaceAllowsZeroPrice(surface))
     throw throwBadRequestError(
       `placement: ${PLACEMENT_SURFACES[surface].label} have no free tier to claim from`

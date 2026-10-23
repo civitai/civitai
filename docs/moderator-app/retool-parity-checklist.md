@@ -782,8 +782,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
       gate; a non-zero exit means stop.
 - [ ] **Grant the new pages on `/admin`.** A new page has no `AppPageAccess` rows, so only
       `moderator:admin` can see it until someone ticks the boxes — it is invisible rather than broken,
-      which is the hard failure to notice. `/models/minor-hash-matches` (2026-08-13) is the newest and
-      is **not yet granted to anyone**.
+      which is the hard failure to notice. `/models/flags/*` (2026-10) is the newest; its grants are copied from the
+      old pages by a hand-applied migration.
 - [x] **Re-extract every export while access remains** — done 2026-08-10; all nine carry option sets
       and layout geometry, and sanitized copies are committed under `retool-exports/raw/`.
 - [x] 🔒 **Support-tool credential** — never committed (verified 2026-08-10). Ticket-body hygiene is an
@@ -985,9 +985,9 @@ that reporter to that build.
       page**, which `docs/moderator-app/page-migration-checklist.md` already has a pattern for
       (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
       nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
-      Now at `/models/minor-hash-matches`, under a new **Models** nav group between Images and Articles.
-      The Appeals tab has since become its own page, `/models/flag-appeals` (`?tab=appeals` redirects).
-      Re-detections later moved to `/models/held-detections` (`?view=redetected` redirects).
+      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, since renamed `{appeals,auto,needs-review}`, under the **Models**
+      nav group); the old `/models/minor-hash-matches`, `/models/flag-appeals` and `/models/held-detections`
+      URLs redirect (see `docs/features/moderator-model-flags.md`).
       **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns
       the search-index sync, the cache busting and the per-image propagation, then restores five columns
       from the flag snapshot; `resolveAppeal` also closes the `Appeal` row and refuses to uphold against

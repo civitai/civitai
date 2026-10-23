@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
+import type * as ModelCoverService from '~/server/services/model-cover.service';
 
 // Unit tests for upsertModel's owner-writable fields: moderation-owned meta and availability.
 // Scaffold mirrors model-locked-properties.service.test.ts.
@@ -100,6 +101,13 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+const { mockAssertCoverImagesValid } = vi.hoisted(() => ({
+  mockAssertCoverImagesValid: vi.fn(),
+}));
+vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelCoverService>()),
+  assertCoverImagesValid: mockAssertCoverImagesValid,
+}));
 const { mockSettleAppeals } = vi.hoisted(() => ({ mockSettleAppeals: vi.fn() }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
   ...(await importOriginal<typeof AppealTextHash>()),
@@ -113,6 +121,7 @@ import { upsertModel } from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { trackModActivity } from '~/server/services/moderator.service';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -139,6 +148,8 @@ const storedModel = {
   allowCommercialUse: ['Image'] as string[],
   allowDerivatives: true,
   allowDifferentLicense: false,
+  coverImageId: null as number | null,
+  sfwCoverImageId: null as number | null,
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
@@ -589,5 +600,152 @@ describe('permission snapshots', () => {
 
     expect(mockDbWrite.modelPermissionSnapshot.findFirst).not.toHaveBeenCalled();
     expect(mockDbWrite.modelPermissionSnapshot.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('moderation log for flag edits', () => {
+  const logged = () => vi.mocked(trackModActivity).mock.calls.map(([, input]) => input.activity);
+
+  it.each([
+    ['poi', false, true, 'setPoi'],
+    ['poi', true, false, 'unsetPoi'],
+    ['minor', false, true, 'setMinor'],
+    ['minor', true, false, 'unsetMinor'],
+    ['sfwOnly', false, true, 'setSfwOnly'],
+    ['sfwOnly', true, false, 'unsetSfwOnly'],
+  ] as const)('logs %s %s -> %s as %s', async (field, before, after, activity) => {
+    mockStored({ [field]: before });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, [field]: after });
+
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+    expect(trackModActivity).toHaveBeenCalledWith(
+      MODERATOR_ID,
+      { entityType: 'model', entityId: MODEL_ID, activity },
+      expect.anything()
+    );
+  });
+
+  it('writes the row inside the save transaction', async () => {
+    mockStored({ poi: false });
+    // The shared mock hands dbWrite itself to the callback, so a write on dbWrite after commit
+    // would pass for one on the transaction. A distinct client tells them apart.
+    const tx = new Proxy(mockDbWrite, {});
+    mockDbWrite.$transaction.mockImplementationOnce(async (fn: (client: unknown) => unknown) =>
+      fn(tx)
+    );
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: true });
+
+    expect(vi.mocked(trackModActivity).mock.calls[0][2]).toBe(tx);
+  });
+
+  it('fails the save when the row cannot be written', async () => {
+    mockStored({ poi: false });
+    vi.mocked(trackModActivity).mockRejectedValueOnce(new Error('insert failed'));
+
+    await expect(
+      upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: true })
+    ).rejects.toThrow('insert failed');
+  });
+
+  it('logs each property locked or unlocked, compared as a set', async () => {
+    mockStored({ lockedProperties: ['category', 'minor'] });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['poi', 'category', 'nsfw'],
+    });
+
+    expect(logged().sort()).toEqual([
+      'lockProperty:nsfw',
+      'lockProperty:poi',
+      'unlockProperty:minor',
+    ]);
+  });
+
+  it('logs a moderator editing their own model', async () => {
+    mockStored({ userId: MODERATOR_ID, poi: false });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: true });
+
+    expect(logged()).toEqual(['setPoi']);
+  });
+
+  it('compares against the row the transaction replaced, not the earlier read', async () => {
+    // The earlier read still shows poi; by the time the transaction reads, something else lifted it.
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...storedModel, poi: true })
+      .mockResolvedValueOnce({ ...storedModel, poi: false });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: false });
+
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs nothing for a moderator save that changes no flag', async () => {
+    mockStored({ poi: true, lockedProperties: ['nsfw', 'poi'] });
+
+    // minor and sfwOnly default to false in the schema, so a form save always sends them.
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      poi: true,
+      minor: false,
+      sfwOnly: false,
+      lockedProperties: ['poi', 'nsfw'],
+    });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed' });
+
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs nothing for an owner changing an unlocked flag', async () => {
+    mockStored({ poi: false });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: true });
+
+    expect(updateData()).toMatchObject({ poi: true });
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs nothing for a moderator create', async () => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, poi: true, minor: true });
+
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('cover gate', () => {
+  // The create form sends both covers as explicit nulls. Comparing them to a missing stored row
+  // read as a cover change and refused every new model; keep null-vs-no-row equal.
+  it('lets a create with null covers through', async () => {
+    await upsert({ userId: OWNER_ID, coverImageId: null, sfwCoverImageId: null, sfwName: null });
+
+    expect(mockDbWrite.model.create).toHaveBeenCalledTimes(1);
+    expect(mockAssertCoverImagesValid).not.toHaveBeenCalled();
+  });
+
+  it.each(['coverImageId', 'sfwCoverImageId'] as const)(
+    'refuses a create that picks %s',
+    async (field) => {
+      await expect(upsert({ userId: OWNER_ID, [field]: 9 })).rejects.toThrow(
+        'Covers can be picked once the model has published images.'
+      );
+      expect(mockDbWrite.model.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('validates a cover changed on update', async () => {
+    mockStored({ coverImageId: null });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
+    );
   });
 });

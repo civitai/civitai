@@ -61,6 +61,7 @@ import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 const USER_ID = 7;
 const PANEL_ID = 21;
@@ -98,7 +99,10 @@ const output = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function givenWorkflow(outputs: Array<Record<string, unknown>>) {
+function givenWorkflow(
+  outputs: Array<Record<string, unknown>>,
+  normalized: Record<string, unknown> = {}
+) {
   // The raw read the unlock guard checks: still locked, with an output rated mature.
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
@@ -112,6 +116,7 @@ function givenWorkflow(outputs: Array<Record<string, unknown>>) {
       status: 'succeeded',
       allowMatureContent: false,
       metadata: {},
+      ...normalized,
       steps: [
         {
           $type: 'comfy',
@@ -217,6 +222,24 @@ describe('comics.pollPanelStatus - an output that has not been rated yet', () =>
   });
 });
 
+describe('comics.pollPanelStatus - an output above the workflow cap', () => {
+  it('marks a single-image panel capped, so the card offers no unlock', async () => {
+    givenPanel();
+    givenWorkflow([output('b1', { nsfwLevel: 'r' })], { nsfwCap: 'pg13' });
+
+    const result = await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expect(result).toMatchObject({
+      status: 'RequireUnlock',
+      blockedReason: NSFW_CAPPED,
+      errorMessage: NSFW_CAPPED_MESSAGE,
+    });
+    const [data] = writes();
+    expect(data.metadata).toMatchObject({ blockedReason: NSFW_CAPPED });
+    expect(console.error).not.toHaveBeenCalled();
+  });
+});
+
 describe('comics.unlockPanelGeneration - an output that has not been rated yet', () => {
   it('sends a single-image panel back to the poll instead of keeping the output', async () => {
     givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
@@ -228,7 +251,7 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
     expect(mocks.updateWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true })
+      expect.objectContaining({ workflowId: 'wf-1', allowMatureContent: true, throwOnError: true })
     );
     const [data] = writes();
     expect(data.status).toBe('Generating');

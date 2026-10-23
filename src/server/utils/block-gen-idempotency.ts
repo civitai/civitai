@@ -238,7 +238,8 @@ export function composeTrainingBlockExternalId(runKey: string): string {
  * confirmation consumes its own quote, so every confirmed job is a distinct run: two
  * confirms of an identical body get two ids, and there is no counter whose expiry could
  * hand a new job an old job's id. (Training keys on the run instead — see
- * `composeTrainingBlockExternalId` — because its body names a one-shot dataset.)
+ * `composeTrainingBlockExternalId` — so a retry after an ambiguous failure dedupes onto the
+ * run that may exist.)
  *
  * SHAPE: `blc<32 hex>` — the quote's own 128 random bits under the `blc` tag, disjoint
  * from `blk` / `bls` / `blt` at index 2.

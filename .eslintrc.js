@@ -435,6 +435,7 @@ module.exports = {
       // Where a direct pg Pool is allowed (see eslint-no-direct-pg-pool.cjs). Tests and scripts are
       // short-lived. apps/auth builds its own standalone pool and must attach the same listeners
       // itself; it does not yet (#5657 adds them), so that pool is still unguarded.
+      // apps/assistant-runner builds every pool in pg-pool.ts, which attaches them.
       files: [
         '**/*.test.ts',
         '**/*.test.tsx',
@@ -442,6 +443,7 @@ module.exports = {
         'scripts/**',
         'apps/*/scripts/**',
         'apps/auth/src/lib/server/db/db.ts',
+        'apps/assistant-runner/src/pg-pool.ts',
       ],
       rules: {
         'no-restricted-syntax': 'off',

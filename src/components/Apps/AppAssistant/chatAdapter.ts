@@ -37,13 +37,24 @@ export function listenReplyResume(
   return () => el.removeEventListener('reply-resume', listener);
 }
 
-/** Calls `onChange` with the open chat's id whenever the viewer opens another chat. */
+/**
+ * Calls `onChange` with the open chat's id whenever the viewer opens another chat. Since
+ * components-chat 0.22, `chat-change` also fires for the same chat once its first save lands
+ * (`saved`); that is no change of chat, so it is not passed on (it would take Build it away).
+ * `current`: the chat already open as this starts listening.
+ */
 export function listenChatChange(
-  el: HTMLElement,
-  onChange: (chatId: string | null) => void
+  el: EventTarget,
+  onChange: (chatId: string | null) => void,
+  current?: string | null
 ): () => void {
-  const listener = (event: Event) =>
-    onChange((event as CustomEvent<ChatChangeDetail>).detail.chatId);
+  let last = current;
+  const listener = (event: Event) => {
+    const { chatId } = (event as CustomEvent<ChatChangeDetail>).detail;
+    if (chatId === last) return;
+    last = chatId;
+    onChange(chatId);
+  };
   el.addEventListener('chat-change', listener);
   return () => el.removeEventListener('chat-change', listener);
 }

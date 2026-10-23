@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
 import { act, createElement } from 'react';
-import { createRoot } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as NextRouterModule from 'next/router';
 import type * as DialogProviderModule from '~/components/Dialog/DialogProvider';
@@ -77,16 +77,29 @@ vi.mock('~/components/Storyline/StorylineModeProvider', async (importOriginal) =
   useStorylineMode: () => mocks.mode,
 }));
 
+// Every root is unmounted after its test. A root left mounted keeps Mantine's tooltip and transition
+// effects alive past the file, and their cleanup then runs after happy-dom has torn `document` down:
+// an unhandled "`document` global ... not defined anymore" error that fails the run.
+const roots: Root[] = [];
+
 function render(element: ReturnType<typeof createElement>) {
   const container = document.createElement('div');
   document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
   act(() => {
-    createRoot(container).render(
+    root.render(
       createElement(MantineProvider, { forceColorScheme: 'light', env: 'test' }, element)
     );
   });
   return container;
 }
+
+afterEach(() => {
+  act(() => {
+    for (const root of roots.splice(0)) root.unmount();
+  });
+});
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -187,8 +200,8 @@ describe('StorylineModeChip', () => {
     expect(renderChip(true).chip?.getAttribute('aria-expanded')).toBe('true');
   });
 
-  // Sunita, 2026-10-14: the chip has no x. Leaving lives at the foot of the map sheet, and closing
-  // the image leaves too. Do not put a second control back on the chip.
+  // The chip has no x. Leaving lives at the foot of the map sheet, and closing the image leaves
+  // too. Do not put a second control back on the chip.
   it('is one button that toggles the map, with no leave control of its own', () => {
     const { c, chip, onToggleMap } = renderChip(true);
     act(() => chip?.click());
@@ -328,8 +341,8 @@ describe('where the chip goes', () => {
   });
 });
 
-// Sunita, 2026-10-14: the guard's rating pill truncates to "P..." on thumbs this small and reads as
-// broken. The map drops it; the blur stays. The end card's larger covers keep theirs.
+// The guard's rating pill truncates to "P..." on thumbs this small and reads as broken. The map
+// drops it; the blur stays. The end card's larger covers keep theirs.
 describe('the map thumbs', () => {
   it('stay blurred but carry no rating pill', () => {
     const image = { id: 9, url: 'u', nsfwLevel: 4 };
@@ -372,6 +385,63 @@ describe('the map', () => {
       'The Patch',
       'Chapter 2 of 4 on the canon path',
     ]);
+  });
+
+  // The line the map counts is the reader's path then the canon ahead of its end: off the main
+  // route it is not the canon path, whatever number it counts.
+  it('says this path, with the same count, once the reader has left the main route', () => {
+    mocks.ahead = [chapter(4, 3)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+      { ...chapter(7, 2), onMain: false },
+    ];
+    renderMap({ chapters, current: 7 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 3 of 4 on this path');
+  });
+
+  it('still says the canon path for a reader on the main route', () => {
+    mocks.ahead = [chapter(3, 2)];
+    const chapters = [
+      { ...chapter(1, 0), onMain: true },
+      { ...chapter(2, 1), onMain: true },
+    ];
+    renderMap({ chapters, current: 2 });
+    expect(text(q('storyline-map-position'))).toBe('Chapter 2 of 3 on the canon path');
+  });
+
+  // A long path is read from a window that starts deeper than chapter 1: the total counts from
+  // chapter 1 like the number does, and the bar stays within its track.
+  describe('on a path read from a window that starts at depth 30', () => {
+    const windowed = () => [
+      { ...chapter(31, 30), onMain: true },
+      { ...chapter(32, 31), onMain: true },
+      { ...chapter(33, 32), onMain: true },
+    ];
+    const barValue = () =>
+      document.body.querySelector('.mantine-Progress-section')?.getAttribute('aria-valuenow');
+
+    it('counts the total from chapter 1', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 33 on the canon path');
+    });
+
+    it('counts the chapters ahead on top of that', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(text(q('storyline-map-position'))).toBe('Chapter 33 of 34 on the canon path');
+    });
+
+    it('fills the bar to the reader place in it', () => {
+      mocks.ahead = [chapter(34, 33)];
+      renderMap({ chapters: windowed(), current: 31 });
+      expect(parseFloat(barValue() ?? 'x')).toBeCloseTo((31 / 34) * 100, 5);
+    });
+
+    it('is full, not past full, at the end of the line', () => {
+      renderMap({ chapters: windowed(), current: 33 });
+      expect(parseFloat(barValue() ?? 'x')).toBe(100);
+    });
   });
 
   it('gives no total while the canon path is still being read', () => {

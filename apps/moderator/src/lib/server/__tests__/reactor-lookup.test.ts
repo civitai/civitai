@@ -56,7 +56,9 @@ vi.mock('$lib/server/moderation-memory.service', () => ({
   strikeCountsByUserIds: () => Promise.resolve(new Map()),
 }));
 
-const { getInflationActors, getSharedIps } = await import('../reactor-lookup.service');
+const { getInflationActors, getSharedIps, getSharedIpCoverage } = await import(
+  '../reactor-lookup.service'
+);
 const { OWN_ACTIVITY_ONLY } = await import('../clickhouse-filters');
 
 beforeEach(() => {
@@ -454,5 +456,39 @@ describe('getSharedIps per-account budget', () => {
     // hundreds of addresses to answer about rows nothing renders.
     const ipsAsked = (chQueries[1].match(/'\d+\.\d+\.\d+\.\d+'/g) ?? []).length;
     expect(ipsAsked).toBeLessThanOrEqual(25);
+  });
+});
+
+describe('getSharedIpCoverage', () => {
+  const TARGET = 1000001;
+  const row = (i: number) => ({
+    cluster: `198.18.${Math.floor(i / 256)}.${i % 256}`,
+    userIds: [String(1000002 + (i % 2)), String(TARGET)],
+    ips: [`198.18.${Math.floor(i / 256)}.${i % 256}`],
+  });
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => row(i));
+
+  it('says when the address scan filled its row budget, and only then', async () => {
+    chRows.push(rows(1500), []);
+    expect((await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET })).scanCapped).toBe(
+      true
+    );
+    chRows.push(rows(400), []);
+    expect((await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET })).scanCapped).toBe(
+      false
+    );
+  });
+
+  it('puts a time limit on both queries when given one', async () => {
+    chRows.push(rows(2), []);
+    await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET, timeoutSeconds: 15 });
+    expect(chQueries).toHaveLength(2);
+    for (const q of chQueries) expect(q).toMatch(/SETTINGS max_execution_time = 15\s*$/);
+  });
+
+  it('leaves the Reactor Lookup page queries unbounded', async () => {
+    chRows.push(rows(2), []);
+    await getSharedIps([1000002, 1000003], { targetId: TARGET });
+    for (const q of chQueries) expect(q).not.toContain('max_execution_time');
   });
 });

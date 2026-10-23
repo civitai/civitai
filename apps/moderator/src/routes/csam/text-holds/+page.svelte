@@ -1,38 +1,25 @@
 <script lang="ts">
-  import { page } from '$app/state';
-  import LinkTabs from '$lib/components/LinkTabs.svelte';
-  import { urlWith } from '$lib/url';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import CsamHoldTriage from './CsamHoldTriage.svelte';
-  import { CSAM_HOLD_ENTITY_TYPES, entityLabel } from './hold-entity';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-
-  const ALL = 'all';
-
-  const filterHref = (entityType: string | null) =>
-    urlWith(page.url, { entityType, page: null, hold: null });
-
-  const filters = $derived([
-    { value: ALL, label: 'All', href: filterHref(null) },
-    ...CSAM_HOLD_ENTITY_TYPES.map((value) => ({
-      value,
-      label: entityLabel(value),
-      href: filterHref(value),
-    })),
-  ]);
 </script>
 
-<div class="flex flex-col gap-3 px-6 pb-4 lg:h-[calc(100svh-3rem)]">
-  <h1 class="m-0 text-xl font-semibold text-white">CSAM text holds</h1>
-  <nav aria-label="Entity type" data-sveltekit-noscroll>
-    <LinkTabs items={filters} active={data.entityType ?? ALL} />
-  </nav>
-  <CsamHoldTriage
-    {data}
-    {form}
-    canDecide={data.grants['csam.report.file'] === true}
-    canStrike={data.grants['user.strike'] === true}
-    canBan={data.grants['user.ban'] === true}
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="CSAM holds"
+    subtitle="Text the scan held for possible CSAM. Nothing happens to the content or its author until you decide."
+    placeholder="Username, user ID or content ID"
+    searchLabel="Search holds"
   />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <CsamHoldTriage
+      {data}
+      {form}
+      canDecide={data.grants['csam.report.file'] === true}
+      canStrike={data.grants['user.strike'] === true}
+      canBan={data.grants['user.ban'] === true}
+    />
+  </div>
 </div>

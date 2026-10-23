@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as IpLinks from '../../ip-links.service';
+import type * as ReactorLookup from '../../reactor-lookup.service';
 
 /**
  * What a moderator can reach through the assistant is bounded by what their pages already open: the
@@ -33,6 +34,15 @@ const linked = {
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
   getLinkedAccounts: vi.fn(async () => linked),
+  getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
+}));
+
+const getInflationActors = vi.fn();
+const getSharedIpCoverage = vi.fn();
+vi.mock('$lib/server/reactor-lookup.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactorLookup>()),
+  getInflationActors,
+  getSharedIpCoverage,
 }));
 vi.mock('$lib/server/dossier.service', () => ({
   getDossier: vi.fn(async (userId: number) => ({
@@ -58,8 +68,28 @@ const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], tru
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
+const getRegistrationEmails = vi.fn(
+  async (ids: number[]) => new Map(ids.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+);
+vi.mock('../email', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../email')>()),
+  getRegistrationEmails,
+}));
 
+const getAccounts = vi.fn(async (ids: number[]) => ({
+  accounts: ids.map((userId) => ({ userId, username: `u${userId}` })),
+  missing: [],
+}));
+vi.mock('../reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../reads')>()),
+  getAccounts,
+}));
+
+const addPlaybookVersion = vi.fn(async () => ({ version: 1 }));
+const fileToolRequest = vi.fn(async () => 1);
 vi.mock('../store', () => ({
+  addPlaybookVersion,
+  fileToolRequest,
   getPlaybook: vi.fn(async (slug: string) => ({
     slug,
     version: 2,
@@ -72,6 +102,7 @@ vi.mock('../store', () => ({
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
+const { DAILY_TOKEN_CAP, MAX_TOOL_CHARS, fitJson } = await import('../loop');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -171,6 +202,199 @@ describe('reads User Lookup gates beyond the page', () => {
     expect(out.data).toMatchObject({ found: false });
     await run('find_user', { query: 'someone@example.com' }, ['/retool/user-lookup']);
     expect(resolveUserId).toHaveBeenCalledWith('someone@example.com');
+  });
+});
+
+describe('registration emails', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  beforeEach(() => {
+    getRegistrationEmails.mockClear();
+  });
+
+  it('are never read for a User Lookup holder without assistant.emails', async () => {
+    const out = JSON.stringify(await run('find_linked_accounts', { userId: 5 }, [LOOKUP_PAGE]));
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('are never read with assistant.emails but without User Lookup', async () => {
+    const out = JSON.stringify(
+      await run('get_user_dossier', { userId: 5 }, ['/reports/user'], ['assistant.emails'])
+    );
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('reach the model with their inbox for a User Lookup holder with assistant.emails', async () => {
+    const linkedOut = await run(
+      'find_linked_accounts',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect((linkedOut.data as { accounts: unknown[] }).accounts[0]).toMatchObject({
+      userId: 7,
+      email: 'Sock.7+x@GoogleMail.com',
+      normalizedEmail: 'sock7@gmail.com',
+    });
+    const dossier = await run(
+      'get_user_dossier',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect(dossier.data).toMatchObject({
+      normalizedEmail: 'sock5@gmail.com',
+      linked: { accounts: [{ userId: 7, normalizedEmail: 'sock7@gmail.com' }] },
+    });
+  });
+
+  it.each([
+    ['find_user', { query: '9' }],
+    ['get_accounts', { userIds: [9] }],
+  ])('%s carries them only with both User Lookup and assistant.emails', async (name, args) => {
+    resolveUserId.mockImplementation(async () => 9 as never);
+    expect(JSON.stringify(await run(name, args, [LOOKUP_PAGE]))).not.toContain('@');
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    const out = JSON.stringify(await run(name, args, [LOOKUP_PAGE], ['assistant.emails']));
+    expect(out).toContain('"normalizedEmail":"sock9@gmail.com"');
+    resolveUserId.mockImplementation(async () => null);
+  });
+
+  describe('get_accounts fields', () => {
+    const data = async (args: unknown, paths = [LOOKUP_PAGE], grants = ['assistant.emails']) =>
+      (await run('get_accounts', args, paths, grants)).data as {
+        accounts: object[];
+        emailsWithheld?: true;
+      };
+    const accounts = async (args: unknown, grants?: string[]) =>
+      (await data(args, undefined, grants)).accounts;
+    // Every column `getAccounts` returns, so a column lost on the way out shows.
+    const fullRow = (userId: number) => ({
+      userId,
+      username: `u${userId}`,
+      createdAt: new Date('2025-01-02T03:04:05Z'),
+      bannedAt: null,
+      banReason: 'spam',
+      deletedAt: null,
+      muted: true,
+      strikes: 2,
+    });
+
+    it('returns only the columns asked for, and always the id', async () => {
+      expect(await accounts({ userIds: [3, 4], fields: ['normalizedEmail'] })).toEqual([
+        { userId: 3, normalizedEmail: 'sock3@gmail.com' },
+        { userId: 4, normalizedEmail: 'sock4@gmail.com' },
+      ]);
+      expect(await accounts({ userIds: [3], fields: ['email'] })).toEqual([
+        { userId: 3, email: 'Sock.3+x@GoogleMail.com' },
+      ]);
+    });
+
+    it('returns every column when none are named, as before', async () => {
+      getAccounts.mockImplementationOnce(async (ids: number[]) => ({
+        accounts: ids.map(fullRow) as never,
+        missing: [],
+      }));
+      expect(await data({ userIds: [3] })).toEqual({
+        accounts: [
+          { ...fullRow(3), email: 'Sock.3+x@GoogleMail.com', normalizedEmail: 'sock3@gmail.com' },
+        ],
+        missing: [],
+      });
+    });
+
+    it('never gives an email without both User Lookup and assistant.emails, and says so', async () => {
+      const fields = ['email', 'normalizedEmail'];
+      for (const [paths, grants] of [
+        [[LOOKUP_PAGE], []],
+        [['/reports/user'], ['assistant.emails']],
+      ]) {
+        const out = await data({ userIds: [3], fields }, paths, grants);
+        expect(out.accounts).toEqual([{ userId: 3 }]);
+        expect(out.emailsWithheld).toBe(true);
+      }
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('does not read emails unless they are asked for', async () => {
+      expect(await accounts({ userIds: [3], fields: ['username'] })).toEqual([
+        { userId: 3, username: 'u3' },
+      ]);
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('fits a full list of inboxes into one result, where every column does not', async () => {
+      // The model sees a result through `fitJson`; a trimmed one has silently lost accounts.
+      const ids = Array.from({ length: 200 }, (_, i) => 9_000_000 + i);
+      const address = (id: number) => `firstname.lastname${id % 1000}@outlook.com`;
+      getRegistrationEmails.mockImplementation(
+        async (list: number[]) => new Map(list.map((id) => [id, address(id)]))
+      );
+      getAccounts.mockImplementation(async (list: number[]) => ({
+        accounts: list.map(fullRow) as never,
+        missing: [],
+      }));
+      const seen = async (fields?: string[]) =>
+        fitJson({ data: await data({ userIds: ids, fields }), truncated: false }, MAX_TOOL_CHARS)
+          .trimmed;
+      try {
+        expect(await seen(['normalizedEmail'])).toBe(false);
+        expect(await seen()).toBe(true);
+      } finally {
+        getRegistrationEmails.mockImplementation(
+          async (list: number[]) => new Map(list.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+        );
+        getAccounts.mockImplementation(async (list: number[]) => ({
+          accounts: list.map((userId) => ({ userId, username: `u${userId}` })) as never,
+          missing: [],
+        }));
+      }
+    });
+
+    it('refuses a column it does not have', () => {
+      const tool = TOOLS.find((t) => t.name === 'get_accounts')!;
+      expect(tool.input.safeParse({ userIds: [3], fields: ['passwordHash'] }).success).toBe(false);
+      expect(tool.input.safeParse({ userIds: [3], fields: [] }).success).toBe(false);
+    });
+  });
+
+  const EMAIL = 'b.o.t+1@gmail.com';
+  const pilot = { ...ctx([LOOKUP_PAGE], ['assistant.emails']) };
+
+  it('are dropped from a proposed playbook, which every assistant user reads', async () => {
+    const tool = TOOLS.find((t) => t.name === 'propose_playbook')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        slug: 'chain',
+        title: `Chains like ${EMAIL}`,
+        summary: `Accounts sharing ${EMAIL} as one inbox.`,
+        body: `Example:\n${EMAIL}\nand ${EMAIL.toUpperCase()}`,
+        note: EMAIL,
+      }),
+      pilot
+    );
+    const saved = JSON.stringify(addPlaybookVersion.mock.lastCall);
+    expect(saved).toContain('[email]');
+    expect(saved.toLowerCase()).not.toContain('gmail');
+  });
+
+  it('are dropped from a tool request, its attached conversation included', async () => {
+    const tool = TOOLS.find((t) => t.name === 'request_tool')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        need: `Group accounts by inbox, e.g. ${EMAIL}`,
+        reason: `The chain all used ${EMAIL}.`,
+        example: EMAIL,
+      }),
+      {
+        ...pilot,
+        conversation: () => [{ prompt: `who is ${EMAIL}?`, answer: `${EMAIL} is a sock.` }],
+      }
+    );
+    const filed = JSON.stringify(fileToolRequest.mock.lastCall);
+    expect(filed).toContain('[email]');
+    expect(filed).not.toContain('gmail');
   });
 });
 
@@ -317,7 +541,7 @@ describe('turnTokenBudget', () => {
   it('clamps a setting into range, so a tighter budget never comes out looser', () => {
     expect(turnTokenBudget('3000')).toBe(5_000);
     expect(turnTokenBudget('40000')).toBe(40_000);
-    expect(turnTokenBudget('99000000')).toBe(2_000_000);
+    expect(turnTokenBudget('99000000')).toBe(DAILY_TOKEN_CAP);
   });
 
   it('falls back to the default when unset or not a whole number', () => {
@@ -334,5 +558,166 @@ describe('toolCatalog', () => {
       'days',
       'minCount',
     ]);
+  });
+});
+
+describe('reactors_of', () => {
+  const CREATOR = 1;
+  // Ranked as the tool ranks them: user 1000 + rank, concentration and reactions falling with rank.
+  const actors = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      userId: 1001 + i,
+      username: `r${i + 1}`,
+      count: 400 - i,
+      entities: 5,
+      totalGiven: 800,
+      owners: 3,
+      concentration: 1 - i / 1000,
+      status: 'active',
+      strikes: 0,
+      createdAt: null,
+      instantVerify: null,
+    }));
+  const sharer = (
+    userId: number,
+    peers: number[],
+    { withTarget = false, addresses = ['198.51.100.7'] } = {}
+  ) => ({
+    userId,
+    username: `r${userId - 1000}`,
+    withTarget,
+    addressCount: addresses.length,
+    addresses: addresses.map((cluster, i) => ({ cluster, totalAccounts: 2 + i })),
+    peers: peers.map((p) => ({ userId: p, username: null, isTarget: p === CREATOR })),
+  });
+  // A pair deep in the ranking shares an address. The fake answers only about the ids it is asked,
+  // as the real query does, so checking too few reactors finds nothing. 1200 shares an address with
+  // the creator alone (a finding, no cluster); 1250 shares with nobody the clusters can measure.
+  const PAIR = [1150, 1151];
+  const FIVE = ['198.51.100.7', '198.51.100.8', '198.51.100.9', '198.51.100.10', '198.51.100.11'];
+  const coverage = async (ids: number[]) => ({
+    accounts: [
+      ...(PAIR.every((p) => ids.includes(p))
+        ? [sharer(PAIR[0], [PAIR[1]], { addresses: FIVE }), sharer(PAIR[1], [PAIR[0]])]
+        : []),
+      ...(ids.includes(1200)
+        ? [sharer(1200, [CREATOR], { withTarget: true, addresses: ['203.0.113.5'] })]
+        : []),
+      ...(ids.includes(1250) ? [sharer(1250, [], { addresses: ['203.0.113.9'] })] : []),
+    ],
+    scanCapped: false,
+  });
+  type Out = {
+    addressesChecked: {
+      reactors: number;
+      overFloor: number;
+      scanCapped: boolean;
+      timedOut: boolean;
+      complete: boolean;
+    };
+    clusters: {
+      complete: boolean;
+      members: {
+        userId: number;
+        rank: number | null;
+        concentration: number | null;
+        reactions: number | null;
+      }[];
+    }[];
+    actors: unknown[];
+    sharedAddresses: { userId: number; addresses: unknown[] }[];
+  };
+  const reactors = async () =>
+    (await run('reactors_of', { userId: CREATOR }, [
+      '/retool/reactor-lookup',
+      '/retool/user-lookup',
+    ])) as unknown as { data: Out; truncated: boolean; sources: { ref: string }[] };
+  const report = (n: number, total: number) =>
+    getInflationActors.mockResolvedValue({
+      actors: actors(n),
+      total,
+      belowFloor: 0,
+      capped: false,
+    });
+
+  beforeEach(() => {
+    getInflationActors.mockReset();
+    report(300, 1090);
+    getSharedIpCoverage.mockReset().mockImplementation(coverage);
+  });
+
+  it('finds a cluster far below the top reactors, with each member ranked', async () => {
+    const { data } = await reactors();
+    expect(data.clusters).toHaveLength(1);
+    expect(data.clusters[0].members).toMatchObject([
+      { userId: 1150, rank: 150, concentration: 1 - 149 / 1000, reactions: 251 },
+      { userId: 1151, rank: 151, concentration: 1 - 150 / 1000, reactions: 250 },
+    ]);
+    expect(data.actors).toHaveLength(20);
+  });
+
+  it('lists addresses only for accounts in a finding, the narrowest three each', async () => {
+    const { data } = await reactors();
+    const listed = new Map(data.sharedAddresses.map((s) => [s.userId, s.addresses.length]));
+    expect([...listed.keys()].sort()).toEqual([1150, 1151, 1200]);
+    expect(listed.get(1150)).toBe(3);
+  });
+
+  it('cites every account a finding names, however far down it ranks', async () => {
+    const { sources } = await reactors();
+    const refs = sources.map((s) => s.ref);
+    for (const id of [1150, 1151, 1200]) expect(refs).toContain(`user:${id}`);
+    expect(refs).not.toContain('user:1250');
+  });
+
+  it('says how many reactors it checked out of how many, bounded in time', async () => {
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toEqual({
+      reactors: 300,
+      overFloor: 1090,
+      scanCapped: false,
+      timedOut: false,
+      complete: true,
+    });
+    expect(truncated).toBe(true);
+    expect(getSharedIpCoverage).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ targetId: CREATOR, timeoutSeconds: 15 })
+    );
+  });
+
+  it('is not truncated when every over-floor reactor was checked in full', async () => {
+    report(300, 300);
+    expect((await reactors()).truncated).toBe(false);
+  });
+
+  it('marks the check and every cluster incomplete when the address scan hit its budget', async () => {
+    report(300, 300);
+    getSharedIpCoverage.mockImplementation(async (ids: number[]) => ({
+      ...(await coverage(ids)),
+      scanCapped: true,
+    }));
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toMatchObject({ scanCapped: true, complete: false });
+    expect(data.clusters[0].complete).toBe(false);
+    expect(truncated).toBe(true);
+  });
+
+  it('reads a timed-out address check as unfinished, not as no clusters', async () => {
+    report(300, 300);
+    getSharedIpCoverage.mockRejectedValue(
+      new Error(
+        'ClickHouse query failed: Timeout exceeded: elapsed 15.2 seconds (TIMEOUT_EXCEEDED)'
+      )
+    );
+    const { data, truncated } = await reactors();
+    expect(data.addressesChecked).toMatchObject({ reactors: 0, timedOut: true, complete: false });
+    expect(data.clusters).toEqual([]);
+    expect(truncated).toBe(true);
+  });
+
+  it('lets any other failure of the address check fail the call', async () => {
+    getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
+    await expect(reactors()).rejects.toThrow(/connection refused/);
   });
 });

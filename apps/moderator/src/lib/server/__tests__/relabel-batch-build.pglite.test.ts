@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely, type DatabaseConnection, type Dialect } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
@@ -203,9 +204,9 @@ async function seedItem(imageId: number, batch: string, relabel: boolean) {
 
 // One instance per database for the file: PGlite takes seconds to boot.
 beforeAll(async () => {
-  mainPg = await PGlite.create();
+  mainPg = await freshPglite();
   await mainPg.exec(MAIN_TABLES);
-  modPg = await PGlite.create();
+  modPg = await freshPglite();
   await modPg.exec(MODERATOR_SCHEMA);
   replica = new Kysely<MainDB>({
     dialect: numberedDialect(

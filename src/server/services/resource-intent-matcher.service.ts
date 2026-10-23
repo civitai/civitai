@@ -31,6 +31,7 @@ import {
   RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
   type ResourceIntentInsight,
 } from '~/server/services/resource-insight';
+import { gateBaseModels, type BaseModelGate } from '~/server/services/resource-intent-tags/gate';
 import { coverageFilter, versionGeneratableFor } from '~/shared/generation/coverage-fields';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Flags } from '~/shared/utils/flags';
@@ -96,22 +97,29 @@ export type ResourceIntentShortlistEntry = {
  */
 const RERANK_POOL_MULTIPLIER = 2;
 
+/** `baseModelsByType`, when given, replaces `baseModels` inside each type's clause. */
 export function buildResourceIntentFilter({
   modelTypes,
   baseModels,
+  baseModelsByType,
   browsingLevel,
   coverage,
 }: {
   modelTypes: readonly ModelType[] | null;
   baseModels: readonly string[] | null;
+  baseModelsByType?: BaseModelGate | null;
   browsingLevel: number;
   coverage: ResourceIntentCoverage;
 }): string | null {
-  const typeClauses = modelTypes?.map((type) =>
-    baseModels?.length
-      ? and(eq('type', type), inArray('versions.baseModel', baseModels))
-      : eq('type', type)
-  );
+  const typeClauses = modelTypes?.flatMap((type) => {
+    const typeBaseModels = baseModelsByType ? baseModelsByType.get(type) ?? [] : baseModels;
+    // Invariant guard (unreachable today: a gate always holds its ecosystem's own name). A gated type
+    // with no base model admits nothing, so it gets no clause rather than a bare type.
+    if (baseModelsByType && !typeBaseModels?.length) return [];
+    return typeBaseModels?.length
+      ? [and(eq('type', type), inArray('versions.baseModel', typeBaseModels))]
+      : [eq('type', type)];
+  });
 
   return and(
     ne('availability', Availability.Private),
@@ -132,6 +140,8 @@ export function expandShortlist(
   hits: ModelSearchIndexRecord[],
   opts: {
     baseModels: readonly string[] | null;
+    /** When given, a version must carry a base model of its model's type (else `baseModels`). */
+    baseModelsByType?: BaseModelGate | null;
     coverage: ResourceIntentCoverage;
     cap: number;
   }
@@ -141,10 +151,11 @@ export function expandShortlist(
   const seen = new Set<number>();
   for (const hit of hits) {
     if (entries.length >= cap) break;
+    const allowed = opts.baseModelsByType?.get(hit.type) ?? opts.baseModels;
     for (const version of hit.versions) {
       if (entries.length >= cap) break;
       if (seen.has(version.id)) continue;
-      if (opts.baseModels?.length && !opts.baseModels.includes(version.baseModel)) continue;
+      if (allowed?.length && !allowed.includes(version.baseModel)) continue;
       if (
         !versionGeneratableFor(version, {
           coverageNext: opts.coverage.next,
@@ -352,7 +363,12 @@ async function searchModelIndex(request: SearchParams): Promise<ModelSearchIndex
  */
 export function expandOneVersionPerModel(
   hits: ModelSearchIndexRecord[],
-  opts: { baseModels: readonly string[] | null; coverage: ResourceIntentCoverage; cap: number }
+  opts: {
+    baseModels: readonly string[] | null;
+    baseModelsByType?: BaseModelGate | null;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+  }
 ): ResourceIntentShortlistEntry[] {
   const entries: ResourceIntentShortlistEntry[] = [];
   for (const hit of hits) {
@@ -368,6 +384,7 @@ type ResourceIntentSeed = {
   poolCap: number;
   filter: string | null;
   baseModels: string[] | null;
+  baseModelsByType?: BaseModelGate | null;
   pool: ResourceIntentShortlistEntry[];
 };
 
@@ -534,7 +551,7 @@ export async function findResourceIntentCandidates(
  */
 async function gateRankedCandidates(
   cands: readonly number[],
-  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels'>,
+  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels' | 'baseModelsByType'>,
   coverage: ResourceIntentCoverage
 ): Promise<ResourceIntentShortlistEntry[]> {
   if (!cands.length) return [];
@@ -546,28 +563,41 @@ async function gateRankedCandidates(
   const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
   return expandOneVersionPerModel(docs, {
     baseModels: seed.baseModels,
+    baseModelsByType: seed.baseModelsByType,
     coverage,
     cap: cands.length,
   });
 }
 
 /**
- * A ranked list of model ids through `gateRankedCandidates` under the seed's `modelTypes`/`baseModel`
- * filter, first `min(cap, maxModels)` models. Shared by checkpoint mode's `attach_bm` arm and the
- * v1_tags arm. A build-time index may hold models since unlisted; these gates are what hold at
- * request time.
+ * A ranked list of model ids through `gateRankedCandidates` under the seed's `modelTypes` filter and
+ * `baseModel` (one name, or a per-type gate), first `min(cap, maxModels)` models. Shared by
+ * checkpoint mode's `attach_bm` arm and the v1_tags arm. A build-time index may hold models since
+ * unlisted; these gates are what hold at request time.
  */
 export async function findRankedCandidates(opts: {
   modelIds: readonly number[];
   modelTypes: readonly ModelType[];
-  baseModel: string;
+  baseModel: string | BaseModelGate;
   browsingLevel: number;
   coverage: ResourceIntentCoverage;
   cap: number;
   maxModels: number;
 }): Promise<ResourceIntentShortlistEntry[]> {
   const width = Math.min(clampResourceIntentCap(opts.cap), opts.maxModels);
-  const seed = seedFilter({ modelTypes: [...opts.modelTypes], baseModel: opts.baseModel }, opts);
+  const modelTypes = [...opts.modelTypes];
+  let seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels' | 'baseModelsByType'>;
+  if (typeof opts.baseModel === 'string') {
+    seed = seedFilter({ modelTypes, baseModel: opts.baseModel }, opts);
+  } else {
+    const baseModels = gateBaseModels(opts.baseModel);
+    // Invariant guard (unreachable today: a gate always holds its ecosystem's own name). An empty
+    // gate would leave the filter without a type clause, admitting every type.
+    if (!baseModels.length) return [];
+    const baseModelsByType = opts.baseModel;
+    const filter = buildResourceIntentFilter({ ...opts, modelTypes, baseModels, baseModelsByType });
+    seed = { filter, baseModels, baseModelsByType };
+  }
   const gated = await gateRankedCandidates(opts.modelIds, seed, opts.coverage);
   return gated.slice(0, width);
 }

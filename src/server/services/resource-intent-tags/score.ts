@@ -122,21 +122,22 @@ export function ecosystemLift(
 
 /**
  * Ecosystems ranked by Σ_t w_t·ln lift(t, e) (`ecosystemLift`), best first, at most `limit`, each with
- * its score. Only ecosystems with at least `ecosystemMinUsers` users are ranked, in order of users
- * descending then name, and equal scores keep that order; the observation totals N and c_t still sum
- * over every ecosystem. A tag without counts casts no vote.
+ * its score. Only ecosystems with at least `ecosystemMinUsers` users (and in `rankable`, when given)
+ * are ranked, in order of users descending then name, and equal scores keep that order; the
+ * observation totals N and c_t still sum over every ecosystem. A tag without counts casts no vote.
  */
 export function resolveEcosystems(
   index: Pick<TagIndex, 'ecosystems' | 'tagEcosystemCounts'>,
   weights: ReadonlyMap<number, number>,
   limit: number,
-  params: Pick<TagScoreParams, 'liftPrior' | 'ecosystemMinUsers'> = TAG_SCORE_PARAMS
+  params: Pick<TagScoreParams, 'liftPrior' | 'ecosystemMinUsers'> = TAG_SCORE_PARAMS,
+  rankable?: ReadonlySet<number>
 ): { id: number; score: number }[] {
   const m = params.liftPrior;
   const N = index.ecosystems.reduce((s, e) => s + e.observations, 0);
   const eligible = index.ecosystems
     .map((e, id) => ({ e, id }))
-    .filter((x) => x.e.users >= params.ecosystemMinUsers)
+    .filter((x) => x.e.users >= params.ecosystemMinUsers && (!rankable || rankable.has(x.id)))
     .sort((a, b) => b.e.users - a.e.users || compareCodePoints(a.e.name, b.e.name));
   const votes = [...weights].flatMap(([t, w]) => {
     const counts = index.tagEcosystemCounts.get(t);
@@ -305,8 +306,9 @@ export type TagScoreResult = {
   weights: Map<number, number>;
   /**
    * Why nothing was ranked, when nothing was: `no_tags`, no tag passed the gate; `no_ecosystem`, no
-   * baseModel and no ecosystem has enough training users; `unknown_ecosystem`, the ecosystem is not
-   * in the index. `ok` with no candidates means the ranking ran and matched nothing.
+   * baseModel and no ecosystem both has enough training users and is in `rankableEcosystems`;
+   * `unknown_ecosystem`, the ecosystem is not in the index. `ok` with no candidates means the
+   * ranking ran and matched nothing.
    */
   status: 'ok' | 'no_tags' | 'no_ecosystem' | 'unknown_ecosystem';
   /** Tag-derived ecosystems, best first; only when the request had no baseModel. */
@@ -316,11 +318,15 @@ export type TagScoreResult = {
   candidates: TagCandidate[];
 };
 
-/** One request end to end: literal tags, explicit gate, weights, ecosystem, ranked candidates. */
+/**
+ * One request end to end: literal tags, explicit gate, weights, ecosystem, ranked candidates.
+ * `rankableEcosystems` narrows the ecosystems the tags may choose; a caller's baseModel ignores it.
+ */
 export function scoreTagRequest(
   index: TagIndex,
   req: TagRequest,
-  params: TagScoreParams = TAG_SCORE_PARAMS
+  params: TagScoreParams = TAG_SCORE_PARAMS,
+  rankableEcosystems?: ReadonlySet<number>
 ): TagScoreResult {
   const foundTagIds: number[] = [];
   for (const k of tagKeys(req.prompt)) {
@@ -335,7 +341,7 @@ export function scoreTagRequest(
 
   const ecosystems = req.baseModel
     ? []
-    : resolveEcosystems(index, weights, params.ecosystemsReturned, params).map(
+    : resolveEcosystems(index, weights, params.ecosystemsReturned, params, rankableEcosystems).map(
         (x) => index.ecosystems[x.id].name
       );
   const ecosystem = req.baseModel || ecosystems[0];

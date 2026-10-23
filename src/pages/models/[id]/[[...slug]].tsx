@@ -112,6 +112,7 @@ import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import {
   modelVersionAccessInput,
+  toModelVersionPermissionData,
   useModelVersionPermission,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -187,6 +188,14 @@ import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookup
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
+
+const NOT_FOUND = Symbol('model-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -281,14 +290,19 @@ export const getServerSideProps = createServerSideProps({
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
       // bookmarks land here often; bailing early saves ~5 DB roundtrips.
-      const model = await ssg.model.getById
+      const fetched = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
-        .catch(() => null);
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+      // `getById` is viewer-scoped, so this is a 404 for exactly the viewers it refuses; any
+      // other failure still renders and lets the client retry.
+      if (fetched === NOT_FOUND) return { notFound: true };
+      const model = fetched;
 
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // A complete .com face is what civitai.com shows; it is not the mature listing.
+          nsfw: model.nsfw && !model.hasSfwFace,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }
@@ -475,7 +489,12 @@ export default function ModelDetailsV2({
     ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id,
+      // The version is already on hand from model.getById — don't refetch it via modelVersion.getById.
+      modelVersion:
+        model && selectedVersion ? toModelVersionPermissionData(model, selectedVersion) : undefined,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -877,7 +896,7 @@ export default function ModelDetailsV2({
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw}
+      nsfw={model.nsfw && !model.hasSfwFace}
       bypassRating={isOwner}
       suppressAds={!published}
       meta={{

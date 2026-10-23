@@ -15,6 +15,8 @@ export interface PlannerActions {
   toggleAllHours(): void;
   toggleSelectMode(): void;
   clearSelection(): void;
+  /** Selects every selectable post the current view and filters show. */
+  selectAll(): void;
   toggleSelected(id: number): void;
   toggleUnblur(id: number): void;
   open(post: PlannerPost, at?: Date): void;

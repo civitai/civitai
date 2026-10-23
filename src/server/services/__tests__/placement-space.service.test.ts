@@ -212,10 +212,8 @@ describe('setPlacementSpace — the price guard', () => {
 });
 
 /**
- * The zero floor is a property of one surface, read from the table. These are
- * the mutation-level halves of the table pin in `placement.test.ts`: the pin
- * says what the floors are, these say `setPlacementSpace` acts on them per
- * surface rather than on any one surface's value.
+ * Pairs with the floor table pin in `placement.test.ts`: these check `setPlacementSpace` reads each
+ * surface's own floor.
  */
 describe('setPlacementSpace — a zero price', () => {
   it('opens a storyline at zero', async () => {
@@ -489,10 +487,9 @@ describe('the host decline fee', () => {
 });
 
 /**
- * A storyline continuation sits on the chapter POST it continues. The owner and
- * the space come from the storyline, never from the post: chapters may be
- * written by collaborators, and a continuation of one still belongs in the
- * storyline creator's queue at the creator's price.
+ * A continuation sits on the chapter POST it continues, but the owner and the space come from the
+ * storyline: chapters may be written by collaborators, and a continuation of one still belongs in
+ * the storyline creator's queue at the creator's price.
  */
 describe('resolvePlacementSpaceFor — a storyline chapter', () => {
   const chapterFindUnique = dbMock.dbWrite.storylineChapter.findUnique;
@@ -521,7 +518,6 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
       storylineId: STORYLINE,
       ownerUsername: 'storyteller',
     });
-    // Neither id is read as an image or a post of its own.
     expect(imageFindUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.post.findUnique).not.toHaveBeenCalled();
   });
@@ -544,8 +540,6 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
     expect(space).toMatchObject({ mode: 'review', setPrice: 0, price: 0 });
   });
 
-  // What makes Complete bite: the storyline's own row outranks the creator's
-  // account default.
   it('lets the storyline row outrank the account row', async () => {
     spaceFindMany.mockResolvedValue([
       { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
@@ -559,9 +553,8 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
     expect(space.setPrice).toBe(200);
   });
 
-  // The cascade test from the plan: storyline A priced, storyline B left at
-  // the default. The fake answers by the storyline id each query names, so a
-  // resolver that read the wrong storyline would get A's price for B.
+  // The fake answers by the storyline id each query names, so a resolver that read the wrong
+  // storyline would get A's price for B.
   it('keeps one storyline’s price off another', async () => {
     spaceFindMany.mockImplementation(
       async ({ where }: { where: { OR: { entityType: string; entityId: number }[] } }) =>
@@ -581,8 +574,6 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
     });
   });
 
-  // Every field the cascade resolves on its own, not only mode: a storyline
-  // row's price, free slots and settings each beat the account's.
   it('lets the storyline row win price, free slots and settings too', async () => {
     spaceFindMany.mockResolvedValue([
       {
@@ -676,9 +667,8 @@ describe('resolvePlacementSpaceFor — a storyline chapter', () => {
 });
 
 /**
- * A storyline space is configured on the storyline itself. Its id is neither a
- * post id nor an image id, and both of the paths below once read any unknown
- * entity as a post.
+ * A storyline space is configured on the storyline itself. Its id is neither a post id nor an image
+ * id, so neither path may read it as a post.
  */
 describe('setPlacementSpace — a storyline entity', () => {
   const storylineFindUnique = dbMock.dbWrite.storyline.findUnique;

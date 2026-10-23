@@ -46,7 +46,7 @@ replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
 
-ChatMessage, Comment, CommentV2, UserProfile, Post and Model also list `csam`, asked only while its
+ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.
@@ -107,7 +107,9 @@ The `/text-scan/model-rules` Matches tab marks each rule as matched by the model
 and lists literal-only hits the model did not match.
 
 Image moderation rules are separate and stay in Retool; `/api/mod/mod-rules` now accepts Image rules
-only, so a Model rule can only be managed on `/text-scan/model-rules`.
+only, so a Model rule can only be managed on `/text-scan/model-rules`. An Image rule is built from
+`content`, `tag`, `and` and `or` nodes only; any other node type is refused there and never matches if
+stored. Each create or update writes a `ModerationRuleVersion` row in the same transaction.
 
 ## Actions
 
@@ -116,10 +118,14 @@ A label's action is one of: raise the content rating (the owner can dispute it),
 the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals).
 
-`csam` is the exception: a positive verdict writes one Pending `TextScanHold` row per entity, label
-and scanned text, and nothing else (no report, mute, strike, hide or notification). A rescan of the
-same text adds nothing; changed text adds a new row. A chat window adds nothing when the sender's
-newest Pending hold in that chat, or the newest decided one, already covered every message in it.
+`csam` is the exception: a positive verdict writes a `TextScanHold` row and nothing else (no report,
+mute, strike, hide or notification). Every type except `ChatMessage` keeps one Pending hold per
+entity: changed text updates it in place (earlier held text is kept on the hold), text a moderator
+already ruled on adds nothing unless a different text is pending, and changed text after a ruling
+inserts a new hold marked `redetected` (see
+[text-scan-csam-holds.md](text-scan-csam-holds.md#one-hold-per-entity)). A chat window adds nothing
+when the sender's newest Pending hold in that chat, or the newest decided one, already covered every
+message in it.
 A verdict requested in `review` is held even if the gate turned off before it landed. The scam, Post
 and Model adapters write the hold before their own action. A failed hold write is logged as an error and fails the callback before
 that action runs, so the row is marked Failed and the retry cron rescans it; the action has not run,

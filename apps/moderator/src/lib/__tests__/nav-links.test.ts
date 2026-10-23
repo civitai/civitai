@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive } from '$lib/nav-links';
+import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
+  isGrantable,
   NAVIGATION,
   navForUser,
   pageAccessState,
@@ -80,42 +81,97 @@ describe('the Users section', () => {
 });
 
 describe('the Models section', () => {
-  it('shows every page, each under its own grant', () => {
+  const APPEALS = '/models/flags/appeals';
+  const AUTO = '/models/flags/auto';
+  const NEEDS_REVIEW = '/models/flags/needs-review';
+  const DETECTIONS = permissionKey('modelFlags.detections.decide');
+  const MATCHES = permissionKey('modelFlags.fileMatches.decide');
+  const flags = (roles = reviewer) =>
+    navForUser(roles)
+      .find((l) => l.label === 'Models')
+      ?.children?.find((c) => c.path === '/models/flags');
+  const counts: Record<string, number> = {
+    modelFlagsAppeals: 3,
+    modelFlagsAuto: 5,
+    modelFlagsNeedsReview: 7,
+    modelFlagsNeedsReviewDetections: 2,
+    modelFlagsNeedsReviewMatches: 6,
+  };
+  const countFor = (key: string | undefined) => (key ? counts[key] ?? null : null);
+  const needsReview = () => flags()?.children?.find((c) => c.path === NEEDS_REVIEW);
+
+  it('is one Model Flags entry holding the three tabs, each under its own grant', () => {
     applyGrants({
-      '/models/minor-hash-matches': ['moderator:reviewer'],
-      '/models/flag-appeals': ['moderator:reviewer'],
-      '/models/held-detections': ['moderator:reviewer'],
+      [APPEALS]: ['moderator:reviewer'],
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
     });
-    expect(labelsUnder('Models')).toEqual([
-      ['/models/minor-hash-matches', 'Minor Hash Matches'],
-      ['/models/flag-appeals', 'Model Flag Appeals'],
-      ['/models/held-detections', 'Held Detections'],
-    ]);
-
-    applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/minor-hash-matches', 'Minor Hash Matches']]);
-    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
-
-    applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
-    expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
-    expect(canAccess(reviewer, '/models/held-detections')).toBe(false);
-
-    applyGrants({ '/models/held-detections': ['moderator:reviewer'] });
-    expect(labelsUnder('Models')).toEqual([['/models/held-detections', 'Held Detections']]);
-    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
-  });
-
-  it('badges every queue', () => {
-    const models = NAVIGATION.find((n) => n.path === '/models');
-    expect(models?.children?.map((c) => [c.path, c.countKey])).toEqual([
-      ['/models/minor-hash-matches', 'minorHashMatches'],
-      ['/models/flag-appeals', 'modelFlagAppeals'],
-      ['/models/held-detections', 'heldDetections'],
+    expect(labelsUnder('Models')).toEqual([['/models/flags', 'Model Flags']]);
+    expect(flags()?.tabs).toBe(true);
+    expect(flags()?.children?.map((c) => [c.path, c.label])).toEqual([
+      [APPEALS, 'Appeals'],
+      [AUTO, 'Auto-flagged'],
+      [NEEDS_REVIEW, 'Needs review'],
     ]);
   });
 
-  it('is hidden from whoever holds neither page', () => {
+  it('points the one entry at the first tab held and sums only the held tabs', () => {
+    applyGrants({
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const entry = flags()!;
+    expect(navHref(entry)).toBe(AUTO);
+    expect(navCount(entry, countFor)).toBe(12);
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    expect(navCount(models, countFor)).toBe(12);
+  });
+
+  it('badges Needs review with only the kinds of lead the viewer may rule', () => {
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'], [MATCHES]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBe('modelFlagsNeedsReviewMatches');
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'], [DETECTIONS]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBe('modelFlagsNeedsReviewDetections');
+    applyGrants({ [NEEDS_REVIEW]: ['moderator:reviewer'] });
+    expect(needsReview()?.countKey).toBeUndefined();
+    // The admin holds every permission, so every lead.
+    expect(
+      navForUser({ roles: ['moderator:admin'] })
+        .find((l) => l.label === 'Models')
+        ?.children?.[0]?.children?.find((c) => c.path === NEEDS_REVIEW)?.countKey
+    ).toBe('modelFlagsNeedsReview');
+  });
+
+  it('lets a user holding only Appeals open Appeals and nothing else', () => {
+    applyGrants({ [APPEALS]: ['moderator:reviewer'] });
+    expect(flags()?.children?.map((c) => c.path)).toEqual([APPEALS]);
+    expect(navHref(flags()!)).toBe(APPEALS);
+    expect(navCount(flags()!, countFor)).toBe(3);
+    expect(canAccess(reviewer, APPEALS)).toBe(true);
+    expect(canAccess(reviewer, AUTO)).toBe(false);
+    expect(canAccess(reviewer, NEEDS_REVIEW)).toBe(false);
+  });
+
+  it('is active on every tab of the entry', () => {
+    applyGrants({ [AUTO]: ['moderator:reviewer'] });
+    const entry = flags()!;
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/auto?source=hash'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models/flags/needs-review'))).toBe(true);
+    expect(isNavLinkActive(entry, [entry], at('/models'))).toBe(false);
+  });
+
+  it('badges every tab', () => {
+    const group = NAVIGATION.find((n) => n.path === '/models')?.children?.[0];
+    expect(group?.children?.map((c) => [c.path, c.countKey])).toEqual([
+      [APPEALS, 'modelFlagsAppeals'],
+      [AUTO, 'modelFlagsAuto'],
+      [NEEDS_REVIEW, 'modelFlagsNeedsReview'],
+    ]);
+  });
+
+  it('is hidden from whoever holds none of the tabs', () => {
     applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
     expect(labelsUnder('Models')).toBeUndefined();
   });
@@ -159,10 +215,13 @@ describe('/admin grantable pages', () => {
 
   it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
-      '/models/minor-hash-matches',
-      '/models/flag-appeals',
-      '/models/held-detections',
+      '/models/flags/appeals',
+      '/models/flags/auto',
+      '/models/flags/needs-review',
     ]);
+    expect(isGrantable('/models/flags')).toBe(false);
+    expect(isGrantable('/models/flags/needs-review')).toBe(true);
+    expect(isGrantable('/models/flags/review')).toBe(false);
   });
 });
 
@@ -251,5 +310,65 @@ describe('the Feedback section', () => {
     expect(active('/feedback?area=apps-platform&status=reviewed')).toEqual([true, false]);
     expect(active('/feedback/12')).toEqual([true, false]);
     expect(active('/abuse')).toEqual([false, false]);
+  });
+});
+
+describe('switcherEntries', () => {
+  const civitai = 'https://civitai.test';
+
+  it('lists a top-level page by its label and a group child as "Group › Page"', () => {
+    const entries = switcherEntries(
+      [
+        { path: '/', label: 'Dashboard' },
+        {
+          label: 'Images',
+          children: [{ path: '/images/review', label: 'Review' }],
+        },
+      ],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Dashboard', href: '/', external: false },
+      { label: 'Images › Review', href: '/images/review', external: false },
+    ]);
+  });
+
+  it('lists a tabs group once, at the href the sidebar opens', () => {
+    const entries = switcherEntries(
+      [
+        {
+          label: 'Decisions',
+          children: [
+            {
+              label: 'Support',
+              tabs: true,
+              path: '/decisions/support',
+              children: [
+                { path: '/decisions/support/open', label: 'Open' },
+                { path: '/decisions/support/closed', label: 'Closed' },
+              ],
+            },
+          ],
+        },
+      ],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Decisions › Support', href: '/decisions/support/open', external: false },
+    ]);
+  });
+
+  it('points an external link at the main site', () => {
+    const entries = switcherEntries(
+      [{ label: 'Site', children: [{ path: '/moderator/x', label: 'Old page', external: true }] }],
+      civitai
+    );
+    expect(entries).toEqual([
+      { label: 'Site › Old page', href: 'https://civitai.test/moderator/x', external: true },
+    ]);
+  });
+
+  it('skips a group with no reachable page', () => {
+    expect(switcherEntries([{ label: 'Empty', children: [] }], civitai)).toEqual([]);
   });
 });

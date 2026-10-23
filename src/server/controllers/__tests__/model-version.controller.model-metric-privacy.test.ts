@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as ModelVersionService from '~/server/services/model-version.service';
+import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 import type * as PaidAccessService from '~/server/services/paid-access.service';
 import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
 
@@ -15,9 +15,9 @@ const { mockGetVersionById } = vi.hoisted(() => ({ mockGetVersionById: vi.fn() }
 // The controller reaches the orchestrator caller through training.service, which throws on a
 // missing token at import. Nothing on this path calls it.
 vi.mock('~/server/services/training.service', () => ({}));
-vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ModelVersionService>()),
-  getVersionById: mockGetVersionById,
+vi.mock('~/server/services/model-version-generation-children.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof VersionChildrenService>()),
+  getVersionByIdWithGenerationChildren: mockGetVersionById,
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   getResourceData: vi.fn(async () => []),
@@ -114,5 +114,23 @@ describe('modelVersion.getById: the model-level metric privacy the version edito
   it('serves no model meta to anyone else', async () => {
     expect((await load(null)).model.meta).toBeNull();
     expect((await load({ id: 99 })).model.meta).toBeNull();
+  });
+});
+
+describe('modelVersion.getById: coverage and recommended resources', () => {
+  it('reads them through the one-statement loader, not as nested selects of the version', async () => {
+    const generationCoverage = { covered: true, coveredNext: false };
+    mockGetVersionById.mockImplementation(async ({ select }) => ({
+      ...(project(versionRow, select) as object),
+      generationCoverage,
+      recommendedResources: [],
+    }));
+
+    const result = await load({ id: OWNER_ID });
+
+    const { select } = mockGetVersionById.mock.lastCall![0];
+    expect(select).not.toHaveProperty('generationCoverage');
+    expect(select).not.toHaveProperty('recommendedResources');
+    expect(result.generationCoverage).toEqual(generationCoverage);
   });
 });

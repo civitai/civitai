@@ -192,12 +192,15 @@ describe('upsertArticle — scheduling', () => {
     });
   });
 
-  it('writes a published article by id alone', async () => {
+  it('writes a published article by id, refusing a row removed for a violation meanwhile', async () => {
     mockStored({ publishedAt: inHours(-48), status: ArticleStatus.Published });
 
     await upsert({ status: ArticleStatus.Published });
 
-    expect(mockDbWrite.article.update.mock.calls[0][0].where).toEqual({ id: ARTICLE_ID });
+    expect(mockDbWrite.article.update.mock.calls[0][0].where).toEqual({
+      id: ARTICLE_ID,
+      status: { not: ArticleStatus.UnpublishedViolation },
+    });
   });
 
   it('says so when the draft went live while it was being edited', async () => {

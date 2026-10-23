@@ -130,6 +130,12 @@ const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefin
 // itself, and the sharp decode inside it, run for real against real bytes.
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 
 // The post-commit history write is a seam: these suites pin what each go-live HANDS it;

@@ -53,9 +53,13 @@ describe('sourceLabel', () => {
 });
 
 describe('matchesFlag', () => {
-  it('treats unflagged as neither minor nor poi', () => {
-    expect(matchesFlag('unflagged', { minor: false, poi: false })).toBe(true);
-    expect(matchesFlag('unflagged', { minor: false, poi: true })).toBe(false);
+  it('keeps a no-longer-flagged model under All only', () => {
+    const cleared = { minor: false, poi: false };
+    expect([
+      matchesFlag('all', cleared),
+      matchesFlag('minor', cleared),
+      matchesFlag('poi', cleared),
+    ]).toEqual([true, false, false]);
   });
   it('matches a model carrying both labels under each', () => {
     const both = { minor: true, poi: true };
@@ -72,20 +76,20 @@ const groups: AppealGroup[] = [
 ];
 
 describe('appealFacets', () => {
-  it('counts every appeal with no filter', () => {
+  it('counts every appeal under All, including unflagged and unrecorded ones', () => {
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
-    expect(f.source).toEqual({ all: 12, 'text-scan': 1, hash: 3, moderator: 7, none: 1 });
-    expect(f.flag).toEqual({ all: 12, minor: 8, poi: 4, unflagged: 3 });
+    expect(f.source).toEqual({ all: 12, 'text-scan': 1, hash: 3, moderator: 7 });
+    expect(f.flag).toEqual({ all: 12, minor: 8, poi: 4 });
   });
 
   it('counts sources under the selected flag', () => {
     const f = appealFacets(groups, { ...DEFAULT_APPEAL_FILTERS, flag: 'minor' });
-    expect(f.source).toEqual({ all: 8, 'text-scan': 0, hash: 3, moderator: 5, none: 0 });
+    expect(f.source).toEqual({ all: 8, 'text-scan': 0, hash: 3, moderator: 5 });
   });
 
   it('counts flags under the selected source', () => {
     const f = appealFacets(groups, { ...DEFAULT_APPEAL_FILTERS, source: 'moderator' });
-    expect(f.flag).toEqual({ all: 7, minor: 5, poi: 0, unflagged: 2 });
+    expect(f.flag).toEqual({ all: 7, minor: 5, poi: 0 });
   });
 });
 

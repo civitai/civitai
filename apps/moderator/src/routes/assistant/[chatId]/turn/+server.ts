@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
 import { admitTurn, BUSY, executeTurn } from '$lib/server/assistant/turn.service';
 import { denied } from '$lib/permissions';
+import { findModel } from '$lib/assistant/models';
 import type { TurnEvent } from '$lib/assistant/types';
 
 const bodySchema = z.object({
@@ -12,6 +13,11 @@ const bodySchema = z.object({
     .string()
     .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
     .max(60)
+    .nullish(),
+  // Only a listed model: each was checked to route under the no-retention policy.
+  model: z
+    .string()
+    .refine((id) => !!findModel(id))
     .nullish(),
 });
 
@@ -28,9 +34,18 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
   const chatId = Number(params.chatId);
   if (!Number.isSafeInteger(chatId) || chatId <= 0) error(404, 'No such chat.');
   const body = bodySchema.safeParse(await request.json().catch(() => null));
-  if (!body.success) error(400, 'Ask a question of up to 4,000 characters.');
+  if (!body.success)
+    error(
+      400,
+      body.error.issues.some((i) => i.path[0] === 'model')
+        ? 'That model is not one the assistant can use.'
+        : 'Ask a question of up to 4,000 characters.'
+    );
 
-  const admitted = await admitTurn(chatId, locals.user.id);
+  const admitted = await admitTurn(chatId, {
+    id: locals.user.id,
+    roles: locals.user.roles ?? [],
+  });
   if (!admitted.ok) return json({ error: admitted.error }, { status: admitted.status });
 
   const encoder = new TextEncoder();
@@ -50,9 +65,10 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
         moderator: { id: locals.user.id, username: locals.user.username ?? null },
         prompt: body.data.prompt,
         playbookSlug: body.data.playbook ?? null,
+        model: body.data.model ?? null,
         canAccess: (path) => canAccess(locals.user, path),
         hasGrant: (permission) => !!locals.grants[permission],
-        used: admitted.used,
+        allowance: admitted.allowance,
         emit,
       })
         .catch((e) => {

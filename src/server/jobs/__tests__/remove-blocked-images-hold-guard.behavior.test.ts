@@ -51,6 +51,8 @@ vi.mock('~/server/search-index', () => ({
 
 import * as imageService from '~/server/services/image.service';
 import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
+import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
 import * as postService from '~/server/services/post.service';
@@ -69,9 +71,14 @@ const HOLD_MIGRATION = path.resolve(
 
 const PLAIN_USER = 1;
 const OPEN_REPORT_USER = 2;
-const EXPIRED_REPORT_USER = 3;
-const CLOSED_REPORT_USER = 4;
+const SENT_UNARCHIVED_USER = 3; // sent over a year ago, never archived
+const RECENTLY_CLOSED_USER = 4; // sent and archived within the year
 const UNSENT_ARCHIVED_USER = 5;
+const LONG_CLOSED_USER = 6; // sent and archived over a year ago
+const SECONDARY_USER = 7; // the secondary user on a report sent within the year
+const LONG_CLOSED_SECONDARY_USER = 8; // the secondary user on LONG_CLOSED_USER's report
+const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_USER
+const PLACEHOLDER_OWNER = -1;
 
 // Image ids, named for the case each one pins.
 const PLAIN = 10; // blocked, no hold -> deleted
@@ -79,28 +86,48 @@ const APPEALED = 11; // flagged for appeal mid-run -> kept
 const FLAGGED = 12; // moderator-only review flag set mid-run -> kept
 const UNBLOCKED = 13; // unblocked mid-run -> kept
 const REPORTED = 14; // owner's report filed mid-run -> kept
-const EXPIRED = 15; // owner's open report already judged past the ceiling -> deleted
-const CLOSED = 16; // owner's report sent and archived -> deleted
+const SENT_UNARCHIVED = 15; // kept, however old the report
+const RECENTLY_CLOSED = 16; // kept for a year after the report was sent
 const OTHER_FLAG = 17; // a review flag that is not a hold -> deleted
 const UNSENT = 18; // owner's report archived but never sent -> kept
-const ALL = [PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, CLOSED, OTHER_FLAG, UNSENT];
+const LONG_CLOSED = 19; // the year is up -> deleted
+const SECONDARY = 20; // kept: the hold covers the report's secondary user too
+const PLACEHOLDER = 21; // owned by the placeholder owner -> kept
+const LONG_CLOSED_SECONDARY = 22; // the year is up for the secondary user too -> deleted
+const ALL = [
+  PLAIN,
+  APPEALED,
+  FLAGGED,
+  UNBLOCKED,
+  REPORTED,
+  SENT_UNARCHIVED,
+  RECENTLY_CLOSED,
+  OTHER_FLAG,
+  UNSENT,
+  LONG_CLOSED,
+  SECONDARY,
+  PLACEHOLDER,
+  LONG_CLOSED_SECONDARY,
+];
+const DELETED = [PLAIN, OTHER_FLAG, LONG_CLOSED, LONG_CLOSED_SECONDARY];
+const KEPT = ALL.filter((id) => !DELETED.includes(id));
 
 // Hold markers. Owners, then one blocked, unflagged image each.
-const RECENT_REPORT_USER = 6; // report sent and archived 10 days ago
-const SECONDARY_USER = 7; // named as the secondary user on that report
-const MANUAL_USER = 8; // hold set by a person, no end date
-const RELEASED_USER = 9; // hold set by a person, then released
-const EXTENDED_USER = 10; // report sent over a year ago, hold extended past today
-const RECENT_REPORTED = 20;
-const SECONDARY = 21;
-const MANUAL = 22;
-const RELEASED = 23;
-const EXTENDED = 24;
-const MARKED = [RECENT_REPORTED, SECONDARY, MANUAL, RELEASED, EXTENDED];
-const LAPSED_USER = 11; // report sent a year and a day ago
-const LAPSED = 25;
-const LIVE_HELD = 26; // a held owner's image still on the site
-const POST_NEIGHBOUR = 27; // an unheld owner's image in the same post
+const RECENT_REPORT_USER = 56; // report sent and archived 10 days ago
+const MARKED_SECONDARY_USER = 57; // named as the secondary user on that report
+const MANUAL_USER = 58; // hold set by a person, no end date
+const RELEASED_USER = 59; // hold set by a person, then released
+const EXTENDED_USER = 60; // report sent over a year ago, hold extended past today
+const RECENT_REPORTED = 70;
+const MARKED_SECONDARY = 71;
+const MANUAL = 72;
+const RELEASED = 73;
+const EXTENDED = 74;
+const MARKED = [RECENT_REPORTED, MARKED_SECONDARY, MANUAL, RELEASED, EXTENDED];
+const LAPSED_USER = 61; // report sent a year and a day ago
+const LAPSED = 75;
+const LIVE_HELD = 76; // a held owner's image still on the site
+const POST_NEIGHBOUR = 77; // an unheld owner's image in the same post
 const POST = 500;
 
 const BACKFILL_RECENT_USER = 30;
@@ -206,16 +233,23 @@ beforeEach(async () => {
       (${FLAGGED}, ${PLAIN_USER}, 'Blocked', 'csam'),
       (${UNBLOCKED}, ${PLAIN_USER}, 'Scanned', NULL),
       (${REPORTED}, ${OPEN_REPORT_USER}, 'Blocked', NULL),
-      (${EXPIRED}, ${EXPIRED_REPORT_USER}, 'Blocked', NULL),
-      (${CLOSED}, ${CLOSED_REPORT_USER}, 'Blocked', NULL),
+      (${SENT_UNARCHIVED}, ${SENT_UNARCHIVED_USER}, 'Blocked', NULL),
+      (${RECENTLY_CLOSED}, ${RECENTLY_CLOSED_USER}, 'Blocked', NULL),
       (${OTHER_FLAG}, ${PLAIN_USER}, 'Blocked', 'minor'),
-      (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL);
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
-      (${OPEN_REPORT_USER}, NULL, NULL),
-      -- Sent over a year ago, so the hold marker the send wrote has lapsed.
-      (${EXPIRED_REPORT_USER}, now() - interval '400 days', NULL),
-      (${CLOSED_REPORT_USER}, now() - interval '400 days', now() - interval '400 days'),
-      (${UNSENT_ARCHIVED_USER}, NULL, now());
+      (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL),
+      (${LONG_CLOSED}, ${LONG_CLOSED_USER}, 'Blocked', NULL),
+      (${SECONDARY}, ${SECONDARY_USER}, 'Blocked', NULL),
+      (${PLACEHOLDER}, ${PLACEHOLDER_OWNER}, 'Blocked', NULL),
+      (${LONG_CLOSED_SECONDARY}, ${LONG_CLOSED_SECONDARY_USER}, 'Blocked', NULL);
+    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
+      (${OPEN_REPORT_USER}, NULL, NULL, '{}'),
+      (${SENT_UNARCHIVED_USER}, now() - interval '400 days', NULL, '{}'),
+      (${RECENTLY_CLOSED_USER}, now() - interval '30 days', now(), 'null'),
+      (${UNSENT_ARCHIVED_USER}, NULL, now(), '{}'),
+      (${LONG_CLOSED_USER}, now() - interval '400 days', now(),
+        '{"secondaryUserId": ${LONG_CLOSED_SECONDARY_USER}}'),
+      (${REPORT_SUBJECT}, now() - interval '30 days', now(), '{"secondaryUserId": ${SECONDARY_USER}}'),
+      (NULL, NULL, NULL, '{}');
   `);
 });
 
@@ -223,13 +257,13 @@ const insertMarkedOwners = () =>
   holder.db.exec(`
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${RECENT_REPORTED}, ${RECENT_REPORT_USER}, 'Blocked', NULL),
-      (${SECONDARY}, ${SECONDARY_USER}, 'Blocked', NULL),
+      (${MARKED_SECONDARY}, ${MARKED_SECONDARY_USER}, 'Blocked', NULL),
       (${MANUAL}, ${MANUAL_USER}, 'Blocked', NULL),
       (${RELEASED}, ${RELEASED_USER}, 'Blocked', NULL),
       (${EXTENDED}, ${EXTENDED_USER}, 'Blocked', NULL);
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
       (${RECENT_REPORT_USER}, now() - interval '10 days', now() - interval '10 days',
-        '{"secondaryUserId": ${SECONDARY_USER}}'),
+        '{"secondaryUserId": ${MARKED_SECONDARY_USER}}'),
       (${EXTENDED_USER}, now() - interval '400 days', now() - interval '400 days', '{}');
     UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '90 days', "extensionRequestedBy" = 'agency', "extensionReference" = 'ref'
       WHERE "userId" = ${EXTENDED_USER};
@@ -242,40 +276,40 @@ const remaining = async () =>
   (await holder.db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`)).rows.map(
     (r) => r.id
   );
+const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
+
+describe('legalHoldUserIdsSql', () => {
+  it('names the subject and secondary user of every report still inside the hold', async () => {
+    // The query the job runs, as it runs it.
+    const { rows } = await holder.db.query<{ userId: string }>(
+      legalHoldUserIdsSql.text,
+      legalHoldUserIdsSql.values
+    );
+
+    expect(rows.map((r) => Number(r.userId)).sort((a, b) => a - b)).toEqual([
+      OPEN_REPORT_USER,
+      SENT_UNARCHIVED_USER,
+      RECENTLY_CLOSED_USER,
+      UNSENT_ARCHIVED_USER,
+      SECONDARY_USER,
+      REPORT_SUBJECT,
+    ]);
+  });
+});
 
 describe('purgeHoldGuard on the delete', () => {
   it('deletes only images no hold covers at the moment of the delete', async () => {
     const deleted = await imageService.deleteImages(ALL, true, {
-      onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
+      onlyWhere: purgeHoldGuard(NO_COPY),
     });
 
-    expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([
-      PLAIN,
-      EXPIRED,
-      CLOSED,
-      OTHER_FLAG,
-    ]);
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+    expect(sorted(deleted.map((r) => r.id))).toEqual(DELETED);
+    expect(await remaining()).toEqual(KEPT);
     // A kept image's own side effects must not run: it is still live in the database.
     const deindexed = vi
       .mocked(imagesSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
-    expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, EXPIRED, CLOSED, OTHER_FLAG]);
-  });
-
-  it('holds an open report whose owner the run did not judge expired', async () => {
-    await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
-
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, UNSENT]);
-  });
-
-  // An unsent report writes no hold marker, so the run's ceiling still reaches its owner.
-  it('purges an unsent open report the run judged past the ceiling', async () => {
-    await imageService.deleteImages(ALL, true, {
-      onlyWhere: purgeHoldGuard([OPEN_REPORT_USER], NO_COPY),
-    });
-
-    expect(await remaining()).not.toContain(REPORTED);
+    expect(sorted(deindexed)).toEqual(DELETED);
   });
 
   it('applies the guard to every batch, not only the first', async () => {
@@ -287,7 +321,7 @@ describe('purgeHoldGuard on the delete', () => {
       FROM generate_series(${extra[0]}, ${lastFlagged}) g;
     `);
 
-    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
+    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
     expect((await remaining()).filter((id) => id >= extra[0])).toEqual([lastFlagged]);
   });
@@ -297,24 +331,22 @@ describe('purgeHoldGuard on the delete', () => {
       await holder.db.exec(`
         INSERT INTO "AppealDecisionRecord" ("imageId", decision, "removalLabel") VALUES
           (${PLAIN}, 'Rejected', 'spam'),
-          (${CLOSED}, 'Rejected', 'realisticMinorNsfw');
+          (${LONG_CLOSED}, 'Rejected', 'realisticMinorNsfw');
       `);
     });
 
     it('keeps a rejected image waiting for its copy when the copy job is configured', async () => {
       await imageService.deleteImages(ALL, true, {
-        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], { holdForTrainingCopy: true }),
+        onlyWhere: purgeHoldGuard({ holdForTrainingCopy: true }),
       });
 
-      expect(await remaining()).toEqual([PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+      expect(await remaining()).toEqual(sorted([PLAIN, ...KEPT]));
     });
 
     it('holds nothing for it when the copy job is not configured', async () => {
-      await imageService.deleteImages(ALL, true, {
-        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
-      });
+      await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
-      expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+      expect(await remaining()).toEqual(KEPT);
     });
   });
 
@@ -323,24 +355,15 @@ describe('purgeHoldGuard on the delete', () => {
 
     it('keeps every image of a held owner, and only of a held owner', async () => {
       await imageService.deleteImages([...ALL, ...MARKED], true, {
-        onlyWhere: purgeHoldGuard([EXPIRED_REPORT_USER], NO_COPY),
+        onlyWhere: purgeHoldGuard(NO_COPY),
       });
 
       expect((await remaining()).filter((id) => MARKED.includes(id))).toEqual([
         RECENT_REPORTED,
-        SECONDARY,
+        MARKED_SECONDARY,
         MANUAL,
         EXTENDED,
       ]);
-    });
-
-    it('is not lifted by the report-expiry override', async () => {
-      await imageService.deleteImages(MARKED, true, {
-        onlyWhere: purgeHoldGuard([RECENT_REPORT_USER, MANUAL_USER], NO_COPY),
-      });
-
-      expect(await remaining()).toContain(RECENT_REPORTED);
-      expect(await remaining()).toContain(MANUAL);
     });
 
     it('deletes the image once the hold has ended', async () => {
@@ -350,7 +373,7 @@ describe('purgeHoldGuard on the delete', () => {
           (${LAPSED_USER}, now() - interval '366 days', now() - interval '366 days');
       `);
 
-      await imageService.deleteImages([LAPSED], true, { onlyWhere: purgeHoldGuard([], NO_COPY) });
+      await imageService.deleteImages([LAPSED], true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
       expect(await remaining()).not.toContain(LAPSED);
     });
@@ -370,7 +393,7 @@ describe('purgeHoldGuard on the delete', () => {
       expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
       expect((await remaining()).filter((id) => MARKED.includes(id))).toEqual([
         RECENT_REPORTED,
-        SECONDARY,
+        MARKED_SECONDARY,
         MANUAL,
         EXTENDED,
       ]);
@@ -593,7 +616,7 @@ describe('purgeHoldGuard on the delete', () => {
           VALUES (${LAPSED_USER}, 'manual', 'review', now() - interval '1 day');
         INSERT INTO "Post" (id, "userId", title, detail, "createdAt", "publishedAt", "modelVersionId", "collectionId", metadata) VALUES
           (1, ${MANUAL_USER}, 't1', 'd1', '2025-01-02 03:04:05', '2025-02-03 04:05:06', 70, 80, '{"k": 1}'),
-          (2, ${SECONDARY_USER}, 't2', NULL, '2025-03-04 05:06:07', NULL, NULL, NULL, NULL),
+          (2, ${MARKED_SECONDARY_USER}, 't2', NULL, '2025-03-04 05:06:07', NULL, NULL, NULL, NULL),
           (3, ${PLAIN_USER}, 't3', 'd3', now(), now(), NULL, NULL, NULL),
           (4, ${RELEASED_USER}, 't4', NULL, now(), NULL, NULL, NULL, NULL),
           (5, ${LAPSED_USER}, 't5', NULL, now(), NULL, NULL, NULL, NULL);
@@ -635,7 +658,7 @@ describe('purgeHoldGuard on the delete', () => {
         },
         {
           postId: 2,
-          userId: SECONDARY_USER,
+          userId: MARKED_SECONDARY_USER,
           title: 't2',
           detail: null,
           createdAt: '2025-03-04 05:06:07',
@@ -651,14 +674,14 @@ describe('purgeHoldGuard on the delete', () => {
       await holder.db.exec(`
         DELETE FROM "Post";
         INSERT INTO "EvidenceHoldImage" ("imageId", "userId", "postId") VALUES
-          (${MANUAL}, ${MANUAL_USER}, 1), (${SECONDARY}, ${SECONDARY_USER}, 2);
+          (${MANUAL}, ${MANUAL_USER}, 1), (${MARKED_SECONDARY}, ${MARKED_SECONDARY_USER}, 2);
         UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
         WHERE "userId" = ${MANUAL_USER} AND "releasedAt" IS NULL;
       `);
 
       // The control: the still-held owner's rows stay.
       expect((await snapshots()).map((r) => r.postId)).toEqual([2]);
-      expect(await keptImages()).toEqual([SECONDARY]);
+      expect(await keptImages()).toEqual([MARKED_SECONDARY]);
     });
 
     it('keeps them while another hold on the same owner is still running', async () => {
@@ -776,6 +799,42 @@ describe('purgeHoldGuard on the delete', () => {
     await imageService.deleteImages([...ALL, ...MARKED], true);
 
     expect(await remaining()).toEqual([]);
+  });
+});
+
+// The account guards' marker leg, read through the real view: a released or lapsed marker drops
+// that leg only, and never another hold on the same account.
+describe('accountHoldSql over the real marker view', () => {
+  const RELEASED_REPORTED_USER = 90; // released marker, unsent report
+  const RELEASED_ONLY_USER = 91; // released marker, nothing else
+  const LAPSED_MARKER_USER = 92; // marker past its end date, nothing else
+  const RUNNING_MARKER_USER = 93; // marker with no end date, nothing else
+
+  const held = async (userId: number) => {
+    const q = Prisma.sql`SELECT ${accountHoldSql(Prisma.sql`${userId}::int`, true)} AS held`;
+    return (await holder.db.query<{ held: boolean }>(q.text, q.values as unknown[])).rows[0].held;
+  };
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "EvidenceHold" ("userId", role, reason, "releaseAt", "releasedAt", "releasedById", "releaseReason") VALUES
+        (${RELEASED_REPORTED_USER}, 'manual', 'review', NULL, now(), 1, 'done'),
+        (${RELEASED_ONLY_USER}, 'manual', 'review', NULL, now(), 1, 'done'),
+        (${LAPSED_MARKER_USER}, 'manual', 'review', now() - interval '1 day', NULL, NULL, NULL),
+        (${RUNNING_MARKER_USER}, 'manual', 'review', NULL, NULL, NULL, NULL);
+      INSERT INTO "CsamReport" ("userId", details) VALUES (${RELEASED_REPORTED_USER}, '{}');
+    `)
+  );
+
+  it("still holds a released marker's owner through an unsent report", async () => {
+    expect(await held(RELEASED_REPORTED_USER)).toBe(true);
+    // The control: the same released marker with no report holds nothing.
+    expect(await held(RELEASED_ONLY_USER)).toBe(false);
+  });
+
+  it('lets a marker go at its end date, and holds through one still running', async () => {
+    expect(await held(LAPSED_MARKER_USER)).toBe(false);
+    expect(await held(RUNNING_MARKER_USER)).toBe(true);
   });
 });
 

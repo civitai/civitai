@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
@@ -188,7 +190,152 @@ describe('linkStorylineChapter', () => {
   });
 });
 
+describe('linkStorylineChapter against a removal', () => {
+  it('holds the two chapters until it commits, so a removal landing mid-link waits', async () => {
+    db.removeBeforeNextEdge(R);
+    await link(24, R);
+
+    expect(edgesInto(R)).toEqual([
+      [13, true],
+      [24, true],
+    ]);
+    // Nothing was written onto a chapter that was already removed...
+    expect(db.edgesOnRemoved()).toEqual([]);
+    // ...and the removal still happened, once the link had committed.
+    expect(db.row('storylineChapter', { id: R })?.removedAt).toBeInstanceOf(Date);
+  });
+
+  it('refuses a chapter a removal has committed, whatever an earlier read of it said', async () => {
+    const before = db.rows('storylineChapterEdge');
+    const real = dbMock.dbWrite.storylineChapter.findMany.getMockImplementation() as (
+      args: unknown
+    ) => Promise<{ removedAt: Date | null }[]>;
+    // The read that ran before the removal committed: R still looks live to it.
+    dbMock.dbWrite.storylineChapter.findMany.mockImplementationOnce((async (args: unknown) =>
+      (await real(args)).map((c) => ({ ...c, removedAt: null }))) as never);
+    db.update('storylineChapter', { id: R }, { removedAt: new Date() });
+
+    const error = await link(24, R).catch((e: unknown) => e);
+    expect((error as Error).message).toMatch(/removed/);
+    expect(db.rows('storylineChapterEdge')).toEqual(before);
+  });
+});
+
+describe('the fake db chapter lock', () => {
+  const lock = (liveFilter: boolean) => {
+    // The same statement as the service's, reflowed across lines as a formatter would leave it.
+    const filter = liveFilter ? Prisma.sql`AND "removedAt" IS NULL` : Prisma.empty;
+    return dbMock.dbWrite.$transaction(async (tx: typeof dbMock.dbWrite) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id
+        FROM "StorylineChapter"
+        WHERE id =
+          ANY(${[R, 24]})
+          ${filter}
+        FOR SHARE`);
+      return [R, 24].map((id) => db.isShareLocked(id));
+    });
+  };
+
+  it('accepts a live-chapter lock whatever its whitespace and share-locks the chapters', async () => {
+    expect(await lock(true)).toEqual([true, true]);
+  });
+
+  it('still refuses a lock that does not read live chapters only', async () => {
+    await expect(lock(false)).rejects.toThrow(/not a live-chapter read/);
+  });
+});
+
+describe('which chapters can be joined', () => {
+  // A chapter's post the storyline's owner is not shown, whatever its own reader is shown.
+  it.each([
+    ['above the story rating', () => db.update('post', { id: R * 10 }, { nsfwLevel: 4 })],
+    [
+      'by a banned author',
+      () => {
+        db.update('post', { id: R * 10 }, { userId: STRANGER });
+        db.update('user', { id: STRANGER }, { bannedAt: new Date() });
+      },
+    ],
+    [
+      'by a blocked author',
+      () => {
+        db.update('post', { id: R * 10 }, { userId: STRANGER });
+        blockedPairIds.ids = [STRANGER];
+      },
+    ],
+  ])('keeps a chapter %s out of the picker and refuses it from the link', async (_name, hide) => {
+    hide();
+    const before = db.rows('storylineChapterEdge');
+
+    for (const caller of [
+      { userId: OWNER, isModerator: false },
+      // A moderator is offered what the owner is, not everything the moderator can see.
+      { userId: MODERATOR, isModerator: true },
+    ]) {
+      const targets = await getStorylineLinkTargets({ parentChapterId: 24, ...caller });
+      expect(targets.map((t) => t.chapterId)).toEqual([12, 13]);
+      await expect(link(24, R, caller.userId, caller.isModerator)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/cannot be joined/),
+      });
+    }
+    expect(db.rows('storylineChapterEdge')).toEqual(before);
+  });
+
+  it('still offers and accepts the same chapter once it is shown to the owner', async () => {
+    expect(
+      (
+        await getStorylineLinkTargets({ parentChapterId: 24, userId: MODERATOR, isModerator: true })
+      ).map((t) => t.chapterId)
+    ).toEqual([12, 13, R]);
+    await link(24, R, MODERATOR, true);
+    expect(edgesInto(R)).toHaveLength(2);
+  });
+});
+
 describe('getStorylineLinkTargets', () => {
+  // Branch P forks off trunk chapter 200 for three chapters; branch Q forks off chapter 5 and runs
+  // 150 chapters; the trunk runs on to 260. From P's end every Q chapter after the first and every
+  // trunk chapter after the fork's next one can be joined: well past the 100 the picker keeps.
+  const longStory = () => {
+    for (let id = 4; id <= 260; id++) {
+      chapter(100 + id, id - 1);
+      edge(100 + id, id === 4 ? 3 : 99 + id, false);
+    }
+    for (let i = 1; i <= 150; i++) {
+      chapter(1000 + i, 4 + i);
+      edge(1000 + i, i === 1 ? 105 : 999 + i, false);
+    }
+    for (let i = 1; i <= 3; i++) {
+      chapter(2000 + i, 199 + i);
+      edge(2000 + i, i === 1 ? 300 : 1999 + i, false);
+    }
+  };
+
+  it('keeps the nearest chapters to the parent when there are more than it shows', async () => {
+    longStory();
+    const targets = await getStorylineLinkTargets({ parentChapterId: 2003, userId: OWNER });
+    const depths = targets.map((t) => t.depth);
+
+    expect(targets).toHaveLength(100);
+    // Ahead of the parent, all of them: the trunk's 203 to 259, and then those behind it nearest first.
+    expect(depths).toContain(259);
+    expect(depths).toContain(204);
+    // The shallow far end of the long branch is what the cap leaves out.
+    expect(depths).not.toContain(7);
+    expect(Math.min(...depths)).toBeGreaterThan(100);
+    // Shown in story order.
+    expect(depths).toEqual([...depths].sort((a, b) => a - b));
+  });
+
+  it('only offers chapters the link accepts', async () => {
+    longStory();
+    const targets = await getStorylineLinkTargets({ parentChapterId: 2003, userId: OWNER });
+    await expect(link(2003, targets[targets.length - 1].chapterId)).resolves.toBeUndefined();
+  });
+});
+
+describe('getStorylineLinkTargets on the small story', () => {
   it('lists exactly the chapters a link would be accepted to, in story order', async () => {
     const targets = await getStorylineLinkTargets({ parentChapterId: 24, userId: OWNER });
     // Not 1 (first chapter), 2, 3, 21-23 (before 24: a loop), 24 itself, or 11 (a skip round the fork at 3).

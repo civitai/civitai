@@ -16,11 +16,12 @@ const load = async (entityType: string, id = 1) => {
 beforeEach(() => vi.clearAllMocks());
 
 describe('rated-entity profiles', () => {
-  it('registers all six with the spec labels', () => {
+  it('registers the rated entities with the spec labels', () => {
     expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor', 'csam']);
     expect(getTextScanProfile('Post')?.labels).toEqual(['nsfw', 'csam']);
     expect(getTextScanProfile('Bounty')?.labels).toEqual(['nsfw', 'poi']);
-    for (const t of ['Article', 'BountyEntry', 'Challenge'])
+    expect(getTextScanProfile('Article')?.labels).toEqual(['nsfw', 'csam']);
+    for (const t of ['BountyEntry', 'Challenge'])
       expect(getTextScanProfile(t)?.labels).toEqual(['nsfw']);
   });
 

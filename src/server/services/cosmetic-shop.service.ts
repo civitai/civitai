@@ -17,6 +17,7 @@ import {
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
@@ -33,6 +34,8 @@ import type {
   UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
+  SetShopItemEventTagsInput,
+  ShopItemSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
   computeCreatorShopSplit,
@@ -60,6 +63,10 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import {
+  excludeDeletedShopListing,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
@@ -97,6 +104,7 @@ import {
   CollectionType,
   CosmeticShopItemStatus,
   CosmeticType,
+  HomeBlockType,
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
@@ -540,6 +548,35 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
   };
 };
 
+// Creator-listed items may only be featured when published AND opted into
+// resale — a creator who never marked their item sellable-by-others hasn't
+// consented to official-shop placement.
+async function assertSectionPlaceable(items: number[]) {
+  // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+  const boxes = await dbWrite.cosmeticShopItem.count({
+    where: { id: { in: items }, itemDefinitionId: { not: null } },
+  });
+  if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
+  const ineligible = await dbWrite.cosmeticShopItem.findMany({
+    where: {
+      id: { in: items },
+      cosmetic: { createdById: { not: null } },
+      OR: [
+        { status: { not: CosmeticShopItemStatus.Published } },
+        { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+      ],
+    },
+    select: { title: true },
+  });
+  if (ineligible.length)
+    throw new Error(
+      `These creator items are not published resellable cosmetics: ${ineligible
+        .map((i) => i.title)
+        .join(', ')}`
+    );
+}
+
 export const upsertCosmeticShopSection = async ({
   userId,
   id,
@@ -547,34 +584,7 @@ export const upsertCosmeticShopSection = async ({
   image, // TODO
   ...cosmeticShopSection
 }: UpsertCosmeticShopSectionInput & { userId: number }) => {
-  // Creator-listed items may only be featured when published AND opted into
-  // resale — a creator who never marked their item sellable-by-others hasn't
-  // consented to official-shop placement.
-  if (items?.length) {
-    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
-    const boxes = await dbWrite.cosmeticShopItem.count({
-      where: { id: { in: items }, itemDefinitionId: { not: null } },
-    });
-    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
-
-    const ineligible = await dbWrite.cosmeticShopItem.findMany({
-      where: {
-        id: { in: items },
-        cosmetic: { createdById: { not: null } },
-        OR: [
-          { status: { not: CosmeticShopItemStatus.Published } },
-          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-        ],
-      },
-      select: { title: true },
-    });
-    if (ineligible.length)
-      throw new Error(
-        `These creator items are not published resellable cosmetics: ${ineligible
-          .map((i) => i.title)
-          .join(', ')}`
-      );
-  }
+  if (items?.length) await assertSectionPlaceable(items);
 
   const shouldCreateImage = image && !image.id;
   const [imageRecord] = shouldCreateImage
@@ -653,6 +663,109 @@ export const upsertCosmeticShopSection = async ({
   return getSectionById({ id });
 };
 
+/** The sections a shop item is placed in, for the review drawer's section picker. */
+export const getShopItemSections = async ({
+  shopItemId,
+}: Pick<ShopItemSectionInput, 'shopItemId'>) => {
+  const rows = await dbWrite.cosmeticShopSectionItem.findMany({
+    where: { shopItemId },
+    select: { shopSection: { select: { id: true, title: true, published: true } } },
+    orderBy: { shopSection: { placement: 'asc' } },
+  });
+  return rows.map((row) => row.shopSection);
+};
+
+/**
+ * One item into one section, appended after what the section already holds so the curated order
+ * is left alone. The same placement rules as the section editor, which replaces the whole list.
+ */
+export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSectionInput) => {
+  // The editor's rules only constrain creator cosmetics; a picker on the review queue also reaches
+  // creator packs and items still in review, and neither is on sale.
+  const item = await dbWrite.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { status: true, archivedAt: true },
+  });
+  if (!item) throw throwNotFoundError(`No cosmetic shop item with id ${shopItemId}`);
+  if (item.status !== CosmeticShopItemStatus.Published || item.archivedAt)
+    throw new Error('Only published items can be placed in a shop section');
+  await assertSectionPlaceable([shopItemId]);
+  await dbWrite.$executeRaw`
+    INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
+    SELECT ${sectionId}, ${shopItemId}, COALESCE(MAX("index") + 1, 0)
+    FROM "CosmeticShopSectionItem"
+    WHERE "shopSectionId" = ${sectionId}
+    ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING
+  `;
+  return getShopItemSections({ shopItemId });
+};
+
+export const removeShopItemFromSection = async ({
+  shopItemId,
+  sectionId,
+}: ShopItemSectionInput) => {
+  await dbWrite.cosmeticShopSectionItem.deleteMany({
+    where: { shopSectionId: sectionId, shopItemId },
+  });
+  return getShopItemSections({ shopItemId });
+};
+
+/** Moderator data: the event tags that put an item in tagged shop sections. */
+export const getShopItemEventTags = async ({ shopItemId }: { shopItemId: number }) => {
+  const item = await dbRead.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { eventTags: true },
+  });
+  if (!item) throw throwNotFoundError(`No cosmetic shop item with id ${shopItemId}`);
+  return item.eventTags;
+};
+
+export const setShopItemEventTags = async ({
+  shopItemId,
+  eventTags,
+}: SetShopItemEventTagsInput) => {
+  const before = await dbWrite.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { eventTags: true },
+  });
+  if (!before) throw throwNotFoundError(`No cosmetic shop item with id ${shopItemId}`);
+  const updated = await dbWrite.cosmeticShopItem.update({
+    where: { id: shopItemId },
+    data: { eventTags },
+    select: { eventTags: true },
+  });
+  // The tags are saved by now, so a failed bust must not report the save as failed; the block's
+  // own 3-minute TTL clears it.
+  try {
+    await bustEventTaggedHomeBlocks([...before.eventTags, ...updated.eventTags]);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'shop-item-event-tags-bust-failed',
+      message: e instanceof Error ? e.message : String(e),
+      shopItemId,
+    });
+  }
+  return updated.eventTags;
+};
+
+/**
+ * A CosmeticShop home block caches its section for 3 minutes, so without this a newly tagged item
+ * would not reach the homepage until that expired. Entries are keyed by section, and the tags both
+ * before and after the change matter: an untagged item has to leave as promptly as a tagged one
+ * arrives.
+ */
+async function bustEventTaggedHomeBlocks(tags: string[]) {
+  if (!tags.length) return;
+  const changed = new Set(tags);
+  const sectionTags = await getSectionEventTags();
+  await Promise.all(
+    [...sectionTags]
+      .filter(([, tag]) => changed.has(tag))
+      .map(([sectionId]) => homeBlockCacheBust(HomeBlockType.CosmeticShop, sectionId))
+  );
+}
+
 export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
   const deleteItemFindArgs = {
     where: { id },
@@ -674,9 +787,11 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
     throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');
   }
 
-  return dbWrite.cosmeticShopItem.delete({
-    where: { id },
-  });
+  return dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.cosmeticShopItem.delete({ where: { id } });
+    await excludeDeletedShopListing(tx, id);
+    return deleted;
+  }, SHOP_VERDICT_TRANSACTION);
 };
 
 export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
@@ -698,6 +813,87 @@ export const reorderCosmeticShopSections = async ({
   return true;
 };
 
+/** How many tagged items one section takes. The homepage shows a handful; /shop shows them all. */
+const EVENT_TAGGED_ITEMS_MAX = 200;
+
+/** Published sections with a `meta.eventTag`, as section id to tag. */
+async function getSectionEventTags(sectionId?: number) {
+  const rows = await dbRead.cosmeticShopSection.findMany({
+    where: { published: true, ...(sectionId ? { id: sectionId } : {}) },
+    select: { id: true, meta: true },
+  });
+  const tags = new Map<number, string>();
+  for (const row of rows) {
+    const tag = (row.meta as CosmeticShopSectionMeta | null)?.eventTag;
+    if (tag) tags.set(row.id, tag);
+  }
+  return tags;
+}
+
+/**
+ * A tagged section's items are its placed items, in their order, then every shop item carrying the
+ * tag that is on sale, newest first. The tag is the placement: a moderator approving and tagging
+ * an item is the consent the section editor otherwise asks `sellableByOthers` for, and selling it
+ * through the official shop pays the creator their full pool unless they opted into resale. Tagged
+ * items still pass every rule a placed item does for this viewer (`shopItemWhere`).
+ */
+async function withEventTaggedItems<
+  S extends {
+    id: number;
+    items: { createdAt: Date; shopItem: { id: number } & Record<string, unknown> }[];
+  }
+>(
+  sections: S[],
+  sectionTags: Map<number, string>,
+  shopItemWhere: Prisma.CosmeticShopItemWhereInput
+) {
+  const tags = [
+    ...new Set(sections.flatMap((s) => (sectionTags.has(s.id) ? [sectionTags.get(s.id)!] : []))),
+  ];
+  if (!tags.length) return sections;
+
+  const byTag = new Map(
+    await Promise.all(
+      tags.map(
+        async (tag) =>
+          [
+            tag,
+            await dbRead.cosmeticShopItem.findMany({
+              where: {
+                AND: [
+                  shopItemWhere,
+                  {
+                    eventTags: { has: tag },
+                    // Moderators see placed items in any status; a tag adds only what is on sale.
+                    status: CosmeticShopItemStatus.Published,
+                    listed: true,
+                    archivedAt: null,
+                    // Mystery boxes sell only through their own surface.
+                    itemDefinitionId: null,
+                    OR: [{ availableTo: { gte: new Date() } }, { availableTo: null }],
+                  },
+                ],
+              },
+              select: cosmeticShopItemSelect,
+              orderBy: { id: 'desc' },
+              take: EVENT_TAGGED_ITEMS_MAX,
+            }),
+          ] as const
+      )
+    )
+  );
+
+  return sections.map((section) => {
+    const tag = sectionTags.get(section.id);
+    if (!tag) return section;
+    const placed = new Set(section.items.map((item) => item.shopItem.id));
+    const tagged = (byTag.get(tag) ?? [])
+      .filter((shopItem) => !placed.has(shopItem.id))
+      .map((shopItem) => ({ createdAt: shopItem.createdAt, shopItem }));
+    return { ...section, items: [...section.items, ...tagged] as S['items'] };
+  });
+}
+
 export const getShopSectionsWithItems = async ({
   isModerator,
   creatorShopEnabled,
@@ -718,6 +914,88 @@ export const getShopSectionsWithItems = async ({
   // there; official items (createdById null) are never block-filtered.
   const blockedPairIds =
     !isModerator && creatorShopEnabled && userId ? await getBlockedPairIds(userId) : [];
+  const shopItemWhere: Prisma.CosmeticShopItemWhereInput = {
+    // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so
+    // any condition under it drops every pack — a pack placed in a
+    // section simply never rendered. The pack branch keeps them; their
+    // members' types are enforced at purchase.
+    OR: [
+      // Packs show unless a type filter is on that doesn't include them.
+      ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
+        ? [
+            {
+              // Not a mystery box listing: those are sold only through their own surface,
+              // which applies the box's flag, region and event checks.
+              ...PACK_SHOP_ITEM_WHERE,
+              ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+            },
+          ]
+        : []),
+      // Asking for packs and nothing else drops this arm outright.
+      // Leaving it in unconstrained would match every cosmetic, since
+      // 'Pack' contributes no `type` for it to filter on.
+      ...(cosmeticTypes?.length && !realTypes.length
+        ? []
+        : [
+            {
+              // Not redundant with the EXISTS below: every condition under
+              // `cosmetic` is conditional, and Prisma DROPS an empty relation
+              // filter rather than treating it as "the relation is set". At
+              // top level that reads as `1=1`, but as an OR arm it erases the
+              // arm — leaving `OR: [{ cosmeticId: null }]`, i.e. packs only,
+              // so every section of real cosmetics returned nothing.
+              cosmeticId: { not: null },
+              cosmetic: {
+                // Merged into ONE `type` filter. A second `type` key would silently
+                // overwrite the caller's requested types — with the flag off (the
+                // default for everyone), /shop?cosmeticTypes=Badge would return
+                // every non-sticker type instead of badges.
+                ...(realTypes.length > 0 || !stickersEnabled
+                  ? {
+                      type: {
+                        ...(realTypes.length > 0 ? { in: realTypes } : {}),
+                        // Stickers stay out of the official shop until the flag is
+                        // on. Rendering is unaffected — this hides the storefront
+                        // entry only.
+                        ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                      },
+                    }
+                  : {}),
+                // Creator-made cosmetics (createdById set — official items also
+                // have an addedById, the mod who listed them) are gated behind
+                // the creatorShop feature flag; a section of only creator items
+                // disappears entirely for unflagged viewers via the
+                // empty-section filter below.
+                ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+                // A block between viewer and creator (either direction) hides
+                // that creator's items even when featured in official sections.
+                ...(blockedPairIds.length
+                  ? {
+                      OR: [{ createdById: null }, { createdById: { notIn: blockedPairIds } }],
+                    }
+                  : {}),
+              },
+            },
+          ]),
+    ],
+    archivedAt: null,
+    // Creator items in official sections can lose their Published
+    // status after being featured (revert/reject), or be delisted by
+    // their creator while staying Published — hide both.
+    ...(isModerator
+      ? {}
+      : {
+          status: CosmeticShopItemStatus.Published,
+          listed: true,
+          // Under AND rather than a second `OR` key, which would
+          // overwrite the pack branch above and take the block filter
+          // with it.
+          AND: [{ OR: [{ availableTo: { gte: new Date() } }, { availableTo: null }] }],
+        }),
+  };
+  // Sections that also take every shop item carrying their event tag. Read separately because a
+  // tag-only section has no placed items, and the query below otherwise drops it as empty.
+  const sectionTags = await getSectionEventTags(sectionId);
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -740,90 +1018,7 @@ export const getShopSectionsWithItems = async ({
             select: cosmeticShopItemSelect,
           },
         },
-        where: {
-          shopItem: {
-            // A `cosmetic` relation filter is an EXISTS on a nullable to-one, so
-            // any condition under it drops every pack — a pack placed in a
-            // section simply never rendered. The pack branch keeps them; their
-            // members' types are enforced at purchase.
-            OR: [
-              // Packs show unless a type filter is on that doesn't include them.
-              ...(!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE)
-                ? [
-                    {
-                      // Not a mystery box listing: those are sold only through their own surface,
-                      // which applies the box's flag, region and event checks.
-                      ...PACK_SHOP_ITEM_WHERE,
-                      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
-                    },
-                  ]
-                : []),
-              // Asking for packs and nothing else drops this arm outright.
-              // Leaving it in unconstrained would match every cosmetic, since
-              // 'Pack' contributes no `type` for it to filter on.
-              ...(cosmeticTypes?.length && !realTypes.length
-                ? []
-                : [
-                    {
-                      // Not redundant with the EXISTS below: every condition under
-                      // `cosmetic` is conditional, and Prisma DROPS an empty relation
-                      // filter rather than treating it as "the relation is set". At
-                      // top level that reads as `1=1`, but as an OR arm it erases the
-                      // arm — leaving `OR: [{ cosmeticId: null }]`, i.e. packs only,
-                      // so every section of real cosmetics returned nothing.
-                      cosmeticId: { not: null },
-                      cosmetic: {
-                        // Merged into ONE `type` filter. A second `type` key would silently
-                        // overwrite the caller's requested types — with the flag off (the
-                        // default for everyone), /shop?cosmeticTypes=Badge would return
-                        // every non-sticker type instead of badges.
-                        ...(realTypes.length > 0 || !stickersEnabled
-                          ? {
-                              type: {
-                                ...(realTypes.length > 0 ? { in: realTypes } : {}),
-                                // Stickers stay out of the official shop until the flag is
-                                // on. Rendering is unaffected — this hides the storefront
-                                // entry only.
-                                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
-                              },
-                            }
-                          : {}),
-                        // Creator-made cosmetics (createdById set — official items also
-                        // have an addedById, the mod who listed them) are gated behind
-                        // the creatorShop feature flag; a section of only creator items
-                        // disappears entirely for unflagged viewers via the
-                        // empty-section filter below.
-                        ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
-                        // A block between viewer and creator (either direction) hides
-                        // that creator's items even when featured in official sections.
-                        ...(blockedPairIds.length
-                          ? {
-                              OR: [
-                                { createdById: null },
-                                { createdById: { notIn: blockedPairIds } },
-                              ],
-                            }
-                          : {}),
-                      },
-                    },
-                  ]),
-            ],
-            archivedAt: null,
-            // Creator items in official sections can lose their Published
-            // status after being featured (revert/reject), or be delisted by
-            // their creator while staying Published — hide both.
-            ...(isModerator
-              ? {}
-              : {
-                  status: CosmeticShopItemStatus.Published,
-                  listed: true,
-                  // Under AND rather than a second `OR` key, which would
-                  // overwrite the pack branch above and take the block filter
-                  // with it.
-                  AND: [{ OR: [{ availableTo: { gte: new Date() } }, { availableTo: null }] }],
-                }),
-          },
-        },
+        where: { shopItem: shopItemWhere },
         orderBy: { index: 'asc' },
       },
     },
@@ -833,6 +1028,7 @@ export const getShopSectionsWithItems = async ({
       // feed itself is flag-gated, so hide the hub from unflagged viewers.
       OR: [
         { items: { some: {} } },
+        ...(sectionTags.size ? [{ id: { in: [...sectionTags.keys()] } }] : []),
         ...(isModerator || creatorShopEnabled
           ? [{ meta: { path: ['communityHub'], equals: true } }]
           : []),
@@ -844,13 +1040,14 @@ export const getShopSectionsWithItems = async ({
       placement: 'asc',
     },
   });
+  const sectionsWithTagged = await withEventTaggedItems(sections, sectionTags, shopItemWhere);
   const eventItemVisible = createEventShopItemVisibility({ userId, isModerator });
   // Event items (team hats) are sold only on their event's page (Justin, 2026-10-09), never in the
   // shop or its homepage blocks, moderators included. They stay in a published section because the
   // event page's shelf and hat catalog read them from there.
   const visibleSections = event
     ? await Promise.all(
-        sections
+        sectionsWithTagged
           .filter((s) => !(s.meta as CosmeticShopSectionMeta | null)?.communityHub)
           .map(async (section) => {
             const items = section.items.filter((item) =>
@@ -864,7 +1061,7 @@ export const getShopSectionsWithItems = async ({
             return { ...section, items: items.filter((_, i) => visible[i]) };
           })
       )
-    : sections.map((section) => ({
+    : sectionsWithTagged.map((section) => ({
         ...section,
         items: section.items.filter((item) => !isEventShopItemData(item.shopItem.cosmetic?.data)),
       }));

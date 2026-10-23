@@ -45,7 +45,6 @@ if (!DEV_URL || !NONDEV_URLS) {
   process.exit(2);
 }
 
-/** Every table this test creates: its fixture's, and the migration's. */
 const OWN_TABLES = new Set([
   'User',
   'Report',
@@ -57,11 +56,7 @@ const OWN_TABLES = new Set([
 /** More rows than the fixture ever writes to one table. */
 const MAX_OWN_ROWS = 100;
 
-/**
- * Fails closed: a database may be wiped only if every table in it, in any schema, is one this
- * test creates, and none of those holds more rows than the fixture writes. A fresh server has
- * no tables; anything else was not made here.
- */
+/** Fails closed: the fixture opens with DROP SCHEMA public CASCADE. */
 async function assertThrowaway(c, url) {
   const { rows } = await c.query(
     `SELECT n.nspname AS schema, cl.relname AS name
@@ -99,12 +94,13 @@ async function assertThrowaway(c, url) {
 // - owner 102/103 and collaborator 201/202 are published in the opposite order to their ids,
 //   and 206 is the earliest usable post above the ceiling but has a higher id than 104;
 // - 308 is the third account's earliest usable post but has a higher id than 301;
-// - 105/205 unpublished, 106/306 level 0, 107/108/208/304 already chapters of "Prior",
+// - 106/306 level 0, 107/108/208/304 already chapters of "Prior",
 //   110/214/211/302 tosViolation, 111/215/212/312 unlisted, 112/216/213/313 not Public,
 //   209/210 Blocked (alone and with R), 303 above the ceiling, 310 a third account's post
 //   above the ceiling;
-// - 113/217/218/314 are scheduled in the future and 207 is unpublished and above the ceiling:
-//   they sort last, so the refusal checks reach them by making each account run short.
+// - 113/217/218/314 are scheduled in the future and 105/205/207 are unpublished (207 also above
+//   the ceiling): they sort last, so the refusal checks reach them by making each account run
+//   short.
 const FIXTURE = `
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
@@ -255,7 +251,6 @@ await withClient(DEV_URL, async (c) => {
   const images = await digest(c, 'Image');
   const others = await otherStorylines(c);
 
-  /** Runs a check that expects the seed to refuse, from and back to a clean state. */
   async function refusal(name, setup, teardown, sql, pattern) {
     await check(name, async () => {
       await c.query(cleanupSql);

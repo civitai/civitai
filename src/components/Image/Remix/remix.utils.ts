@@ -11,7 +11,7 @@ import {
   withExternalFetch,
 } from '~/store/generation-graph.store';
 import { getImageDimensions } from '~/utils/image-utils';
-import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { remixProvenanceStore, trackPromptMint } from '~/store/remix-provenance.store';
 import { trpcVanilla } from '~/utils/trpc';
 
 /**
@@ -233,7 +233,7 @@ let promptReuseSequence = 0;
 export function startPromptReuse(image: RemixSourceImage) {
   const sequence = ++promptReuseSequence;
 
-  trpcVanilla.orchestrator.mintPromptProvenance
+  const mint = trpcVanilla.orchestrator.mintPromptProvenance
     .mutate({ imageId: image.id })
     .then((r) => {
       // A newer reuse click owns the form. Counted separately from the panel's
@@ -244,6 +244,8 @@ export function startPromptReuse(image: RemixSourceImage) {
       if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance, image.id);
     })
     .catch(() => undefined);
+  // A Generate click can come before the mint answers; the submit waits on this.
+  trackPromptMint(image.id, mint);
 
   return generationGraphPanel.open({ type: image.type, id: image.id });
 }

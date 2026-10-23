@@ -183,6 +183,11 @@ export const postCreateSchema = z.object({
   // so the Post is bound to the draft Model3D on create. Validated server-side
   // (must be owner or moderator) inside `createPost`.
   model3dId: z.number().int().positive().nullish(),
+  // Set by the storyline flow so the draft is linked to its storyline on create: `storylineId`
+  // alone starts the owner's storyline, `parentChapterId` continues that chapter. Validated in
+  // `createPost`'s transaction (`linkPendingChapter`).
+  storylineId: z.number().int().positive().optional(),
+  parentChapterId: z.number().int().positive().optional(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
@@ -405,6 +410,8 @@ export const scheduleBatchImageSchema = addPostImageSchema
   .extend({ url: z.string().uuid() });
 
 export const scheduleBatchPostSchema = z.object({
+  /** Stable for one post across every attempt to create it, so a retry is recognised. */
+  clientKey: z.string().uuid().optional(),
   title: z.string().trim().max(255).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
@@ -412,7 +419,8 @@ export const scheduleBatchPostSchema = z.object({
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
 export const scheduleBatchSchema = z.object({
-  /** One per chunk per attempt; the server refuses a repeat so a re-sent request cannot double-post. */
+  /** One per chunk per attempt; the server refuses a repeat. Superseded by `posts[].clientKey`,
+   *  kept for bundles that predate it. */
   idempotencyKey: z.string().uuid().optional(),
   modelVersionId: z.number().int().positive().nullish(),
   tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),

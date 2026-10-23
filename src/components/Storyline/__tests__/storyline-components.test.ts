@@ -53,7 +53,7 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showSuccessNotification: (input: { title: string }) => calls.push(`success:${input.title}`),
   showErrorNotification: (input: { title: string }) => calls.push(`error:${input.title}`),
 }));
-// The search index and avatar fetches are not what these tests are about.
+// Network-bound: search index and avatar fetches.
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({
   QuickSearchDropdown: ({
     onItemSelected,
@@ -244,7 +244,7 @@ const row = (id: number, placerId = 50) => ({
   placer: { id: placerId, username: `user${placerId}` },
   post: { id: 100 + id, title: `Continuation ${id}`, nsfwLevel: NsfwLevel.PG },
   parentPost: { id: 200, title: 'Chapter 4' },
-  storyline: { id: 7, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13 },
+  storyline: { id: 7, title: 'The Patch', maxNsfwLevel: NsfwLevel.PG13, takenDown: false },
 });
 
 describe('StorylineContinueForm post picker', () => {
@@ -538,6 +538,28 @@ describe('StorylineQueueList rows', () => {
     expect(button(withheld, 'Endorse').disabled).toBe(false);
   });
 
+  it('marks a row in a taken-down storyline and offers no answer to it', () => {
+    const el = list([row(7), { ...row(8), storyline: { ...row(8).storyline, takenDown: true } }]);
+    const [open, held] = [7, 8].map(
+      (id) => el.querySelector(`[data-testid="storyline-queue-row-${id}"]`) as HTMLElement
+    );
+
+    expect(held.querySelector('[data-testid="storyline-queue-held-8"]')?.textContent).toContain(
+      'once the takedown is lifted'
+    );
+    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(held, name).disabled)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(open.querySelector('[data-testid="storyline-queue-held-7"]')).toBeNull();
+    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(open, name).disabled)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
   it('puts no control inside the cover and does not wrap it in a link', () => {
     const cover = {
       id: 9,
@@ -550,7 +572,7 @@ describe('StorylineQueueList rows', () => {
     const el = list([{ ...row(7), post: { ...row(7).post, coverImage: cover } }]);
     const card = el.querySelector('[data-testid="storyline-queue-row-7"]') as HTMLElement;
 
-    // Accept, Endorse, Decline, and nothing from the guard's explainer.
+    // Nothing from the guard's explainer.
     expect([...card.querySelectorAll('button')].map((node) => node.textContent)).toEqual([
       'Accept',
       'Endorse',
@@ -645,7 +667,6 @@ const settingsForm = (
     ...overrides,
   });
 
-/** A SegmentedControl option, found by its visible label inside the named control. */
 function option(el: Element, control: string, label: string) {
   const root = el.querySelector(`[aria-label="${control}"]`);
   expect(root, `control "${control}"`).not.toBeNull();

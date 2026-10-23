@@ -18,7 +18,10 @@
   } = $props();
 </script>
 
-<nav aria-label="Prompts" class="flex flex-col gap-1 rounded-xl border border-dark-4 bg-dark-6 p-2">
+<nav
+  aria-label="Prompts"
+  class="flex flex-col gap-1 overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-2"
+>
   {#each PROMPT_KEYS as key (key)}
     {@const saved = latest[key]}
     <a

@@ -50,15 +50,15 @@ export type ImageUploadBytesRequest =
 /**
  * Pick the `bytes` variant out of a raw OPEN_IMAGE_UPLOAD payload. `none` = no `bytes` field, so
  * the picker paths run unchanged. A typed-array view is refused rather than unwrapped (its window
- * into `.buffer` is not the file), as is an empty buffer and `purpose: 'generationSource'` (that
- * purpose never creates an Image row, so there is nothing to stamp).
+ * into `.buffer` is not the file), as is an empty buffer and `purpose: 'generationSource'` or
+ * `'trainingData'` (neither purpose creates an Image row, so there is nothing to stamp).
  */
 export function resolveImageUploadBytes(raw: unknown): ImageUploadBytesRequest {
   if (!raw || typeof raw !== 'object') return { kind: 'none' };
   const r = raw as { bytes?: unknown; purpose?: unknown; filename?: unknown };
   if (r.bytes == null) return { kind: 'none' };
   if (!(r.bytes instanceof ArrayBuffer) || r.bytes.byteLength === 0) return { kind: 'invalid' };
-  if (r.purpose === 'generationSource') return { kind: 'invalid' };
+  if (r.purpose === 'generationSource' || r.purpose === 'trainingData') return { kind: 'invalid' };
   return {
     kind: 'bytes',
     bytes: r.bytes,

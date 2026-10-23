@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -38,7 +39,7 @@ const SYSTEM = -1;
 const modelQueue = REPORT_ENTITIES.find((e) => e.reportTable === 'ModelReport')!.label;
 
 beforeAll(async () => {
-  const pg = new PGlite();
+  const pg = await freshPglite();
   await pg.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "Report" (

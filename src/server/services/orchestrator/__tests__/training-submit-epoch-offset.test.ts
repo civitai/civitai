@@ -11,6 +11,9 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: vi.fn(async () => undefined),
+}));
 vi.mock('~/utils/s3-utils', () => ({
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
   getB2S3Client: vi.fn(),

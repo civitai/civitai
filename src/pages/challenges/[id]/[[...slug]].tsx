@@ -355,7 +355,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const handleRescan = () => {
     if (!challenge) return;
     // Only a live green user challenge is cancelled outright on an NSFW verdict
-    // (computeNsfwEscalation); everything else is just raised to R in place.
+    // (computeNsfwEscalation); everything else just has its rating raised in place.
     const warnOnNsfw =
       challenge.status === ChallengeStatus.Active &&
       challenge.source === ChallengeSource.User &&

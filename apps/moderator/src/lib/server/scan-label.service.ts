@@ -38,6 +38,9 @@ export type VoteResult =
 
 type Db = Kysely<DB> | Transaction<DB>;
 
+/** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
+const CONTROL_SOURCE = 'control-sample';
+
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
@@ -52,6 +55,7 @@ function openItems(db: Db, filters: ScanLabelFilters) {
           .select(sql`1`.as('one'))
           .whereRef('f.itemId', '=', 'i.id')
           .where('f.flaggerVersion', '=', version)
+          .where('f.source', '<>', CONTROL_SOURCE)
       )
     );
   }
@@ -315,6 +319,28 @@ export async function castVote(
   });
 }
 
+export type VotedItemOwner = { imageId: number; ownerId: number; ownerUsername: string | null };
+
+/**
+ * Votes are cast blind, so the vote row is the gate: the owner is never part of the card a moderator is
+ * still deciding on. Reads the primary because it runs straight after the vote it depends on.
+ */
+export async function getVotedItemOwner(
+  itemId: number,
+  userId: number
+): Promise<VotedItemOwner | null> {
+  const row = await dbWrite
+    .selectFrom('ScanLabelVote as v')
+    .innerJoin('ScanLabelItem as i', 'i.id', 'v.itemId')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .leftJoin('User as u', 'u.id', 'img.userId')
+    .select(['i.imageId', 'img.userId as ownerId', 'u.username as ownerUsername'])
+    .where('v.itemId', '=', itemId)
+    .where('v.userId', '=', userId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
 export type ScanLabelCounters = {
   openInFilter: number;
   myVotesToday: number;
@@ -359,6 +385,25 @@ export async function getCounters(
   };
 }
 
+/** A version from the URL that control flags carry. The page treats it as no version filter. */
+export async function isControlFlaggerVersion(
+  version: string,
+  db: Kysely<DB> = dbRead
+): Promise<boolean> {
+  // From the control lane's partial index: a real version has no control flags, so looking it up
+  // by version alone reads every flag of that version to prove it.
+  const row = await db
+    .selectFrom('ScanLabelItem as i')
+    .innerJoin('ScanLabelFlag as f', 'f.itemId', 'i.id')
+    .select(sql`1`.as('one'))
+    .where(sql<boolean>`i.lane = 'control'`)
+    .where('f.flaggerVersion', '=', version)
+    .where('f.source', '=', CONTROL_SOURCE)
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
+
 /** Flagger versions that have at least one open item, newest flag first, for the filter. */
 export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<string[]> {
   const rows = await db
@@ -367,6 +412,7 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .select('f.flaggerVersion')
     .select((eb) => eb.fn.max('f.flaggedAt').as('latest'))
     .where('i.status', '=', 'open')
+    .where('f.source', '<>', CONTROL_SOURCE)
     .groupBy('f.flaggerVersion')
     .orderBy('latest', 'desc')
     .execute();

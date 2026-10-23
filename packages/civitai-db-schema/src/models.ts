@@ -108,6 +108,8 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
 
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible";
+
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
@@ -180,9 +182,9 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -589,6 +591,10 @@ export interface User {
   answerReactions?: AnswerReaction[];
   commentV2Reactions?: CommentV2Reaction[];
   threadMutes?: ThreadMute[];
+  commentsV3?: CommentV3[];
+  commentV3Reactions?: CommentV3Reaction[];
+  commentMutes?: CommentMute[];
+  commentTopicMutes?: CommentTopicMute[];
   answerVotes?: AnswerVote[];
   tagsEngaged?: TagEngagement[];
   imageReactions?: ImageReaction[];
@@ -987,6 +993,10 @@ export interface Model {
   scannedAt: Date | null;
   sfwOnly: boolean;
   isOfficial: boolean;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -1364,6 +1374,7 @@ export interface Report {
   model?: ModelReport | null;
   comment?: CommentReport | null;
   commentV2?: CommentV2Report | null;
+  commentV3?: CommentV3Report | null;
   image?: ImageReport | null;
   resourceReview?: ResourceReviewReport | null;
   article?: ArticleReport | null;
@@ -1612,6 +1623,7 @@ export interface Post {
   reports?: PostReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
+  storylinePendingChapter?: StorylinePendingChapter | null;
 }
 
 export interface PostMetric {
@@ -3045,6 +3057,78 @@ export interface ThreadMute {
   mutedAt: Date;
 }
 
+export interface CommentTopic {
+  entityType: CommentEntityType;
+  entityId: number;
+  locked: boolean;
+  commentCount: number;
+  comments?: CommentV3[];
+}
+
+export interface CommentV3 {
+  id: number;
+  entityType: CommentEntityType;
+  entityId: number;
+  topic?: CommentTopic;
+  parentId: number | null;
+  parent?: CommentV3 | null;
+  replies?: CommentV3[];
+  replyToId: number | null;
+  replyTo?: CommentV3 | null;
+  repliedBy?: CommentV3[];
+  rootId: number;
+  depth: number;
+  userId: number;
+  user?: User;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt: Date | null;
+  tosViolation: boolean;
+  hidden: boolean;
+  locked: boolean;
+  pinnedAt: Date | null;
+  reactionCount: number;
+  legacyV1Id: number | null;
+  reactions?: CommentV3Reaction[];
+  reports?: CommentV3Report[];
+  mutes?: CommentMute[];
+}
+
+export interface CommentV3Reaction {
+  id: number;
+  commentId: number;
+  comment?: CommentV3;
+  userId: number;
+  user?: User;
+  reaction: ReviewReactions;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CommentV3Report {
+  commentId: number;
+  comment?: CommentV3;
+  reportId: number;
+  report?: Report;
+}
+
+export interface CommentMute {
+  userId: number;
+  user?: User;
+  commentId: number;
+  comment?: CommentV3;
+  mutedAt: Date;
+}
+
+export interface CommentTopicMute {
+  userId: number;
+  user?: User;
+  entityType: CommentEntityType;
+  entityId: number;
+  mutedAt: Date;
+}
+
 export interface QuestionReaction {
   id: number;
   question?: Question;
@@ -3357,6 +3441,7 @@ export interface CosmeticShopItem {
   listed: boolean;
   itemDefinitionId: number | null;
   itemDefinition?: ItemDefinition | null;
+  eventTags: string[];
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
@@ -3948,6 +4033,46 @@ export interface CsamReport {
   details: JsonValue;
   images: JsonValue;
   type: CsamReportType;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
+}
+
+export interface CsamReportAudit {
+  id: number;
+  csamReportId: number;
+  op: string;
+  oldUserId: number | null;
+  oldReportId: number | null;
+  oldType: string | null;
+  oldSecondaryUserId: number | null;
+  oldImageCount: number | null;
+  oldDetailsFingerprint: string | null;
+  oldReportSentAt: Date | null;
+  changedAt: Date;
+  changedBy: string;
+}
+
+export interface CsamFlagRelease {
+  id: number;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  overriddenLegs: JsonValue;
+  imageCount: number;
+  createdAt: Date;
+}
+
+export interface CsamReportArchiveObject {
+  id: number;
+  csamReportId: number;
+  kind: string;
+  key: string;
+  etag: string | null;
+  entries: number | null;
+  namedExpected: number | null;
+  namedMissing: number | null;
+  uploadedAt: Date;
 }
 
 export interface EvidenceHold {
@@ -4306,6 +4431,28 @@ export interface UserPurchasedRewards {
   createdAt: Date;
   meta: JsonValue;
   code: string;
+}
+
+export interface ImageCdnAccess {
+  url: string;
+  state: string;
+  deniedAt: Date;
+  retractedAt: Date | null;
+  lastAssertedAt: Date;
+}
+
+export interface ImageCdnModeratorDelete {
+  imageId: number;
+  url: string;
+  userId: number | null;
+  csamReview: boolean;
+  deletedAt: Date;
+}
+
+export interface ImageCdnAccessClaim {
+  url: string;
+  token: string;
+  claimedUntil: Date;
 }
 
 export interface JobQueue {
@@ -6343,6 +6490,7 @@ export interface Storyline {
   heroImage?: Image | null;
   heroImagePosition: number;
   chapters?: StorylineChapter[];
+  pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
 }
@@ -6363,6 +6511,18 @@ export interface StorylineChapter {
   branchChoicesFrom?: StorylineBranchChoice[];
   branchChoicesTo?: StorylineBranchChoice[];
   createClicks?: StorylineCreateClick[];
+  pendingContinuations?: StorylinePendingChapter[];
+}
+
+export interface StorylinePendingChapter {
+  postId: number;
+  post?: Post;
+  storylineId: number;
+  storyline?: Storyline;
+  parentChapterId: number | null;
+  parentChapter?: StorylineChapter | null;
+  userId: number;
+  createdAt: Date;
 }
 
 export interface StorylineChapterEdge {
@@ -6665,6 +6825,7 @@ export interface Crucible {
   scannedAt: Date | null;
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
+  eventTags: string[];
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
@@ -6750,6 +6911,37 @@ export interface Prize {
   autoClaimed: boolean;
   paidAt: Date | null;
   voidedAt: Date | null;
+}
+
+export interface CreatorProgramPayoutReview {
+  id: number;
+  period: string;
+  userId: number;
+  status: string;
+  hold: boolean;
+  signals: string[];
+  payoutCents: number;
+  evidence: JsonValue;
+  firstFlaggedAt: Date;
+  lastEvaluatedAt: Date;
+  evaluations: number;
+  decidedAt: Date | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  askRef: string | null;
+  version: number;
+  decisions: JsonValue;
+}
+
+export interface CreatorProgramPayoutReviewRun {
+  id: number;
+  period: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  creditedCount: number;
+  evaluatedCount: number;
+  flaggedCount: number;
+  error: string | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

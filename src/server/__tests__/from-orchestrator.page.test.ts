@@ -23,7 +23,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   updateWorkflow: vi.fn(),
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getServerSideProps } from '~/pages/models/train/from-orchestrator';
 import { dbMock } from '~/__tests__/mocks/db.mock';

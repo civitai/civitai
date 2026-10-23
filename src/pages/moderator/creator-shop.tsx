@@ -62,6 +62,8 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
+import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -82,7 +84,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  DECORATION_OFFSET_LIMIT,
+  MODERATOR_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -99,6 +101,8 @@ import {
   statusFromQuery,
   typesFromQuery,
 } from '~/components/CreatorShop/Submit/review-queue-query';
+import { MysteryPackReviewPanel } from '~/components/CreatorShop/MysteryPack/MysteryPackReviewPanel';
+import { reviewActions } from '~/components/CreatorShop/MysteryPack/review-actions';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
@@ -388,6 +392,8 @@ function CreatorShopReviewPage() {
 
   const selected = items.find((i) => i.id === selectedId) ?? null;
   const isPack = !!selected && !selected.cosmetic;
+  // A creator mystery pack: also cosmetic-less, but reviewed as a box, through its own read.
+  const isMysteryPack = selected?.itemDefinitionId != null;
   // A pack is authored by whoever listed it; a cosmetic by whoever made it.
   const submitter = selected?.cosmetic?.creator ?? selected?.addedBy ?? null;
   const selectedMeta = (selected?.meta ?? {}) as CosmeticShopItemMeta;
@@ -465,6 +471,21 @@ function CreatorShopReviewPage() {
     }
   );
 
+  // Fresh every time: a verdict names the edit this returns, and the creator can replace it.
+  const mysteryReview = trpc.creatorShop.getMysteryPackReview.useQuery(
+    { id: selected?.id as number },
+    { enabled: isMysteryPack, staleTime: 0, refetchOnMount: 'always' }
+  );
+  const boxRevision = isMysteryPack ? mysteryReview.data?.revision ?? null : null;
+  const actions = reviewActions({
+    status: selected?.status ?? CosmeticShopItemStatus.PendingReview,
+    isMysteryPack,
+    hasEdit: !!boxRevision,
+    hasLive: !!mysteryReview.data?.live,
+    loaded: !!mysteryReview.data,
+    takenDown: !!(selected?.meta as CosmeticShopItemMeta | null)?.takedown,
+  });
+
   const queryUtils = trpc.useUtils();
   const saveFit = trpc.creatorShop.updateItem.useMutation({
     async onSuccess() {
@@ -509,13 +530,31 @@ function CreatorShopReviewPage() {
       return next;
     });
 
-  const handleApprove = async () => {
-    if (!selected) return;
-    await reviewItem.mutateAsync({ id: selected.id, action: 'approve' });
-    setReason('');
+  // A pack's verdict names its edit; re-read after every attempt, since a success or an "edit
+  // changed" refusal leaves the pane on a stale one.
+  const review = async (
+    input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId'>
+  ) => {
+    try {
+      await reviewItem.mutateAsync({
+        ...input,
+        boxRevisionId: boxRevision?.id,
+      });
+      setReason('');
+    } catch {
+      // `reviewItem` already shows the error.
+    } finally {
+      if (isMysteryPack) void mysteryReview.refetch();
+    }
   };
 
-  // Reject is terminal; request-changes lets the creator edit & resubmit;
+  const handleApprove = async () => {
+    if (!selected) return;
+    await review({ id: selected.id, action: 'approve' });
+  };
+
+  // Reject is terminal (for a mystery pack, only one never approved); request-changes lets the
+  // creator edit & resubmit;
   // revert unpublishes a live item back into the queue. All require a note so
   // the creator knows why.
   const submitReview = async (action: 'reject' | 'request-changes' | 'revert') => {
@@ -525,12 +564,7 @@ function CreatorShopReviewPage() {
         title: 'A note is required',
         error: new Error('Add a note so the creator knows what to change.'),
       });
-    await reviewItem.mutateAsync({
-      id: selected.id,
-      action,
-      rejectionReason: reason.trim(),
-    });
-    setReason('');
+    await review({ id: selected.id, action, rejectionReason: reason.trim() });
   };
 
   // Same warning as the creator-side manage table: purchase records/totals are
@@ -592,6 +626,27 @@ function CreatorShopReviewPage() {
       confirmProps: { color: 'red' },
       centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
+    });
+  };
+
+  // Runs the same takedown again: it pays only refunds still owed, and strips the cosmetic from
+  // anyone who got it since.
+  const confirmRetryTakedown = () => {
+    if (!selected) return;
+    const takedown = (selected.meta as CosmeticShopItemMeta | null)?.takedown;
+    if (!takedown) return;
+    openConfirmModal({
+      title: 'Retry takedown',
+      children: (
+        <Text size="sm">
+          Finish the takedown of <strong>{selected.title}</strong>: refund any buyer or box opener
+          it still owes, then remove the cosmetic again. Nobody already refunded is paid twice.
+        </Text>
+      ),
+      labels: { confirm: 'Retry takedown', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => takedownItem.mutate({ id: selected.id, reason: takedown.reason }),
     });
   };
 
@@ -770,7 +825,12 @@ function CreatorShopReviewPage() {
                             {item.cosmetic?.creator?.username ??
                               item.addedBy?.username ??
                               'unknown'}{' '}
-                            · {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
+                            ·{' '}
+                            {item.cosmetic
+                              ? getDisplayName(item.cosmetic.type)
+                              : item.itemDefinitionId != null
+                              ? 'Mystery pack'
+                              : 'Pack'}
                           </Text>
                         </Stack>
                         {itemPrior && item.status === CosmeticShopItemStatus.PendingReview && (
@@ -783,6 +843,12 @@ function CreatorShopReviewPage() {
                             {itemPrior.artworkSwaps ? 'New artwork' : 'Re-review'}
                           </Badge>
                         )}
+                        {item.status === CosmeticShopItemStatus.Published &&
+                          !!item.itemDefinition?.revisions.length && (
+                            <Badge size="sm" variant="light" radius="sm" color="yellow">
+                              Edit waiting
+                            </Badge>
+                          )}
                         {statusFilter === 'all' && (
                           <Badge
                             size="sm"
@@ -817,13 +883,17 @@ function CreatorShopReviewPage() {
                     <Badge variant="light" color="gray" radius="xl">
                       {selected.cosmetic
                         ? `Cosmetic · ${getDisplayName(selected.cosmetic.type)}`
+                        : isMysteryPack
+                        ? 'Mystery pack'
                         : 'Pack'}
                     </Badge>
                     <Badge variant="light" radius="xl" color={statusMeta(selected.status).color}>
                       {statusMeta(selected.status).label}
                     </Badge>
                   </Group>
-                  {!selected.cosmetic && <PackContentsPanel shopItemId={selected.id} />}
+                  {!selected.cosmetic && !isMysteryPack && (
+                    <PackContentsPanel shopItemId={selected.id} />
+                  )}
                   <Group gap={6} align="center">
                     <Text size="sm" c="dimmed">
                       Submitted by
@@ -850,6 +920,17 @@ function CreatorShopReviewPage() {
                 </Stack>
 
                 {!!priorReview && <PriorReviewCard prior={priorReview} />}
+
+                {isMysteryPack &&
+                  (mysteryReview.data ? (
+                    <MysteryPackReviewPanel review={mysteryReview.data} />
+                  ) : mysteryReview.isError ? (
+                    <Text size="sm" c="red">
+                      Couldn&apos;t load this mystery pack: {mysteryReview.error.message}
+                    </Text>
+                  ) : (
+                    <Loader size="sm" />
+                  ))}
 
                 <Group align="flex-start" gap="xl" wrap="nowrap" className="max-md:flex-wrap">
                   {/* Preview */}
@@ -896,6 +977,8 @@ function CreatorShopReviewPage() {
                         ? `Submitted artwork${dims ? ` · ${dims.width}×${dims.height} PNG` : ''}`
                         : selectedMeta.coverUrl
                         ? 'Pack cover'
+                        : isMysteryPack
+                        ? 'No cover was supplied'
                         : 'Pack contents — no cover was supplied'}
                     </Text>
                     {!!selected.cosmetic && (
@@ -917,9 +1000,9 @@ function CreatorShopReviewPage() {
                           Fit adjustment
                         </Text>
                         <Text size="xs" c="dimmed">
-                          Pixel offset per edge (−{DECORATION_OFFSET_LIMIT} to{' '}
-                          {DECORATION_OFFSET_LIMIT}) — negative extends the frame outside the
-                          avatar. The preview above updates live.
+                          Pixel offset per edge (−{MODERATOR_OFFSET_LIMIT} to{' '}
+                          {MODERATOR_OFFSET_LIMIT}) — negative extends the frame outside the avatar.
+                          The preview above updates live.
                         </Text>
                         <Group gap="xs" grow>
                           {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
@@ -927,8 +1010,8 @@ function CreatorShopReviewPage() {
                               key={side}
                               size="xs"
                               label={side.charAt(0).toUpperCase() + side.slice(1)}
-                              min={-DECORATION_OFFSET_LIMIT}
-                              max={DECORATION_OFFSET_LIMIT}
+                              min={-MODERATOR_OFFSET_LIMIT}
+                              max={MODERATOR_OFFSET_LIMIT}
                               step={1}
                               allowDecimal={false}
                               suffix="px"
@@ -940,8 +1023,8 @@ function CreatorShopReviewPage() {
                                   [side]:
                                     typeof v === 'number'
                                       ? Math.max(
-                                          -DECORATION_OFFSET_LIMIT,
-                                          Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                          -MODERATOR_OFFSET_LIMIT,
+                                          Math.min(MODERATOR_OFFSET_LIMIT, Math.round(v))
                                         )
                                       : 0,
                                 }))
@@ -1022,10 +1105,14 @@ function CreatorShopReviewPage() {
                         // A pack's revenue splits per member creator, with only
                         // the residual reaching the lister — a single figure
                         // names money nobody receives.
-                        label={isPack ? 'Creators earn (split)' : 'Creator earns'}
-                        value={`${numberWithCommas(
-                          Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
-                        )} Buzz${isPack ? ' across members' : ''}`}
+                        label={isPack && !isMysteryPack ? 'Creators earn (split)' : 'Creator earns'}
+                        value={
+                          isMysteryPack
+                            ? 'Not live yet'
+                            : `${numberWithCommas(
+                                Math.floor(selected.unitAmount * CREATOR_SHOP_CREATOR_SHARE)
+                              )} Buzz${isPack ? ' across members' : ''}`
+                        }
                         icon={<IconTrendingUp size={14} />}
                         iconColor="var(--mantine-color-green-5)"
                       />
@@ -1055,7 +1142,13 @@ function CreatorShopReviewPage() {
                       )}
                       <MoneyTile
                         label="Type"
-                        value={selected.cosmetic ? getDisplayName(selected.cosmetic.type) : 'Pack'}
+                        value={
+                          selected.cosmetic
+                            ? getDisplayName(selected.cosmetic.type)
+                            : isMysteryPack
+                            ? 'Mystery pack'
+                            : 'Pack'
+                        }
                         icon={<IconTag size={14} />}
                         iconColor="var(--mantine-color-cyan-5)"
                       />
@@ -1162,6 +1255,23 @@ function CreatorShopReviewPage() {
                       </Paper>
                     </Stack>
 
+                    {selected.status === CosmeticShopItemStatus.Published && (
+                      <ShopSectionsPanel
+                        shopItemId={selected.id}
+                        placeable={
+                          isMysteryPack
+                            ? 'Mystery packs are sold only through their own page.'
+                            : selected.cosmetic && !selectedMeta.sellableByOthers
+                            ? "The creator hasn't allowed resale, so it can't be placed by hand. An event tag below still adds it to sections with that tag."
+                            : true
+                        }
+                      />
+                    )}
+
+                    {selected.status !== CosmeticShopItemStatus.Archived && !isMysteryPack && (
+                      <ShopItemEventTagsPanel shopItemId={selected.id} />
+                    )}
+
                     <Stack gap={8}>
                       <Text size="sm" fw={600}>
                         Flag concerns
@@ -1194,18 +1304,41 @@ function CreatorShopReviewPage() {
                     only way back from a rejection, and it is moderator-only. */}
                 {selected.status === CosmeticShopItemStatus.Archived ? (
                   <Group pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
-                    <Text size="sm" c="dimmed">
-                      This item is archived and can&apos;t be reviewed. The creator can restore it
-                      from their shop&apos;s manage view.
-                    </Text>
+                    {actions.retryTakedown ? (
+                      <>
+                        <Text size="sm" c="dimmed" style={{ flex: 1 }}>
+                          This item was taken down. If refunds failed, retrying pays what is still
+                          owed.
+                        </Text>
+                        <Button
+                          color="red"
+                          variant="light"
+                          leftSection={<IconBan size={16} />}
+                          loading={takedownItem.isPending}
+                          onClick={confirmRetryTakedown}
+                        >
+                          Retry takedown
+                        </Button>
+                      </>
+                    ) : (
+                      <Text size="sm" c="dimmed">
+                        This item is archived and can&apos;t be reviewed. The creator can restore it
+                        from their shop&apos;s manage view.
+                      </Text>
+                    )}
                   </Group>
                 ) : (
                   <Stack gap={8} pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
                     {selected.status === CosmeticShopItemStatus.Rejected && (
                       <Text size="sm" c="dimmed">
-                        Rejected — the creator can no longer edit, relist or restore this. Bringing
-                        it back is a moderator action: request changes to hand it to them, or
-                        approve to publish it as it stands.
+                        {isMysteryPack
+                          ? 'Rejected, which is final for a mystery pack.'
+                          : 'Rejected — the creator can no longer edit, relist or restore this. Bringing it back is a moderator action: request changes to hand it to them, or approve to publish it as it stands.'}
+                      </Text>
+                    )}
+                    {actions.waitingOnCreator && (
+                      <Text size="sm" c="dimmed">
+                        Sent back to the creator. Nothing to review until they edit it.
                       </Text>
                     )}
                     <Group
@@ -1222,20 +1355,21 @@ function CreatorShopReviewPage() {
                         style={{ flex: 1 }}
                         className="max-md:w-full"
                       />
-                      <Group gap="sm" wrap="nowrap">
-                        {selected.status === CosmeticShopItemStatus.Published ? (
-                          // Already-live items: review verdicts make no sense —
-                          // the mod either pulls it back into the queue or removes it.
+                      <Group gap="sm" wrap="nowrap" className="max-md:flex-wrap">
+                        {actions.revert && (
+                          // Already-live items: the mod pulls it back into the queue or removes it.
+                          <Button
+                            color="orange"
+                            variant="light"
+                            leftSection={<IconArrowBackUp size={16} />}
+                            loading={reviewItem.isPending}
+                            onClick={() => submitReview('revert')}
+                          >
+                            Revert to pending
+                          </Button>
+                        )}
+                        {actions.remove && (
                           <>
-                            <Button
-                              color="orange"
-                              variant="light"
-                              leftSection={<IconArrowBackUp size={16} />}
-                              loading={reviewItem.isPending}
-                              onClick={() => submitReview('revert')}
-                            >
-                              Revert to pending
-                            </Button>
                             <Button
                               color="red"
                               variant="light"
@@ -1254,11 +1388,13 @@ function CreatorShopReviewPage() {
                               Delete
                             </Button>
                           </>
-                        ) : (
+                        )}
+                        {actions.verdicts && (
                           <>
                             <Button
                               variant="default"
                               loading={reviewItem.isPending}
+                              disabled={actions.blocked}
                               onClick={() => submitReview('request-changes')}
                             >
                               Request changes
@@ -1268,17 +1404,19 @@ function CreatorShopReviewPage() {
                               variant="light"
                               leftSection={<IconX size={16} />}
                               loading={reviewItem.isPending}
+                              disabled={actions.blocked}
                               onClick={() => submitReview('reject')}
                             >
-                              Reject
+                              {actions.rejectLabel}
                             </Button>
                             <Button
                               color="green"
                               leftSection={<IconCheck size={16} />}
                               loading={reviewItem.isPending}
+                              disabled={actions.blocked}
                               onClick={handleApprove}
                             >
-                              Approve &amp; Publish
+                              {actions.approveLabel}
                             </Button>
                           </>
                         )}

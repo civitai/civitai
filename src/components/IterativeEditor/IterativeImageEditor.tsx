@@ -26,7 +26,7 @@ import {
   IconWand,
   IconZoomIn,
 } from '@tabler/icons-react';
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

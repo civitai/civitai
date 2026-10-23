@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
+  import { navCount, navHref } from '$lib/nav-links';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
@@ -261,12 +262,16 @@
 
   const sections = $derived.by(() => {
     const toItem = (link: (typeof data.nav)[number]): Item => ({
-      path: link.path as string,
+      path: navHref(link) as string,
       label: link.label,
       informational: link.informational,
       // `?? null`, not `?? 0`: a key the counts endpoint omitted is one it could not measure, and 0
       // both reads as "empty" and hides the row under the quiet-queue filter.
-      count: link.countKey ? (counts.value?.[link.countKey] ?? null) : null,
+      count: link.tabs
+        ? navCount(link, (key) => (key ? (counts.value?.[key] ?? null) : null))
+        : link.countKey
+          ? (counts.value?.[link.countKey] ?? null)
+          : null,
       countKey: link.countKey,
     });
     const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);

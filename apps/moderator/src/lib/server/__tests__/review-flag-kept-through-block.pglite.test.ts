@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -76,6 +77,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -102,7 +104,7 @@ let db: PGlite;
 
 // One instance per file: a fresh PGlite per case is what times out under a full-suite run.
 beforeAll(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });

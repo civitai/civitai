@@ -10,6 +10,7 @@ import type {
 } from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -166,5 +167,11 @@ export const shellBackend: StudioBackend = {
     const res = await fetch('/api/buzz');
     if (!res.ok) return null;
     return (await res.json()) as { yellow: number; green: number; blue: number } | null;
+  },
+
+  getServiceStatus: async () => {
+    const res = await fetch('/api/training-status');
+    if (!res.ok) return null;
+    return (await res.json()) as TrainingServiceStatus;
   },
 };

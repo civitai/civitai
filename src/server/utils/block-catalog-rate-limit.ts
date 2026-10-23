@@ -51,9 +51,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
-//      of strangers' traffic. The `:poll:`, `:post:` and `:training-dataset:`
-//      buckets below do NOT inherit this: each puts the viewer in the key, and the
-//      poll bucket says why.
+//      of strangers' traffic. The `:poll:` and `:post:` buckets below do NOT
+//      inherit this: each puts the viewer in the key, and the poll bucket says why.
 //   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
 //      audit. #569 first added FIVE bridge procedures to this bucket against an
 //      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
@@ -194,7 +193,7 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
 // FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
-// bucket and the training-dataset bucket follow this one instead). The catalog,
+// bucket follows this one instead). The catalog,
 // publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
 // not a person — a MODEL-SLOT install is served to every visitor of its model page —
 // and for a PAGE app the sharing is widest:
@@ -569,33 +568,6 @@ export async function checkBlockPostAppRateLimit(
 // one page app is the same trade the catalog bucket already makes. Same stated
 // limits as every bucket in this file: FIXED window and FAILS OPEN on a Redis
 // error — it is a spend ceiling, not a security control.
-/**
- * `kind:'training'` dataset preparation: images imported per (install, viewer) per
- * hour. Room for a few full datasets (`BLOCK_TRAINING_DATASET_MAX_ITEMS` = 50) an
- * hour per viewer; each image is a server-side fetch plus an orchestrator import.
- */
-export const BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX = 150;
-export const BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS = 3600;
-
-/**
- * Records a training-dataset preparation of `imageCount` images against this
- * (install, viewer)'s window. Keyed on the viewer too, for the reason the poll
- * bucket is: a page app's `blockInstanceId` is shared by every viewer of it. Own
- * `:training-dataset:` sub-namespace; fail-open like every sibling limiter.
- */
-export async function checkBlockTrainingDatasetRateLimit(
-  blockInstanceId: string,
-  userId: number,
-  imageCount: number
-): Promise<BlockCatalogRateLimitResult> {
-  return checkFixedWindow(
-    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:training-dataset:${blockInstanceId}:${userId}`,
-    BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX,
-    BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS,
-    Math.max(1, Math.floor(imageCount))
-  );
-}
-
 // UPLOAD bucket (blocks.persistAppUploadImage, the server half of an app's upload
 // from bytes). One token per upload: each one creates a real, scanned Image row.
 // It is the ONLY bucket an upload charges.
@@ -650,7 +622,7 @@ export async function checkBlockUploadAppRateLimit(
 // COUNT, before any cell runs.
 //
 // 🔴 KEYED ON THE INSTALL ALONE, LIKE THE CATALOG BUCKET, AND NOT ON THE VIEWER —
-// THE OPPOSITE OF THE POLL AND TRAINING-DATASET BUCKETS, DELIBERATELY. Those two put
+// THE OPPOSITE OF THE POLL BUCKET, DELIBERATELY. That one puts
 // the viewer in the key so a page app's strangers cannot throttle each other, and
 // accept that the app-wide total then scales with the number of viewers. Here that
 // trade is the wrong one: the quantity being bounded is upstream cost quotes, which

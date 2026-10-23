@@ -215,10 +215,17 @@ export const HiddenUsers = createUserCache({
       `,
 });
 
+// The two block caches refill from the PRIMARY, not the replica. `toggleBlockUser` commits
+// the Block and then drops these fields; a refill inside the replica-lag window would read
+// a replica without the Block and write "not blocked" back. The hash TTL is set with `NX`,
+// so that stale field would then stand until the hash expires (up to ~4.5h) instead of
+// healing when the replica catches up. A block is a safety control, so pay the primary
+// read on a cache miss. Both caches, because both are dropped by the same toggle and the
+// block is enforced in both directions (`getBlockedPairIds`, the feed filter).
 export const BlockedUsers = createUserCache({
   key: 'blocked-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."targetUserId" "id",
           u."username"
@@ -231,7 +238,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."userId" "id",
           u."username"

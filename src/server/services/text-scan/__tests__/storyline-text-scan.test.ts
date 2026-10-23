@@ -28,7 +28,7 @@ const { applyStorylineTextScan } = await import('~/server/services/text-scan/act
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { isFlipt } = await import('~/server/flipt/client');
 const { createNotification } = await import('~/server/services/notification.service');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(
   '~/server/services/text-scan/prompt'
 );
@@ -288,8 +288,8 @@ describe('applyStorylineTextScan', () => {
       ]);
     });
 
-    // Justin's ruling: a minor in a safe-for-work title is fine. The storyline stays up, and its
-    // chapters are held to safe for work (storylineCeiling).
+    // A minor in a safe-for-work title keeps the storyline up, with its chapters held to
+    // `storylineCeiling`.
     it.each([
       ['PG', NsfwLevel.PG],
       ['PG-13', NsfwLevel.PG13],

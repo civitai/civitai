@@ -5,11 +5,6 @@ import {
   type StorylineWhoCanContinue,
 } from '~/components/Storyline/storyline-ui';
 
-/**
- * Who may continue a storyline. There is no "open, no review" option: a continuation adds
- * someone else's media after your chapter, so every one passes the creator unless they endorsed
- * its author.
- */
 export function StorylineContinueModeInput({
   value,
   onChange,

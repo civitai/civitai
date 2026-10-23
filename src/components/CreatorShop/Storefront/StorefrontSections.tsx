@@ -7,7 +7,7 @@ import { MerchSection } from '~/components/CreatorShop/Storefront/MerchSection';
 import { ModelsSection } from '~/components/CreatorShop/Storefront/ModelsSection';
 import { ResoldSection } from '~/components/CreatorShop/Storefront/ResoldSection';
 import { ServicesSection } from '~/components/CreatorShop/Storefront/ServicesSection';
-import { isSectionAvailable, withMissingSections } from '~/components/CreatorShop/section-meta';
+import { storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
 
@@ -28,11 +28,8 @@ export function StorefrontSections({
   preview?: boolean;
 }) {
   const features = useFeatureFlags();
-  const sectionOrder = useMemo<CreatorShopSectionKey[]>(
-    () =>
-      withMissingSections(shop.settings.sections)
-        .filter((s) => s.visible && isSectionAvailable(s.key, features))
-        .map((s) => s.key),
+  const sectionOrder = useMemo(
+    () => storefrontSectionKeys(shop.settings.sections, features),
     [shop.settings.sections, features]
   );
 

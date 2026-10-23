@@ -1,4 +1,4 @@
-import type { ChatCompletionInput } from '@civitai/client';
+import type { ChatCompletionInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import type { BlockStep, OrchestratorStepTemplate } from './index';
@@ -10,7 +10,7 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //
 //  1. A GENUINE STANDALONE `$type`. `ChatCompletionStep` /
 //     `ChatCompletionStepTemplate` with `$type: 'chatCompletion'` are first-class
-//     in the generated `@civitai/client` types, and the orchestrator runs the
+//     in the generated `@civitai/orchestration-client` types, and the orchestrator runs the
 //     step standalone (Civitai's own `xGuardModeration` scanning is implemented
 //     as `chatCompletion` jobs).
 //
@@ -204,7 +204,7 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //
 // 🔴 WHY THAT IS STILL NOT ENOUGH TO SCOPE THE SCAN. That paragraph is a claim
 // about the CURRENT source of a SEPARATELY DEPLOYED service. Nothing in this
-// repo can hold it true: the generated `@civitai/client` types encode the SHAPE
+// repo can hold it true: the generated `@civitai/orchestration-client` types encode the SHAPE
 // of `ChatCompletionInput`, never which of its fields get resolved, so an
 // orchestrator change that started resolving AIRs mentioned in prompt text
 // would turn a per-entry "don't scan `messages`" exemption into a silent
@@ -956,7 +956,7 @@ const chatToolChoiceSchema = z.union([
  *
  * 🔴 `content` IS A PLAIN STRING, and that is measured rather than read off the
  * generated type. `UserMessage.content` is typed `Array<ChatCompletionContentPart>`
- * in `@civitai/client`, but the orchestrator accepts a bare string and converts
+ * in `@civitai/orchestration-client`, but the orchestrator accepts a bare string and converts
  * it to a single text part — its own doc string on that field says so ("can be a
  * simple string or array of content parts"), and a live submit with string
  * content returned HTTP 200 and polled to `succeeded`. A string is also the only
@@ -1261,7 +1261,7 @@ export type ChatCompletionStepParams = z.infer<typeof chatCompletionParamsSchema
  * `ChatCompletionInput` with its two TOOL fields corrected.
  *
  * 🔴 THE GENERATED TYPES CANNOT EXPRESS A TOOL CALL, AND THAT IS A GENERATOR
- * ARTIFACT RATHER THAN A CONTRACT. Read off `@civitai/client`'s `types.gen.d.ts`
+ * ARTIFACT RATHER THAN A CONTRACT. Read off `@civitai/orchestration-client`'s `types.gen.d.ts`
  * at the version this repo pins:
  *
  *     ChatCompletionInput.tool_choice?: null;
@@ -1349,7 +1349,7 @@ function buildChatCompletionInput(params: ChatCompletionStepParams): ChatComplet
  * One assistant message, as this entry READS it.
  *
  * 🔴 `role` IS DELIBERATELY ABSENT, and that is a measured decision rather than
- * an omission. `AssistantMessage` in `@civitai/client` declares `role: 'assistant'`
+ * an omission. `AssistantMessage` in `@civitai/orchestration-client` declares `role: 'assistant'`
  * as REQUIRED, but the real orchestrator response carries **only `content`** on
  * `choices[].message` — no `role` at all. An extractor that keyed off `role`
  * would return nothing for every real reply: the step would charge 1 Buzz, reach

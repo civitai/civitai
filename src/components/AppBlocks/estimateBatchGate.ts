@@ -25,9 +25,8 @@ import type {
  * and never submits. Each cell is still submitted later through SUBMIT_WORKFLOW.
  *
  * 🔴 THE CALL IS INJECTED, NOT A `useMutation` HOOK. The hosts pass
- * `trpcUtils.client.blocks.estimateWorkflowBatch.mutate`, the same shape
- * `prepareTrainingDatasetGate.ts` uses, so the bridge is exercised here without a
- * rendered host.
+ * `trpcUtils.client.blocks.estimateWorkflowBatch.mutate`, so the bridge is exercised
+ * here without a rendered host.
  */
 
 export const ESTIMATE_BATCH_REPLY = 'ESTIMATE_BATCH_RESULT';

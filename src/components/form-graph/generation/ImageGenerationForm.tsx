@@ -1,6 +1,8 @@
 import { Checkbox, Input, Select, Stack, Switch } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
+import { TurboRow } from '~/components/form-graph/generation/TurboRow';
+import { additionalResources, turboMetaOf } from '~/shared/form-graph/generation/turbo';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
@@ -99,21 +101,29 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="resources"
-        render={({ meta, onChange }) => {
-          const turbo = meta && 'turbo' in meta ? meta.turbo : undefined;
+        render={({ meta, onChange: setResources }) => {
+          const turbo = turboMetaOf(meta);
           if (!turbo) return null;
           return (
-            <Checkbox
-              label="Turbo"
-              description={
-                turbo.full
-                  ? 'Remove a resource to make room for Turbo'
-                  : 'Fewer steps for faster, cheaper images, at some cost to quality'
-              }
-              checked={turbo.enabled}
-              disabled={turbo.full}
-              onChange={(e) =>
-                onChange(e.currentTarget.checked ? turbo.withTurbo : turbo.withoutTurbo)
+            <Controller
+              graph={imageHub}
+              name="turboLora"
+              render={({ value: pick, meta: loraMeta, onChange: setPick }) =>
+                pick && loraMeta ? (
+                  <TurboRow
+                    turbo={turbo}
+                    pick={pick}
+                    familyDefaultId={loraMeta.familyDefaultId}
+                    options={loraMeta.options}
+                    onToggle={(on, lora) =>
+                      setResources(on && lora ? [...turbo.withoutTurbo, lora] : turbo.withoutTurbo)
+                    }
+                    onChange={(lora) => {
+                      setPick(lora);
+                      if (turbo.enabled) setResources([...turbo.withoutTurbo, lora]);
+                    }}
+                  />
+                ) : null
               }
             />
           );
@@ -122,18 +132,21 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="resources"
-        render={({ value, meta, onChange }) => (
-          <ResourceSelectMultipleInput
-            value={value}
-            onChange={onChange}
-            label="Additional Resources"
-            buttonLabel="Add LoRA"
-            modalTitle="Select Resources"
-            options={meta?.options}
-            limit={meta?.limit}
-            role="resource"
-          />
-        )}
+        render={({ value, meta, onChange }) => {
+          const list = additionalResources(turboMetaOf(meta), value, meta?.limit);
+          return (
+            <ResourceSelectMultipleInput
+              value={list.value}
+              onChange={(next) => onChange(list.commit(next as NonNullable<typeof value>))}
+              label="Additional Resources"
+              buttonLabel="Add LoRA"
+              modalTitle="Select Resources"
+              options={meta?.options}
+              limit={list.limit}
+              role="resource"
+            />
+          );
+        }}
       />
       <MultiController
         graph={imageHub}
@@ -411,6 +424,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }
@@ -468,6 +482,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }

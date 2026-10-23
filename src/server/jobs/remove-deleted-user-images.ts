@@ -11,6 +11,7 @@ import {
 } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
 
 /**
@@ -115,11 +116,7 @@ async function drainUser(
         AND u."deletedAt" IS NOT NULL
         AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
       WHERE i."userId" = ${userId}
-        AND NOT EXISTS (
-          SELECT 1 FROM "CsamReport" c
-          WHERE c."userId" = ${userId}
-            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-        )
+        AND NOT ${userUnderLegalHoldSql(Prisma.raw('i."userId"'))}
         AND NOT EXISTS (
           SELECT 1 FROM "Image" f
           WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
@@ -144,7 +141,10 @@ async function drainUser(
       if (!(await isStillMarkedForDeletion(userId)))
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
-      const deleted = await deleteImages(batch);
+      // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
+      const deleted = await deleteImages(batch, undefined, {
+        onlyWhere: Prisma.sql`NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}`,
+      });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
     }
@@ -185,11 +185,7 @@ async function drainUser(
               AND u."deletedAt" IS NOT NULL
               AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM "CsamReport" c
-            WHERE c."userId" = ${userId}
-              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-          )
+          AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Post"."userId"'))}
           AND NOT EXISTS (
             SELECT 1 FROM "Image" f
             WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
@@ -473,9 +469,10 @@ export const removeDeletedUserImages = createJob(
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
 
-    // An account with an unfinished CSAM report is left out entirely: archive-csam-reports runs
-    // five minutes after this job and rebuilds the NCMEC evidence by re-fetching each image from
-    // the CDN, silently skipping — and then stamping the report archived — for anything gone.
+    // An account under a legal hold (`legal-hold.ts`) is left out entirely. While its report is
+    // unfinished this also matters to archive-csam-reports, which runs five minutes after this job
+    // and rebuilds the NCMEC evidence by re-fetching each image from the CDN, silently skipping —
+    // and then stamping the report archived — for anything gone.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
@@ -490,11 +487,7 @@ export const removeDeletedUserImages = createJob(
       ) h
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
-        AND NOT EXISTS (
-          SELECT 1 FROM "CsamReport" c
-          WHERE c."userId" = u.id
-            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-        )
+        AND NOT ${userUnderLegalHoldSql(Prisma.raw('u.id'))}
         AND NOT EXISTS (
           SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
         )
@@ -547,11 +540,7 @@ export const removeDeletedUserImages = createJob(
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
-          AND NOT EXISTS (
-            SELECT 1 FROM "CsamReport" c
-            WHERE c."userId" = u.id
-              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-          )
+          AND NOT ${userUnderLegalHoldSql(Prisma.raw('u.id'))}
           AND NOT EXISTS (
             SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )

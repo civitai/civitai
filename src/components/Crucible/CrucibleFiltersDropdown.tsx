@@ -2,18 +2,21 @@ import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantin
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
-import { useCrucibleQueryParams } from '~/components/Crucible/crucible.utils';
+import type { CrucibleFilterState } from '~/components/Crucible/crucible.utils';
+import {
+  defaultCrucibleStatus,
+  isDefaultCrucibleStatus,
+  toCrucibleFilterPatch,
+  useCrucibleFilters,
+  useCrucibleQueryParams,
+} from '~/components/Crucible/crucible.utils';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-
-type CrucibleFilterState = {
-  status: CrucibleStatus[];
-  contentType?: CrucibleContentType;
-};
 
 const contentTypeOptions: { value?: CrucibleContentType; label: string }[] = [
   { label: 'All' },
@@ -27,35 +30,34 @@ const statusOptions = [
   { value: CrucibleStatus.Completed, label: 'Completed' },
 ];
 
-// The server's feed default; kept out of the URL while selected.
-const defaultStatus = [CrucibleStatus.Active, CrucibleStatus.Pending];
-const isDefaultStatus = (status: CrucibleStatus[]) =>
-  status.length === defaultStatus.length && defaultStatus.every((s) => status.includes(s));
-
 export function CrucibleFiltersDropdown() {
   const mobile = useIsMobile();
+  const filters = useCrucibleFilters();
+  const setFilters = useFiltersContext((state) => state.setCrucibleFilters);
   const { query, replace } = useCrucibleQueryParams();
 
   const committedFilters = useMemo<CrucibleFilterState>(
     () => ({
-      status: query.status?.length ? query.status : defaultStatus,
-      contentType: query.contentType,
+      status: filters.status?.length ? filters.status : defaultCrucibleStatus,
+      contentType: filters.contentType,
     }),
-    [query.status, query.contentType]
+    [filters.status, filters.contentType]
   );
 
+  // The choice is saved to the store so it survives leaving the page. URL params win over the
+  // store, so a shared link's params are dropped once the viewer picks their own.
+  const hasUrlFilters = !!query.status || !!query.contentType;
   const handleApply = useCallback(
-    (next: CrucibleFilterState) =>
-      replace({
-        status: isDefaultStatus(next.status) ? undefined : next.status.join(','),
-        contentType: next.contentType,
-      }),
-    [replace]
+    (next: CrucibleFilterState) => {
+      setFilters(toCrucibleFilterPatch(next));
+      if (hasUrlFilters) replace({ status: undefined, contentType: undefined });
+    },
+    [setFilters, replace, hasUrlFilters]
   );
 
   const handleClear = useCallback(
-    () => replace({ status: undefined, contentType: undefined }),
-    [replace]
+    () => handleApply({ status: defaultCrucibleStatus, contentType: undefined }),
+    [handleApply]
   );
 
   const {
@@ -75,7 +77,7 @@ export function CrucibleFiltersDropdown() {
   });
 
   const filterLength =
-    (isDefaultStatus(mergedFilters.status) ? 0 : 1) + (mergedFilters.contentType ? 1 : 0);
+    (isDefaultCrucibleStatus(mergedFilters.status) ? 0 : 1) + (mergedFilters.contentType ? 1 : 0);
 
   const target = (
     <Indicator

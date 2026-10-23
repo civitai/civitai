@@ -14,7 +14,12 @@ import {
   maskLinkedAddresses,
   type LinkedAccounts,
 } from '../ip-links.service';
-import { getInflationActors, getSharedIps, type SharedIpAccount } from '../reactor-lookup.service';
+import {
+  getInflationActors,
+  getSharedIpCoverage,
+  isClickhouseTimeout,
+  type SharedIpAccount,
+} from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import {
   getReportsOnUser,
@@ -26,7 +31,15 @@ import { getAbuseFindingsForUser } from '../abuse-detection.service';
 import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
-import { getAccounts, getOpenUserReports, MAX_ACCOUNTS, searchAccounts } from './reads';
+import {
+  type AccountRow,
+  getAccounts,
+  getOpenUserReports,
+  HUMAN_REPORT_REASONS,
+  MAX_ACCOUNTS,
+  searchAccounts,
+} from './reads';
+import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
 
 // The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
@@ -77,6 +90,39 @@ const shownText = (ctx: ToolContext, text: string) =>
   showAddresses(ctx) ? text : redactAddresses(text);
 const shownAddress = (ctx: ToolContext) => (cluster: string) =>
   showAddresses(ctx) ? cluster : ctx.mask(cluster);
+
+const showEmails = (ctx: ToolContext) => showAddresses(ctx) && ctx.hasGrant('assistant.emails');
+/** Each account's registration email and the inbox it delivers to; nothing when this moderator may not
+ *  see them. */
+async function emailFields(ctx: ToolContext, userIds: number[]) {
+  const emails = showEmails(ctx) && userIds.length ? await getRegistrationEmails(userIds) : null;
+  return (userId: number) => {
+    if (!emails) return {};
+    const email = emails.get(userId) ?? null;
+    return { email, normalizedEmail: email && normalizeEmail(email) };
+  };
+}
+async function withEmails<T extends { userId: number }>(ctx: ToolContext, rows: T[]) {
+  const fields = await emailFields(
+    ctx,
+    rows.map((r) => r.userId)
+  );
+  return rows.map((r) => ({ ...r, ...fields(r.userId) }));
+}
+const ACCOUNT_FIELDS = [
+  'username',
+  'createdAt',
+  'bannedAt',
+  'banReason',
+  'deletedAt',
+  'muted',
+  'strikes',
+  'email',
+  'normalizedEmail',
+] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
+
+const EMAILS_NOTE =
+  'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
 const userSource = (id: number, username: string | null = null): TurnSource => ({
   ref: `user:${id}`,
@@ -135,7 +181,11 @@ const reactionDays = z
     `Days of reactions to search, 1-${MAX_REACTION_DAYS}. Logins are always searched in full.`
   );
 
-function linkedOut(linked: LinkedAccounts, ctx: ToolContext, subject: number | null): ToolResult {
+async function linkedOut(
+  linked: LinkedAccounts,
+  ctx: ToolContext,
+  subject: number | null
+): Promise<ToolResult> {
   const shown = showAddresses(ctx) ? linked : maskLinkedAddresses(linked, ctx.mask);
   return {
     data: {
@@ -144,7 +194,7 @@ function linkedOut(linked: LinkedAccounts, ctx: ToolContext, subject: number | n
       matched: shown.matched,
       truncated: shown.truncated,
       addresses: shown.addresses.filter((a) => a.accounts > 0),
-      accounts: shown.accounts.map((a) => ({
+      accounts: (await withEmails(ctx, shown.accounts)).map((a) => ({
         ...a,
         accountsOnNarrowestAddress: a.narrowest,
         narrowest: undefined,
@@ -187,13 +237,15 @@ function reportRow(r: UserReportRow) {
  *
  * `addresses` is capped per account, so a link can sit past the cap. A group with a member whose list
  * was cut is not `complete` (a narrower link may be hidden), and two accounts `peers` links that no
- * listed address does come back as `unmeasuredLinks` rather than vanishing.
+ * listed address does come back as `unmeasuredLinks` rather than vanishing. `scanCapped` (the address
+ * scan hit its row budget) makes every group incomplete, since a link may sit past the budget.
  */
 export function reactorClusters(
   shared: Pick<
     SharedIpAccount,
     'userId' | 'username' | 'withTarget' | 'addresses' | 'addressCount' | 'peers'
-  >[]
+  >[],
+  { scanCapped = false }: { scanCapped?: boolean } = {}
 ): {
   clusters: {
     size: number;
@@ -238,7 +290,7 @@ export function reactorClusters(
       size: g.length,
       linkedToCreator: g.some((s) => s.withTarget),
       widestLink: widest.get(r) ?? 0,
-      complete: g.every((s) => s.addressCount <= s.addresses.length),
+      complete: !scanCapped && g.every((s) => s.addressCount <= s.addresses.length),
       members: g.map((s) => ({ userId: s.userId, username: s.username })),
     }))
     .sort((a, b) => b.size - a.size || a.widestLink - b.widestLink);
@@ -250,6 +302,18 @@ export function reactorClusters(
         unmeasuredLinks.push([s.userId, p.userId]);
   return { clusters, unmeasuredLinks };
 }
+
+/**
+ * reactors_of checks shared addresses on this many top reactors, not only the few it lists: a ring
+ * rarely sits at the top by concentration, and checking the top 30 missed every cluster the Reactor
+ * Lookup page showed for the same creator.
+ */
+const ADDRESS_CHECK = 300;
+/** Past this the address check reports itself unfinished rather than empty. */
+const ADDRESS_TIMEOUT_SECONDS = 15;
+const SHOWN_ACTORS = 20;
+/** Narrowest first, so these are the identifying ones. */
+const ADDRESSES_SHOWN = 3;
 
 export const TOOLS = [
   tool({
@@ -271,7 +335,7 @@ export const TOOLS = [
       const id = await resolveUserId(term);
       if (!id) return { data: { found: false }, rows: 0, truncated: false, sources: [] };
       const { accounts } = await getAccounts([id]);
-      const account = accounts[0];
+      const [account] = await withEmails(ctx, accounts);
       return {
         data: { found: true, account },
         rows: 1,
@@ -284,7 +348,8 @@ export const TOOLS = [
   tool({
     name: 'get_user_dossier',
     description:
-      'Everything at a glance about one account: age, content counts, image rating mix, removed/blocked images, prior reports and how many were actioned, strikes/mutes/bans, detector findings, accounts sharing its login or reaction addresses (top 25), and how widely spread its received reactions are (distinct reactors, top-10/top-20 share). Start most investigations here.',
+      'Everything at a glance about one account: age, content counts, image rating mix, removed/blocked images, prior reports and how many were actioned, strikes/mutes/bans, detector findings, accounts sharing its login or reaction addresses (top 25), and how widely spread its received reactions are (distinct reactors, top-10/top-20 share). Start most investigations here. ' +
+      EMAILS_NOTE,
     input: z.object({ userId }),
     requires: [LOOKUP, USER_REPORTS],
     run: async ({ userId: id }, ctx) => {
@@ -293,15 +358,18 @@ export const TOOLS = [
       const linked =
         d.linked && (showAddresses(ctx) ? d.linked : maskLinkedAddresses(d.linked, ctx.mask));
       const abuse = ctx.canAccess('/abuse') ? d.abuse : null;
+      const emails = await emailFields(ctx, [id, ...(linked?.accounts ?? []).map((a) => a.userId)]);
       return {
         data: {
           ...d,
+          ...emails(id),
           linked: linked && {
             totals: linked.totals,
             matched: linked.matched,
             truncated: linked.truncated,
             accounts: linked.accounts.map(({ login, reaction, ...a }) => ({
               ...a,
+              ...emails(a.userId),
               sharedLoginAddresses: login.length,
               sharedReactionAddresses: reaction.length,
             })),
@@ -322,13 +390,32 @@ export const TOOLS = [
 
   tool({
     name: 'get_accounts',
-    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced.`,
-    input: z.object({ userIds: userIdList(MAX_ACCOUNTS) }),
+    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced. Pass \`fields\` to get only the columns the question needs (e.g. ["normalizedEmail"] to group a list by inbox): every column costs tokens on every later step. ${EMAILS_NOTE}`,
+    input: z.object({
+      userIds: userIdList(MAX_ACCOUNTS),
+      fields: z.array(z.enum(ACCOUNT_FIELDS)).min(1).optional(),
+    }),
     requires: [LOOKUP, USER_REPORTS],
-    run: async ({ userIds }) => {
+    run: async ({ userIds, fields }, ctx) => {
       const { accounts, missing } = await getAccounts(userIds);
+      const wanted = fields && new Set<string>(fields);
+      const askedForEmails = !wanted || wanted.has('email') || wanted.has('normalizedEmail');
+      // Not fetched at all unless asked for: a column nobody needs should not be read, least of all an
+      // address.
+      const rows = askedForEmails ? await withEmails(ctx, accounts) : accounts;
       return {
-        data: { accounts, missing },
+        data: {
+          accounts: wanted
+            ? rows.map((row) =>
+                Object.fromEntries(
+                  Object.entries(row).filter(([key]) => key === 'userId' || wanted.has(key))
+                )
+              )
+            : rows,
+          missing,
+          // Said outright: rows without an address otherwise read as accounts that share none.
+          ...(fields && askedForEmails && !showEmails(ctx) ? { emailsWithheld: true } : {}),
+        },
         rows: accounts.length,
         truncated: false,
         sources: accounts.map((a) => userSource(a.userId, a.username)),
@@ -339,7 +426,8 @@ export const TOOLS = [
   tool({
     name: 'find_linked_accounts',
     description:
-      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset.',
+      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset. ' +
+      EMAILS_NOTE,
     input: z.object({
       userId,
       days: reactionDays,
@@ -354,7 +442,8 @@ export const TOOLS = [
   tool({
     name: 'accounts_on_address',
     description:
-      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact.',
+      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact. ' +
+      EMAILS_NOTE,
     input: z.object({
       address: z.string().min(3).max(60),
       days: reactionDays,
@@ -394,7 +483,7 @@ export const TOOLS = [
   tool({
     name: 'reactors_of',
     description:
-      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), plus addresses the top reactors share with the creator or each other, and the overall spread (distinct reactors, top-10/top-20 share). `clusters` groups the reactors that share addresses with EACH OTHER, whether or not with the creator: when asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` has a member with more shared addresses than were checked, so a narrower link may exist; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
+      "Who reacts to this creator's content in the window, scored by concentration (the share of each reactor's own reactions that land on this creator; 100% from one account is the ring signal, raw count is not), and which of them share addresses. `clusters` comes first: groups of reactors that share addresses with EACH OTHER, whether or not with the creator, each member with its rank and concentration. When asked about interconnected accounts, report these first, with each one's `widestLink` (how many accounts the site has seen on the broadest address holding it together; a crowded address such as a VPN exit or mobile carrier is weak evidence on its own). A cluster that is not `complete` may hide a narrower link; `unmeasuredLinks` are account pairs that share an address the clusters could not measure. Report both as unverified rather than as no link. `addressesChecked` says how many of the over-floor reactors were checked for shared addresses and whether that check is `complete`. Say a creator's reactors have no clusters only when it is complete, and then say how many were checked out of how many; when it timed out or the scan was cut short (`scanCapped`), say the check did not finish, never that there are no clusters. `actors` is only the top reactors by concentration. Use days 3 for who is boosting the creator now, 30 or 90 for a slow farm. Use for bot accusations in both directions: a ring boosting someone, and a creator falsely accused who simply has a wide audience.",
     input: z.object({
       userId,
       days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
@@ -403,19 +492,54 @@ export const TOOLS = [
     requires: [REACTOR_LOOKUP, LOOKUP],
     run: async ({ userId: id, days, minCount }, ctx) => {
       const [report, breadth] = await Promise.all([
-        getInflationActors(id, { category: 'reactions', days, minCount, limit: 50 }),
+        getInflationActors(id, { category: 'reactions', days, minCount, limit: ADDRESS_CHECK }),
         getReactionBreadth(id, days),
       ]);
-      const top = report.actors.slice(0, 30).map((a) => a.userId);
-      const shared = top.length ? await getSharedIps(top, { targetId: id }) : [];
+      const checked = report.actors.map((a) => a.userId);
+      let shared: SharedIpAccount[] = [];
+      let scanCapped = false;
+      let timedOut = false;
+      if (checked.length)
+        try {
+          ({ accounts: shared, scanCapped } = await getSharedIpCoverage(checked, {
+            targetId: id,
+            timeoutSeconds: ADDRESS_TIMEOUT_SECONDS,
+          }));
+        } catch (e) {
+          // A timeout checked nobody; it must not read as "no shared addresses".
+          if (!isClickhouseTimeout(e)) throw e;
+          timedOut = true;
+        }
+      const { clusters, unmeasuredLinks } = reactorClusters(shared, { scanCapped });
+      const byId = new Map(report.actors.map((a, i) => [a.userId, { a, rank: i + 1 }]));
+      const inCluster = new Set(clusters.flatMap((c) => c.members.map((m) => m.userId)));
+      const shown = report.actors.slice(0, SHOWN_ACTORS);
+      // Only accounts in a finding: with 300 checked, every sharer would swamp the answer.
+      const findings = shared.filter((s) => s.withTarget || inCluster.has(s.userId));
       const label = shownAddress(ctx);
       return {
         data: {
-          ...reactorClusters(shared),
+          addressesChecked: {
+            reactors: timedOut ? 0 : checked.length,
+            overFloor: report.total,
+            scanCapped,
+            timedOut,
+            complete: !scanCapped && !timedOut,
+          },
+          clusters: clusters.map((c) => ({
+            ...c,
+            members: c.members.map((m) => ({
+              ...m,
+              rank: byId.get(m.userId)?.rank ?? null,
+              concentration: byId.get(m.userId)?.a.concentration ?? null,
+              reactions: byId.get(m.userId)?.a.count ?? null,
+            })),
+          })),
+          unmeasuredLinks,
           breadth,
           overFloor: report.total,
           belowFloor: report.belowFloor,
-          actors: report.actors.map((a) => ({
+          actors: shown.map((a) => ({
             userId: a.userId,
             username: a.username,
             reactions: a.count,
@@ -427,20 +551,24 @@ export const TOOLS = [
             createdAt: day(a.createdAt),
             instantVerify: a.instantVerify,
           })),
-          sharedAddresses: shared.map((s) => ({
+          sharedAddresses: findings.map((s) => ({
             userId: s.userId,
             username: s.username,
             withCreator: s.withTarget,
             addressCount: s.addressCount,
-            addresses: s.addresses.map((a) => ({ ...a, cluster: label(a.cluster) })),
-            peers: s.peers.map((p) => p.userId),
+            addresses: s.addresses
+              .slice(0, ADDRESSES_SHOWN)
+              .map((a) => ({ ...a, cluster: label(a.cluster) })),
           })),
         },
-        rows: report.actors.length,
-        truncated: report.total > report.actors.length,
+        rows: shown.length,
+        truncated: report.total > checked.length || scanCapped || timedOut,
         sources: [
           userSource(id),
-          ...report.actors.map((a) => userSource(a.userId, a.username)),
+          ...shown.map((a) => userSource(a.userId, a.username)),
+          // Every account a finding names, so a citation of one past the top rows still verifies.
+          ...findings.map((s) => userSource(s.userId, s.username)),
+          ...unmeasuredLinks.flat().map((u) => userSource(u, byId.get(u)?.a.username)),
           ...breadth.top.map((t) => userSource(t.userId)),
         ],
       };
@@ -516,14 +644,26 @@ export const TOOLS = [
   tool({
     name: 'open_user_reports',
     description:
-      "The open user-report queue, oldest first, human-filed only: report id, reported account, reporter, reason and the reporter's comment (quoted user text). Page with afterReportId.",
+      "The open user-report queue, human-filed only, newest first: report id, reported account, reporter, reason, status and the reporter's comment (quoted user text). Filter by status and reason rather than paging the whole queue; for a sweep (spam, bots), filter by reason first, then look up the reported accounts. Page with the returned nextCursor, passing the same order and filters.",
     input: z.object({
       limit: z.number().int().min(1).max(100).default(50),
-      afterReportId: z.number().int().positive().optional(),
+      order: z.enum(['newest', 'oldest']).default('newest'),
+      cursor: z.number().int().positive().max(MAX_INT4).optional(),
+      statuses: z
+        .array(z.enum(['Pending', 'Processing']))
+        .min(1)
+        .max(2)
+        .optional(),
+      reasons: z
+        .array(z.enum(HUMAN_REPORT_REASONS as [string, ...string[]]))
+        .min(1)
+        .max(HUMAN_REPORT_REASONS.length)
+        .optional(),
     }),
     requires: [USER_REPORTS],
-    run: async ({ limit, afterReportId }) => {
-      const rows = await getOpenUserReports(limit, afterReportId);
+    run: async (query) => {
+      const { limit } = query;
+      const rows = await getOpenUserReports(query);
       return {
         data: {
           reports: rows.map((r) => ({
@@ -531,6 +671,7 @@ export const TOOLS = [
             createdAt: day(r.createdAt),
             comment: quoted(r.comment),
           })),
+          nextCursor: rows.length >= limit ? rows.at(-1)!.reportId : null,
         },
         rows: rows.length,
         truncated: rows.length >= limit,
@@ -650,9 +791,16 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ slug, title, summary, body, note }, ctx) => {
+      // A playbook is read by every assistant user and goes into every moderator's prompt, so an
+      // email from this chat must not ride along; the method never needs one.
       const { version } = await addPlaybookVersion({
         slug,
-        draft: { title, summary, body, note: note ?? null },
+        draft: {
+          title: redactEmails(title),
+          summary: redactEmails(summary),
+          body: redactEmails(body),
+          note: note ? redactEmails(note) : null,
+        },
         authorId: ctx.moderatorId,
         byAssistant: true,
         sourceTurnId: ctx.turnId,
@@ -677,14 +825,19 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ need, reason, example }, ctx) => {
+      // Read by every assistant user (the conversation by every auditor), none of whom need an email
+      // to build a tool.
       const id = await fileToolRequest({
         chatId: ctx.chatId,
         turnId: ctx.turnId,
         moderatorId: ctx.moderatorId,
-        need,
-        reason,
-        example: example ?? null,
-        conversation: ctx.conversation(),
+        need: redactEmails(need),
+        reason: redactEmails(reason),
+        example: example ? redactEmails(example) : null,
+        conversation: ctx.conversation().map((c) => ({
+          prompt: redactEmails(c.prompt),
+          answer: c.answer && redactEmails(c.answer),
+        })),
       });
       return { data: { filed: true, requestId: id }, rows: 1, truncated: false, sources: [] };
     },

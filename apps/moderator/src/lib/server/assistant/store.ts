@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { getModeratorDb } from '../moderator-db';
-import type { AssistantTables } from './tables';
+import type { AssistantTables, PriceSource } from './tables';
+import { CEILING_PRICE, type TokenRow } from '$lib/assistant/models';
 import type {
   PlaybookStatus,
   ToolRequestStatus,
@@ -222,7 +223,8 @@ export async function finishTurn(
     error: string | null;
     promptTokens: number;
     completionTokens: number;
-  }
+  },
+  cost: { usd: number; source: PriceSource }
 ): Promise<void> {
   // jsonb columns take a JSON string; handing Kysely the array would bind it as a Postgres array.
   await db()
@@ -238,7 +240,27 @@ export async function finishTurn(
       prompt_tokens: outcome.promptTokens,
       completion_tokens: outcome.completionTokens,
       total_tokens: outcome.promptTokens + outcome.completionTokens,
+      cost_usd: cost.usd,
+      price_source: cost.source,
       finished_at: sql`now()`,
+    })
+    .where('id', '=', id)
+    .where('status', '=', 'running')
+    .execute();
+}
+
+/** A running turn's tokens so far. Only a running row: the outcome `finishTurn` wrote is final. */
+export async function recordTurnTokens(
+  id: number,
+  promptTokens: number,
+  completionTokens: number
+): Promise<void> {
+  await db()
+    .updateTable('assistant_turn')
+    .set({
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
     })
     .where('id', '=', id)
     .where('status', '=', 'running')
@@ -268,20 +290,56 @@ export async function hasRunningTurn(moderatorId: number, staleAfterMs: number):
   return !!row;
 }
 
-/** Tokens this moderator's finished turns have spent since midnight UTC. A running turn counts 0 until
- *  it finishes, which is why only one may run at a time (`assistant_turn_one_running_idx`). */
+/** Tokens this moderator's turns have spent since midnight UTC: the circuit breaker's count. A running
+ *  turn counts what it has recorded so far, which is why only one may run at a time
+ *  (`assistant_turn_one_running_idx`). */
 export async function tokensToday(moderatorId: number): Promise<number> {
+  return sumTokens(await tokensTodayByModel(moderatorId));
+}
+
+export const sumTokens = (rows: TokenRow[]) =>
+  rows.reduce((sum, r) => sum + r.promptTokens + r.completionTokens, 0);
+
+const startOfUtcDay = sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`;
+
+/**
+ * USD this moderator's turns have cost since midnight UTC: what the daily dollar cap compares against.
+ * A turn with no recorded cost (one from before costs were kept, one still running, or one whose
+ * process died) is charged its recorded tokens at `CEILING_PRICE`.
+ */
+export async function usdToday(moderatorId: number): Promise<number> {
   const row = await db()
     .selectFrom('assistant_turn')
-    .select(sql<string>`coalesce(sum(total_tokens), 0)`.as('total'))
-    .where('moderator_id', '=', moderatorId)
-    .where(
-      'created_at',
-      '>=',
-      sql<Date>`date_trunc('day', now() at time zone 'utc') at time zone 'utc'`
+    .select(
+      sql<string>`coalesce(sum(coalesce(cost_usd, (prompt_tokens * ${CEILING_PRICE.input}::numeric + completion_tokens * ${CEILING_PRICE.output}::numeric) / 1000000)), 0)`.as(
+        'usd'
+      )
     )
-    .executeTakeFirst();
-  return Number(row?.total ?? 0);
+    .where('moderator_id', '=', moderatorId)
+    .where('created_at', '>=', startOfUtcDay)
+    .executeTakeFirstOrThrow();
+  return Number(row.usd);
+}
+
+/** The same day's tokens split by model and direction, which is what a price applies to. */
+export async function tokensTodayByModel(moderatorId: number): Promise<TokenRow[]> {
+  const rows = await db()
+    .selectFrom('assistant_turn')
+    .select([
+      'model',
+      sql<string>`coalesce(sum(prompt_tokens), 0)`.as('prompt'),
+      sql<string>`coalesce(sum(completion_tokens), 0)`.as('completion'),
+    ])
+    .where('moderator_id', '=', moderatorId)
+    .where('created_at', '>=', startOfUtcDay)
+    .groupBy('model')
+    .orderBy('model')
+    .execute();
+  return rows.map((r) => ({
+    model: r.model,
+    promptTokens: Number(r.prompt),
+    completionTokens: Number(r.completion),
+  }));
 }
 
 export type AuditRow = Omit<Turn, 'sources'> & { chatTitle: string };

@@ -27,7 +27,7 @@ export function StorylineBatchProvider({
 
   const chunks = useMemo(
     () => (enabled ? chunkIds(postIds, STORYLINE_POSTS_CHUNK) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unstable array; its join is the key
     [postIds.join(','), enabled]
   );
 
@@ -39,7 +39,7 @@ export function StorylineBatchProvider({
 
   const byPost = useMemo(
     () => Object.assign({}, ...queries.map((query) => query.data ?? {})),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- queries unstable; stamps are the key
     [queries.map((query) => query.dataUpdatedAt).join(',')]
   ) as Record<number, StorylineForPost>;
 

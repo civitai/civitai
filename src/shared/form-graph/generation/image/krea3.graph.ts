@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defFamily, defineGraph } from 'form-graph';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { checkpointDef } from '../checkpoint';
 import { optionFallback, aspectRatioDef, enumDef, img2imgImages } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
@@ -55,7 +56,21 @@ const AR = defFamily((resolution: Krea3Resolution) =>
 const krea3ThinkingModeOptions = [
   { label: 'Instant', value: 'instant' },
   { label: 'Medium', value: 'medium' },
+  { label: 'Ultra', value: 'ultra' },
 ] as const;
+
+/**
+ * Ultra is gated by `krea3Ultra` (Krea's capacity-limited top mode, opened at launch) and is
+ * 2K only: the orchestrator refuses it at 1K.
+ */
+export function getKrea3ThinkingModeOptions(
+  flags?: Partial<FeatureAccess>,
+  resolution: Krea3Resolution = '1k'
+) {
+  return flags?.krea3Ultra === true && resolution === '2k'
+    ? krea3ThinkingModeOptions
+    : krea3ThinkingModeOptions.filter((o) => o.value !== 'ultra');
+}
 
 export const krea3 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
@@ -82,4 +97,9 @@ export const krea3 = defineGraph<FamilyExt>({ scope: familyScope })
     _ext.workflow.startsWith('txt') ? AR(resolution ?? '1k') : null
   )
   .field('images', img2imgImages({ min: 1, max: KREA3_IMAGES_LIMIT }))
-  .field('thinkingMode', enumDef({ options: krea3ThinkingModeOptions, default: 'instant' }));
+  .field('thinkingMode', ({ resolution, _ext }) =>
+    enumDef({
+      options: getKrea3ThinkingModeOptions(_ext.flags, resolution ?? '1k'),
+      default: 'instant',
+    })
+  );

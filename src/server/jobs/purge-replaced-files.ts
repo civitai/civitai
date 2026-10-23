@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { legalHoldSkipReason, ownerUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { createJob } from '~/server/jobs/job';
 
@@ -9,13 +10,23 @@ const GRACE_DAYS = 30;
 const logJob = (data: MixedObject) =>
   logToAxiom({ name: 'purge-replaced-files', type: 'error', ...data }, 'webhooks').catch(() => {});
 
-type ReplacedRow = { id: number; url: string };
+type ReplacedRow = { id: number; url: string; held: boolean };
 
 export async function processReplacedFiles(rows: ReplacedRow[]) {
   let purged = 0;
   let failed = 0;
   let skipped = 0;
-  for (const { id, url } of rows) {
+  for (const { id, url, held } of rows) {
+    const holdReason = legalHoldSkipReason(held);
+    if (holdReason) {
+      skipped += 1;
+      logJob({
+        type: 'info',
+        message: 'purge skipped, object left in place',
+        data: { modelFileId: id, reason: holdReason },
+      });
+      continue;
+    }
     try {
       // Refcount-guarded: skips the S3 delete if another live ModelFile still
       // references this url. Do NOT swap for raw deleteObject. excludeId=id is
@@ -52,7 +63,7 @@ export async function processReplacedFiles(rows: ReplacedRow[]) {
 // function (42883) at plan time — the statement throws before any row is examined.
 export function buildReplacedFilesQuery(): Prisma.Sql {
   return Prisma.sql`
-    SELECT id, url
+    SELECT id, url, ${ownerUnderLegalHoldSql(Prisma.raw('"ModelFile"."modelVersionId"'))} AS held
     FROM "ModelFile"
     WHERE "replacedAt" < now() - make_interval(days => ${Prisma.raw(String(GRACE_DAYS))})
       AND "dataPurged" IS NOT TRUE

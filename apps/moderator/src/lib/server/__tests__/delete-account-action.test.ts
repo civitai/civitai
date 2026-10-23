@@ -159,6 +159,12 @@ describe('deleteAccount — the audit row belongs to the endpoint', () => {
   // The control. `recordModActivity` is mocked and observable, so the assertion above is capable of
   // failing — a neighbouring action that DOES log proves the spy is wired to the real call site.
   it('while its neighbour purgeAllContent still does', async () => {
+    // Purge checks the hold first; one answer serves the check and the purge.
+    respond = () =>
+      new Response(JSON.stringify({ userId: TARGET, held: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     await purgeAllContent({ userId: TARGET, moderatorId: 990000007 });
 
     expect(recordModActivity).toHaveBeenCalledWith({
@@ -167,48 +173,6 @@ describe('deleteAccount — the audit row belongs to the endpoint', () => {
       entityId: TARGET,
       activity: 'purgeAllContent',
     });
-  });
-});
-
-describe('purgeAllContent — images kept under a hold', () => {
-  it('warns how many images the purge kept, so it does not read as complete', async () => {
-    respond = () => new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 3 }));
-
-    const result = await purgeAllContent({ userId: TARGET, moderatorId: 990000007 });
-
-    expect(result).toEqual({
-      ok: true,
-      warning: 'Under a hold: 3 images were preserved as evidence, not shown.',
-    });
-  });
-
-  it('warns about kept posts too, also when no image was kept', async () => {
-    respond = () =>
-      new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 0, keptPostsUnderHold: 1 }));
-    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({
-      ok: true,
-      warning: 'Under a hold: 1 post was preserved as evidence, not shown.',
-    });
-
-    respond = () =>
-      new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 1, keptPostsUnderHold: 2 }));
-    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({
-      ok: true,
-      warning: 'Under a hold: 1 image and 2 posts were preserved as evidence, not shown.',
-    });
-  });
-
-  it('carries no warning when nothing was kept', async () => {
-    respond = () => new Response(JSON.stringify({ userId: TARGET, keptUnderHold: 0 }));
-
-    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({ ok: true });
-  });
-
-  // The purge already ran by the time the body is read, so a body it cannot parse is still a success.
-  it('still reports success when the body is unreadable', async () => {
-    respond = () => new Response('not json');
-
-    expect(await purgeAllContent({ userId: TARGET, moderatorId: 990000007 })).toEqual({ ok: true });
   });
 });
 

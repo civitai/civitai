@@ -2,7 +2,13 @@ import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/ki
 import type { SessionUser } from '@civitai/auth';
 import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, HELD_DETECTIONS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import {
+  MODEL_FLAGS_APPEALS_PATH,
+  MODEL_FLAGS_AUTO_PATH,
+  MODEL_FLAGS_NEEDS_REVIEW_PATH,
+  MODEL_FLAGS_PATH,
+} from '$lib/minor-flags/paths';
+import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
@@ -41,6 +47,9 @@ export type NavLink = {
   sharedAccess?: boolean;
   // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
   noPreload?: boolean;
+  // The children are grant-aware tab routes of one page: still granted one by one (and listed on /admin), but
+  // the sidebar renders the group as a single entry and the page draws its own tab bar.
+  tabs?: true;
   children?: NavLink[];
 };
 
@@ -111,15 +120,30 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches', countKey: 'minorHashMatches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals', countKey: 'modelFlagAppeals' },
-      { path: HELD_DETECTIONS_PATH, label: 'Held Detections', countKey: 'heldDetections' },
+      {
+        label: 'Model Flags',
+        path: MODEL_FLAGS_PATH,
+        tabs: true,
+        children: [
+          { path: MODEL_FLAGS_APPEALS_PATH, label: 'Appeals', countKey: 'modelFlagsAppeals' },
+          { path: MODEL_FLAGS_AUTO_PATH, label: 'Auto-flagged', countKey: 'modelFlagsAuto' },
+          // The badge each viewer sees counts only the leads they may rule (`withViewerCountKey`).
+          {
+            path: MODEL_FLAGS_NEEDS_REVIEW_PATH,
+            label: 'Needs review',
+            countKey: 'modelFlagsNeedsReview',
+          },
+        ],
+      },
     ],
   },
   {
     label: 'Bounties',
     path: '/bounties',
-    children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
+    children: [
+      { path: '/bounties/poi-appeals', label: 'Real-Person Appeals' },
+      { path: '/bounties/file-checks', label: 'Entry File Checks' },
+    ],
   },
   {
     label: 'Storylines',
@@ -138,7 +162,7 @@ export const NAVIGATION: NavLink[] = [
       },
     ],
   },
-  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  // Every rated entity's owner disputes.
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
@@ -349,6 +373,13 @@ function allows(path: string, user: RoleUser): boolean {
   return !!match && (user?.roles ?? []).some((r) => match.roles.has(r));
 }
 
+/** Needs review lists only the kinds of lead a viewer holds a permission for, so its badge reads the
+ *  shared count for exactly those. */
+function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
+  if (link.path !== MODEL_FLAGS_NEEDS_REVIEW_PATH) return link;
+  return { ...link, countKey: needsReviewCountKey(needsReviewSources(resolvePermissions(user))) };
+}
+
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
@@ -359,7 +390,7 @@ function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
     }
     const children = link.children ? pruneNav(link.children, user) : undefined;
     if (link.children && (!children || children.length === 0)) continue;
-    out.push({ ...link, children });
+    out.push(withViewerCountKey({ ...link, children }, user));
   }
   return out;
 }
@@ -409,6 +440,11 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
 /** The Investigate button: the assistant page AND the right to run it. */
 export const canInvestigate = (locals: App.Locals) =>
   canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
+
+/** The training-data viewer: whoever `/api/training-data` would serve, so a page never shows a
+ *  button that only answers 403. */
+export const canViewTrainingData = (user: RoleUser) =>
+  canAccess(user, '/audit/training-data') || canAccess(user, '/audit/training-models');
 
 /** Same grant as User Lookup. */
 export const canSeeAddresses = (locals: App.Locals) =>
@@ -506,7 +542,9 @@ export function pageAccessState(edit?: {
         // A section whose every child is ungrantable would render as an empty header with a checkbox
         // that addresses nothing. It is still a real route, so it is still reported in `paths`.
         paths.push(link.path);
-        if (children.length)
+        // Tab routes read as pages of the section on /admin, not as a header of their own.
+        if (link.tabs) out.push(...children);
+        else if (children.length)
           out.push({ key: link.path, label: link.label, kind: 'group', children });
         continue;
       }

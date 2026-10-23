@@ -16,8 +16,8 @@ export const STORYLINE_FEED_FILTERS = [
 export type StorylineFeedFilter = (typeof STORYLINE_FEED_FILTERS)[number]['value'];
 
 /**
- * The feed's one filter. Single select across all four: the server takes one value, so "open"
- * cannot be combined with a status.
+ * The feed's one filter. Single select: the server takes one value, so "open" cannot be combined
+ * with a status.
  */
 export function StorylineFiltersDropdown({
   value,

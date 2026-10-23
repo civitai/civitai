@@ -21,6 +21,12 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   behaviour parity with the Prisma originals is pinned against a real database by
   `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts` — see Testing below.
 
+  `listImageReactionsMany` (`image.db.ts`) is the viewer's-own-reactions read behind
+  `getUserReactionsForImages` (image feeds, `reaction.getMyImageReactions`, App Block reactions). It is
+  served behind the default-off server Flipt flag `kysely-image-reactions` so the Prisma query-engine
+  CPU per query can be compared with it on and off; off, the original Prisma read runs. Parity is
+  pinned in the same suite.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

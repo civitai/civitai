@@ -27,6 +27,7 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
+  deleteAccountHold,
   countReactions,
   removeReactions,
   purgeAllContent,
@@ -57,16 +58,26 @@ import {
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
+import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   // A retired section keeps working: its slug is in tickets and pasted lookup URLs, and 404ing one
   // reads as the account being gone rather than the tab having moved.
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  return { section: params.section };
+  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
+  let deleteHold: DeleteHold | null = null;
+  if (
+    params.section === 'admin' &&
+    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
+  ) {
+    const { result } = await parent();
+    if (result) deleteHold = await deleteAccountHold(result.identity.id);
+  }
+  return { section: params.section, deleteHold };
 };
 
 const NOTE_MAX = 5000;
@@ -663,6 +674,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
+        retainedHidden: result.retainedHidden ?? 0,
         requested: commentIds.length + commentV2Ids.length,
       };
     }
@@ -710,6 +722,10 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    // The endpoint refuses a held account too; this answers before anything is sent.
+    const hold = await deleteAccountHold(input.userId);
+    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
+    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({

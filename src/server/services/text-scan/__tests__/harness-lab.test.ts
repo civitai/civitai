@@ -35,7 +35,7 @@ await import('~/server/services/text-scan/profiles/model-rules.profile');
 const { registerTextScanProfile, getTextScanProfile } = await import(
   '~/server/services/text-scan/profiles'
 );
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt } = await import(
   '~/server/services/text-scan/prompt'
 );

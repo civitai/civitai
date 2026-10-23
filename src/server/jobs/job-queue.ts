@@ -32,6 +32,7 @@ const jobQueueMap = {
   [EntityType.ModelVersion]: 'modelVersionIds',
   [EntityType.Comment]: 'commentIds', // unused
   [EntityType.CommentV2]: 'commentV2Ids', // unused
+  [EntityType.CommentV3]: 'commentV3Ids', // unused
   [EntityType.User]: 'userIds', // unused
   [EntityType.UserProfile]: 'userProfileIds', // unused
   [EntityType.ResourceReview]: 'resourceReviewIds', // unused

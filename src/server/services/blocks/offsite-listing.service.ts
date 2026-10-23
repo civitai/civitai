@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   bustAppListingCatalogCache,
   listingQueueFacts,
@@ -172,6 +173,24 @@ function slugTakenError(slug: string): TRPCError {
  */
 export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
 
+/**
+ * The author-written text a submission or patch carries. Tagline and description edits on a
+ * live listing apply in place without review, so this is scanned on every path that writes them.
+ */
+function listingAuthorText(
+  fields: Pick<UpdateListingPatch, 'name' | 'tagline' | 'description' | 'betaMessage'> & {
+    scopeJustifications?: Record<string, string> | null;
+  }
+) {
+  return [
+    fields.name,
+    fields.tagline,
+    fields.description,
+    fields.betaMessage,
+    ...Object.values(fields.scopeJustifications ?? {}),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // submitExternalListing (author).
 // ---------------------------------------------------------------------------
@@ -228,6 +247,11 @@ export async function submitExternalListing(opts: {
   isModerator?: boolean;
 }): Promise<SubmitExternalListingResult> {
   const { input, userId, isModerator = false } = opts;
+
+  await throwOnBlockedUserContent([input.slug, input.changelog, ...listingAuthorText(input)], {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
@@ -1397,6 +1421,11 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before any branch below can open a shadow revision, for the reason the hoists below give.
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
   // and DERIVE the requested-scope snapshot from it (server-authoritative — a
@@ -1828,6 +1857,7 @@ export async function submitListingRevision(opts: {
 }): Promise<SubmitListingRevisionResult> {
   const { shadowId, userId } = opts;
   const changelog = opts.changelog ?? null;
+  await throwOnBlockedUserContent(changelog, { surface: 'offsite-listing' });
 
   const shadow = (await dbRead.appListing.findUnique({
     where: { id: shadowId },
@@ -2792,6 +2822,10 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a

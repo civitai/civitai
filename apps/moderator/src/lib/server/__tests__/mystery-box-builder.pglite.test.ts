@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -76,7 +77,7 @@ const MOD = 5;
 let db: PGlite;
 
 beforeEach(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(BASE);
   for (const migration of MIGRATIONS) await db.exec(migration);
   await db.exec(`

@@ -9,12 +9,15 @@ import {
   CrucibleEngagementType,
   CrucibleIngestionStatus,
   CrucibleStatus,
+  HomeBlockType,
   ImageIngestionStatus,
   MediaType,
   ModelStatus,
   ModelType,
   PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { Flags } from '~/shared/utils/flags';
@@ -46,6 +49,7 @@ import type {
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
+  SetCrucibleEventTagsSchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
@@ -919,11 +923,16 @@ export const updateCrucible = async ({
     if (settlement) Object.assign(data, settlement.data);
   }
 
-  let updated: Awaited<ReturnType<typeof dbWrite.crucible.update>>;
+  let updated: Omit<Awaited<ReturnType<typeof dbWrite.crucible.update>>, 'eventTags'>;
   try {
     // On the status read above: a cancel since then has already refunded the creator, and writing
     // the status back would revive a crucible whose seed is gone.
-    updated = await dbWrite.crucible.update({ where: { id, status: crucible.status }, data });
+    // The row goes back to the creator, and event tags are moderator data.
+    updated = await dbWrite.crucible.update({
+      where: { id, status: crucible.status },
+      data,
+      omit: { eventTags: true },
+    });
   } catch (error) {
     await settlement?.rollback();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
@@ -1450,6 +1459,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator = false,
   viewerId,
   isGreen = false,
+  eventTag,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
@@ -1457,8 +1467,11 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator?: boolean;
   viewerId?: number;
   isGreen?: boolean;
+  /** Server-side only: event tags are moderator data, so no public input may filter on them. */
+  eventTag?: string;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
+  if (eventTag !== undefined) where.eventTags = { has: eventTag };
 
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
@@ -1571,6 +1584,52 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     rows.length > take ? (rows.pop() as { id: number } & (typeof rows)[number]).id : undefined;
 
   return { items: rows, nextCursor };
+};
+
+export const getCrucibleEventTags = async (id: number) => {
+  const crucible = await dbRead.crucible.findUnique({ where: { id }, select: { eventTags: true } });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  return crucible.eventTags;
+};
+
+export const setCrucibleEventTags = async ({ id, eventTags }: SetCrucibleEventTagsSchema) => {
+  const exists = await dbWrite.crucible.findUnique({ where: { id }, select: { id: true } });
+  if (!exists) throw throwNotFoundError('Crucible not found');
+  const updated = await dbWrite.crucible.update({
+    where: { id },
+    data: { eventTags },
+    select: { eventTags: true },
+  });
+  // The tags are saved by now, so a failed bust must not report the save as failed; the block's
+  // own TTL clears it.
+  try {
+    await bustCrucibleFeedBlocks();
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-event-tags-bust-failed',
+      message: e instanceof Error ? e.message : String(e),
+      crucibleId: id,
+    });
+  }
+  return updated.eventTags;
+};
+
+/**
+ * A crucibles Feed block caches its slice for 10 minutes, empty ones included, so without this a
+ * newly tagged crucible would not reach the homepage until that expired. Clones share their source's
+ * entry, so the system blocks are all there is to clear.
+ */
+const bustCrucibleFeedBlocks = async () => {
+  const blocks = await dbRead.homeBlock.findMany({
+    where: { userId: -1, type: HomeBlockType.Feed },
+    select: { id: true, metadata: true },
+  });
+  await Promise.all(
+    blocks
+      .filter((block) => (block.metadata as HomeBlockMetaSchema)?.feed?.entity === 'crucibles')
+      .map((block) => homeBlockCacheBust(HomeBlockType.Feed, block.id))
+  );
 };
 
 /**
@@ -3281,15 +3340,17 @@ export type FinalizeCrucibleResult = {
 };
 
 /**
- * An entry whose image was blocked, held for review, flagged, unpublished, or re-rated outside the
- * crucible's levels can't place; its fee stays in the pool. A scan still in progress doesn't
- * disqualify.
+ * An entry by a banned entrant, or whose image was blocked, held for review, flagged, unpublished,
+ * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
+ * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
+ * is finalized holds the prize instead (see `prize.service`).
  */
 const rankableEntryWhere = (
   crucibleId: number,
   nsfwLevel: number
 ): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
+  user: { bannedAt: null },
   image: {
     ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
@@ -4673,8 +4734,7 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner)))
-      cruciblesWon++;
+    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner))) cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);
   }

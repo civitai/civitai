@@ -56,10 +56,9 @@ vi.mock('~/server/services/free-placement.service', async (importOriginal) => ({
 beforeEach(() => vi.clearAllMocks());
 
 /**
- * Every shared endpoint that takes a client-supplied `surface`, with an input
- * that is otherwise valid for it. `placementSurfaceSchema` is built from the
- * whole surface table, so adding `storyline` there made it a schema-valid value
- * on all of these at once.
+ * Every shared endpoint that takes a client-supplied `surface`, with otherwise valid input.
+ * `placementSurfaceSchema` is built from the whole surface table, so `storyline` is schema-valid on
+ * all of them.
  */
 const SURFACE_ENDPOINTS = (surface: string) =>
   [
@@ -159,8 +158,6 @@ describe('the storyline procedures', () => {
       },
     });
 
-  // Read off the router, so a storyline procedure added without a row here
-  // fails instead of going unchecked.
   it('lists every storyline procedure the router has', () => {
     const routed = Object.keys(
       (placementRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def

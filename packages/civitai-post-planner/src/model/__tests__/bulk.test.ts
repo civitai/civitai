@@ -16,6 +16,7 @@ const post = (date: Date, id: number, extra: Partial<PlannerPost> = {}): Planner
   imageCount: 1,
   cover: null,
   release: null,
+  model: null,
   ...extra,
 });
 

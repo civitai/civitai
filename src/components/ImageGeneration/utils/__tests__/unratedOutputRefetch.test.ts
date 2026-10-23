@@ -4,12 +4,13 @@ import { QueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  UNRATED_REFETCH_GIVE_UP_MS,
-  UNRATED_REFETCH_MAX_INTERVAL_MS,
-  UNRATED_REFETCH_MIN_INTERVAL_MS,
-  createUnratedRefetchScheduler,
+  UNRATED_RETRY_MIN_MS,
+  applyCachedOutputRating,
+  createUnratedOutputWatcher,
+  readBlobVerdict,
   readCachedGeneratorWorkflows,
-  selectUnratedRefetch,
+  selectUnratedOutputs,
+  type BlobVerdict,
 } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 import { trpc } from '~/utils/trpc';
 
@@ -19,60 +20,45 @@ const workflow = (id: string, output: Array<Record<string, unknown>>) => ({
 });
 const image = (id: string, over: Record<string, unknown> = {}) => ({
   id,
+  url: `https://orchestrator/v2/consumer/blobs/${id}`,
   type: 'image',
   available: true,
   ...over,
 });
 
-describe('selectUnratedRefetch', () => {
-  const select = (...args: Parameters<typeof selectUnratedRefetch>) => {
-    const waiting = selectUnratedRefetch(...args);
-    return { workflowIds: [...new Set(waiting.values())], blobIds: [...waiting.keys()] };
-  };
+describe('selectUnratedOutputs', () => {
+  const select = (...args: Parameters<typeof selectUnratedOutputs>) => [
+    ...selectUnratedOutputs(...args).keys(),
+  ];
 
-  it('re-fetches a workflow holding an available output with no rating', () => {
-    const { workflowIds, blobIds } = select(
-      [workflow('wf-1', [image('a')]), workflow('wf-2', [image('b', { nsfwLevel: 'r' })])],
-      new Map(),
-      0
-    );
-
-    expect(workflowIds).toEqual(['wf-1']);
-    expect(blobIds).toEqual(['a']);
+  it('picks an available output with no rating', () => {
+    expect(
+      select([workflow('wf-1', [image('a')]), workflow('wf-2', [image('b', { nsfwLevel: 'r' })])])
+    ).toEqual(['a']);
   });
 
   it('ignores outputs that are rated, blocked, not yet available, or never rated', () => {
-    const { workflowIds } = select(
-      [
+    expect(
+      select([
         workflow('rated', [image('a', { nsfwLevel: 'pg' })]),
         workflow('blocked', [image('b', { blockedReason: 'NSFWLevel' })]),
         workflow('pending', [image('c', { available: false })]),
         workflow('audio', [image('d', { type: 'audio' })]),
-        workflow('mesh', [image('e', { type: 'model3d' })]),
+        workflow('mesh', [image('e', { type: 'model3d', format: 'glb' } as never)]),
         workflow('unscanned', [image('f', { type: 'video', nsfwLevel: 'na' })]),
-      ],
-      new Map(),
-      0
-    );
-
-    expect(workflowIds).toEqual([]);
+      ])
+    ).toEqual([]);
   });
 
   it('includes an unrated video', () => {
-    const { workflowIds } = select(
-      [workflow('wf-1', [image('a', { type: 'video' })])],
-      new Map(),
-      0
-    );
-
-    expect(workflowIds).toEqual(['wf-1']);
+    expect(select([workflow('wf-1', [image('a', { type: 'video' })])])).toEqual(['a']);
   });
 
   it('skips unrated video from an engine the orchestrator never rates, as WorkflowData does', () => {
     const kling = { params: { ecosystem: 'Kling' } };
     const video = (id: string) => [image(id, { type: 'video' })];
-    const { workflowIds } = select(
-      [
+    expect(
+      select([
         { id: 'wf-level', metadata: kling, steps: [{ $type: 'videoGen', output: video('a') }] },
         { id: 'step-level', steps: [{ $type: 'videoGen', metadata: kling, output: video('b') }] },
         { id: 'image', steps: [{ $type: 'videoGen', metadata: kling, output: [image('c')] }] },
@@ -82,46 +68,12 @@ describe('selectUnratedRefetch', () => {
           metadata: kling,
           steps: [{ $type: 'videoGen', metadata: { params: { prompt: 'x' } }, output: video('e') }],
         },
-      ],
-      new Map(),
-      0
-    );
-
-    expect(workflowIds).toEqual(['image', 'upscale', 'own-params']);
-  });
-
-  it('stops once an output has waited out the give-up window', () => {
-    const seen = new Map([['a', 0]]);
-    const wf = [workflow('wf-1', [image('a')])];
-
-    expect(select(wf, seen, UNRATED_REFETCH_GIVE_UP_MS).workflowIds).toEqual([]);
-    expect(select(wf, seen, UNRATED_REFETCH_GIVE_UP_MS - 1).workflowIds).toEqual(['wf-1']);
-  });
-
-  it('keeps re-fetching for a fresh output after another one gave up', () => {
-    const { workflowIds, blobIds } = select(
-      [workflow('wf-1', [image('a'), image('b')])],
-      new Map([['a', 0]]),
-      UNRATED_REFETCH_GIVE_UP_MS
-    );
-
-    expect(workflowIds).toEqual(['wf-1']);
-    expect(blobIds).toEqual(['b']);
-  });
-
-  it('lists a workflow once however many outputs it is waiting on', () => {
-    const { workflowIds } = select(
-      [workflow('wf-1', [image('a'), image('b')]), workflow('wf-1', [image('a'), image('b')])],
-      new Map(),
-      0
-    );
-
-    expect(workflowIds).toEqual(['wf-1']);
+      ])
+    ).toEqual(['c', 'd', 'e']);
   });
 });
 
-describe('createUnratedRefetchScheduler', () => {
-  const SECOND_INTERVAL_AT = UNRATED_REFETCH_MIN_INTERVAL_MS * 2;
+describe('createUnratedOutputWatcher', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -129,153 +81,133 @@ describe('createUnratedRefetchScheduler', () => {
     vi.useRealTimers();
   });
 
-  const neverRated = () => {
+  function setup(readVerdict: (url: string) => Promise<BlobVerdict>) {
+    let workflows = [workflow('wf-1', [image('a')])];
+    const applyRating = vi.fn((id: string, nsfwLevel: string) => {
+      workflows = [workflow('wf-1', [image(id, { nsfwLevel })])];
+    });
     const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a')])],
+    const verdict = vi.fn(readVerdict);
+    const watch = createUnratedOutputWatcher({
+      readWorkflows: () => workflows,
+      readVerdict: verdict,
+      applyRating,
       refetch,
     });
-    return { refetch, schedule };
-  };
+    return {
+      watch,
+      verdict,
+      applyRating,
+      refetch,
+      setWorkflows: (next: typeof workflows) => (workflows = next),
+    };
+  }
 
-  it('backs off to the max interval and gives up after the window', async () => {
-    const { refetch, schedule } = neverRated();
+  it('shows the rating as soon as the blob answers, without re-reading the workflow', async () => {
+    const { watch, applyRating, refetch } = setup(async () => ({ nsfwLevel: 'r' }));
+    watch();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(applyRating).toHaveBeenCalledWith('a', 'r');
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it('asks again after a failed scan, which is what makes the orchestrator rescan it', async () => {
+    let calls = 0;
+    const { watch, verdict, applyRating } = setup(async () => {
+      if (++calls < 3) throw new Error('503');
+      return { nsfwLevel: 'pg' };
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MIN_MS * 3);
+
+    expect(verdict).toHaveBeenCalledTimes(3);
+    expect(applyRating).toHaveBeenCalledWith('a', 'pg');
+  });
+
+  it('backs off on quick failures but reconnects soon after a long wait is cut off', async () => {
     const start = Date.now();
     const at: number[] = [];
-    refetch.mockImplementation(async () => void at.push(Date.now() - start));
-    schedule();
-    // 2x the window: a missing give-up shows as a re-read past it.
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_GIVE_UP_MS * 2);
+    const { watch } = setup(async () => {
+      at.push(Date.now() - start);
+      if (at.length === 3) await new Promise((resolve) => setTimeout(resolve, 120_000));
+      throw new Error('connection reset');
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 120_000 + 2_000);
 
-    const gaps = at.slice(1).map((t, i) => t - at[i]);
-    expect(at[0]).toBe(UNRATED_REFETCH_MIN_INTERVAL_MS);
-    expect(gaps.every((gap, i) => i === 0 || gap >= gaps[i - 1])).toBe(true);
-    expect(Math.max(...gaps)).toBe(UNRATED_REFETCH_MAX_INTERVAL_MS);
-    expect(at.at(-1)).toBeLessThan(UNRATED_REFETCH_GIVE_UP_MS);
-    expect(at.at(-1)).toBeGreaterThan(UNRATED_REFETCH_GIVE_UP_MS - UNRATED_REFETCH_MAX_INTERVAL_MS);
-    expect(refetch).toHaveBeenLastCalledWith(['wf-1']);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(at).toEqual([0, 2_000, 6_000, 128_000]);
   });
 
-  it('re-reads a new output at the min interval without speeding up an older one', async () => {
-    const workflows = [workflow('wf-1', [image('a')])];
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
-    const schedule = createUnratedRefetchScheduler({ readWorkflows: () => workflows, refetch });
-    schedule();
-    // Stop just after a re-read, once the backoff has the next one many seconds away.
-    for (let i = 0; i < 1000 && refetch.mock.calls.length < 6; i++)
-      await vi.advanceTimersByTimeAsync(100);
-    expect(refetch).toHaveBeenCalledTimes(6);
+  it('re-reads the workflow when the blob answers blocked', async () => {
+    const { watch, applyRating, refetch } = setup(async () => ({
+      nsfwLevel: 'xxx',
+      blockedReason: 'NSFWLevel',
+    }));
+    watch();
+    await vi.advanceTimersByTimeAsync(0);
 
-    workflows.push(workflow('wf-2', [image('b')]));
-    schedule();
-    expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
-    expect(refetch).toHaveBeenCalledTimes(7);
-    expect(refetch).toHaveBeenLastCalledWith(['wf-2']);
+    expect(refetch).toHaveBeenCalledWith(['wf-1']);
+    expect(applyRating).not.toHaveBeenCalled();
   });
 
-  it('waits one interval before the first re-read', async () => {
-    const { refetch, schedule } = neverRated();
-    schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS - 1);
-    expect(refetch).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(refetch).toHaveBeenCalledTimes(1);
+  it('stops asking once the output is no longer waiting on a rating', async () => {
+    const { watch, verdict, setWorkflows } = setup(async () => {
+      throw new Error('503');
+    });
+    watch();
+    await vi.advanceTimersByTimeAsync(0);
+    setWorkflows([]);
+    await vi.advanceTimersByTimeAsync(UNRATED_RETRY_MIN_MS * 10);
+
+    expect(verdict).toHaveBeenCalledTimes(1);
   });
 
-  it('runs one timer however often it is asked', async () => {
-    const { refetch, schedule } = neverRated();
-    schedule();
-    schedule();
-    schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
+  it('keeps one request per output however often it is asked', async () => {
+    const { watch, verdict } = setup(() => new Promise<BlobVerdict>(() => undefined));
+    watch();
+    watch();
+    watch();
 
-    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(verdict).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('readBlobVerdict', () => {
+  const respond = (status: number, headers: Record<string, string> = {}) =>
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status, headers }));
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('keeps going after a failed re-read', async () => {
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
-      throw new Error('orchestrator down');
+  it('reads the rating the orchestrator sends once the blob is scanned', async () => {
+    respond(204, { 'X-NSFW-Level': 'PG13' });
+    await expect(readBlobVerdict('https://orchestrator/blob')).resolves.toEqual({
+      nsfwLevel: 'pg13',
+      blockedReason: undefined,
     });
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a')])],
-      refetch,
-    });
-    schedule();
-    await vi.advanceTimersByTimeAsync(SECOND_INTERVAL_AT);
-
-    expect(refetch).toHaveBeenCalledTimes(2);
-    error.mockRestore();
   });
 
-  it('stops once the rating lands', async () => {
-    let rated = false;
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
-      rated = true;
-    });
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a', rated ? { nsfwLevel: 'x' } : {})])],
-      refetch,
-    });
-    schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS * 4);
-
-    expect(refetch).toHaveBeenCalledTimes(1);
+  it('fails on a failed scan, and on an older orchestrator that answers before the verdict', async () => {
+    respond(503);
+    await expect(readBlobVerdict('https://orchestrator/blob')).rejects.toThrow();
+    respond(204, { 'X-Scan-Status': 'Pending' });
+    await expect(readBlobVerdict('https://orchestrator/blob')).rejects.toThrow();
   });
+});
 
-  it('keeps one re-read per interval when asked again while one is in flight', async () => {
-    let release: () => void = () => undefined;
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(
-      () => new Promise<void>((resolve) => (release = resolve))
-    );
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a')])],
-      refetch,
-    });
-    schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS);
-    expect(refetch).toHaveBeenCalledTimes(1);
+describe('applyCachedOutputRating', () => {
+  it('rates the output in every cached generator list', () => {
+    const client = new QueryClient();
+    const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+    const page = { items: [workflow('wf-1', [image('a'), image('b')])] };
+    client.setQueryData([...queryKey, { input: { ascending: false } }], { pages: [page] });
+    client.setQueryData([...queryKey, { input: { ascending: true } }], { pages: [page] });
 
-    schedule();
-    release();
-    await vi.advanceTimersByTimeAsync(SECOND_INTERVAL_AT - UNRATED_REFETCH_MIN_INTERVAL_MS - 1);
-    expect(refetch).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(refetch).toHaveBeenCalledTimes(2);
-  });
+    applyCachedOutputRating('a', 'r', client);
 
-  it('picks up a rating that lands 20 s after the output', async () => {
-    const start = Date.now();
-    let cached = {};
-    // The rating reaches the cache only through a re-read made after it landed.
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => {
-      if (Date.now() - start >= 20_000) cached = { nsfwLevel: 'pg' };
-    });
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a', cached)])],
-      refetch,
-    });
-    schedule();
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(cached).toEqual({ nsfwLevel: 'pg' });
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('does nothing when nothing is waiting on a rating', async () => {
-    const refetch = vi.fn<(ids: string[]) => Promise<void>>(async () => undefined);
-    const schedule = createUnratedRefetchScheduler({
-      readWorkflows: () => [workflow('wf-1', [image('a', { nsfwLevel: 'pg' })])],
-      refetch,
-    });
-    schedule();
-    await vi.advanceTimersByTimeAsync(UNRATED_REFETCH_MIN_INTERVAL_MS * 4);
-
-    expect(refetch).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(selectUnratedOutputs(readCachedGeneratorWorkflows(client)).has('a')).toBe(false);
+    expect(selectUnratedOutputs(readCachedGeneratorWorkflows(client)).has('b')).toBe(true);
   });
 });
 

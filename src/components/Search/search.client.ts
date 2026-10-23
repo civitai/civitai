@@ -1,15 +1,10 @@
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import type { InstantSearchProps } from 'react-instantsearch';
-import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
 const baseSearchClient: InstantSearchProps['searchClient'] = {
   ...meilisearch,

@@ -1,6 +1,6 @@
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
-// web-component host (direct @civitai/client calls — $lib/element/backend).
+// web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type {
   ArchiveKind,
@@ -9,6 +9,7 @@ import type {
   TrainingRow,
 } from '$lib/data/trainingRows';
 import type { EpochArchive, TrainingWhatIfInput } from '$lib/orchestrator-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
 import type { SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
@@ -72,4 +73,6 @@ export interface StudioBackend {
   quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
+  /** The training service status moderators set on the main app; null when the host can't read it. */
+  getServiceStatus(): Promise<TrainingServiceStatus | null>;
 }

@@ -4,6 +4,7 @@ import {
   getMyStrikesHandler,
   acceptTosAfterMuteHandler,
   getMyStrikeSummaryHandler,
+  getMyTosReacceptanceOfferHandler,
   getStrikesHandler,
   getUserStandingsHandler,
   getUserStrikeHistoryHandler,
@@ -34,6 +35,10 @@ export const strikeRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .use(isFlagProtected('strikes'))
     .query(getMyStrikeSummaryHandler),
+  getMyTosReacceptanceOffer: protectedProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(isFlagProtected('strikes'))
+    .query(getMyTosReacceptanceOfferHandler),
 
   // Moderator endpoints
   create: moderatorProcedure

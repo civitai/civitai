@@ -181,9 +181,7 @@ const makeResource = (over: Record<string, any> = {}): any => ({
   baseModel: 'SD1',
   canGenerate: true,
   hasAccess: true,
-  minStrength: -1,
-  maxStrength: 2,
-  strength: 1,
+  settings: { strength: { min: -1, max: 2, default: 1 } },
   isOwnedByUser: false,
   isPrivate: false,
   model: { id: 42, name: 'My Cool Model', type: 'LORA', sfwOnly: false, minor: false },
@@ -576,12 +574,28 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(page.getByTestId('edge-media')).toHaveAttribute('src', 'x-video');
   });
 
-  test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
-    // Distinct min/max (NOT the -1/2 fallbacks) so the min/max wiring has teeth:
-    // a mutation that hardcodes the isSameMinMaxStrength fallback would be caught.
+  test('a plain LoRA shows no Turbo badge', async () => {
+    const r = makeResource({ model: { id: 1, name: 'M', type: 'LORA' } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Turbo', { exact: true }).query()).toBeNull();
+  });
+
+  test('a turbo LoRA shows the Turbo badge and keeps its strength slider', async () => {
     const r = makeResource({
-      minStrength: 0.1,
-      maxStrength: 1.5,
+      model: { id: 1, name: 'M', type: 'LORA' },
+      turbo: true,
+    });
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
+
+    await expect.element(page.getByText('Turbo', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByTestId('strength-slider')).toBeInTheDocument();
+  });
+
+  test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
+    // Distinct min/max (NOT the -1/2 fallbacks) so the min/max wiring has teeth.
+    const r = makeResource({
+      settings: { strength: { min: 0.1, max: 1.5, default: 1 } },
       model: { id: 1, name: 'M', type: 'LORA' },
     });
     const onStrengthChange = vi.fn();
@@ -597,12 +611,10 @@ describe('ResourceItemContent (render)', () => {
     expect(onStrengthChange).toHaveBeenCalledWith(0.5);
   });
 
-  test('strength slider uses the -1/2 fallback when minStrength === maxStrength', async () => {
-    // isSameMinMaxStrength branch: equal min/max -> the slider gets the -1/2
-    // fallback bounds instead of the (degenerate) resource bounds.
+  test('strength slider uses the -1/2 fallback when the bounds are equal', async () => {
+    // Equal bounds are a version that set none it meant: the slider keeps the full range.
     const r = makeResource({
-      minStrength: 1,
-      maxStrength: 1,
+      settings: { strength: { min: 1, max: 1, default: 1 } },
       model: { id: 1, name: 'M', type: 'LORA' },
     });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
@@ -614,9 +626,10 @@ describe('ResourceItemContent (render)', () => {
   });
 
   test('strength slider passes the disabled prop through and uses the value fallback', async () => {
-    // disabled pass-through + value = strengthValue ?? resource.strength ?? 1.
-    // Here strengthValue is omitted and resource.strength = 0.8 -> 0.8.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />);
 
     const slider = page.getByTestId('strength-slider');
@@ -625,9 +638,11 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(slider).toHaveAttribute('data-value', '0.8');
   });
 
-  test('strength slider prefers strengthValue over resource.strength', async () => {
-    // strengthValue (user-edited) wins the ?? chain over resource.strength.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+  test("strength slider prefers strengthValue over the version's default", async () => {
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(
       <ResourceItemContent resource={r} strengthValue={0.3} onStrengthChange={vi.fn()} />
     );

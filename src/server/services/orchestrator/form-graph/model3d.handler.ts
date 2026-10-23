@@ -89,6 +89,8 @@ export const createTripoInput = defineHandler<EcosystemData<'Tripo'>, StepInput[
     ...data,
     ...(sourceImage ? { sourceImage } : {}),
   } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput;
+  // Quad topology is FBX-only: there is no GLB for the preview renderer to load.
+  if (input.quad) return [{ $type: 'polyGen', input }] as unknown as StepInput[];
   return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
 });
 

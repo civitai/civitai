@@ -8,9 +8,8 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineCoversRow } from '~/components/Storyline/manage/StorylineCoversRow';
 
 /**
- * The owner's cover and banner picks: what each slot shows, resetting a pick, and a picker that
- * offers only what the server would accept (chapters by the owner or an endorsed collaborator,
- * within the ceiling, no minors or real people), saving the pick and showing a refusal.
+ * The picker offers only what the server would accept: chapters by the owner or an endorsed
+ * collaborator, within the ceiling, no minors or real people.
  */
 
 const OWNER = 10;
@@ -172,7 +171,6 @@ const Row = () => (
   </>
 );
 const slot = (name: string) => page.getByRole('group', { name });
-/** Per chapter heading, the image urls offered under it. */
 const offered = () =>
   [...document.querySelectorAll('[role="radiogroup"]')].map((group) => ({
     chapter: document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent,
@@ -366,7 +364,6 @@ describe('StorylineCoversRow', () => {
       .toHaveTextContent('That image cannot be used as a cover');
     expect(mocks.invalidateById).not.toHaveBeenCalled();
 
-    // The next save that goes through clears it.
     mocks.refusal = null;
     await page.getByRole('button', { name: 'Use chapter 1' }).click();
     await expect.element(page.getByTestId('storyline-covers-error')).not.toBeInTheDocument();

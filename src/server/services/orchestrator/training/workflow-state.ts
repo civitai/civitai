@@ -5,7 +5,7 @@ import type {
   TrainingStep,
   Workflow,
   WorkflowStatus,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 

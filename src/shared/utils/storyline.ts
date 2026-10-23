@@ -174,7 +174,10 @@ export function getStorylineChapterTombstone({
   return null;
 }
 
-/** Choices at a fork before the copy calls its shares settled, unless the server overrides it. */
+/**
+ * Choices at a fork below which its shares are withheld, unless `STORYLINE_SHARE_MIN_CHOICES` sets
+ * another.
+ */
 export const STORYLINE_SHARE_MIN_CHOICES_DEFAULT = 1;
 
 /**
@@ -190,10 +193,9 @@ export function storylineShareMinChoices(raw: string | undefined) {
 
 /**
  * Each way on's count and share of the readers who chose at a fork. A way nobody took is absent
- * from both. Below `minChoices` choices both are withheld and only the total is given
- * (`enough: false`): with very few readers, someone who knows who read the chapter could tell
- * which way they went. The default minimum is 1, so by default they show from the first choice;
- * raising `STORYLINE_SHARE_MIN_CHOICES` is the dial.
+ * from both. Below `minChoices` choices both are withheld and only the total is given (`enough:
+ * false`): with very few readers, someone who knows who read the chapter could tell which way they
+ * went. `STORYLINE_SHARE_MIN_CHOICES` sets the minimum.
  */
 export function toStorylineForkShares(
   counts: ReadonlyMap<number, number>,

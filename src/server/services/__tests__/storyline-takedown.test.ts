@@ -260,7 +260,8 @@ describe('resolving an appeal of a title-scan takedown', () => {
     w.appeal.findFirst
       .mockReset()
       .mockImplementation((async () => (appealOpen ? { id: 1 } : null)) as never);
-    mockResolveEntityAppeal.mockImplementation(async () => {
+    // Reset, not just cleared: a queued once-value a test never consumed would hit the next one.
+    mockResolveEntityAppeal.mockReset().mockImplementation(async () => {
       const claimed = appealOpen ? [{ id: 1 }] : [];
       appealOpen = false;
       return claimed;
@@ -345,5 +346,119 @@ describe('resolving an appeal of a title-scan takedown', () => {
     await rule(true);
     expect(state()).toEqual(UP);
     expect(closedAs()).toEqual(['Approved']);
+  });
+
+  describe('a clean rescan that lifts the title-scan takedown', () => {
+    it('closes the open appeal approved, marked as a rescan lift and not an appeal review', async () => {
+      await flaggingScan();
+      await cleanScan();
+      expect(state()).toEqual(UP);
+      expect(mockResolveEntityAppeal.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            ids: [ID],
+            entityType: 'Storyline',
+            status: 'Approved',
+            resolvedReason: 'lifted-by-rescan',
+            internalNotes: expect.stringContaining('not an appeal review'),
+          }),
+        ],
+      ]);
+      expect(appealOpen).toBe(false);
+    });
+
+    it("leaves the appeal open while a moderator's takedown still holds the storyline down", async () => {
+      await flaggingScan();
+      await takeDown();
+      await cleanScan();
+      expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      expect(appealOpen).toBe(true);
+    });
+
+    it('leaves the appeal alone when there was no scan takedown to lift', async () => {
+      await cleanScan();
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    });
+
+    it('still lifts when closing the appeal fails', async () => {
+      await flaggingScan();
+      mockResolveEntityAppeal.mockRejectedValueOnce(new Error('db down'));
+      await expect(cleanScan()).resolves.toBeUndefined();
+      expect(state()).toEqual(UP);
+      expect(appealOpen).toBe(true);
+    });
+  });
+
+  // The moderator's button and `storyline.moderateTitle` both lift through moderateStorylineTitle.
+  describe('a direct lift by a moderator', () => {
+    const lift = (reviewedTitle = TITLE) =>
+      moderateStorylineTitle({ id: ID, liftScanTakedown: { reviewedTitle }, moderatorId: 99 });
+
+    it('closes the open appeal approved, marked as a lift and not an appeal review', async () => {
+      await flaggingScan();
+      await lift();
+      expect(state()).toEqual(UP);
+      expect(mockResolveEntityAppeal.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            ids: [ID],
+            entityType: 'Storyline',
+            status: 'Approved',
+            userId: 99,
+            resolvedReason: 'lifted-by-moderator',
+            internalNotes: expect.stringContaining('not an appeal review'),
+          }),
+        ],
+      ]);
+      expect(appealOpen).toBe(false);
+    });
+
+    it("leaves the appeal open while a moderator's takedown still holds the storyline down", async () => {
+      await flaggingScan();
+      await takeDown();
+      await lift();
+      expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      expect(appealOpen).toBe(true);
+    });
+
+    it('refuses a title edited since it was reviewed, and the appeal stays open', async () => {
+      await flaggingScan();
+      await expect(lift('The title before the edit')).rejects.toThrow(/title has changed/);
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      expect(appealOpen).toBe(true);
+    });
+
+    it('leaves the appeal alone when it only sets a rating', async () => {
+      await flaggingScan();
+      await moderateStorylineTitle({ id: ID, moderatorNsfwLevel: NsfwLevel.PG });
+      expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+    });
+
+    it('lifts as before when the storyline has no open appeal', async () => {
+      await flaggingScan();
+      appealOpen = false;
+      await lift();
+      expect(state()).toEqual(UP);
+    });
+
+    it('still lifts when closing the appeal fails, so a retry is not told it was never taken down', async () => {
+      await flaggingScan();
+      mockResolveEntityAppeal.mockRejectedValueOnce(new Error('db down'));
+      await expect(lift()).resolves.toMatchObject({ tosViolation: false });
+      expect(state()).toEqual(UP);
+      expect(appealOpen).toBe(true);
+    });
+
+    // The grant lifts through the same function, then closes the appeal itself as a reviewed one.
+    it('does not close the appeal a second time under an appeal grant', async () => {
+      await flaggingScan();
+      await rule(true);
+      expect(mockResolveEntityAppeal.mock.calls).toEqual([
+        [expect.objectContaining({ status: 'Approved', userId: 99 })],
+      ]);
+      expect(mockResolveEntityAppeal.mock.calls[0][0].resolvedReason).toBeUndefined();
+    });
   });
 });

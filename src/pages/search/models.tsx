@@ -124,7 +124,7 @@ const RenderFilters = () => {
       />
       {features.paidModelSearchFilter && (
         <Checkbox
-          label="Hide paid models"
+          label="Hide Early Access & paid models"
           checked={hidePaid}
           onChange={(event) => setHidePaid(event.currentTarget.checked)}
         />

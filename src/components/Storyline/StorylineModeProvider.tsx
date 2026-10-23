@@ -200,9 +200,6 @@ export function StorylineModeProvider({
     [chapterId, path?.chapters, routeImageId, go, tracking]
   );
 
-  // Once the chosen chapter's path and images arrive, open its first image. A chapter with no
-  // image this reader can see leaves the end-of-chapter view open on it, so what follows a
-  // hidden chapter stays reachable.
   const pathEndId = path?.chapters[path.chapters.length - 1]?.chapterId;
   useEffect(() => {
     if (!pendingChapterId) return;

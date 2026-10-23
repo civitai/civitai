@@ -243,7 +243,7 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // error. Pinning the whole normalised list makes every edit, in either direction, visible.
     // Updating this string is the intended cost of changing the list.
     expect(modelsDisplayedAttributes.join(',')).toBe(
-      'id,name,type,nsfw,nsfwLevel,minor,sfwOnly,status,createdAt,lastVersionAt,' +
+      'id,name,sfwName,hasSfwFace,coverImageId,sfwCoverImageId,type,nsfw,nsfwLevel,minor,sfwOnly,status,createdAt,lastVersionAt,' +
         'lastVersionAtUnix,publishedAt,locked,earlyAccessDeadline,hasActivePaidAccess,mode,' +
         'checkpointType,availability,poi,user,category,permissions,version,versions,triggerWords,' +
         'fileFormats,hashes,tags,metrics,rank,hiddenMetrics,canGenerate,cannotPromote,cosmetic,' +

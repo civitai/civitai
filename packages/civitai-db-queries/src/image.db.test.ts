@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getImageGenerationFields } from './image.db';
+import { getImageGenerationFields, listImageReactionsMany } from './image.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();
@@ -39,5 +39,23 @@ describe('image.db', () => {
   it('getImageGenerationFields returns null, as Prisma findUnique did, when no row matches', async () => {
     // DummyDriver resolves every statement to zero rows.
     expect(await getImageGenerationFields(harness.db, 42)).toBeNull();
+  });
+
+  // Parity with the Prisma `imageReaction.findMany` it replaces is pinned against a real database in
+  // src/server/db/__tests__/kysely-prisma-parity.test.ts.
+  it('listImageReactionsMany reads imageId + reaction for one user across the ids, unordered', async () => {
+    await listImageReactionsMany(harness.db, { imageIds: [11, 22, 33], userId: 7 });
+    expect(harness.queries).toHaveLength(1);
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'select "imageId", "reaction" from "ImageReaction" ' +
+        'where "imageId" in ($1, $2, $3) and "userId" = $4'
+    );
+    expect(parameters).toEqual([11, 22, 33, 7]);
+  });
+
+  it('listImageReactionsMany short-circuits an empty id list without touching the DB', async () => {
+    expect(await listImageReactionsMany(harness.db, { imageIds: [], userId: 7 })).toEqual([]);
+    expect(harness.queries).toHaveLength(0); // `in ([])` would compile to the syntax error `IN ()`
   });
 });

@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { holdServiceDealForReview } from '~/server/services/creator-service-escrow.service';
 import { transitionDeal } from '~/server/services/creator-service-deal.service';
 import { dealReadyToDeliver } from '~/server/services/creator-service-deal-file-sql';
@@ -117,6 +118,9 @@ export async function requestServiceDealUpload({
   mimeType: string;
   size: number;
 }) {
+  // The buyer sees the file name. Scanned as it will be stored.
+  await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
+
   if (kind === 'Preview') {
     if (!isPreviewMime(mimeType))
       throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');

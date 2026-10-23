@@ -27,10 +27,15 @@ const log = createLogger('leaderboard', 'blue');
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
 // Applied uniformly across every population path so exclusion lives at the system level, not per-query.
 // Mutes only count once confirmed by a moderator (mutedAt set); an unconfirmed `muted` flag does not exclude.
-// Unlike `excludeFromLeaderboards`, metric exclusion has no non-public-board waiver.
+// Unlike `leaderboardExcludedSql`, metric exclusion has no non-public-board waiver.
 const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
   `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL
     AND ${alias}.id <> ALL(${intArrayLiteral(excludedUserIds)})`;
+
+// Moderators are excluded by role, not the flag: the flag also bars event earnings, which moderators keep.
+// `isModerator` is nullable: `IS TRUE` keeps a NULL from excluding the account.
+const leaderboardExcludedSql = (alias = 'u') =>
+  `(${alias}."excludeFromLeaderboards" OR ${alias}."isModerator" IS TRUE)`;
 
 function intArrayLiteral(ids: number[]) {
   if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
@@ -245,7 +250,7 @@ async function updateLegendsBoardResults(excludedUserIds: number[]) {
       WHERE date <= now()
         AND position <= 100
         AND (
-          NOT u."excludeFromLeaderboards"
+          NOT ${leaderboardExcludedSql()}
           OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
         )
         AND ${eligibleAccountSql(excludedUserIds)}
@@ -331,7 +336,7 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     FROM scores s
     JOIN "User" u ON u.id = s."userId"
     WHERE (
-      NOT u."excludeFromLeaderboards"
+      NOT ${leaderboardExcludedSql()}
       OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
     )
       AND ${eligibleAccountSql(ctx.excludedUserIds)}
@@ -496,7 +501,7 @@ async function imageLeaderboardPopulation(
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
     WHERE ${eligibleAccountSql(ctx.excludedUserIds)} AND u.id > 0
-      AND NOT u."excludeFromLeaderboards"
+      AND NOT ${leaderboardExcludedSql()}
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);
@@ -658,10 +663,8 @@ export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): 
         s.*,
         (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
       FROM scores s
-      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND ${eligibleAccountSql(
-        ctx.excludedUserIds
-      )}
-      WHERE NOT u."excludeFromLeaderboards"
+      JOIN "User" u ON u.id = s."userId" AND ${eligibleAccountSql(ctx.excludedUserIds)}
+      WHERE NOT ${leaderboardExcludedSql()}
     `);
     ctx.jobContext.on('cancel', query.cancel);
     await query.result();

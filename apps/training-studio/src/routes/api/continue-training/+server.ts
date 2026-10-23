@@ -2,6 +2,11 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
 import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
+import {
+  TrainingTextCheckError,
+  TrainingTextRefusedError,
+  textCheckFailureStatus,
+} from '$lib/training-text';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -49,8 +54,17 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
   try {
-    return json({ workflowId: await continueTraining(token, locals.user.id, opts) });
+    return json({
+      workflowId: await continueTraining(
+        token,
+        locals.user.id,
+        opts,
+        locals.devPreview ? null : request.headers.get('cookie') ?? ''
+      ),
+    });
   } catch (err) {
+    if (err instanceof TrainingTextRefusedError) error(400, err.message);
+    if (err instanceof TrainingTextCheckError) error(textCheckFailureStatus(err), err.message);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');
   }

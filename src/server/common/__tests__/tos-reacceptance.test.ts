@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   couldAwaitTosReacceptance,
+  stillRestrictedAfterAcceptance,
   STRIKE_MUTE_REASON,
   tosReacceptanceOffer,
 } from '~/server/common/tos-reacceptance';
@@ -63,5 +64,21 @@ describe('tosReacceptanceOffer', () => {
     expect(tosReacceptanceOffer({ ...strikeMute, mutedAt: new Date(), activePoints: 2 })).toBe(
       false
     );
+  });
+});
+
+describe('stillRestrictedAfterAcceptance', () => {
+  it('reports a release as lifted', () => {
+    expect(stillRestrictedAfterAcceptance({ unmuted: true })).toBe(false);
+  });
+
+  it('reports lifted when the settings write already released the mute', () => {
+    expect(stillRestrictedAfterAcceptance({ unmuted: false, reason: 'not-muted' })).toBe(false);
+  });
+
+  it('reports still restricted on a refusal or a failed call', () => {
+    expect(stillRestrictedAfterAcceptance({ unmuted: false, reason: 'review' })).toBe(true);
+    expect(stillRestrictedAfterAcceptance({ unmuted: false, reason: 'moderator' })).toBe(true);
+    expect(stillRestrictedAfterAcceptance(undefined)).toBe(true);
   });
 });

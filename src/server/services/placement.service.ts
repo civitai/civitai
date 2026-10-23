@@ -159,7 +159,6 @@ export async function placementPriceRange(
   return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
 }
 
-/** The range from a creator's two facts, shared by the single and the batched read. */
 function toPlacementPriceRange(
   rawScore: number | null | undefined,
   capTier: string | null,
@@ -181,8 +180,8 @@ function toPlacementPriceRange(
 }
 
 /**
- * `placementPriceRange` for many creators at once, keyed by user id: two queries and one config
- * read for the whole set, so a page of cards does not price each owner on its own round trips.
+ * `placementPriceRange` for many creators at once, keyed by user id, so a page of cards does not
+ * price each owner on its own round trips.
  */
 export async function placementPriceRanges(
   userIds: number[],

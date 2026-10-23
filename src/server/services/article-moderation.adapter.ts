@@ -11,6 +11,7 @@ import {
   submitTextModerationOrScan,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
 } from '~/server/services/text-scan/route';
+import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { removeTags } from '~/utils/string-helpers';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
@@ -100,8 +101,8 @@ export const articleModerationAdapter: ModerationAdapter = {
 
   // Rating before ingestion: ingestion publishes a Processing article, which must not go
   // live at its pre-verdict level.
-  applyTextScan: async (args) => {
+  applyTextScan: withCsamHold('Article', async (args) => {
     await applyRatingFloor('Article', args);
     await recomputeArticleIngestion(args.entityId);
-  },
+  }),
 };

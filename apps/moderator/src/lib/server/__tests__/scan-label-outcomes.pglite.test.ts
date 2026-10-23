@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +58,7 @@ const migration = (name: string) =>
 let pg: PGlite;
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(`
     CREATE TABLE "User" (
       "id" INTEGER PRIMARY KEY, "username" TEXT, "isModerator" BOOLEAN NOT NULL DEFAULT true

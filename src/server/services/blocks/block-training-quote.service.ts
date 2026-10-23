@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
-import type { TrainingStepTemplate } from '@civitai/client';
+import type { TrainingStepTemplate } from '@civitai/orchestration-client';
 import { OrchPriorityTypes } from '~/server/common/enums';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { BlockTrainingBody } from '~/server/schema/blocks/workflow.schema';
@@ -15,7 +15,6 @@ import {
   type BlockQuoteBinding,
   type BlockQuoteGrantRecord,
 } from '~/server/services/blocks/block-quote-grant.service';
-import type { BlockTrainingDataset } from '~/server/services/blocks/block-training-dataset.service';
 import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/training/training.orch';
 import {
   getTrainingFields,
@@ -43,7 +42,8 @@ import {
 export const BLOCK_TRAINING_QUOTE_TTL_SECONDS = BLOCK_QUOTE_GRANT_TTL_SECONDS;
 
 export type BlockTrainingQuoteRecord = BlockQuoteGrantRecord & {
-  datasetId: string;
+  /** The dataset's blob keys, as the body named them — what the confirming host checks. */
+  itemKeys: string[];
   imageCount: number;
   /** The `trainingModelInfo` key and its display name, for the consent dialog. */
   modelKey: string;
@@ -62,8 +62,8 @@ export function hashTrainingBody(body: BlockTrainingBody): string {
 }
 
 /**
- * The identity of a training RUN — app, dataset, every body field and that body's
- * run generation (`readTrainingRunGeneration`) — as a sha256 hex digest. Retries of one run share it; it keys the
+ * The identity of a training RUN — app, every body field (the dataset included) and
+ * that body's run generation (`readTrainingRunGeneration`) — as a sha256 hex digest. Retries of one run share it; it keys the
  * run's idempotency claim and orchestrator `externalId` (which the orchestrator
  * dedupes per `(userId, externalId)`).
  */
@@ -77,23 +77,30 @@ export function trainingRunKey(
     .digest('hex');
 }
 
-// Per (dataset, body): a definite submit of one body must not change the run key of
-// another body's pending retry.
+/** Who a run belongs to — every field from VERIFIED token claims. */
+export type BlockTrainingRunOwner = { userId: number; appBlockId: string };
+
+// Per (viewer, app, body): a definite submit of one body must not change the run key
+// of another body's pending retry.
 function runGenerationKey(
+  owner: BlockTrainingRunOwner,
   body: BlockTrainingBody
-): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${body.datasetId}:runs:${hashTrainingBody(
-    body
-  )}`;
+): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_RUNS}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_RUNS}:${owner.userId}:${
+    owner.appBlockId
+  }:${hashTrainingBody(body)}`;
 }
 
 /**
- * How many runs of this body on this dataset have been SUBMITTED. Part of the run key, so a
- * deliberate re-run after a known result is a new run, while a retry after an
- * ambiguous failure (no bump) still dedupes onto the run that may exist.
+ * How many runs of this body this viewer has SUBMITTED from this app. Part of the run
+ * key, so a deliberate re-run after a known result is a new run, while a retry after
+ * an ambiguous failure (no bump) still dedupes onto the run that may exist.
  */
-export async function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
-  const raw = await sysRedis.get(runGenerationKey(body));
+export async function readTrainingRunGeneration(
+  owner: BlockTrainingRunOwner,
+  body: BlockTrainingBody
+): Promise<number> {
+  const raw = await sysRedis.get(runGenerationKey(owner, body));
   const n = Number(raw ?? 0);
   return Number.isInteger(n) && n >= 0 ? n : 0;
 }
@@ -101,10 +108,13 @@ export async function readTrainingRunGeneration(body: BlockTrainingBody): Promis
 export const TRAINING_RUN_GENERATION_TTL_SECONDS = 2 * 24 * 60 * 60;
 
 /** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
-export async function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
+export async function bumpTrainingRunGeneration(
+  owner: BlockTrainingRunOwner,
+  body: BlockTrainingBody
+): Promise<void> {
   try {
-    await sysRedis.incrBy(runGenerationKey(body), 1);
-    await sysRedis.expire(runGenerationKey(body), TRAINING_RUN_GENERATION_TTL_SECONDS);
+    await sysRedis.incrBy(runGenerationKey(owner, body), 1);
+    await sysRedis.expire(runGenerationKey(owner, body), TRAINING_RUN_GENERATION_TTL_SECONDS);
   } catch {
     // best-effort
   }
@@ -132,8 +142,8 @@ function refuse(message: string): never {
 }
 
 /**
- * Resolve a training body + its dataset into the one step a quote and a submit
- * both use, applying the training form's server-side gates.
+ * Resolve a training body into the one step a quote and a submit both use, applying
+ * the training form's server-side gates.
  *
  * PURE — no I/O. Every input that can change between the estimate and the submit
  * (service status, feature flags) is passed in, so the submit re-runs this with
@@ -148,12 +158,11 @@ function refuse(message: string): never {
  */
 export function resolveBlockTrainingRun(input: {
   body: BlockTrainingBody;
-  dataset: BlockTrainingDataset;
   status: TrainingServiceStatus;
   features: Record<string, boolean | undefined>;
   isModerator: boolean;
 }): ResolvedBlockTrainingRun {
-  const { body, dataset, status, isModerator } = input;
+  const { body, status, isModerator } = input;
   const features = input.features as Record<string, boolean>;
 
   if (!status.available && !isModerator) {
@@ -211,7 +220,7 @@ export function resolveBlockTrainingRun(input: {
     triggerWord: body.triggerWord,
     trainingData: {
       type: 'blobs',
-      items: dataset.items.map((item) => ({ air: item.air, caption: item.caption })),
+      items: body.items.map((item) => ({ air: item.air, caption: item.caption })),
     },
     // Same fallback as the training form's submit when no prompts were given.
     samplePrompts: body.samplePrompts.length > 0 ? body.samplePrompts : ['', '', ''],

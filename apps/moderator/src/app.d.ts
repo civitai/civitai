@@ -31,4 +31,9 @@ declare global {
   }
 }
 
+/** The `version` in this app's package.json, inlined by vite.config.ts. */
+declare global {
+  const __APP_VERSION__: string;
+}
+
 export {};

@@ -10,6 +10,7 @@ import {
 } from '~/server/services/placement-escrow.service';
 import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
@@ -264,6 +265,9 @@ export async function createStickerPlacement({
   // later is additive where charging for it wrongly is not.
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place a sticker on your own content');
+
+  // Above the free branch, so both creation routes scan the note they store.
+  await throwOnBlockedUserContent(commentFrom(data), { surface: 'sticker-placement' });
 
   // The creator's size limit, refused rather than clamped. Quietly shrinking a
   // sticker someone just paid for is the same shape as v1's recurring defect: a

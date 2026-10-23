@@ -11,6 +11,7 @@ import {
   chunkPosts,
   chunkSizeFor,
   describeServerError,
+  isScheduleBusy,
   toBatchImage,
 } from './batch-composer.utils';
 
@@ -22,8 +23,9 @@ export type BatchSubmissionPayload = {
   extraResourceIds: number[];
 };
 
-type Created = { postId: number; publishedAt: string };
-type Phase = 'running' | 'failed' | 'done';
+type Created = { postId: number; publishedAt: string; alreadyCreated?: true };
+type Recognised = { key: string; title: string | null; publishedAt: string };
+type Phase = 'running' | 'failed' | 'busy' | 'done';
 
 export function BatchProgressModal({
   posts,
@@ -53,6 +55,18 @@ export function BatchProgressModal({
   const [failed, setFailed] = useState<PlannedPost[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const createdRef = useRef<Created[]>([]);
+  const [recognised, setRecognised] = useState<Recognised[]>([]);
+  // One key per post for the life of this screen, so a retry of a call that timed out on our side
+  // but finished on the server gets that post back instead of a second one.
+  const clientKeysRef = useRef(new Map<string, string>());
+  const clientKeyFor = (post: PlannedPost) => {
+    let key = clientKeysRef.current.get(post.key);
+    if (!key) {
+      key = crypto.randomUUID();
+      clientKeysRef.current.set(post.key, key);
+    }
+    return key;
+  };
   const startedRef = useRef(false);
   const total = posts.length;
 
@@ -75,18 +89,24 @@ export function BatchProgressModal({
       const rest = chunks.slice(i + 1).flatMap((c) => c.map((x) => x.post));
       try {
         const result = await scheduleBatch.mutateAsync({
-          idempotencyKey: crypto.randomUUID(),
           modelVersionId: payload.modelVersionId,
           tags: payload.tags,
           tools: payload.tools,
           techniques: payload.techniques,
           posts: chunk.map((post) => ({
+            clientKey: clientKeyFor(post),
             title: post.title,
             publishedAt: post.publishedAt,
             images: post.media.map((media) => toBatchImage(media, payload.extraResourceIds)),
           })),
         });
         createdRef.current.push(...result.created);
+        const earlier = result.created.flatMap((entry, index) =>
+          entry.alreadyCreated
+            ? [{ key: chunk[index].key, title: chunk[index].title, publishedAt: entry.publishedAt }]
+            : []
+        );
+        if (earlier.length) setRecognised((current) => [...current, ...earlier]);
         onCreated(chunk.slice(0, result.created.length).map((post) => post.key));
         setDone(createdRef.current.length);
         if (result.failedAt !== undefined && result.failedAt !== null) {
@@ -94,7 +114,15 @@ export function BatchProgressModal({
           return;
         }
       } catch (error) {
-        fail([...chunk, ...rest], error instanceof Error ? error.message : String(error));
+        const reason = error instanceof Error ? error.message : String(error);
+        // An earlier attempt the client gave up on still holds the creator's schedule lock. Not a
+        // failure: once it finishes, retrying returns whatever it made instead of making it twice.
+        if (isScheduleBusy(reason)) {
+          setFailed([...chunk, ...rest]);
+          setPhase('busy');
+          return;
+        }
+        fail([...chunk, ...rest], reason);
         return;
       }
     }
@@ -108,7 +136,7 @@ export function BatchProgressModal({
       return;
     }
     setFailed(failedPosts);
-    setMessage(describeServerError(reason));
+    setMessage(describeServerError(reason, createdRef.current.length));
     setPhase('failed');
   };
 
@@ -120,17 +148,39 @@ export function BatchProgressModal({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const created = createdRef.current;
-  const first = created.length ? new Date(created[0].publishedAt) : null;
-  const last = created.length ? new Date(created[created.length - 1].publishedAt) : null;
+  // By time, not order: a post an earlier attempt made keeps its own date wherever it sits.
+  const times = created.map((entry) => new Date(entry.publishedAt).getTime());
+  const first = times.length ? new Date(Math.min(...times)) : null;
+  const last = times.length ? new Date(Math.max(...times)) : null;
   // Locked only while posts are being created; closing a finished screen takes its plain way out.
   const dismissible = phase !== 'running';
+  // A date edited before a resubmit did not take for these; say so, with the time that did.
+  const recognisedNote = recognised.length > 0 && (
+    <div className="flex flex-col gap-1" data-testid="batch-recognised">
+      <Text size="xs" c="dimmed">
+        {recognised.length === 1
+          ? 'This post was already scheduled by an earlier attempt and keeps the time it set:'
+          : `These ${recognised.length} posts were already scheduled by an earlier attempt and keep the times it set:`}
+      </Text>
+      <div className="max-h-[160px] overflow-auto">
+        {recognised.map((post) => (
+          <div key={post.key} className="flex items-center justify-between gap-2 text-sm">
+            <span className="truncate">{post.title ?? 'Untitled'}</span>
+            <span className="whitespace-nowrap text-gray-6 dark:text-gray-4">
+              {formatDate(post.publishedAt, 'MMM D, h:mm A')}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <Modal
       opened
       onClose={() => {
         if (phase === 'done') onScheduleAnother();
-        else if (phase === 'failed') onKeepEditing();
+        else if (phase === 'failed' || phase === 'busy') onKeepEditing();
       }}
       withCloseButton={dismissible}
       closeOnClickOutside={dismissible}
@@ -141,6 +191,8 @@ export function BatchProgressModal({
           ? 'Creating posts…'
           : phase === 'done'
           ? `${created.length} ${created.length === 1 ? 'post' : 'posts'} scheduled`
+          : phase === 'busy'
+          ? 'Still finishing an earlier attempt'
           : `${created.length} scheduled, ${failed.length} failed`
       }
       data-testid="batch-progress-modal"
@@ -170,6 +222,7 @@ export function BatchProgressModal({
                 : ''}
             </Text>
           </div>
+          {recognisedNote}
           {calendarHref && first && (
             <Button
               component={Link}
@@ -190,6 +243,19 @@ export function BatchProgressModal({
           </Button>
         </div>
       )}
+      {phase === 'busy' && (
+        <div className="flex flex-col gap-3" data-testid="batch-busy">
+          <Text size="sm">
+            An earlier attempt to schedule these posts is still finishing. Give it a moment, then
+            try again: any post it already made comes back as it is, not twice.
+          </Text>
+          {recognisedNote}
+          <Button onClick={() => void run(failed)}>Try again</Button>
+          <Button variant="default" onClick={onKeepEditing}>
+            Keep editing
+          </Button>
+        </div>
+      )}
       {phase === 'failed' && (
         <div className="flex flex-col gap-3">
           {message && (
@@ -197,6 +263,7 @@ export function BatchProgressModal({
               {message}
             </Text>
           )}
+          {recognisedNote}
           <div className="max-h-[240px] overflow-auto rounded border border-gray-2 dark:border-dark-5">
             {failed.map((post) => (
               <div

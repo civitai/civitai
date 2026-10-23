@@ -20,6 +20,30 @@ export enum FLIPT_FEATURE_FLAGS {
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+  // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
+  // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
+  // DEFAULT-OFF: `isFlipt` returns false for an unknown flag or an unreachable Flipt, which keeps
+  // the Prisma path. Both paths read the same replica and return the same rows.
+  //
+  // 🔴 BOOLEAN ONLY. Evaluated once per call with no entityId and no context (a single cached key,
+  // so the gate adds no per-user cache churn on a hot path); a percentage rollout hashes the literal
+  // 'global' and is 0% or 100%, and a segment rule matches nothing.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
+  // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
+  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
+  // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
+  //
+  // 🔴 ON MOVES THE READ OFF PRISMA'S POOL ONTO THE SHARED `pgDbRead` POOL (kyselyRead is built
+  // over it, src/server/db/kyselyDb.ts). Two properties of the ON state to check before flipping:
+  //  - That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`, whose default is 0 = WAIT FOREVER
+  //    (packages/civitai-db/src/env.ts). Prisma's pool times out instead. So the environment must
+  //    set a non-zero DATABASE_CONNECTION_TIMEOUT, or a saturated pool hangs these requests.
+  //  - Failures surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer
+  //    maps a pool timeout to TIMEOUT.
+  // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
+  KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -71,6 +95,8 @@ export enum FLIPT_FEATURE_FLAGS {
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
+  // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
+  CDN_ACCESS_SYNC = 'cdn-access-sync',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -97,6 +123,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
   DUPLICATE_MODEL_HASH_BLOCK = 'duplicate-model-hash-block',
+  // Turns on the bounty entry file check: the job that hashes model-bounty entry files, and the
+  // award and download gates that read its result. DEFAULT-OFF; all three ship dark together,
+  // since the award gate refuses files the job has not hashed yet.
+  BOUNTY_ENTRY_FILE_CHECK = 'bounty-entry-file-check',
   // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
   // modelId so a percentage rollout picks a deterministic, sticky subset of content.
   // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.

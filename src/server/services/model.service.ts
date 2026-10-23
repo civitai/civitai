@@ -110,6 +110,7 @@ import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -269,6 +270,18 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import {
+  hasCompleteSfwFace,
+  hoistCoverImage,
+  imagesForFace,
+  normalizeSfwFaceInput,
+  pickCoverImageId,
+  resolveModelFace,
+  showsSfwFace,
+} from '~/shared/utils/model-sfw-face';
+import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
+import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -297,6 +310,10 @@ type ModelRaw = {
   name: string;
   meta?: ModelMeta | null;
   description?: string | null;
+  sfwName: string | null;
+  sfwDescription?: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   type: ModelType;
   poi?: boolean;
   minor?: boolean;
@@ -394,6 +411,7 @@ export const getModelsRaw = async ({
   publicVersionsOnly,
   _forceBaseModelMetrics,
   eventDecorationViewer,
+  faceBrowsingLevel,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -420,6 +438,11 @@ export const getModelsRaw = async ({
   ownerUserId?: number;
   /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
   publicVersionsOnly?: boolean;
+  /**
+   * The level that picks each model's .com or .red face when `input.browsingLevel` is a content
+   * filter rather than the viewer's (the featured block queries every level, then shows SFW only).
+   */
+  faceBrowsingLevel?: number;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
@@ -1092,8 +1115,12 @@ export const getModelsRaw = async ({
   const selectList = Prisma.sql`
       ${pSql}."modelId" as "id",
       m."name",
+      m."sfwName",
+      m."coverImageId",
+      m."sfwCoverImageId",
       ${ifDetails`
         m."description",
+        m."sfwDescription",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
@@ -1235,14 +1262,23 @@ export const getModelsRaw = async ({
     models.pop(); //Remove excess model
   }
 
+  const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
   return {
     items: withSpan('model:getAll:transform', () =>
       models
-        .map(({ rank, cursorId, meta, ...model }) => {
+        .map(({ rank, cursorId, meta, ...rawModel }) => {
+          const model = {
+            ...resolveModelFace(rawModel, showSfwFace),
+            hasSfwFace: hasCompleteSfwFace(rawModel),
+          };
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
-          let modelVersions = data.versions;
+          // A .com face has no per-version description; the .red one is not shown in its place.
+          let modelVersions =
+            showSfwFace && rawModel.sfwName != null
+              ? data.versions.map((version) => ({ ...version, description: '' }))
+              : data.versions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -1625,6 +1661,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   metricPrivacyEnabled = true,
   domain,
   eventDecorationViewer,
+  faceBrowsingLevel,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1635,6 +1672,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
   domain?: DomainColor;
+  /** See `getModelsRaw`. */
+  faceBrowsingLevel?: number;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1658,6 +1697,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     domain,
     include: ['cosmetics'],
     eventDecorationViewer,
+    faceBrowsingLevel,
   });
 
   const modelVersionIds = items
@@ -1692,6 +1732,19 @@ export const getModelsWithImagesAndModelVersions = async ({
       modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
     }
   }
+
+  const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
+  const coverImages = await getCoverImages({
+    covers: items.map((model) => ({
+      modelId: model.id,
+      ownerId: model.user.id,
+      shownVersionId: model.modelVersions[0]?.id,
+      coverId: pickCoverImageId(model, showSfwFace),
+    })),
+    modelVersionImages,
+    // Under a base-model filter the card shows that version, so a cover from another stays put.
+    sameVersionOnly: !!input.baseModels?.length,
+  });
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
@@ -1733,7 +1786,11 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = modelVersionImages[version.id]?.images ?? [];
+        const versionImages = imagesForFace(
+          hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
+          model,
+          showSfwFace
+        );
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
@@ -2919,6 +2976,41 @@ export async function setModelPoi({
   return result;
 }
 
+const MODEL_FLAG_ACTIVITIES = {
+  poi: ['setPoi', 'unsetPoi'],
+  minor: ['setMinor', 'unsetMinor'],
+  sfwOnly: ['setSfwOnly', 'unsetSfwOnly'],
+} as const;
+
+/**
+ * The moderation-log activities for a moderator's model save: the names the set-flag actions write,
+ * one per flag the save flipped, plus one per property it locked or unlocked. A field the save did
+ * not send is one it did not change.
+ */
+function moderatorFlagActivities(
+  before: { poi: boolean; minor: boolean; sfwOnly: boolean; lockedProperties: string[] },
+  data: { poi?: boolean; minor?: boolean; sfwOnly?: boolean; lockedProperties?: string[] }
+) {
+  const activities: Array<
+    | (typeof MODEL_FLAG_ACTIVITIES)[keyof typeof MODEL_FLAG_ACTIVITIES][number]
+    | `lockProperty:${string}`
+    | `unlockProperty:${string}`
+  > = [];
+  for (const field of ['poi', 'minor', 'sfwOnly'] as const) {
+    const next = data[field];
+    if (next === undefined || next === before[field]) continue;
+    const [set, unset] = MODEL_FLAG_ACTIVITIES[field];
+    activities.push(next ? set : unset);
+  }
+  if (data.lockedProperties) {
+    const prev = new Set(before.lockedProperties);
+    const next = new Set(data.lockedProperties);
+    for (const prop of next) if (!prev.has(prop)) activities.push(`lockProperty:${prop}`);
+    for (const prop of prev) if (!next.has(prop)) activities.push(`unlockProperty:${prop}`);
+  }
+  return activities;
+}
+
 // Model columns the GenerationCoverage view reads that THIS path can change. `poi` and `mode` are
 // read by the view too, but move through applyModelFlagSideEffects and updateModelById, which bust
 // the version caches themselves.
@@ -2936,10 +3028,19 @@ export const upsertModel = async (
     serverMeta?: Pick<ModelMeta, (typeof SERVER_OWNED_META_KEYS)[number]>;
   }
 ) => {
-  await throwOnBlockedUserContent([input.name, input.description], {
-    isModerator: input.isModerator,
-    surface: 'model',
-  });
+  await throwOnBlockedUserContent(
+    [
+      input.name,
+      input.description,
+      input.sfwName,
+      input.sfwDescription,
+      ...(await newTagNames(input.tagsOnModels?.map((tag) => tag.name))),
+    ],
+    {
+      isModerator: input.isModerator,
+      surface: 'model',
+    }
+  );
 
   const {
     id,
@@ -2969,6 +3070,10 @@ export const upsertModel = async (
           select: {
             name: true,
             description: true,
+            sfwName: true,
+            sfwDescription: true,
+            coverImageId: true,
+            sfwCoverImageId: true,
             poi: true,
             userId: true,
             minor: true,
@@ -2993,6 +3098,37 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
+  normalizeSfwFaceInput(data);
+  // `?? null`: on a create there is no stored row, and a null from the form is not a change.
+  const sfwFaceChanged =
+    (data.sfwName !== undefined && data.sfwName !== (beforeUpdate?.sfwName ?? null)) ||
+    (data.sfwDescription !== undefined &&
+      data.sfwDescription !== (beforeUpdate?.sfwDescription ?? null));
+  const coverChanged =
+    (data.coverImageId !== undefined &&
+      data.coverImageId !== (beforeUpdate?.coverImageId ?? null)) ||
+    (data.sfwCoverImageId !== undefined &&
+      data.sfwCoverImageId !== (beforeUpdate?.sfwCoverImageId ?? null));
+  // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
+  // that lists a mature model on .com), still has its whole face checked.
+  const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;
+  if (!isModerator && storedSfwName && (sfwFaceChanged || coverChanged))
+    await assertSfwFaceSafe({
+      sfwName: storedSfwName,
+      sfwDescription:
+        data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      userId,
+    });
+  if (coverChanged) {
+    if (!beforeUpdate || !id)
+      throw throwBadRequestError('Covers can be picked once the model has published images.');
+    await assertCoverImagesValid({
+      modelId: id,
+      ownerId: beforeUpdate.userId,
+      coverImageId: data.coverImageId,
+      sfwCoverImageId: data.sfwCoverImageId,
+    });
+  }
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
   // so what is stored is what the blurb actually says — and before the profanity filter below,
@@ -3211,9 +3347,13 @@ export const upsertModel = async (
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
-        // unchanged", skipping the repair below on exactly the save that needed it.
-        typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
-          ?.type;
+        // unchanged", skipping the repair below on exactly the save that needed it. The flags are
+        // read here for the same reason: the moderation log records what this save replaced.
+        const replaced = await tx.model.findUnique({
+          where: { id },
+          select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
+        });
+        typeBeforeUpdate = replaced?.type;
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -3280,6 +3420,15 @@ export const upsertModel = async (
               : undefined,
           },
         });
+
+        // In the transaction, so a moderator's flag change cannot commit without its log row.
+        if (isModerator && replaced)
+          for (const activity of moderatorFlagActivities(replaced, data))
+            await trackModActivity(
+              userId,
+              { entityType: 'model', entityId: updated.id, activity },
+              tx
+            );
 
         // In the transaction, so a permission change cannot land without the record mods judge merges by.
         if (storedPermissions && permissionsChanged(storedPermissions, data)) {
@@ -3434,6 +3583,12 @@ export const upsertModel = async (
       after: result,
       tagsChanged: !!tagsOnModels,
     });
+
+    // The face and the .com cover feed the model's level, which decides whether .com lists it.
+    if (sfwFaceChanged || coverChanged) {
+      await updateModelNsfwLevels([result.id]);
+      await bustPublicModelResponseCache(result.id);
+    }
 
     // A lift is the moderator's only when their input set the flag false: a sweep clearing it
     // between the read and the write must not be stamped as their decision.
@@ -3839,7 +3994,7 @@ export const publishModelById = async ({
                                   THEN (p."metadata" ->> 'prevPublishedAt')::timestamptz
                                 ELSE mv."publishedAt"
             END,
-              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+              "metadata"    = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           WHERE mv.id = p."modelVersionId"
             AND mv."modelId" = ${id}
@@ -4512,12 +4667,19 @@ export const getAllModelsWithCategories = async ({
   userId,
   limit,
   page,
-}: GetModelsWithCategoriesSchema) => {
+  viewer,
+}: GetModelsWithCategoriesSchema & {
+  viewer?: { id?: number; isModerator?: boolean | null } | null;
+}) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
+    // Same rule as canViewPoiModel, as a query: moderators see all, others only their own.
+    ...(!viewer?.isModerator && {
+      OR: [{ poi: false }, ...(viewer?.id ? [{ userId: viewer.id }] : [])],
+    }),
   };
 
   const modelCategories = await getCategoryTags('model');
@@ -5607,7 +5769,22 @@ export const privateModelFromTraining = async ({
 }: PrivateModelFromTrainingInput & {
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
-  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+  // The .com face and covers are set from the model editor, where they are checked; a model
+  // created from training starts without them.
+  const {
+    id,
+    tagsOnModels,
+    user,
+    templateId,
+    bountyId,
+    meta,
+    status,
+    sfwName: _sfwName,
+    sfwDescription: _sfwDescription,
+    coverImageId: _coverImageId,
+    sfwCoverImageId: _sfwCoverImageId,
+    ...data
+  } = input;
 
   // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
   const model = await dbWrite.model.findUnique({
@@ -5891,7 +6068,7 @@ export const publishPrivateModel = async (
             THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${now}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;

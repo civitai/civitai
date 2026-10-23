@@ -10,6 +10,10 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import {
+  coverPickerTile,
+  type CoverSlot,
+} from '~/components/Storyline/storyline-cover-picker.utils';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { storylineLevelAllowed } from '~/shared/utils/storyline';
@@ -17,21 +21,18 @@ import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
 type Storyline = RouterOutput['storyline']['getById'];
-type Slot = 'cover' | 'banner';
+type Slot = CoverSlot;
 
-/** The image read's page size, and so how many images the picker can offer. */
 const PICKER_IMAGE_LIMIT = 200;
 
 /**
- * The owner's picks for the storyline's card cover and page banner, as one row of the Manage
- * modal's settings. Each pick is saved as soon as it is made; the server has the last word on
- * which images may be used, and its refusal is shown here.
+ * Each pick is saved as soon as it is made; the server decides which images may be used and its
+ * refusal is shown here.
  */
 export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
   const utils = trpc.useUtils();
   const { data: storyline } = trpc.storyline.getById.useQuery({ id: storylineId });
   const [error, setError] = useState<string | null>(null);
-  // Follows the drag; the server's value until the owner moves it.
   const [position, setPosition] = useState<number | null>(null);
 
   const update = trpc.storyline.update.useMutation({
@@ -44,7 +45,6 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
       ]),
     onError: (e) => setError(e.message),
   });
-  // Saved once the drag pauses, and on closing Manage mid-drag.
   const savePosition = useDebouncedCallback(
     (heroImagePosition: number) => update.mutate({ id: storylineId, heroImagePosition }),
     { delay: 400, flushOnUnmount: true }
@@ -110,7 +110,6 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
           disabled={update.isPending}
         >
           {storyline.heroIsBanner && storyline.heroImage ? (
-            // The owner's own blur preferences apply here as on the page.
             <ImageGuard2 image={storyline.heroImage} explain={false}>
               {(safe) =>
                 safe ? (
@@ -168,6 +167,7 @@ function StorylineImagePickerModal({
     <Modal {...dialog} title={banner ? 'Choose the banner' : 'Choose the card cover'} size="lg">
       <StorylineImagePicker
         storyline={storyline}
+        slot={slot}
         initialId={banner ? storyline.heroImageId : storyline.coverImageId}
         confirmLabel={banner ? 'Use as banner' : 'Use as card cover'}
         onCancel={dialog.onClose}
@@ -223,24 +223,26 @@ function CoverSlot({
 }
 
 /**
- * The images the server would accept, grouped by chapter: the canon path's chapters by the owner
- * or an endorsed collaborator, rated within the ceiling, and no minors or real people. Read
- * through the normal image read, so the owner's own level and hidden images apply as well.
+ * The images the server accepts for a cover or banner, grouped by chapter. Read through the normal
+ * image read, so the owner's own level and hidden images apply as well.
  */
-function StorylineImagePicker({
+export function StorylineImagePicker({
   storyline,
+  slot,
   initialId,
   confirmLabel,
   onCancel,
   onPick,
 }: {
   storyline: Storyline;
+  slot: Slot;
   initialId: number | null;
   confirmLabel: string;
   onCancel: () => void;
   onPick: (imageId: number) => void;
 }) {
   const [selectedId, setSelectedId] = useState<number | null>(initialId);
+  const tile = coverPickerTile(slot, storyline.heroImagePosition);
   const authors = new Set([storyline.userId, ...storyline.collaborators.map((c) => c.id)]);
   const chapters = storyline.mainPath.flatMap((chapter) =>
     chapter.post && authors.has(chapter.post.userId)
@@ -274,9 +276,12 @@ function StorylineImagePicker({
   return (
     <Stack gap="md">
       {chapters.length > 0 && isLoading ? (
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+        <div className={clsx('grid gap-2', tile.columnsClass)}>
           {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className="aspect-[3/4]" />
+            <Skeleton
+              key={i}
+              className={tile.ratio === '16/6' ? 'aspect-[16/6]' : 'aspect-[3/4]'}
+            />
           ))}
         </div>
       ) : isError ? (
@@ -295,6 +300,7 @@ function StorylineImagePicker({
               key={group.postId}
               number={group.number}
               images={group.images}
+              tile={tile}
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
@@ -321,14 +327,16 @@ function StorylineImagePicker({
   );
 }
 
-function ChapterImages({
+export function ChapterImages({
   number,
   images,
+  tile,
   selectedId,
   onSelect,
 }: {
   number: number;
   images: StorylineThumbImage[];
+  tile: ReturnType<typeof coverPickerTile>;
   selectedId: number | null;
   onSelect: (id: number) => void;
 }) {
@@ -341,7 +349,7 @@ function ChapterImages({
       <div
         role="radiogroup"
         aria-labelledby={labelId}
-        className="grid grid-cols-3 gap-2 sm:grid-cols-4"
+        className={clsx('grid gap-2', tile.columnsClass)}
       >
         {images.map((image, i) => {
           const selected = image.id === selectedId;
@@ -359,7 +367,13 @@ function ChapterImages({
                 selected && 'ring-2 ring-blue-5 focus-visible:ring-blue-5'
               )}
             >
-              <StorylineThumb image={image} width={120} fluid>
+              <StorylineThumb
+                image={image}
+                width={tile.ratio === '16/6' ? 240 : 120}
+                ratio={tile.ratio}
+                focusY={tile.focusY}
+                fluid
+              >
                 {selected && (
                   <span className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-blue-6 text-white">
                     <IconCheck size={14} stroke={3} />

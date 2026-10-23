@@ -103,7 +103,6 @@
               use:enhance={submit(row.storylineId, 'Appeal granted')}
             >
               <input type="hidden" name="storylineId" value={row.storylineId} />
-              <!-- reviewedTitle pins the grant to the title shown. -->
               <input type="hidden" name="reviewedTitle" value={row.title} />
               <Button type="submit" size="xs" variant="destructive" disabled={row.tosViolationByModerator}>
                 Grant and lift

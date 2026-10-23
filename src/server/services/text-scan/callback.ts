@@ -1,4 +1,4 @@
-import { getWorkflow } from '@civitai/client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import type { StoredModelRules } from '@civitai/moderation/model-rules';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';

@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
+  assertBountyEntryFileUrlAllowed,
   assertClientFileUrlAllowed,
   findClientFileUrlMiss,
   parseUploadObjectUrl,
@@ -21,6 +22,7 @@ const B2 = 'https://s3.us-west-004.backblazeb2.com';
 const B2_BUCKET = 'uploads-b2';
 const ME = 7;
 const OTHER = 8;
+const THIRD = 9;
 const VERSION = 100; // the version the file is on
 const SIBLING = 101; // another version of the same model
 const FOREIGN = 200; // a version of someone else's model
@@ -307,5 +309,71 @@ describe('assertClientFileUrlAllowed', () => {
         op: 'create',
       })
     );
+  });
+});
+
+describe('assertBountyEntryFileUrlAllowed', () => {
+  const AUTHOR = OTHER; // the entry's author; ME awards the entry and creates the version
+  const ENTRY = 55;
+  const check = (url: string) =>
+    assertBountyEntryFileUrlAllowed({ url, authorId: AUTHOR, userId: ME, bountyEntryId: ENTRY });
+
+  it.each([
+    ['in the upload bucket, path style', r2Path(`default/${AUTHOR}/lora.safetensors`)],
+    ['in the upload bucket, virtual host', r2Virtual(`default/${AUTHOR}/lora.safetensors`)],
+    [
+      'as a large upload with its slashes encoded',
+      `${R2}/${R2_BUCKET}/default%2F${AUTHOR}%2Fl.zip`,
+    ],
+    ['in the second upload bucket', b2Path(`default/${AUTHOR}/lora.safetensors`)],
+  ])("copies the author's own upload %s", (_, url) => {
+    expect(() => check(url)).not.toThrow();
+  });
+
+  it.each([
+    ["another user's upload", r2Path(`default/${THIRD}/lora.safetensors`), 'other-user-prefix'],
+    [
+      "the awarder's own upload, which the author did not make",
+      r2Path(`default/${ME}/lora.safetensors`),
+      'other-user-prefix',
+    ],
+    [
+      'a checkpoint copied to a version',
+      r2Path(`modelVersion/${VERSION}/lora.safetensors`),
+      'other-model-version',
+    ],
+    [
+      'a bucket no upload goes to',
+      `${B2}/retired-2023/default/${AUTHOR}/lora.safetensors`,
+      'not-upload-bucket',
+    ],
+    [
+      'a host that is not our storage',
+      `https://files.example.com/default/${AUTHOR}/l.zip`,
+      'unknown-host',
+    ],
+  ])('refuses %s, and logs why', (_, url, reason) => {
+    expect(() => check(url)).toThrowError(/can't be copied into a model version/);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'model-file-url-refused',
+        op: 'bounty-award',
+        userId: ME,
+        authorId: AUTHOR,
+        bountyEntryId: ENTRY,
+        reason,
+      })
+    );
+  });
+
+  it('refuses a file on an entry with no author', () => {
+    expect(() =>
+      assertBountyEntryFileUrlAllowed({
+        url: r2Path(`default/${AUTHOR}/lora.safetensors`),
+        authorId: null,
+        userId: ME,
+        bountyEntryId: ENTRY,
+      })
+    ).toThrowError(/can't be copied into a model version/);
   });
 });

@@ -1,4 +1,4 @@
-import type { PromptEnhancementStepTemplate } from '@civitai/client';
+import type { PromptEnhancementStepTemplate } from '@civitai/orchestration-client';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { buildInstruction } from '~/server/services/orchestrator/promptInstruction';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';

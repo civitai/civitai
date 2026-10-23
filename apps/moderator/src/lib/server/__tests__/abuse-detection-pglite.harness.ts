@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import {
   CompiledQuery,
   Kysely,
@@ -147,7 +148,7 @@ export function pgliteKysely(db: PGlite): Kysely<AbuseDetectionTables> {
 
 /** A fresh in-process Postgres with the real schema applied. */
 export async function freshDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await applySchema(db);
   return db;
 }

@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import {
+  HOLD_UNKNOWN_REFUSAL,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  type DeleteHold,
+} from '$lib/legal-hold';
+import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
+import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
 import { civitaiAppUrl } from './civitai-url';
@@ -19,7 +27,7 @@ import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './it
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
-import { restErrorReason } from './rest-error-reason';
+import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, alwaysRemovesMedia, type ProfileField } from '$lib/enforcement';
 import type { HeldSummary } from './removal-hold';
@@ -45,10 +53,7 @@ export type ActionResult = { ok: true; warning?: string } | { ok: false; error: 
 async function callMainApp(
   path: string,
   params: Record<string, string>,
-  label: string,
-  /** Reads a warning out of a successful response body. An unreadable body is no warning: the
-   *  action already happened. */
-  warningFrom?: (body: unknown) => string | undefined
+  label: string
 ): Promise<ActionResult> {
   const token = env.WEBHOOK_TOKEN;
   if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
@@ -61,8 +66,7 @@ async function callMainApp(
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return { ok: false, error: `${label} returned ${res.status}.` };
-    const warning = warningFrom?.(await res.json().catch(() => null));
-    return warning ? { ok: true, warning } : { ok: true };
+    return { ok: true };
   } catch (e) {
     console.error(`[user-actions] ${label} failed`, e);
     return { ok: false, error: `${label} failed.` };
@@ -113,6 +117,8 @@ async function postJson(opts: {
   path: string;
   /** Sent as the JSON body, or as the query string when `method` is `GET`. */
   body: Record<string, unknown>;
+  /** Always sent in the query string, for endpoints that read their input from it. */
+  query?: Record<string, string>;
   method?: 'GET' | 'POST';
   label: string;
   auth: 'webhook' | 'session';
@@ -154,6 +160,9 @@ async function postJson(opts: {
       return { ok: false, error: 'WEBHOOK_TOKEN is not configured.', requestNeverSent: true };
     url += `?token=${encodeURIComponent(token)}`;
   }
+
+  if (opts.query)
+    url += `${url.includes('?') ? '&' : '?'}${new URLSearchParams(opts.query).toString()}`;
 
   const isGet = opts.method === 'GET';
   if (isGet) {
@@ -209,6 +218,8 @@ async function postJson(opts: {
  * generated client when that lands.
  */
 export type ModEndpoint =
+  | 'bounty-entry-file/clear-check'
+  | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
@@ -270,6 +281,7 @@ export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
   | 'creator-services/disputes'
+  | 'user/legal-hold'
   | 'user/reactions';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
@@ -394,7 +406,7 @@ export async function bulkCommentAction(input: {
   commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number }> {
+}): Promise<ActionResult & { affected?: number; retainedHidden?: number }> {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
@@ -425,8 +437,12 @@ export async function bulkCommentAction(input: {
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
       : nested('comment') + nested('commentV2');
 
+  // A delete keeps some comments hidden instead; the endpoint never says why, and neither does this.
+  const retainedHidden =
+    input.action === 'bulkDelete' ? countOf(result.body, ['retainedHidden']) : 0;
+
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0)
+  if (affected === 0 && retainedHidden === 0)
     return {
       ok: false,
       error:
@@ -435,9 +451,16 @@ export async function bulkCommentAction(input: {
           : 'Nothing changed — those comments may already be gone. Reload.',
     };
 
-  await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+  if (affected)
+    await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+  if (retainedHidden)
+    await logAction(
+      `comments:${input.action}:retainedHidden:${retainedHidden}`,
+      input.userId,
+      input.moderatorId
+    );
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected };
+  return { ok: true, affected, retainedHidden };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
@@ -1452,9 +1475,14 @@ export async function setImageFlag(input: {
   return { ok: true };
 }
 
+/** A purge whose answer was lost, most often to the timeout below while it keeps running. */
+export const PURGE_MAY_BE_RUNNING =
+  'Purge started but not confirmed; it may still be running. Check the account in a few minutes before purging again.';
+
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
-// act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
+// act on an id that does not resolve, so a mistyped id cannot reach the endpoint, and on an account
+// under a legal hold. The endpoint refuses a held account too; this answers before anything is sent.
 export async function purgeAllContent(input: {
   userId: number;
   moderatorId: number;
@@ -1466,30 +1494,38 @@ export async function purgeAllContent(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'User not found.' };
 
-  const result = await callMainApp(
-    '/api/mod/remove-all-content',
-    { userId: String(input.userId) },
-    'Purge',
-    keptUnderHoldWarning
-  );
-  if (!result.ok) return result;
+  const hold = await deleteAccountHold(input.userId);
+  if (hold === 'held') return { ok: false, error: LEGAL_HOLD_REFUSAL };
+  if (hold !== 'clear') return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
+
+  const result = await postJson({
+    path: '/api/mod/remove-all-content',
+    body: {},
+    query: { userId: String(input.userId), moderatorId: String(input.moderatorId) },
+    label: 'Purge',
+    auth: 'webhook',
+    timeoutMs: 15_000,
+  });
+  if (!result.ok) {
+    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
+      return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
+      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
+    // A hold stopped it part-way, after some of the account was deleted: that is recorded.
+    if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
+      await logAction('purgeAllContent', input.userId, input.moderatorId);
+      return { ok: false, error: LEGAL_HOLD_STOPPED };
+    }
+    // The wipe runs to completion on the main app whether or not this side is still waiting, so a
+    // lost answer is reported as started, never as failed: a failure invites a second purge.
+    if (!responseMayHaveLanded(result)) return { ok: false, error: result.error };
+    await logAction(PURGE_UNCONFIRMED_ACTIVITY, input.userId, input.moderatorId);
+    return { ok: false, error: PURGE_MAY_BE_RUNNING };
+  }
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
-  return result;
-}
-
-function keptUnderHoldWarning(body: unknown): string | undefined {
-  const counted = (value: unknown) => (typeof value === 'number' && value > 0 ? value : 0);
-  const kept = body as { keptUnderHold?: unknown; keptPostsUnderHold?: unknown } | null;
-  const images = counted(kept?.keptUnderHold);
-  const posts = counted(kept?.keptPostsUnderHold);
-  const parts = [
-    ...(images ? [`${images} ${images === 1 ? 'image' : 'images'}`] : []),
-    ...(posts ? [`${posts} ${posts === 1 ? 'post' : 'posts'}`] : []),
-  ];
-  if (!parts.length) return undefined;
-  const verb = images + posts === 1 ? 'was' : 'were';
-  return `Under a hold: ${parts.join(' and ')} ${verb} preserved as evidence, not shown.`;
+  const warning = purgeWarning(result.body);
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 /** One sentence for every way this call can fail without proving the deletion did not happen. The
@@ -1605,6 +1641,16 @@ export async function revokeCreatorScoreGrant(input: {
   const { total } = result.body;
   if (typeof total !== 'number') return { ok: false, error: GRANT_REVOKE_MAY_HAVE_COMPLETED };
   return { ok: true, total };
+}
+
+/** Whether a legal hold blocks deleting the account. Only `held: false` is `clear`; the endpoint
+ *  refuses a held account regardless. */
+export async function deleteAccountHold(userId: number): Promise<DeleteHold> {
+  // Short: the Admin tab waits on this, and a slow answer blocks deletion anyway.
+  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
+  if (!result.ok) return 'unknown';
+  if (result.body.held === false) return 'clear';
+  return result.body.held === true ? 'held' : 'unknown';
 }
 
 export async function deleteAccount(input: {

@@ -341,8 +341,8 @@ describe('createEntityAppealHandler — Storyline', () => {
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 
-  // Granting this appeal lifts only the scan's takedown, so the storyline would stay down; and a
-  // moderator's own takedown is not a scan error for another moderator to overturn here.
+  // Granting would lift only the scan's takedown, so the storyline would stay down; a moderator's
+  // own takedown is not a scan error to overturn here.
   it("refuses while a moderator's takedown holds, even with the scan's too", async () => {
     mockStorylineFindUnique.mockResolvedValue({
       ...scanTakenDown,

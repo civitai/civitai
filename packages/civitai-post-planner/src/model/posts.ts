@@ -65,13 +65,21 @@ export function neighbours(
 export function modelFilterOptions(posts: PlannerPost[]): { value: string; label: string }[] {
   const versions = new Map<number, string>();
   for (const post of posts) {
-    if (!post.modelVersionId) continue;
-    if (post.release)
-      versions.set(post.modelVersionId, `${post.release.modelName} · ${post.release.versionName}`);
-    else if (!versions.has(post.modelVersionId))
-      versions.set(post.modelVersionId, `Version #${post.modelVersionId}`);
+    if (!post.modelVersionId || versions.has(post.modelVersionId)) continue;
+    // A server that predates `model` sends neither name for a standalone post.
+    const modelName = post.release?.modelName ?? post.model?.name;
+    const versionName = post.release?.versionName ?? post.model?.versionName;
+    versions.set(
+      post.modelVersionId,
+      modelName ? `${modelName} · ${versionName}` : `Version #${post.modelVersionId}`
+    );
   }
   return [...versions].map(([id, label]) => ({ value: String(id), label }));
+}
+
+/** What select mode can act on: scheduled, standalone posts. */
+export function isSelectable(post: PlannerPost, now: Date): boolean {
+  return !post.release && isScheduled(post, now);
 }
 
 export function hasMature(posts: PlannerPost[]): boolean {

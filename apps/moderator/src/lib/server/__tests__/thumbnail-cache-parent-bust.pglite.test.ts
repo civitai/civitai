@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -84,6 +85,7 @@ CREATE TABLE "Image" (
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,
@@ -112,7 +114,7 @@ let db: PGlite;
 beforeEach(async () => {
   del.mockClear();
   syncSearchIndexBulk.mockClear();
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "metadata", "nsfwLevel") VALUES

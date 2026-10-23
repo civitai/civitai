@@ -26,7 +26,7 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { FormState } from '$lib/form-state.svelte';
   import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
-  import ModelPreview from './ModelPreview.svelte';
+  import ModelPreview from '$lib/components/ModelPreview.svelte';
   import type { LayoutData } from './$types';
   import type { ModelItem } from './item.server';
 
@@ -230,18 +230,20 @@
 
 {#if item}
   {@const itemUrl = getReportItemUrl(data.civitaiUrl, data.type, item.modelId, null)}
-  <header class="flex flex-wrap items-center gap-x-3 gap-y-1">
-    <h2 class="m-0 text-lg font-semibold">{name ?? `Model #${item.modelId}`}</h2>
-    {#if itemUrl}
-      <a href={itemUrl} target="_blank" rel="noreferrer" class="link inline-flex items-center gap-1 text-sm">
-        View model #{item.modelId}
-        <IconExternalLink size={14} />
-      </a>
-    {/if}
-    {#if item.ownerFlaggedMinor}<OwnerFlaggedMinorBadge />{/if}
-  </header>
-
   <ReportDetailColumns>
+    {#snippet header()}
+      <header class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 class="m-0 text-lg font-semibold">{name ?? `Model #${item.modelId}`}</h2>
+        {#if itemUrl}
+          <a href={itemUrl} target="_blank" rel="noreferrer" class="link inline-flex items-center gap-1 text-sm">
+            View model #{item.modelId}
+            <IconExternalLink size={14} />
+          </a>
+        {/if}
+        {#if item.ownerFlaggedMinor}<OwnerFlaggedMinorBadge />{/if}
+      </header>
+    {/snippet}
+
     {#snippet evidence()}
       {#key item.modelId}
         <ModelPreview
@@ -563,7 +565,5 @@
   </ReportDetailColumns>
 {:else}
   <!-- Only when the view itself is empty: the bare queue opens its first model whenever there is one. -->
-  <section class="rounded-xl border border-dashed border-dark-4 p-5">
-    <p class="text-sm text-dark-2">No reports in this view.</p>
-  </section>
+  <p class="py-8 text-center text-sm text-dark-2">No reports in this view.</p>
 {/if}

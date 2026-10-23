@@ -20,6 +20,9 @@ vi.mock('~/server/services/creator-shop.service', async (importOriginal) => ({
   ...shop,
 }));
 
+const review = vi.hoisted(() => ({ getMysteryPackReview: vi.fn(async () => ({ boxId: 1 })) }));
+vi.mock('~/server/services/creator-mystery-pack-review.service', () => review);
+
 import { creatorShopRouter } from '../creator-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -143,6 +146,25 @@ describe('creator mystery pack procedures', () => {
           stickersEnabled: stickers,
         })
       );
+    }
+  });
+
+  it("refuses the review pane's read to a non-moderator, and hands a moderator's the stickers flag", async () => {
+    // The moderator gate's own refusal: the creatorShop flag also answers FORBIDDEN for a member.
+    await expect(caller(ALL_ON).getMysteryPackReview({ id: 3 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'You do not have permission to perform this action',
+    });
+    expect(review.getMysteryPackReview).not.toHaveBeenCalled();
+
+    for (const stickers of [true, false]) {
+      review.getMysteryPackReview.mockClear();
+      await caller({ ...ALL_ON, stickers }, { isModerator: true }).getMysteryPackReview({ id: 3 });
+      expect(review.getMysteryPackReview).toHaveBeenCalledTimes(1);
+      expect(review.getMysteryPackReview).toHaveBeenCalledWith({
+        listingId: 3,
+        stickersEnabled: stickers,
+      });
     }
   });
 

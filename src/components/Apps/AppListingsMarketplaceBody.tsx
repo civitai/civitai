@@ -174,7 +174,9 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
-    if (filters.query !== searchInput) setSearchInput(filters.query);
+    // Trimmed on both sides, like the echo above: a write skipped for whitespace alone leaves the
+    // URL one space off the box, and adopting that would eat or resurrect the space under the caret.
+    if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
   // "Recently opened" rail (client-only personalisation from localStorage).

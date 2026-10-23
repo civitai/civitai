@@ -146,7 +146,7 @@ describe('cosmeticEntityCaches', () => {
     }
     const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
     expect(sql(call)).toBe(
-      `SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData" FROM "UserCosmetic" uc ` +
+      `SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData", c."createdById" FROM "UserCosmetic" uc ` +
         `JOIN "Cosmetic" c ON c.id = uc."cosmeticId" WHERE uc."equippedToId" IN (?) ` +
         `AND uc."equippedToType" = '?'::"CosmeticEntity" AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';`
     );

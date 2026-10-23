@@ -479,6 +479,10 @@ model User {
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
   threadMutes          ThreadMute[]
+  commentsV3           CommentV3[]
+  commentV3Reactions   CommentV3Reaction[]
+  commentMutes         CommentMute[]
+  commentTopicMutes    CommentTopicMute[]
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
@@ -1090,6 +1094,13 @@ model Model {
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
   isOfficial          Boolean         @default(false)
+  // The .com face, shown to viewers who see no mature content; unrelated to `sfwOnly`. Set
+  // `sfwName` means the face is on. The cover ids have no FK: Image is too hot to constrain,
+  // and a dangling id falls back to the derived cover.
+  sfwName             String?         @db.Citext
+  sfwDescription      String?
+  coverImageId        Int?
+  sfwCoverImageId     Int?
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -1697,6 +1708,7 @@ model Report {
   model          ModelReport?
   comment        CommentReport?
   commentV2      CommentV2Report?
+  commentV3      CommentV3Report?
   image          ImageReport?
   resourceReview ResourceReviewReport?
   article        ArticleReport?
@@ -2035,6 +2047,7 @@ model Post {
   reports         PostReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
+  storylinePendingChapter StorylinePendingChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -2282,8 +2295,7 @@ enum TextScanHoldStatus {
   Confirmed
 }
 
-// A text-scan verdict held for a moderator; nothing else acts on it. A partial index on pending rows
-// lives in migration 20261016150000_text_scan_hold (Prisma cannot model it).
+// A text-scan verdict held for a moderator. Partial indexes Prisma cannot model live in the text_scan_hold migrations.
 model TextScanHold {
   id           Int                @id @default(autoincrement())
   entityType   String
@@ -2308,8 +2320,9 @@ model TextScanHold {
   restoredAt   DateTime?
   meta         Json?
 
-  @@unique([entityType, entityId, label, textHash])
+  @@index([entityType, entityId, label, textHash])
   @@index([status, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ImageEngagementType {
@@ -5023,6 +5036,127 @@ model ThreadMute {
   @@index([threadId])
 }
 
+// CommentV3 (docs/comments-consolidation.md). Declared for type generation only; access is via Kysely.
+// The partial indexes (top_*, legacy_v1, reply_to) and the GiST index exist only in the migration;
+// Prisma cannot express them.
+enum CommentEntityType {
+  model
+  image
+  post
+  article
+  review
+  bounty
+  bountyEntry
+  comicChapter
+  challenge
+  model3d
+  model3dReview
+  appListing
+  crucible
+}
+
+// Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
+// an entity table here: the drift gate would look for FKs the parent table does not carry.
+model CommentTopic {
+  entityType   CommentEntityType
+  entityId     Int
+  locked       Boolean           @default(false)
+  commentCount Int               @default(0)
+
+  comments CommentV3[]
+
+  @@id([entityId, entityType])
+}
+
+model CommentV3 {
+  id         Int               @id @default(dbgenerated("nextval('comment_shared_id_seq')"))
+  entityType CommentEntityType
+  entityId   Int
+  topic      CommentTopic      @relation(fields: [entityId, entityType], references: [entityId, entityType], onDelete: Cascade)
+  parentId   Int?
+  parent     CommentV3?        @relation("CommentV3Parent", fields: [parentId], references: [id], onDelete: Restrict)
+  replies    CommentV3[]       @relation("CommentV3Parent")
+  replyToId  Int?
+  replyTo    CommentV3?        @relation("CommentV3ReplyTo", fields: [replyToId], references: [id], onDelete: SetNull)
+  repliedBy  CommentV3[]       @relation("CommentV3ReplyTo")
+
+  // Trigger-set (commentv3_set_path); rootId and depth are GENERATED. Never write these.
+  path   Unsupported("ltree") @default(dbgenerated())
+  rootId Int                  @default(dbgenerated())
+  depth  Int                  @default(dbgenerated())
+
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content       String
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime? @db.Timestamptz(6)
+  tosViolation  Boolean   @default(false)
+  hidden        Boolean   @default(false)
+  locked        Boolean   @default(false)
+  pinnedAt      DateTime? @db.Timestamptz(6)
+  reactionCount Int       @default(0)
+  legacyV1Id    Int?
+
+  reactions CommentV3Reaction[]
+  reports   CommentV3Report[]
+  mutes     CommentMute[]
+
+  @@index([entityType, entityId], map: "commentv3_entity")
+  @@index([parentId, hidden, createdAt, id], map: "commentv3_replies_newest")
+  @@index([parentId, hidden, reactionCount(sort: Desc), id(sort: Desc)], map: "commentv3_replies_reactions")
+  @@index([rootId, depth], map: "commentv3_root_depth")
+  @@index([userId, id(sort: Desc)], map: "commentv3_user")
+}
+
+model CommentV3Reaction {
+  id        Int             @id @default(autoincrement())
+  commentId Int
+  comment   CommentV3       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([commentId, userId, reaction])
+  @@index([userId])
+}
+
+model CommentV3Report {
+  commentId Int
+  comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reportId  Int       @unique
+  report    Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentId])
+  @@index([commentId])
+}
+
+// One conversation: this comment and its whole subtree.
+model CommentMute {
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commentId Int
+  comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mutedAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([userId, commentId])
+  @@index([commentId])
+}
+
+// No relation to CommentTopic: a section can be muted before it has any comments.
+model CommentTopicMute {
+  userId     Int
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType CommentEntityType
+  entityId   Int
+  mutedAt    DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@id([userId, entityType, entityId])
+  @@index([entityType, entityId])
+}
+
 model QuestionReaction {
   id         Int             @id @default(autoincrement())
   question   Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
@@ -5473,6 +5607,9 @@ model CosmeticShopItem {
   // `cosmeticId` as a pack. A CHECK keeps it unlisted.
   itemDefinitionId  Int?
   itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
+  // Lowercase labels a moderator sets so a shop section with the same `meta.eventTag` picks the
+  // item up without being placed by hand.
+  eventTags         String[]  @default([])
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
@@ -5480,7 +5617,9 @@ model CosmeticShopItem {
   resales   UserCosmeticShopItemResale[]
   members   CosmeticShopItemCosmetic[]
 
+  @@index([cosmeticId])
   @@index([itemDefinitionId])
+  @@index([eventTags], type: Gin)
 }
 
 // Cross-creator resale: another creator listing this item in their own shop.
@@ -6401,7 +6540,63 @@ model CsamReport {
   details          Json           @default("{}")
   images           Json           @default("[]")
   type             CsamReportType @default(Image)
+  /// The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+  sendClaimId      String?        @db.Uuid
+  sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
+}
+
+/// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
+model CsamReportAudit {
+  id              Int       @id @default(autoincrement())
+  csamReportId    Int
+  op              String
+  oldUserId       Int?
+  oldReportId     Int?
+  oldType         String?
+  oldSecondaryUserId Int?
+  oldImageCount   Int?
+  /// A keyed fingerprint of the details for tamper detection, never their content.
+  oldDetailsFingerprint String?
+  oldReportSentAt DateTime?
+  changedAt       DateTime  @default(now())
+  changedBy       String    @default(dbgenerated("SESSION_USER"))
+
+  @@index([csamReportId])
+}
+
+/// One admin release of a held user's removed-image review flags. Its images are the ModActivity
+/// rows written in the same transaction.
+model CsamFlagRelease {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  moderatorId    Int
+  approvalRef    String
+  reason         String
+  /// The hold legs the release overrode.
+  overriddenLegs Json
+  imageCount     Int
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
+model CsamReportArchiveObject {
+  id            Int      @id @default(autoincrement())
+  csamReportId  Int
+  /// base | images | generatedImages | trainingData
+  kind          String
+  key           String
+  etag          String?
+  /// Entries appended to a zip archive.
+  entries       Int?
+  /// Items the report names that this archive was expected to hold, and how many it lacks.
+  namedExpected Int?
+  namedMissing  Int?
+  uploadedAt    DateTime @default(now())
+
+  @@index([csamReportId])
 }
 
 /// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
@@ -6907,6 +7102,7 @@ enum EntityType {
   Collection
   Comment
   CommentV2
+  CommentV3
   User
   UserProfile
   ResourceReview
@@ -6926,6 +7122,37 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  CdnAccessSync
+}
+
+/// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
+/// its public variants deleted). Written only by the cdn-access-sync jobs; a row is removed when
+/// the deny is lifted or no image row uses the url any more.
+model ImageCdnAccess {
+  url            String    @id
+  state          String
+  deniedAt       DateTime  @default(now())
+  retractedAt    DateTime?
+  lastAssertedAt DateTime  @default(now())
+}
+
+/// A moderator-app hard delete, kept after its Image row is gone so the cdn-access-sync jobs keep
+/// the url taken down. Written only by those jobs.
+model ImageCdnModeratorDelete {
+  imageId    Int      @id
+  url        String
+  userId     Int?
+  csamReview Boolean  @default(true)
+  deletedAt  DateTime @default(now())
+
+  @@index([url])
+}
+
+/// A short lease on one url while a cdn-access-sync run calls the image server about it.
+model ImageCdnAccessClaim {
+  url          String   @id
+  token        String
+  claimedUntil DateTime
 }
 
 model JobQueue {
@@ -9897,6 +10124,7 @@ model Storyline {
   heroImagePosition Int    @default(50)
 
   chapters      StorylineChapter[]
+  pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
 
@@ -9939,12 +10167,34 @@ model StorylineChapter {
   branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
   branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
   createClicks      StorylineCreateClick[]
+  pendingContinuations StorylinePendingChapter[]
 
   /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
   /// join chapters from two storylines.
   @@unique([id, storylineId])
   @@index([storylineId])
   @@index([userId])
+}
+
+/// A post draft written from the storyline flow, before it is a chapter: which storyline it will
+/// join and, for a continuation, which chapter it continues. Readers never see it; chapter rows
+/// stay the only live chapters. Removed once the chapter is written, the continuation submitted,
+/// or the author detaches the draft.
+model StorylinePendingChapter {
+  postId          Int               @id
+  post            Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  storylineId     Int
+  storyline       Storyline         @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+  /// migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+  parentChapterId Int?
+  parentChapter   StorylineChapter? @relation(fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  /// The draft's author when it was linked. Not a relation, as on StorylineChapter.
+  userId          Int
+  createdAt       DateTime          @default(now())
+
+  @@index([storylineId])
+  @@index([parentChapterId])
 }
 
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
@@ -10536,6 +10786,9 @@ model Crucible {
   // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
   // (the migration backfills false); new rows default to true.
   timeAdjustedPlacement Boolean    @default(true)
+  // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
+  // shown to non-moderators.
+  eventTags         String[]       @default([])
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
@@ -10546,6 +10799,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([eventTags], type: Gin)
   @@index([status, ingestion])
 }
 
@@ -10667,4 +10921,46 @@ model Prize {
 
   @@index([userId])
   @@index([sourceType, sourceId])
+}
+
+// A Creator Program creator whose pending payout for a period is held for review before settlement.
+// `status`: open | escalated | cleared | withheld.
+model CreatorProgramPayoutReview {
+  id                Int       @id @default(autoincrement())
+  period            String // 'YYYY-MM', the banking month
+  userId            Int
+  status            String    @default("open")
+  hold              Boolean   @default(true)
+  signals           String[]
+  payoutCents       Int
+  evidence          Json      @default("{}")
+  firstFlaggedAt    DateTime  @default(now())
+  lastEvaluatedAt   DateTime  @default(now())
+  evaluations       Int       @default(1)
+  decidedAt         DateTime?
+  decidedBy         String?
+  decisionNote      String?
+  askRef            String?
+  // Bumped by every write, decisions and re-runs alike; a decision must name the version it read.
+  version           Int       @default(1)
+  // Append-only: one entry per decision or reopen.
+  decisions         Json      @default("[]")
+
+  @@unique([period, userId])
+  @@index([userId])
+  @@index([status])
+}
+
+// One run of the pre-payout review. A finished run with no `error` is what settlement checks for.
+model CreatorProgramPayoutReviewRun {
+  id             Int       @id @default(autoincrement())
+  period         String
+  startedAt      DateTime
+  finishedAt     DateTime?
+  creditedCount  Int       @default(0)
+  evaluatedCount Int       @default(0)
+  flaggedCount   Int       @default(0)
+  error          String?
+
+  @@index([period, startedAt])
 }

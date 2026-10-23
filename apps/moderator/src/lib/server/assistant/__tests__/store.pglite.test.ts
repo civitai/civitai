@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executableSchemaSql, pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
@@ -21,13 +22,15 @@ vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => kysely }));
 const store = await import('../store');
 
 beforeEach(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(executableSchemaSql(readFileSync(SCHEMA, 'utf8')));
   kysely = new Kysely({ dialect: pgliteDialect(pg) });
 });
 afterEach(async () => {
   await pg.close();
 });
+
+const NO_COST = { usd: 0, source: 'list' } as const;
 
 const draft = (title: string) => ({
   title,
@@ -136,20 +139,72 @@ describe('turns', () => {
         playbookVersion: null,
         model: 'm',
       });
-      await store.finishTurn(turnId, {
-        status: 'done',
-        toolCalls: [],
-        sources: [],
-        answer: 'a',
-        reasoning: null,
-        unverified: [],
-        error: null,
-        promptTokens: 100,
-        completionTokens: 50,
-      });
+      await store.finishTurn(
+        turnId,
+        {
+          status: 'done',
+          toolCalls: [],
+          sources: [],
+          answer: 'a',
+          reasoning: null,
+          unverified: [],
+          error: null,
+          promptTokens: 100,
+          completionTokens: 50,
+        },
+        NO_COST
+      );
     }
     expect(await store.tokensToday(1)).toBe(300);
     expect(await store.tokensToday(2)).toBe(150);
+  });
+
+  it("split today's tokens by model, for this moderator only", async () => {
+    const turn = async (moderatorId: number, model: string, prompt: number, completion: number) => {
+      const chatId = await store.createChat({
+        moderatorId,
+        title: 'c',
+        seedUserId: null,
+        seedReportId: null,
+      });
+      const turnId = await store.startTurn({
+        chatId,
+        moderatorId,
+        prompt: 'q',
+        playbookSlug: null,
+        playbookVersion: null,
+        model,
+      });
+      await store.finishTurn(
+        turnId,
+        {
+          status: 'done',
+          toolCalls: [],
+          sources: [],
+          answer: 'a',
+          reasoning: null,
+          unverified: [],
+          error: null,
+          promptTokens: prompt,
+          completionTokens: completion,
+        },
+        NO_COST
+      );
+      return turnId;
+    };
+    await turn(1, 'b-model', 10, 1);
+    await turn(1, 'a-model', 20, 2);
+    await turn(1, 'a-model', 30, 3);
+    await turn(2, 'a-model', 999, 999);
+    const yesterday = await turn(1, 'a-model', 500, 500);
+    await pg.query(
+      `UPDATE assistant_turn SET created_at = now() - interval '2 days' WHERE id = $1`,
+      [yesterday]
+    );
+    expect(await store.tokensTodayByModel(1)).toEqual([
+      { model: 'a-model', promptTokens: 50, completionTokens: 5 },
+      { model: 'b-model', promptTokens: 10, completionTokens: 1 },
+    ]);
   });
 
   it('close out a turn abandoned mid-run so the moderator can ask again', async () => {
@@ -199,17 +254,21 @@ describe('turns', () => {
       },
     ];
     const sources = [{ ref: 'user:5', href: '/retool/user-lookup?q=5', label: 'five' }];
-    await store.finishTurn(turnId, {
-      status: 'done',
-      toolCalls,
-      sources,
-      answer: 'see [user:5]',
-      reasoning: '- look up 5',
-      unverified: ['user:6'],
-      error: null,
-      promptTokens: 7,
-      completionTokens: 3,
-    });
+    await store.finishTurn(
+      turnId,
+      {
+        status: 'done',
+        toolCalls,
+        sources,
+        answer: 'see [user:5]',
+        reasoning: '- look up 5',
+        unverified: ['user:6'],
+        error: null,
+        promptTokens: 7,
+        completionTokens: 3,
+      },
+      NO_COST
+    );
     expect((await store.listTurns(id))[0]).toMatchObject({
       prompt: 'q',
       playbookSlug: 'p',

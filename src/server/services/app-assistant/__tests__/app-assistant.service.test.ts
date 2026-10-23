@@ -25,16 +25,25 @@ vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsAsync: vi.fn(async () => featuresMock()),
+  isFliptDecisive: vi.fn(async () => decisiveMock()),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksDevTunnelEnabled: devTunnelEnabledMock,
 }));
 vi.mock('~/server/services/blocks/dev-tunnel-frame.service', () => ({
   resolveDevTunnelFrame: resolveFrameMock,
+}));
+const { cachedSessionMock, decisiveMock } = vi.hoisted(() => ({
+  cachedSessionMock: vi.fn<(id: number) => Promise<unknown>>(),
+  decisiveMock: vi.fn<() => boolean>(() => true),
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: cachedSessionMock },
 }));
 
 import { Prisma } from '@prisma/client';
@@ -48,8 +57,11 @@ import {
   enableAppAssistant,
   getAppAssistantPreview,
   getAppAssistantRefusal,
+  getAppAssistantRefusalForUserId,
+  getRunnerDevTunnelUser,
   mintAppAssistantToken,
 } from '../app-assistant.service';
+import { getFeatureFlagsAsync, isFliptDecisive } from '~/server/services/feature-flags.service';
 
 const USER_ID = 42;
 const CLIENT_ID = 'appassist-42';
@@ -110,6 +122,206 @@ describe('getAppAssistantRefusal', () => {
     });
     expect(refusal?.error).toMatch(error);
     expect(featuresMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getAppAssistantRefusalForUserId (the runner’s mints)', () => {
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    id: USER_ID,
+    bannedAt: null,
+    onboarding: OnboardingSteps.Buzz,
+    muted: false,
+    emailVerified: new Date('2024-01-01'),
+    meta: {},
+    isModerator: false,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    // The session cache still holds the user as they were: clean, verified, onboarded.
+    cachedSessionMock.mockResolvedValue(user({ tier: 'gold' } as Partial<SessionUser>));
+    decisiveMock.mockReturnValue(true);
+  });
+
+  it('answers unavailable, never a refusal, when the session hub misses the user', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    cachedSessionMock.mockResolvedValue(null);
+    // Even with the flags reading off on the bare row, as they would for a tier-segmented rollout.
+    featuresMock.mockReturnValue({ appBlocks: true, appAssistant: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+  });
+
+  it('answers unavailable when Flipt cannot decide the flags (the static fallback is not a refusal)', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    decisiveMock.mockReturnValue(false);
+    featuresMock.mockReturnValue({ appBlocks: false, appAssistant: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+  });
+
+  it('still refuses a banned user while the session hub or Flipt is down', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ bannedAt: new Date() }) as never);
+    cachedSessionMock.mockResolvedValue(null);
+    decisiveMock.mockReturnValue(false);
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 403,
+      error: expect.stringMatching(/banned/),
+    });
+  });
+
+  it('admits a user every gate admits', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+  });
+
+  it('refuses a user banned since their session was cached, reading the database, not the cache', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ bannedAt: new Date() }) as never);
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 403,
+      error: expect.stringMatching(/banned/),
+    });
+    expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: USER_ID } })
+    );
+  });
+
+  it('refuses a muted, unonboarded or unverified user, as the token route does', async () => {
+    for (const [name, overrides] of [
+      ['muted', { muted: true }],
+      ['onboarding', { onboarding: 0 }],
+      ['unverified', { emailVerified: null, meta: { emailVerificationRequired: true } }],
+    ] as const) {
+      dbMock.dbWrite.user.findUnique.mockResolvedValue(row(overrides) as never);
+      expect(await getAppAssistantRefusalForUserId(USER_ID), name).toMatchObject({ status: 403 });
+    }
+  });
+
+  it('refuses when the App Assistant flag is off for the user, judged with no request', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ appBlocks: true, appAssistant: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({
+      status: 403,
+      error: 'App Assistant is not available on this account',
+    });
+    // Evaluated as for the user on civitai.com: the runner's own request is never handed in, and
+    // Flipt's targeting attributes the database does not hold come from the session.
+    expect(vi.mocked(getFeatureFlagsAsync)).toHaveBeenLastCalledWith({
+      user: expect.objectContaining({ id: USER_ID, tier: 'gold', bannedAt: null }),
+    });
+  });
+
+  it('refuses a user who no longer exists', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toMatchObject({ status: 403 });
+  });
+
+  it('with remoteRunner, also refuses once the server runner is off for the user (its kill switch)', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 403,
+      error: 'Replies on the server are not available on this account',
+    });
+    // Control: the same user is admitted with the runner on, and without asking about it.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: true });
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toBeNull();
+  });
+
+  it('with remoteRunner, answers unavailable (asked again), never a refusal, while Flipt cannot decide the runner flag', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue({ ...ON, appAssistantRemoteRunner: false });
+    vi.mocked(isFliptDecisive).mockImplementation(
+      async (keys) => !keys.includes('appAssistantRemoteRunner')
+    );
+    expect(await getAppAssistantRefusalForUserId(USER_ID, { remoteRunner: true })).toMatchObject({
+      status: 503,
+      unavailable: true,
+    });
+    // Control: App Assistant's own mints are not held to the runner's flag.
+    expect(await getAppAssistantRefusalForUserId(USER_ID)).toBeNull();
+    vi.mocked(isFliptDecisive).mockImplementation(async () => decisiveMock());
+  });
+});
+
+describe('getRunnerDevTunnelUser (the runner’s dev-tunnel endpoints)', () => {
+  const RUNNER_USER_ID = 7301;
+  const row = (overrides: Record<string, unknown> = {}) => ({
+    id: RUNNER_USER_ID,
+    bannedAt: null,
+    onboarding: OnboardingSteps.Buzz,
+    muted: false,
+    emailVerified: new Date('2024-01-01'),
+    meta: {},
+    isModerator: false,
+    ...overrides,
+  });
+  const AUTHOR = { ...ON, appAssistantRemoteRunner: true, appBlocksAuthor: true };
+
+  beforeEach(() => {
+    cachedSessionMock.mockResolvedValue(
+      user({ id: RUNNER_USER_ID, tier: 'silver' } as Partial<SessionUser>)
+    );
+    decisiveMock.mockReturnValue(true);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row() as never);
+    featuresMock.mockReturnValue(AUTHOR);
+  });
+
+  it('hands back the user, as the gates judged them, when every gate and the author capability admit them', async () => {
+    const result = await getRunnerDevTunnelUser(RUNNER_USER_ID);
+    expect(result.refusal).toBeNull();
+    // The database row over the cached session: the fields the gates read are the fresh ones.
+    expect(result.user).toMatchObject({ id: RUNNER_USER_ID, tier: 'silver', bannedAt: null });
+    expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: RUNNER_USER_ID } })
+    );
+  });
+
+  it('refuses FORBIDDEN, as appDeveloperProcedure words it, without the author capability', async () => {
+    featuresMock.mockReturnValue({ ...AUTHOR, appBlocksAuthor: false });
+    expect(await getRunnerDevTunnelUser(RUNNER_USER_ID)).toEqual({
+      refusal: {
+        status: 403,
+        error: 'You do not have access to Apps authoring',
+        code: 'FORBIDDEN',
+      },
+    });
+  });
+
+  it('holds the user to the server runner’s own flag, answered refused', async () => {
+    featuresMock.mockReturnValue({ ...AUTHOR, appAssistantRemoteRunner: false });
+    expect(await getRunnerDevTunnelUser(RUNNER_USER_ID)).toEqual({
+      refusal: {
+        status: 403,
+        error: 'Replies on the server are not available on this account',
+        code: 'refused',
+      },
+    });
+  });
+
+  it('refuses a user banned now, answered refused, before reading the author capability', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(row({ bannedAt: new Date() }) as never);
+    const result = await getRunnerDevTunnelUser(RUNNER_USER_ID);
+    expect(result.refusal).toMatchObject({ status: 403, code: 'refused' });
+    expect(result.refusal?.error).toMatch(/banned/);
+    expect(result.user).toBeUndefined();
+  });
+
+  it('answers unavailable, never a refusal, when the gates cannot be judged just now', async () => {
+    cachedSessionMock.mockResolvedValue(null);
+    expect(await getRunnerDevTunnelUser(RUNNER_USER_ID)).toEqual({
+      refusal: {
+        status: 503,
+        error: 'App Assistant could not check this account just now',
+        unavailable: true,
+        code: 'unavailable',
+      },
+    });
   });
 });
 

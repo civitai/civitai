@@ -29,6 +29,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
@@ -712,6 +713,15 @@ export async function revokeCosmeticsFromUsers({
     },
     select: equippedHatSelect,
   });
+  const wearers = await dbWrite.userCosmetic.findMany({
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
+      ...wornByUser,
+    },
+    select: { userId: true },
+  });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
     where: {
@@ -721,6 +731,7 @@ export async function revokeCosmeticsFromUsers({
     },
   });
   await afterHoldingsRemoved(uniqueUserIds, equipped);
+  await queueWornCosmeticsUpdate(wearers.map((row) => row.userId));
 
   return { revoked: count };
 }
@@ -751,6 +762,10 @@ export async function unequipWithheldCosmetic(cosmeticId: number | null | undefi
   });
   const userIds = [...new Set(worn.map((row) => row.userId))];
   await afterHoldingsRemoved(userIds, worn);
+  // Rows not placed on content were worn by the user, which their search document shows.
+  await queueWornCosmeticsUpdate(
+    worn.filter((row) => row.equippedToId === null).map((row) => row.userId)
+  );
   await bustUserCreatorCache(userIds);
 }
 
@@ -765,6 +780,12 @@ export async function refuseIfWithheldAfterEquip(cosmeticIds: number[]) {
   for (const cosmeticId of withheld) await unequipWithheldCosmetic(cosmeticId);
   throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 }
+
+/** A holding the user wears themselves, which their search document shows. */
+const wornByUser = {
+  equippedAt: { not: null },
+  equippedToId: null,
+} satisfies Prisma.UserCosmeticWhereInput;
 
 type RemovedEquippedHolding = {
   userId: number;
@@ -911,10 +932,15 @@ export async function unassignCosmetic({
     where: { cosmeticId, userId: { in: userIds }, equippedToId: { not: null } },
     select: equippedHatSelect,
   });
+  const wearers = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId, userId: { in: userIds }, ...wornByUser },
+    select: { userId: true },
+  });
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
   await afterHoldingsRemoved(userIds, equipped);
+  await queueWornCosmeticsUpdate(wearers.map((row) => row.userId));
   return { count: result.count };
 }
 

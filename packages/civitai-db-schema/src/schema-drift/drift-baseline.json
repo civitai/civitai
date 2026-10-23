@@ -1,5 +1,5 @@
 {
-  "catalog": "src/schema-drift/__tests__/fixtures/catalog-production-2026-10-19.json",
+  "catalog": "src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json",
   "entries": [
     {
       "fingerprint": "missing-foreign-key|Article|coverId|Article|coverImage|Image",

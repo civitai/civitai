@@ -165,6 +165,11 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
   };
 });
 
+// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -187,7 +192,7 @@ vi.mock('~/server/metrics', async (importOriginal) => {
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImageById: vi.fn(async () => undefined),
+  deleteImages: vi.fn(async () => []),
 }));
 const { settleBountyPayout, refundUnpayableBountyAward } = vi.hoisted(() => ({
   settleBountyPayout: vi.fn(),
@@ -200,7 +205,7 @@ vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteBidsForModel: vi.fn(async () => undefined),
+  refundBidsForVersions: vi.fn(async () => undefined),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -213,8 +218,8 @@ const MOD = 9;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The post delete reports a count, as Prisma's deleteMany does.
-  vi.mocked(dbMock.dbWrite.post.deleteMany).mockResolvedValue({ count: 0 } as never);
+  // The wipe's re-check after its evidence deletes: still unheld.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
   fake.reset();
   fake.kv.push(
     { user_id: TARGET, key: 'gone-a', size_bytes: 101 },
@@ -320,7 +325,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       Object.assign(new Error('new row violates check constraint'), { code: '23514' })
     );
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage'],
+    });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
     const incomplete = lines.find((l) => l.includes('purge INCOMPLETE'));
@@ -343,7 +350,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     fake.extraSchemas = APP_USER_STORAGE_MAX_SCHEMAS + 1;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: ['app-storage-truncated'],
+    });
 
     const truncated = warn.mock.calls
       .map((c) => String(c[0]))
@@ -374,7 +383,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Positive control for the guard above: the warning must not fire on the
     // happy path, or it is noise that trains an operator to ignore it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({ incomplete: [] });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
     ).toEqual([]);
@@ -401,8 +410,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
-      keptUnderHold: 0,
-      keptPostsUnderHold: 0,
+      incomplete: ['app-storage'],
     });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
@@ -414,8 +422,17 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // And the main-DB wipe must have happened in full regardless. These are the
     // deletes that define the wipe; if the purge could abort it, they would be
     // missing or partial.
-    for (const model of ['model', 'image', 'post', 'article', 'collection', 'comment'] as const) {
-      expect(dbMock.dbWrite[model].deleteMany).toHaveBeenCalledWith({ where: { userId: TARGET } });
+    expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
+      where: { userId: TARGET },
+    });
+    // The evidence deletes are raw, so each can carry the legal hold in its own statement.
+    for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
+      const deleted = dbMock.dbWrite.$executeRaw.mock.calls.some(
+        ([strings, ...values]) =>
+          (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
+          values.includes(TARGET)
+      );
+      expect(deleted, table).toBe(true);
     }
   });
 });
@@ -438,11 +455,15 @@ describe('removeAllContent — bounties with a payout in flight', () => {
       })
     );
     expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
-    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
-      where: { userId: TARGET, id: { notIn: [4] } },
-    });
+    const calls = dbMock.dbWrite.$executeRaw.mock.calls as [string[], ...unknown[]][];
+    const bountyDelete = calls.findIndex(([strings]) =>
+      strings.join('?').includes('DELETE FROM "Bounty"\n')
+    );
+    expect(bountyDelete).toBeGreaterThanOrEqual(0);
+    const [, ...values] = calls[bountyDelete];
+    expect(values.slice(0, 2)).toEqual([TARGET, [4]]);
     expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
-      dbMock.dbWrite.bounty.deleteMany.mock.invocationCallOrder[0]
+      dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[bountyDelete]
     );
   });
 });

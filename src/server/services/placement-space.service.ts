@@ -10,7 +10,9 @@ import type {
   PlacementSurface,
   PlacementTargetType,
 } from '~/shared/utils/placement';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import type { StickerMediaType } from '~/shared/utils/sticker-placement';
+import { stickerMediaTypeOf, stickerMediaTypes } from '~/shared/utils/sticker-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
@@ -40,13 +42,20 @@ async function resolveImageTarget(imageId: number) {
     // shown to the placer, so the alternative — a second query keyed on the id
     // this one just returned — would be a round trip for a string this row can
     // reach in the same hop.
-    select: { id: true, userId: true, postId: true, user: { select: { username: true } } },
+    select: {
+      id: true,
+      userId: true,
+      postId: true,
+      type: true,
+      user: { select: { username: true } },
+    },
   });
   if (!image) throw throwBadRequestError('placement: that image no longer exists');
 
   return {
     ownerId: image.userId,
     postId: image.postId,
+    mediaType: stickerMediaTypeOf(image.type),
     ownerUsername: image.user?.username ?? null,
   };
 }
@@ -63,8 +72,7 @@ async function resolveModelTarget(modelId: number) {
 }
 
 /**
- * A post target is a storyline chapter: the only surface that takes posts is
- * `storyline`, and a continuation sits on the chapter post it continues.
+ * A post target is a storyline chapter: a continuation sits on the chapter post it continues.
  *
  * 🔴 **The owner is the storyline's creator, not the chapter post's author.**
  * Chapters can be written by collaborators, and a continuation of one still
@@ -94,7 +102,7 @@ async function resolveChapterTarget(postId: number) {
   // A taken-down storyline or a removed chapter is not a target at all:
   // refusing here, where the space is resolved, keeps every read of it (the
   // contributor's price, the submit) from showing it as open.
-  if (!chapter || chapter.removedAt || chapter.storyline.tosViolation)
+  if (!chapter || !isAnswerableParentChapter(chapter))
     throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
   return {
@@ -114,6 +122,8 @@ const resolveTarget = (
   postId: number | null;
   storylineId?: number;
   complete?: boolean;
+  /** Only an image target has one; the account's media-type setting reads it. */
+  mediaType?: StickerMediaType;
   ownerUsername: string | null;
 }> => {
   if (targetType === 'model') return resolveModelTarget(targetId);
@@ -244,7 +254,7 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, storylineId, complete, ownerUsername } = await resolveTarget(
+  const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await resolveTarget(
     targetType,
     targetId
   );
@@ -274,11 +284,21 @@ export async function resolvePlacementSpaceFor({
       : undefined;
   };
 
+  // An account that has switched stickers off for this kind of media is closed at
+  // the account level only, so it is the lowest rung of the cascade: a post or an
+  // image the owner switched on by hand still accepts them. Sticker-only — the
+  // setting lives in the sticker row, and no other surface reads it.
+  const account = at('user');
+  const mediaClosed =
+    surface === 'sticker' &&
+    mediaType !== undefined &&
+    !stickerMediaTypes(account?.settings).includes(mediaType);
+
   const resolved = resolvePlacementSpace(surface, {
     storyline: at('storyline'),
     image: at('image'),
     post: at('post'),
-    user: at('user'),
+    user: mediaClosed && account ? { ...account, mode: 'off' } : account,
   });
 
   // One read: the price range needs the same row.
@@ -477,10 +497,6 @@ export async function setPlacementSpace({
   // floor would be unable to change their mode, or turn the surface off at all,
   // until they first raised a price they set legitimately. Refuses a move below
   // the floor; lets an existing one be carried.
-  //
-  // The floor is the surface's own. A storyline's is 0, so a creator may open
-  // one for free; every other surface keeps its floor, and a guard test fails if
-  // a zero floor spreads to a surface whose price is its only spam gate.
   const floor = PLACEMENT_SURFACES[surface].serverMinPrice;
   if (price != null && price < floor && price !== existing?.price)
     throw throwBadRequestError(`placement: the lowest you can charge is ${floor} Buzz`);

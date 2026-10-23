@@ -1,6 +1,7 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { recordUnderSavepoint, type LabelStoreTx } from '~/server/services/label-store.service';
 import {
   readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
@@ -16,9 +17,8 @@ export const TEXT_SCAN_LABEL_FAMILY = 'text_scan';
 
 export const textScanModelQuestion = (label: TextScanFlagLabel) => `text_scan.model.${label}`;
 
-type RawTx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+type RawTx = LabelStoreTx;
 
-const LABEL_STATEMENT_TIMEOUT_MS = 3_000;
 // timeout: the write, the read-back and up to two labels (an appeal rules both flags), plus a wait on the model's row lock.
 const RULING_TRANSACTION = { maxWait: 10_000, timeout: 15_000 };
 
@@ -155,22 +155,9 @@ async function recordLabel(tx: RawTx, input: TextScanModelLabelInput) {
   return row?.id != null;
 }
 
-/** Runs the label work under a savepoint with a statement timeout, so a refusing, missing or slow store rolls back to the savepoint and the decision still commits. `SET LOCAL` outlives a released savepoint, hence last step only. Throws only when the savepoint itself fails: the transaction is then aborted and its COMMIT would silently drop the decision. */
-async function guarded(tx: RawTx, modelId: number, record: () => Promise<boolean>) {
-  await tx.$executeRaw`SAVEPOINT text_scan_label`;
-  try {
-    // Above the store's 2s lock_timeout, so one lock wait completes.
-    await tx.$executeRaw`SET LOCAL statement_timeout = ${Prisma.raw(
-      String(LABEL_STATEMENT_TIMEOUT_MS)
-    )}`;
-    const recorded = await record();
-    await tx.$executeRaw`RELEASE SAVEPOINT text_scan_label`;
-    return recorded;
-  } catch (error) {
-    await tx.$executeRaw`ROLLBACK TO SAVEPOINT text_scan_label`;
-    logNotRecorded(modelId, error);
-    return false;
-  }
+/** See `recordUnderSavepoint`: last step of the transaction only. */
+function guarded(tx: RawTx, modelId: number, record: () => Promise<boolean>) {
+  return recordUnderSavepoint(tx, record, (error) => logNotRecorded(modelId, error));
 }
 
 function logNotRecorded(modelId: number, error: unknown) {

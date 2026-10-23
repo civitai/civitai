@@ -105,6 +105,8 @@ export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS)
 export const PACK_FILTER_VALUE = 'Pack' as const;
 /** Review-queue filter value for a creator's mystery pack: a box listing whose box has a seller. */
 export const MYSTERY_PACK_FILTER_VALUE = 'MysteryPack' as const;
+/** Above this value the review pane shows a content's shelf sales: a real price, not just a claimed one. */
+export const SHELF_SALES_VALUE_THRESHOLD = 5_000;
 /** A shop type filter: a CosmeticType, or the pack pseudo-type. */
 export type ShopFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
 export const shopFilterTypeSchema = z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)]);
@@ -484,12 +486,15 @@ export const cosmeticImageMetaSchema = z.object({
 // Per-side fit adjustment for avatar decorations, stored on the cosmetic's
 // `data.offsets` as pixels. Negative extends the frame outside the avatar —
 // effectively scaling it up (see decorationFrameStyle).
-export const DECORATION_OFFSET_LIMIT = 5;
+export const CREATOR_OFFSET_LIMIT = 20;
+export const MODERATOR_OFFSET_LIMIT = 50;
+// The schema takes the moderator ceiling because moderators call the same procedures;
+// the creator range is enforced in the service (`assertCreatorOffsets`).
 const cosmeticOffsetSideSchema = z
   .number()
   .int()
-  .min(-DECORATION_OFFSET_LIMIT)
-  .max(DECORATION_OFFSET_LIMIT);
+  .min(-MODERATOR_OFFSET_LIMIT)
+  .max(MODERATOR_OFFSET_LIMIT);
 export type CosmeticOffsets = z.infer<typeof cosmeticOffsetsSchema>;
 export const cosmeticOffsetsSchema = z.object({
   top: cosmeticOffsetSideSchema,
@@ -763,6 +768,14 @@ export type TakedownCosmeticShopItemInput = z.infer<typeof takedownCosmeticShopI
 export const takedownCosmeticShopItemSchema = z.object({
   id: z.number(),
   reason: z.string().min(1).max(1000),
+});
+
+export type RefundShopPurchasesInput = z.infer<typeof refundShopPurchasesSchema>;
+export const refundShopPurchasesSchema = z.object({
+  buzzTransactionIds: z.array(z.string().min(1)).min(1).max(50),
+  clawback: z.boolean(),
+  reason: z.string().min(1).max(1000),
+  dryRun: z.boolean().default(true),
 });
 
 export const reviewQueueSortValues = ['oldest', 'newest'] as const;

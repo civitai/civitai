@@ -2415,8 +2415,8 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
-    /** App Blocks `kind:'training'` dataset handle; see block-training-dataset.service. */
-    TRAINING_DATASET: 'system:blocks:training-dataset',
+    /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
+    TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
     TRAINING_QUOTE: 'system:blocks:training-quote',
     /**
@@ -2429,6 +2429,8 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
+    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
+    REPEATS: 'download:repeats',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2492,6 +2494,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
+  SITE_ALERTS: {
+    // Hash of alert id → JSON alert. The alerts version is a field of CLIENT, not of this hash.
+    ALERTS: 'system:site-alerts',
+    SEQ: 'system:site-alerts:seq',
+  },
   SYSTEM: {
     FEATURES: 'system:features',
     PERMISSIONS: 'system:permissions',
@@ -2618,6 +2625,8 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
+    PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2792,6 +2801,8 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Delivery ids already handled by the HQ task webhook — `webhooks:hq:processed:${webhookId}`.
+    HQ_PROCESSED: 'webhooks:hq:processed',
     MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
@@ -3021,7 +3032,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
     // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
-    // Cleared when a reader chooses at that chapter. See storyline.service.
+    // Rewritten on each choice. See storyline.service.
     STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable

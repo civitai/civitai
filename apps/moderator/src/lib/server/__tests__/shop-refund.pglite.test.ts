@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -117,7 +118,7 @@ let mainApp: { url: string; body: unknown; afterCommit: boolean }[];
 let mainAppAnswers: () => Response;
 
 beforeEach(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(migration('20261105120000_mystery_box_items'));
   await db.exec(migration('20261107120000_mystery_box_listing_unlisted_and_refunds'));

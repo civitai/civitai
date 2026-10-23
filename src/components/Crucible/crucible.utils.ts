@@ -13,6 +13,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
+import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
 
 const crucibleQueryParamsSchema = z.object({
   status: commaDelimitedEnumArray(Object.values(CrucibleStatus)).optional(),
@@ -28,6 +29,28 @@ export const useCrucibleFilters = () => {
 };
 
 export const useCrucibleQueryParams = () => useZodRouteParams(crucibleQueryParamsSchema);
+
+export type CrucibleFilterState = {
+  status: CrucibleStatus[];
+  contentType?: CrucibleContentType;
+};
+
+// The server's feed default; never persisted, so a later change to the default reaches everyone.
+export const defaultCrucibleStatus = [CrucibleStatus.Active, CrucibleStatus.Pending];
+export const isDefaultCrucibleStatus = (status: CrucibleStatus[]) =>
+  status.length === defaultCrucibleStatus.length &&
+  defaultCrucibleStatus.every((s) => status.includes(s));
+
+/**
+ * The persisted-store patch for a filter choice. Every key is always present: the store merges
+ * patches, so a default written as `undefined` is what removes an earlier choice.
+ */
+export function toCrucibleFilterPatch({ status, contentType }: CrucibleFilterState) {
+  return {
+    status: isDefaultCrucibleStatus(status) ? undefined : status,
+    contentType,
+  };
+}
 
 export const useQueryCrucibles = (
   filters: Partial<GetCruciblesInfiniteSchema>,

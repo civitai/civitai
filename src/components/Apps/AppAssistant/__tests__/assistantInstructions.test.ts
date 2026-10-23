@@ -75,16 +75,30 @@ describe('buildAssistantInstructions', () => {
     );
   });
 
-  it('starts the dev server from the project directory, since the tool starts in /workspace', () => {
+  it('always starts the dev server with the tunnel flag, which the preview needs to load at all', () => {
+    // The whole paragraph: since civitai/cli#859 a Vite scaffold sends the headers the preview needs
+    // only with CIVITAI_DEV_TUNNEL_HMR=1, so a reworded dev-server step must be re-read here.
+    const DEV_SERVER =
+      "Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port 5173 in any command you give it.";
+    for (const runner of ['browser', 'remote'] as const)
+      for (const canPreview of [true, false]) {
+        const paragraphs = buildAssistantInstructions({
+          sandbox: running,
+          apps: ['my-app'],
+          canPreview,
+          previewHost: null,
+          runner,
+        }).split('\n\n');
+        expect(paragraphs.filter((p) => p.startsWith('Dev server:'))).toEqual([DEV_SERVER]);
+      }
+    // Nowhere is the flag described as being for live reload alone.
     const text = buildAssistantInstructions({
       sandbox: running,
       apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
-    expect(text).toContain(
-      'sandbox__dev_server_start also starts in /workspace, not in the project directory, so give it the command cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload work over the tunnel; any other command must keep it and --host 0.0.0.0 --port 5173.'
-    );
+    expect(text).not.toMatch(/CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload/);
   });
 
   it('names the running preview host', () => {
@@ -160,8 +174,9 @@ describe('buildAssistantSystemPromptWithSubagents', () => {
   it('pins the whole subagent rule text: a reworded rule must be re-read here', () => {
     expect(APP_ASSISTANT_SUBAGENT_RULES).toBe(
       [
-        '- dispatch_agent starts a read-only subagent. Use it when you need a conclusion drawn from many files or pages, not their contents: for example "how does the SDK do auth?" or "which components use X?".',
-        '- Do it yourself when the work is small, when your next step depends on the details rather than a summary, or when the user is waiting on a quick answer. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
+        '- dispatch_agent starts a read-only subagent that reads files, lists directories, reads the dev server’s status and logs and reads the guide, then returns a short summary. Prefer it to reading yourself: everything you read stays in your context for the rest of the reply, and a subagent’s reading does not.',
+        '- Dispatch, with every subagent of the step in that one step so they run at the same time: before you change an existing app (one subagent per area: its source, its tests, the guide pages you need); whenever answering a question would take you more than three reads; and to find where something is defined or used.',
+        '- Do it yourself only when one or two reads will do, or when you need a file’s exact contents to edit it. A subagent cannot change files, run commands, fetch web pages, start the dev server or the preview, or run the tests or the typecheck.',
         '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
       ].join('\n')
     );

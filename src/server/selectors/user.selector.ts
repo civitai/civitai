@@ -54,6 +54,18 @@ const userWithCosmetics = Prisma.validator<Prisma.UserDefaultArgs>()({
 
 export type UserWithCosmetics = Prisma.UserGetPayload<typeof userWithCosmetics>;
 
+/**
+ * `userWithCosmeticsSelect` without its `profilePicture` and `cosmetics` relations, for a hot read
+ * that fills both from the user caches with `getCosmeticsAndProfilePicturesForUsers`. Nested, each
+ * costs Prisma a query per parent query.
+ */
+export const userWithCachedCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
+  id: true,
+  username: true,
+  deletedAt: true,
+  image: true,
+});
+
 export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
   ...simpleUserSelect,
   leaderboardShowcase: true,

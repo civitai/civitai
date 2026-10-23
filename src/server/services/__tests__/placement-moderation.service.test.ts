@@ -13,14 +13,13 @@ const suspensionFindUnique = dbMock.dbWrite.placementSuspension.findUnique;
 const suspensionUpsert = dbMock.dbWrite.placementSuspension.upsert;
 
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement }));
-// The storyline chapter tombstone, so each takedown path can be seen asking for it inside its
-// transaction. The tombstone's own behaviour is tested beside it.
+// Asserted on, not executed: its own behaviour is tested in
+// storyline-chapter-removal.service.test.ts.
 const tombstoneChaptersForPlacements = vi.fn(async (..._a: unknown[]) => 0);
 vi.mock('~/server/services/storyline-chapter-removal.service', () => ({
   tombstoneChaptersForPlacements,
 }));
-// The refund of continuations under a removed chapter, so each takedown path can be seen asking
-// for it after its commit. Its own behaviour is tested in storyline-continuation-loop.test.ts.
+// Asserted on, not executed: its own behaviour is tested in storyline-continuation-loop.test.ts.
 const settleOrphanedContinuations = vi.fn(async (..._a: unknown[]) => ({
   considered: 0,
   settled: 0,
@@ -538,10 +537,9 @@ describe('a storyline chapter taken down with its placement', () => {
   const MODERATOR = 61;
 
   /**
-   * The transaction gets its own client, with its own `placement.updateMany`.
-   * Defined rather than assigned: `dbWrite` is a proxy whose set trap would take
-   * an assignment through the prototype onto the global client. So a takedown
-   * or a tombstone written outside the transaction is told apart.
+   * The transaction gets its own client with its own `placement.updateMany`, defined rather than
+   * assigned (`dbWrite` is a proxy whose set trap would take an assignment onto the global client),
+   * so a takedown or tombstone written outside the transaction is told apart.
    */
   const txUpdateMany = vi.fn();
   let tx: object;

@@ -12,6 +12,8 @@ const { mockTx } = vi.hoisted(() => ({
   mockTx: {
     modelVersion: { create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
     $executeRaw: vi.fn(),
+    // The name/trained-words row lock; no stored row, so no conflict check.
+    $queryRaw: vi.fn(async () => []),
   },
 }));
 
@@ -165,11 +167,11 @@ describe('upsertModelVersion — Denied and Paused training status is moderator-
     [null, TrainingStatus.Pending],
     [TrainingStatus.Denied, TrainingStatus.Denied],
     [TrainingStatus.Paused, TrainingStatus.Paused],
-    [TrainingStatus.Submitted, TrainingStatus.Pending],
     [TrainingStatus.Processing, TrainingStatus.Approved],
     [TrainingStatus.Submitted, TrainingStatus.Approved],
-    [TrainingStatus.Approved, TrainingStatus.Pending],
     [TrainingStatus.Expired, TrainingStatus.Pending],
+    // A stale form re-sending InReview after the run moved to Approved.
+    [TrainingStatus.Approved, TrainingStatus.InReview],
   ] as const)('lets an owner move %s to %s', async (from, to) => {
     seedExisting({ trainingStatus: from });
 
@@ -192,6 +194,57 @@ describe('upsertModelVersion — Denied and Paused training status is moderator-
     await edit({ trainingStatus: TrainingStatus.Approved }, true);
 
     expect(written().trainingStatus).toBe(TrainingStatus.Approved);
+  });
+});
+
+describe('upsertModelVersion — an owner cannot reopen a started run for a new dataset', () => {
+  const refused = [
+    [TrainingStatus.InReview, TrainingStatus.Pending],
+    [TrainingStatus.Approved, TrainingStatus.Pending],
+    [TrainingStatus.Submitted, TrainingStatus.Pending],
+    [TrainingStatus.Processing, TrainingStatus.Failed],
+    [TrainingStatus.Approved, TrainingStatus.Expired],
+    [TrainingStatus.InReview, null],
+  ] as const;
+
+  it.each(refused)('refuses a non-moderator moving %s to %s', async (from, to) => {
+    seedExisting({ trainingStatus: from });
+
+    await expect(edit({ trainingStatus: to })).rejects.toThrowError(/training status/i);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('leaves a moderator free to reopen it', async () => {
+    seedExisting({ trainingStatus: TrainingStatus.InReview });
+
+    await edit({ trainingStatus: TrainingStatus.Pending }, true);
+
+    expect(written().trainingStatus).toBe(TrainingStatus.Pending);
+  });
+
+  it('judges the move against the locked row, not the earlier read', async () => {
+    seedExisting({ trainingStatus: TrainingStatus.Pending });
+    mockTx.$queryRaw.mockResolvedValueOnce([
+      { name: 'v1', trainedWords: [], trainingStatus: TrainingStatus.Submitted },
+    ] as never);
+
+    await expect(edit({ trainingStatus: TrainingStatus.Pending })).rejects.toThrowError(
+      /training status/i
+    );
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('saves when the locked row still allows the move', async () => {
+    seedExisting({ trainingStatus: TrainingStatus.Pending });
+    mockTx.$queryRaw.mockResolvedValueOnce([
+      { name: 'v1', trainedWords: [], trainingStatus: TrainingStatus.Pending },
+    ] as never);
+
+    await edit({ trainingStatus: TrainingStatus.Pending });
+
+    expect(written().trainingStatus).toBe(TrainingStatus.Pending);
   });
 });
 

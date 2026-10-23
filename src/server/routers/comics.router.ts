@@ -11,7 +11,10 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import {
+  throwOnBlockedCommentContent,
+  throwOnBlockedUserContent,
+} from '~/server/services/blocklist.service';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -46,6 +49,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import {
+  assertUnlockAllowed,
   assertUnlockReleasesOutput,
   formatGenerationResponse2,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -57,12 +61,17 @@ import {
   whatIfPresetImageGen,
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import {
+  NSFW_CAPPED,
+  NSFW_CAPPED_MESSAGE,
+  WorkflowData,
+} from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -2163,7 +2172,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You enhance prompts.' },
             { role: 'user', content: 'A sample prompt for cost estimation.' },
@@ -2257,7 +2266,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You plan comic panels.' },
             { role: 'user', content: 'A sample story for cost estimation.' },
@@ -2275,6 +2284,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createProjectSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2362,6 +2375,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const data: Record<string, any> = {};
       if (input.name !== undefined) data.name = input.name;
@@ -2428,7 +2445,11 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createChapterSchema)
     .use(isProjectOwner)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user?.isModerator,
+        surface: 'comic',
+      });
       // Auto-increment position (use dbWrite to reduce read→write race window)
       const lastChapter = await dbWrite.comicChapter.findFirst({
         where: { projectId: input.projectId },
@@ -2461,6 +2482,10 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const updated = await dbWrite.comicChapter.update({
         where: {
@@ -2762,6 +2787,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createReferenceSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user!.isModerator,
+        surface: 'comic',
+      });
       const reference = await dbWrite.comicReference.create({
         data: {
           userId: ctx.user!.id,
@@ -3687,6 +3716,8 @@ export const comicsRouter = router({
               ? 'This generation produced mature content that cannot be viewed on this site.'
               : blockedReason === 'canUpgrade'
               ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
+              : blockedReason === NSFW_CAPPED
+              ? NSFW_CAPPED_MESSAGE
               : `Generation blocked: ${blockedReason}.`;
 
           if (
@@ -3925,15 +3956,7 @@ export const comicsRouter = router({
         throw throwBadRequestError('Panel has no workflow to unlock.');
       }
 
-      // Don't allow lifting mature restrictions while the user is on the
-      // SFW (green) domain — that would push the unblurred result into the
-      // editor on a domain that's not allowed to show it. Force the
-      // redirect-to-red flow instead.
-      if (ctx.domain === 'green') {
-        throw throwBadRequestError(
-          'Mature content cannot be unlocked on this site. Open the project on civitai.red to unlock.'
-        );
-      }
+      assertUnlockAllowed({ domain: ctx.domain, showNsfw: !!ctx.user!.showNsfw });
 
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
@@ -3951,15 +3974,13 @@ export const comicsRouter = router({
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
       await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-      try {
-        await updateWorkflow({
-          token,
-          workflowId: panel.workflowId,
-          allowMatureContent: true,
-        });
-      } catch (error) {
-        throw throwBadRequestError(getOrchestratorErrorMessage(error));
-      }
+      // Uncaught: the mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+      await updateWorkflow({
+        token,
+        workflowId: panel.workflowId,
+        allowMatureContent: true,
+        throwOnError: true,
+      });
 
       // 2) Re-fetch the workflow and run it through the same `BlobData`
       //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
@@ -4558,6 +4579,10 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.chapterName, {
+        isModerator: ctx.user?.isModerator,
+        surface: 'comic',
+      });
       // Check how many queue slots the user has available upfront.
       // Panels that fit will be submitted immediately; the rest get enqueued
       // for the background job to process when slots free up.
@@ -6179,6 +6204,10 @@ export const comicsRouter = router({
       if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const updated = await dbWrite.comicReference.update({
         where: { id: input.referenceId },
         data: { name: input.name },

@@ -2,6 +2,8 @@ import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
+import { bustAfterWrite } from './bust-after-write';
+import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
@@ -45,6 +47,7 @@ export async function updateImageNsfwLevel({
     .where('id', '=', id)
     .execute();
   await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   if (status) {
     await dbWrite
@@ -80,7 +83,9 @@ export async function updateImageNsfwLevel({
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id);
+  await bustAfterWrite('image-nsfw-level-cache-bust', () =>
+    bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id)
+  );
 
   void syncKonoFinalize(id, nsfwLevel);
 }

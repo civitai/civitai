@@ -472,6 +472,10 @@ export const serverSchema = z
     AXIOM_DATASTREAM: z.string().optional(),
     SEARCH_HOST: z.url().optional(),
     SEARCH_API_KEY: z.string().optional(),
+    // Search-only Meilisearch key (value + uid) that signs per-viewer browser search tokens.
+    // Unset = browsers keep using NEXT_PUBLIC_SEARCH_CLIENT_KEY.
+    SEARCH_TOKEN_API_KEY: z.string().optional(),
+    SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
@@ -893,6 +897,9 @@ export const serverSchema = z
     // webhook is created; unset disables the receiver (503) rather than trusting
     // unsigned deliveries.
     CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+    // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
+    // disables the receiver (503) rather than trusting unsigned deliveries.
+    HQ_WEBHOOK_SECRET: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -1107,6 +1114,26 @@ export const serverSchema = z
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.
     APP_ASSISTANT_SANDBOX_URL: z.url().optional(),
+    // App Assistant's server runner (apps/assistant-runner). The ES256 private key (PKCS8 PEM) civitai
+    // signs the runner's viewer tokens and run grants with; the runner holds only its public half.
+    // Unset, the runner endpoints answer 503.
+    ASSISTANT_RUNNER_SIGNING_KEY: z.string().optional(),
+    // The secret the runner presents when it trades a run grant for a short-lived token: at least 32
+    // characters. Unset or blank (a bare key in a ConfigMap arrives as ''), that endpoint answers
+    // 503; blank is accepted here so it cannot stop the app from booting.
+    ASSISTANT_RUNNER_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'ASSISTANT_RUNNER_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // How long a run grant lasts: the runner's wall clock per run (2 h) plus a margin.
+    ASSISTANT_RUNNER_GRANT_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(24 * 60 * 60)
+      .default(7800),
     // How long the review-build callback waits for a freshly-deployed review
     // preview's PUBLIC host to become reachable before giving up and marking the
     // preview failed. The dominant lag is the per-host DNS record's creation +
@@ -1223,9 +1250,9 @@ export const serverSchema = z
     //   (GET /zones?name=civit.ai) and cached in-process. Optional.
     APPS_DEV_TUNNEL_CF_ZONE_ID: z.string().optional(),
     // Storylines: how many readers must choose at the end of a chapter before each way on's
-    // share is shown. A whole number of at least 1; anything else means the default of 1.
-    // Read as a string and parsed by `storylineShareMinChoices`, so a bad value cannot stop the
-    // server from starting.
+    // share is shown. A whole number of at least 1; anything else means the default. Read as a
+    // string and parsed by `storylineShareMinChoices`, so a bad value cannot stop the server
+    // from starting.
     STORYLINE_SHARE_MIN_CHOICES: z.string().optional(),
   })
   .superRefine((env, ctx) => {
