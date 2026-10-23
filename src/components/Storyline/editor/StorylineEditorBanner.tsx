@@ -15,7 +15,9 @@ export type StorylineEditorBannerProps =
       onRemove?: () => void;
       removing?: boolean;
     }
-  | { variant: 'chapter'; storyline: BannerStoryline; chapterNumber: number };
+  | { variant: 'chapter'; storyline: BannerStoryline; chapterNumber: number }
+  /** A draft that continues a chapter of the storyline. */
+  | { variant: 'continue'; storyline: BannerStoryline; chapterNumber: number };
 
 /** What the post editor says about the storyline its post belongs to. */
 export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
@@ -29,10 +31,10 @@ export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
         <IconBooks size={16} aria-hidden />
       </ThemeIcon>
       <div className="min-w-0 flex-1">
-        {props.variant === 'start' ? (
+        {props.variant !== 'chapter' ? (
           <>
             <Text size="xs" fw={700} c="violet">
-              Chapter 1
+              Chapter {props.variant === 'start' ? 1 : props.chapterNumber}
             </Text>
             <Anchor
               component={Link}
