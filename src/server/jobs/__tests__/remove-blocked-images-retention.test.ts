@@ -200,7 +200,8 @@ const {
     mockDeleteImages: vi.fn(async (ids: number[], ..._rest: unknown[]) =>
       ids.map((id) => ({ id }))
     ),
-    mockLogToAxiom: vi.fn(),
+    // Async like the real logger: the sweep chains `.catch` on it.
+    mockLogToAxiom: vi.fn(async (_data: Record<string, unknown>) => undefined),
   };
 });
 
@@ -392,8 +393,9 @@ describe('remove-blocked-images retention clock', () => {
     expect(queuePruneIds()).not.toContain(1);
     // Read off the primary: a marker written within replica lag must still hold this run.
     expect(
-      mockDbWrite.$queryRaw.mock.calls.some(([strings]) =>
-        (strings as TemplateStringsArray).join('?').includes('"EvidenceHeldUser"')
+      // The legal-hold lookup passes a `Prisma.sql` object, not a template.
+      mockDbWrite.$queryRaw.mock.calls.some(([first]) =>
+        ('strings' in first ? first.strings : first).join('?').includes('"EvidenceHeldUser"')
       )
     ).toBe(true);
   });
@@ -408,7 +410,6 @@ describe('remove-blocked-images retention clock', () => {
 
   // e.g. the function not there yet while the hand-applied migration lags the deploy.
   it('still deletes when the sweep fails', async () => {
-    mockLogToAxiom.mockResolvedValueOnce(undefined);
     const recordOnly = mockDbWrite.$executeRaw.getMockImplementation()!;
     mockDbWrite.$executeRaw.mockImplementation(
       async (strings: TemplateStringsArray, ...values: unknown[]) => {
