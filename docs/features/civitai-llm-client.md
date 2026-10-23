@@ -46,7 +46,6 @@ Dispatcher rule (`src/server/games/daily-challenge/generative-content.ts`):
 ```ts
 function pickClient(model: string) {
   if (isCivitaiHostedModel(model)) {
-    // urn:air:* or civitai/*
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     return civitaiLLM;
   }
@@ -59,13 +58,13 @@ URN- and `civitai/`-prefixed models hit the Civitai LLM client. All other model 
 
 ## Files
 
-| File                                                      | Purpose                                                                             |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `src/server/services/ai/civitai-llm.ts`                   | Thin OpenAI-compatible client + defenses                                            |
-| `src/server/services/ai/openrouter.ts`                    | OpenRouter SDK wrapper; hosts `AI_MODELS` constants (including Civitai-hosted URNs) |
-| `src/server/games/daily-challenge/generative-content.ts`  | Dispatcher, per-function model defaults, five call sites                            |
-| `src/components/Challenge/Playground/ModelSelector.tsx`   | Mod-only model picker                                                               |
-| `src/components/Challenge/Playground/playground.store.ts` | Zustand store; versioned `migrate` keeps persisted defaults current                 |
+| File                                                      | Purpose                                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `src/server/services/ai/civitai-llm.ts`                   | Thin OpenAI-compatible client + defenses                                              |
+| `src/server/services/ai/openrouter.ts`                    | OpenRouter SDK wrapper; hosts `AI_MODELS` constants (including Civitai-hosted models) |
+| `src/server/games/daily-challenge/generative-content.ts`  | Dispatcher, per-function model defaults, five call sites                              |
+| `src/components/Challenge/Playground/ModelSelector.tsx`   | Mod-only model picker                                                                 |
+| `src/components/Challenge/Playground/playground.store.ts` | Zustand store; versioned `migrate` keeps persisted defaults current                   |
 
 ## Public API
 
@@ -138,22 +137,16 @@ Same retry semantics as `openrouter.getJsonCompletion`: on "no content" or "all 
 
 ## Daily-Challenge Defaults
 
-The daily-challenge pipeline runs on OpenRouter today. The civitai-llm client is wired up via the dispatcher so any call site can opt into a Civitai-hosted model (e.g. for testing in the Playground) without touching the existing OpenRouter path.
+The daily-challenge pipeline's results come from OpenRouter (MiMo). Any call site can opt into a Civitai-hosted model through the dispatcher, e.g. from the Playground. Entry reviews also run a **shadow review**: `reviewWithShadow` (`src/server/games/daily-challenge/review-shadow.ts`) re-runs a sampled share of reviews on the challenge config's `reviewShadow.model` (default `civitai/qwen3.8`, `sampleRate` 1) and logs both outcomes to Axiom as `daily-challenge-review-shadow`. Only the production review is returned and the shadow is never awaited. Set `reviewShadow` to `null` to turn it off.
 
 `src/server/games/daily-challenge/generative-content.ts`:
 
 ```ts
-const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
-const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.GPT_5_NANO;
+const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
+export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
 ```
 
-| Function                    | Default       | Reason                     |
-| --------------------------- | ------------- | -------------------------- |
-| `generateCollectionDetails` | `GPT_4O_MINI` | Short text generation      |
-| `generateArticle`           | `GPT_4O_MINI` | Persona / creative writing |
-| `generateThemeElements`     | `GPT_4O_MINI` | Keyword extraction         |
-| `generateReview`            | `GPT_5_NANO`  | Stricter image scoring     |
-| `generateWinners`           | `GPT_4O_MINI` | Narrative + ranking        |
+`generateReview` falls back to `DEFAULT_REVIEW_MODEL`; every other function falls back to `DEFAULT_CONTENT_MODEL`. The comment above the constants has the rationale.
 
 Caller-supplied `input.model` overrides the default at every site. The mod-only Playground (`ModelSelector.tsx`) is the primary way to override interactively.
 
@@ -182,7 +175,7 @@ const body = {
 };
 ```
 
-Measured 2026-09-21 against the abliterated Qwen3 model: both return 200. `response_format` returns bare JSON (31 completion tokens, `finish_reason: stop`, no preamble and no fence), though accuracy was not evaluated, and in the probe run its answer to an arithmetic word problem was wrong while the un-flagged arms had derived the correct value. `chat_template_kwargs: { enable_thinking: false }` is accepted but does NOT suppress reasoning on this model: probed at `max_tokens: 400` with and without it on an identical prompt, both arms returned 400 completion tokens with `finish_reason: length`, both still mid-derivation, with ~1,000 characters of prose before the JSON in each, and neither emitted a fence. Do not reach for it to control cost or latency without measuring the model you are actually calling. Neither is wired into the client yet.
+Measured 2026-09-21 against the abliterated Qwen3.6-35B model (since retired from the orchestrator): both return 200. `response_format` returns bare JSON (31 completion tokens, `finish_reason: stop`, no preamble and no fence), though accuracy was not evaluated, and in the probe run its answer to an arithmetic word problem was wrong while the un-flagged arms had derived the correct value. `chat_template_kwargs: { enable_thinking: false }` is accepted but does NOT suppress reasoning on this model: probed at `max_tokens: 400` with and without it on an identical prompt, both arms returned 400 completion tokens with `finish_reason: length`, both still mid-derivation, with ~1,000 characters of prose before the JSON in each, and neither emitted a fence. Do not reach for it to control cost or latency without measuring the model you are actually calling. Neither is wired into the client yet.
 
 ## Env Vars
 
@@ -191,7 +184,7 @@ Measured 2026-09-21 against the abliterated Qwen3 model: both return 200. `respo
 | `ORCHESTRATOR_ENDPOINT`     | Base URL. Trailing slashes are stripped. |
 | `ORCHESTRATOR_ACCESS_TOKEN` | Bearer token.                            |
 
-If either is missing, `civitaiLLM` exports as `undefined`. The dispatcher then throws `'Civitai LLM not connected'` if a URN model is requested, surfacing a clear setup error instead of an opaque network failure.
+If either is missing, `civitaiLLM` exports as `undefined`. The dispatcher then throws `'Civitai LLM not connected'` if a `urn:air:*` or `civitai/*` model is requested, surfacing a clear setup error instead of an opaque network failure.
 
 ## Debugging
 
@@ -214,8 +207,8 @@ For richer per-message dumps (full prompt content, image URLs, content tails), c
 
 - **Streaming**: not implemented. The endpoint supports SSE (`stream: true`); add a `streamChatCompletion` method when a consumer needs it.
 - **Tool calls**: not implemented. Add `runAgentLoop` parity with `openrouter.ts` if/when the Orchestrator supports OpenAI-format tool calls through Qwen.
-- **Vision**: works. Image-bearing content arrays are forwarded unchanged and the model tokenises them — a 512px image took `prompt_tokens` from 34 to 292 on the abliterated Qwen3 model, which described detail present only in the pixels, at every nsfwLevel.
-- **Token usage**: discarded. The Orchestrator returns a `usage` object on every response, including for `urn:air:*`, but `ChatCompletionResponse` in `civitai-llm.ts` does not declare the field, so callers see nothing. `getCompletionWithUsage` in the daily-challenge pipeline therefore hardcodes zeros. Add the field before pricing any `urn:air:*` model.
+- **Vision**: works. Image-bearing content arrays are forwarded unchanged and the model tokenises them — a 512px image took `prompt_tokens` from 34 to 292 on the abliterated Qwen3.6-35B model (since retired), which described detail present only in the pixels, at every nsfwLevel.
+- **Token usage**: discarded. The Orchestrator returns a `usage` object on every response, including for `urn:air:*`, but `ChatCompletionResponse` in `civitai-llm.ts` does not declare the field, so callers see nothing. `getCompletionWithUsage` in the daily-challenge pipeline therefore hardcodes zeros. Add the field before pricing any Civitai-hosted model.
 
 ## See Also
 

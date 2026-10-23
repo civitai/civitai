@@ -31,9 +31,8 @@ function describeOutcome(
 }
 
 /**
- * Runs the production review and, for a sampled share of entries, the same review on a candidate
- * model, logging both to Axiom. Only the production review is returned; the shadow is never
- * awaited, so a slow or failing candidate cannot delay or break judging.
+ * Only the production review is returned; the shadow is never awaited, so a slow or failing
+ * candidate cannot delay or break judging.
  */
 export async function reviewWithShadow<T extends ShadowableReview>({
   run,
@@ -47,14 +46,15 @@ export async function reviewWithShadow<T extends ShadowableReview>({
   const primary = run(undefined);
   if (!shadow || Math.random() >= shadow.sampleRate) return primary;
 
-  void Promise.all([timed(() => primary), timed(() => run(shadow.model))]).then(
-    ([primaryOutcome, shadowOutcome]) =>
+  void Promise.all([timed(() => primary), timed(() => run(shadow.model))])
+    .then(([primaryOutcome, shadowOutcome]) =>
       logToAxiom({
         type: 'daily-challenge-review-shadow',
         ...context,
         primary: describeOutcome(primaryOutcome, undefined),
         shadow: describeOutcome(shadowOutcome, shadow.model),
       })
-  );
+    )
+    .catch((error) => console.error('[review-shadow] failed to log', error));
   return primary;
 }

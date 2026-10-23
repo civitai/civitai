@@ -31,8 +31,6 @@ export const AI_MODELS = {
   // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
   QWEN_FLASH: 'qwen/qwen3.7-flash',
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
-  // Served by the Civitai orchestrator's chat-completions endpoint (civitai-llm client), not OpenRouter.
-  CIVITAI_QWEN_3_8: 'civitai/qwen3.8',
   // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
   // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
   JEV: 'typesafe/jev-1.13',
