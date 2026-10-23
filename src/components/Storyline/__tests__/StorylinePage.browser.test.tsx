@@ -424,6 +424,38 @@ describe('StorylinePage', () => {
     expect(mocks.openManage).toHaveBeenCalledWith({ storylineId: 2 });
   });
 
+  test('an owner whose storyline has no chapter 1 yet is sent to write it', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: 'owner',
+      chapterCount: 0,
+      contributorCount: 0,
+      rootPostId: null,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect
+      .element(page.getByRole('link', { name: 'Write chapter 1' }))
+      .toHaveAttribute('href', '/posts/create?storyline=2');
+    expect(page.getByRole('link', { name: 'Start reading' }).elements()).toHaveLength(0);
+  });
+
+  test('no one else is offered "Write chapter 1"', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: null,
+      chapterCount: 0,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(page.getByRole('link', { name: 'Write chapter 1' }).elements()).toHaveLength(0);
+  });
+
   test.each([null, 'collaborator'])('a %s viewer sees no Manage button', async (viewerRole) => {
     mocks.storyline = { ...STORYLINE, viewerRole };
     renderWithProviders(<StorylinePage id={2} />);

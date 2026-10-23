@@ -105,6 +105,17 @@ function images(nsfwLevel: number) {
 
 type Site = { isGreen: boolean; viewerId?: number };
 
+// The event paths also run the feed's visibility SQL (tested against Postgres in
+// challenge-event-visibility.sql.behavior.test.ts); here every challenge passes it.
+function eventQueries() {
+  dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    const sql = strings.join('');
+    if (sql.includes('COUNT(*) AS count FROM "Challenge" c')) return [{ count: BigInt(1) }];
+    if (sql.includes('FROM "Challenge" c')) return [{ id: cardRow.id }];
+    return [];
+  }) as never);
+}
+
 // Each list, as served to `site`, reduced to the one cover it returns.
 const paths: Record<string, (site: Site) => Promise<{ url: string } | null | undefined>> = {
   'daily challenges': async (site) => {
@@ -146,19 +157,21 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
     dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
       { ...event, challenges: [] },
     ] as never);
-    return (await getActiveEvents(site))[0].coverImage;
+    eventQueries();
+    return (await getActiveEvents(site, true))[0].coverImage;
   },
   'event challenge cover': async (site) => {
     dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
       { ...event, coverImageId: null, challenges: [{ ...cardRow, judgeId: null }] },
     ] as never);
     dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    return (await getActiveEvents(site))[0].challenges[0].coverImage;
+    eventQueries();
+    return (await getActiveEvents(site, true))[0].challenges[0].coverImage;
   },
   'event by id': async (site) => {
     dbMock.dbRead.challengeEvent.findUnique.mockResolvedValue(event as never);
-    return (await getChallengeEventById(event.id, site)).coverImage;
+    eventQueries();
+    return (await getChallengeEventById(event.id, site, true)).coverImage;
   },
 };
 

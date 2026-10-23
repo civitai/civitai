@@ -21,14 +21,10 @@ import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { createRecaptchaAssesment, verifyCaptchaToken } from '../recaptcha/client';
 import { RECAPTCHA_ACTIONS } from '../common/constants';
 
-export const createCustomerHandler = async ({
-  input,
-  ctx,
-}: {
-  input: Schema.CreateCustomerInput;
-  ctx: ProtectedContext;
-}) => {
-  return await createCustomer({ ...input });
+export const createCustomerHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
+  const { id, email } = ctx.user;
+  if (!email) throw throwAuthorizationError('email required');
+  return await createCustomer({ id, email });
 };
 
 export const createDonateSessionHandler = async ({
@@ -179,11 +175,7 @@ export const createCancelSubscriptionSessionHandler = async ({
   }
 };
 
-export const cancelSubscriptionWithFallbackHandler = async ({
-  ctx,
-}: {
-  ctx: ProtectedContext;
-}) => {
+export const cancelSubscriptionWithFallbackHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
   try {
     return await cancelSubscriptionWithFallback({

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -594,10 +595,15 @@ export const updateContentSettingsSchema = z.object({
   autoplayGifs: z.boolean().optional(),
 });
 
+/** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */
+export const handBanReasonSchema = z
+  .enum(BanReasonCode)
+  .refine((code) => !banReasonDetails[code].systemOnly, 'This reason is set only by the system');
+
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
 export const toggleBanUserSchema = z.object({
   id: z.number(),
-  reasonCode: z.enum(BanReasonCode).optional(),
+  reasonCode: handBanReasonSchema.optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
