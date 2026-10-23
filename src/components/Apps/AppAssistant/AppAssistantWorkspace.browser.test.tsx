@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
+import { gateToolSet } from '@civitai/components-chat/core';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -237,6 +238,18 @@ const m = vi.hoisted(() => ({
   listNeverLoaded: true,
   /** The session the preview pane was last rendered with. */
   previewSession: undefined as unknown,
+  /** A delete the service refuses. */
+  removeReject: null as unknown,
+  /** Toasts the page showed. */
+  toasts: [] as { kind: 'success' | 'error'; title?: string; message: unknown }[],
+  /** Starts, export requests and downloads, in the order they happened. */
+  events: [] as string[],
+  /** How the gateway answers each export request in turn: a status, or a zip (200) once they run out. */
+  exportAnswers: [] as number[],
+  /** The bearer each export request carried. */
+  exportAuth: [] as (string | null)[],
+  /** Files the page handed the browser to save. */
+  downloads: [] as { name: string; href: string }[],
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
@@ -291,6 +304,7 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
     const serve = (app: string) => {
       m.open(app);
       if (m.openReject) throw m.openReject;
+      m.events.push(`start ${app}`);
       const found = m.list.find((s) => s.app === app);
       if (found) return { sandbox: found, created: false };
       const made = sandbox(`sbx-new-${app}`, { app, state: 'starting' });
@@ -333,7 +347,20 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
           if (m.deferOpen) m.settleOpen = settle;
           else setTimeout(settle, 0);
         },
-        mutateAsync: async (app: string) => serve(app),
+        // As `mutate`: the service answers later (or when the test settles it).
+        mutateAsync: (app: string) =>
+          new Promise((resolve, reject) => {
+            const settle = () => {
+              try {
+                resolve(serve(app));
+              } catch (error) {
+                reject(error);
+              }
+            };
+            m.resume(app);
+            if (m.deferOpen) m.settleOpen = settle;
+            else setTimeout(settle, 0);
+          }),
         isPending: false,
         error: m.openError,
       },
@@ -343,6 +370,12 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
           m.remove(name);
           m.list = m.list.filter((s) => s.name !== name);
           opts?.onSuccess?.();
+        },
+        mutateAsync: async (name: string) => {
+          m.remove(name);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (m.removeReject) throw m.removeReject;
+          m.list = m.list.filter((s) => s.name !== name);
         },
         isPending: false,
         error: null,
@@ -356,6 +389,19 @@ vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) 
     m.onConsentRequired = opts?.onConsentRequired ?? null;
     return { getToken: m.getToken, enable: m.enable };
   },
+}));
+vi.mock('~/utils/notifications', () => ({
+  showSuccessNotification: ({ title, message }: { title?: string; message: unknown }) =>
+    m.toasts.push({ kind: 'success', title, message }),
+  showErrorNotification: ({
+    title,
+    error,
+    reason,
+  }: {
+    title?: string;
+    error: { message: string };
+    reason?: unknown;
+  }) => m.toasts.push({ kind: 'error', title, message: reason ?? error.message }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -510,6 +556,12 @@ beforeEach(() => {
   m.listError = null;
   m.listNeverLoaded = true;
   m.previewSession = undefined;
+  m.removeReject = null;
+  m.toasts = [];
+  m.events = [];
+  m.exportAnswers = [];
+  m.exportAuth = [];
+  m.downloads = [];
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
@@ -698,7 +750,7 @@ describe('AppAssistantWorkspace app switcher', () => {
     expect(m.open).not.toHaveBeenCalled();
   });
 
-  test('a paused app is shown as paused, with no banner and no Resume to press', async () => {
+  test('a paused app is shown as paused, with no Resume to press', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended' })];
     await mount();
     await openFirst();
@@ -2190,5 +2242,492 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await openFromSwitcher('app-bbbb');
     await expect.element(pane()).not.toBeInTheDocument();
     expect(m.stop).not.toHaveBeenCalled();
+  });
+});
+
+const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+describe('AppAssistantWorkspace paused-app notice', () => {
+  // aaaa was used last, so a visit opens it; created in the other order.
+  const pausedApps = () => [
+    sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', lastActivityAt: ago(2), createdAt: ago(30) }),
+    sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(9), createdAt: ago(20) }),
+  ];
+  const notice = () => page.getByRole('region', { name: 'App status' });
+  const startButton = () => notice().getByRole('button', { name: 'Start app' });
+
+  test('🔴 a visit opens the app used last, says it is paused, and starts nothing by itself', async () => {
+    m.list = pausedApps();
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
+    await expect.element(notice().getByText('app-aaaa is paused.', { exact: true })).toBeVisible();
+    await expect.element(startButton()).toBeVisible();
+    await settle(300);
+    expect(m.open).not.toHaveBeenCalled();
+    expect(m.resume).not.toHaveBeenCalled();
+  });
+
+  test('NEGATIVE CONTROL: a running app shows no notice', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: ago(2), createdAt: ago(30) })];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
+    await settle();
+    expect(notice().query()).toBeNull();
+  });
+
+  test('Start app starts it once, says Starting… while it starts, and goes once it runs', async () => {
+    m.list = pausedApps();
+    const screen = await mount();
+    await expect.element(startButton()).toBeVisible();
+    m.deferOpen = true;
+    await startButton().click();
+    expect(m.resume.mock.calls).toEqual([['app-aaaa']]);
+    await expect.element(notice().getByText('Starting…', { exact: true })).toBeVisible();
+    await expect.element(startButton()).toHaveAttribute('data-loading', 'true');
+
+    m.settleOpen!();
+    m.list = [{ ...m.list[0], state: 'starting' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await expect.element(notice().getByText('Starting…', { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(notice().getByRole('button').elements()).toHaveLength(0));
+
+    m.list = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await expect.element(notice()).not.toBeInTheDocument();
+    expect(m.open.mock.calls).toEqual([['app-aaaa']]);
+    expect(m.resume).toHaveBeenCalledTimes(1);
+  });
+
+  test('a start that fails says why and keeps Start app', async () => {
+    m.list = pausedApps();
+    await mount();
+    m.openReject = new SandboxApiError('Sandbox service error (500)', 500, 'unavailable');
+    await startButton().click();
+    await expect
+      .element(
+        notice().getByText('Your apps could not be reached right now. Try again in a moment.', {
+          exact: true,
+        })
+      )
+      .toBeVisible();
+    await expect.element(startButton()).toBeEnabled();
+    await expect.element(notice().getByText('app-aaaa is paused.', { exact: true })).toBeVisible();
+  });
+
+  test('says that starting it pauses the app that runs', async () => {
+    m.list = [
+      pausedApps()[0],
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: ago(9), createdAt: ago(20) }),
+    ];
+    await mount();
+    await expect
+      .element(notice().getByText('Starting it pauses app-bbbb.', { exact: true }))
+      .toBeVisible();
+  });
+
+  test('NEGATIVE CONTROL: with no other app running, there is no such hint', async () => {
+    m.list = pausedApps();
+    await mount();
+    await expect.element(startButton()).toBeVisible();
+    expect(
+      notice()
+        .getByText(/pauses/)
+        .elements()
+    ).toHaveLength(0);
+  });
+
+  test('a message sent while paused goes through the existing hold, starting it once, and the notice follows', async () => {
+    m.list = pausedApps();
+    await mount();
+    await userSends('Add a high-score table');
+    expect(m.queued).toMatchObject({ text: 'Add a high-score table', held: true });
+    expect(m.resume.mock.calls).toEqual([['app-aaaa']]);
+    await expect.element(notice().getByText('Starting…', { exact: true })).toBeVisible();
+  });
+});
+
+/** The gateway's export and the browser's download, stubbed for one test. */
+function stubExport() {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin !== BASE) throw new Error(`unexpected fetch ${url.href}`);
+    const item = /^\/v1\/sandboxes\/([a-z0-9-]+)$/.exec(url.pathname);
+    if (item && (init?.method ?? 'GET') === 'GET') {
+      const found = m.list.find((s) => s.name === item[1]);
+      // The app came up.
+      return found
+        ? Response.json({ ...found, state: 'running' })
+        : Response.json({ error: 'not found' }, { status: 404 });
+    }
+    const exported = /^\/s\/([a-z0-9-]+)\/export$/.exec(url.pathname);
+    if (exported) {
+      m.events.push(`export ${exported[1]} ${url.searchParams.get('app')}`);
+      m.exportAuth.push(new Headers(init?.headers).get('authorization'));
+      const status = m.exportAnswers.shift();
+      if (status) return Response.json({ error: `export refused (${status})` }, { status });
+      return new Response(new Blob(['PK-zip-bytes'], { type: 'application/zip' }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch ${url.href}`);
+  });
+  const clickSpy = vi
+    .spyOn(HTMLAnchorElement.prototype, 'click')
+    .mockImplementation(function (this: HTMLAnchorElement) {
+      m.events.push(`download ${this.download}`);
+      m.downloads.push({ name: this.download, href: this.href });
+    });
+  return () => {
+    fetchSpy.mockRestore();
+    clickSpy.mockRestore();
+  };
+}
+
+const EXPORT_NOTE_TEXT =
+  'It has the app’s own files only: no node_modules, build output, caches, .git or .env files.';
+
+describe('AppAssistantWorkspace app menu: Start and Export', () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+  const actions = (app: string) => page.getByRole('button', { name: `Actions for ${app}` });
+  async function openMenu(app: string) {
+    if (!document.querySelector('[role="dialog"]')) await switcher().click();
+    await actions(app).click();
+  }
+  const twoApps = () => [
+    sandbox('sbx-aaaaaaaaaaaa'),
+    sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' }),
+  ];
+
+  test('a paused app’s menu offers Start, saying which running app it pauses, and Export', async () => {
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-bbbb');
+    const start = page.getByRole('menuitem', { name: /^Start/ });
+    await expect.element(start.getByText('Start', { exact: true })).toBeVisible();
+    await expect.element(start.getByText('app-aaaa will be paused', { exact: true })).toBeVisible();
+    const exportItem = page.getByRole('menuitem', { name: /^Export/ });
+    await expect.element(exportItem.getByText('Export', { exact: true })).toBeVisible();
+    await expect.element(exportItem.getByText('Download as zip', { exact: true })).toBeVisible();
+  });
+
+  test('NEGATIVE CONTROL: a running app’s menu has Export but no Start', async () => {
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-aaaa');
+    await expect.element(page.getByRole('menuitem', { name: /^Export/ })).toBeVisible();
+    expect(page.getByRole('menuitem', { name: /^Start/ }).elements()).toHaveLength(0);
+  });
+
+  test('Start starts that app, with only its own menu button busy', async () => {
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-bbbb');
+    m.deferOpen = true;
+    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    expect(m.resume.mock.calls).toEqual([['app-bbbb']]);
+    await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
+    expect(actions('app-aaaa').element().hasAttribute('data-loading')).toBe(false);
+    m.settleOpen!();
+    await vi.waitFor(() =>
+      expect(actions('app-bbbb').element().hasAttribute('data-loading')).toBe(false)
+    );
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+  });
+
+  test('Export downloads a running app as <app>.zip with the sandbox token, starting nothing, and says what it holds', async () => {
+    restore = stubExport();
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-aaaa');
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
+    expect(m.downloads[0].name).toBe('app-aaaa.zip');
+    expect(m.downloads[0].href).toMatch(/^blob:/);
+    expect(m.events).toEqual(['export sbx-aaaaaaaaaaaa app-aaaa', 'download app-aaaa.zip']);
+    expect(m.exportAuth).toEqual(['Bearer sandbox-token']);
+    expect(m.getToken).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'sandbox' }));
+    expect(m.open).not.toHaveBeenCalled();
+    expect(m.toasts).toEqual([
+      { kind: 'success', title: 'Downloaded app-aaaa.zip', message: EXPORT_NOTE_TEXT },
+    ]);
+  });
+
+  test('Export of a paused app starts it first, then downloads, with its menu button busy meanwhile', async () => {
+    restore = stubExport();
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-bbbb');
+    m.deferOpen = true;
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
+    expect(actions('app-aaaa').element().hasAttribute('data-loading')).toBe(false);
+    expect(m.events).toEqual([]);
+    m.settleOpen!();
+    await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
+    expect(m.events).toEqual([
+      'start app-bbbb',
+      'export sbx-bbbbbbbbbbbb app-bbbb',
+      'download app-bbbb.zip',
+    ]);
+    await vi.waitFor(() =>
+      expect(actions('app-bbbb').element().hasAttribute('data-loading')).toBe(false)
+    );
+  });
+
+  test('a 413 says the app is too large, and downloads nothing', async () => {
+    restore = stubExport();
+    m.exportAnswers = [413];
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-aaaa');
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
+    expect(m.toasts[0]).toMatchObject({
+      kind: 'error',
+      message: 'This app is too large to export.',
+    });
+    expect(m.downloads).toEqual([]);
+    expect(m.open).not.toHaveBeenCalled();
+  });
+
+  test('a 409 (not running) starts the app once and exports again', async () => {
+    restore = stubExport();
+    m.exportAnswers = [409];
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-aaaa');
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
+    expect(m.events).toEqual([
+      'export sbx-aaaaaaaaaaaa app-aaaa',
+      'start app-aaaa',
+      'export sbx-aaaaaaaaaaaa app-aaaa',
+      'download app-aaaa.zip',
+    ]);
+  });
+
+  test('any other failure is a plain error, with no retry and no download', async () => {
+    restore = stubExport();
+    m.exportAnswers = [500];
+    m.list = twoApps();
+    await mount();
+    await openMenu('app-aaaa');
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
+    expect(m.toasts[0]).toMatchObject({
+      kind: 'error',
+      message: 'The app could not be exported. Try again in a moment.',
+    });
+    expect(m.events).toEqual(['export sbx-aaaaaaaaaaaa app-aaaa']);
+    expect(m.downloads).toEqual([]);
+  });
+});
+
+describe('AppAssistantWorkspace free-a-slot card', () => {
+  const KEEP =
+    'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.';
+  const RUNNING =
+    'Another of your apps started at the same moment, so this one could not. Ask again: starting this app pauses the others.';
+  const card = () => page.getByRole('region', { name: 'Free up a slot' });
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+  // Used: aaaa last (open on load, running), bbbb longest ago, cccc between; created in another order.
+  const kept = () => [
+    sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: ago(2), createdAt: ago(40) }),
+    sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(9), createdAt: ago(20) }),
+    sandbox('sbx-cccccccccccc', { state: 'suspended', lastActivityAt: ago(5), createdAt: ago(30) }),
+  ];
+  const keepCap = () =>
+    new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit');
+  /** The chat runs create_app behind its own gate and reports the call to the page, as in the browser. */
+  async function createApp(error: unknown) {
+    m.openReject = error;
+    const gated = gateToolSet(m.chat!.tools as never, {
+      conversationId: 'c',
+      gate: (name, input, context) => m.chat!.beforeToolCall!(name, input, context) as never,
+      onResult: (result) => m.chat!.onToolResult!(result),
+    });
+    await Promise.resolve(
+      gated.create_app.execute!({ name: 'Quiz night' }, {
+        toolCallId: 't-1',
+        messages: [],
+      } as never)
+    ).catch(() => undefined);
+    m.openReject = null;
+  }
+  async function atLimit() {
+    m.list = kept();
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
+    await userSends('Make a quiz night app');
+    await createApp(keepCap());
+    await expect.element(card()).toBeVisible();
+  }
+  async function confirmDelete(app: string) {
+    await card().getByRole('button', { name: 'Delete and continue' }).click();
+    await expect.element(page.getByRole('dialog', { name: `Delete ${app}?` })).toBeVisible();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+  }
+
+  test('appears after the limit refusal: every app with its status and last use, the one used longest ago chosen', async () => {
+    await atLimit();
+    await expect.element(card().getByText('Free up a slot', { exact: true })).toBeVisible();
+    await expect
+      .element(
+        card().getByText(
+          'You have as many apps as you can keep. Delete one and your message is sent again.',
+          { exact: true }
+        )
+      )
+      .toBeVisible();
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-aaaa' })).not.toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-cccc' })).not.toBeChecked();
+    for (const line of [
+      'Running · last used 2 days ago',
+      'Paused · last used 9 days ago',
+      'Paused · last used 5 days ago',
+    ])
+      await expect.element(card().getByText(line, { exact: true })).toBeVisible();
+    expect(m.remove).not.toHaveBeenCalled();
+  });
+
+  test('when the app used longest ago is the open one, the next oldest is chosen', async () => {
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', {
+        state: 'suspended',
+        lastActivityAt: ago(2),
+        createdAt: ago(40),
+      }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: ago(9), createdAt: ago(20) }),
+      sandbox('sbx-cccccccccccc', {
+        state: 'suspended',
+        lastActivityAt: ago(5),
+        createdAt: ago(30),
+      }),
+    ];
+    await mount();
+    await openFromSwitcher('app-bbbb');
+    await userSends('Make a quiz night app');
+    await createApp(keepCap());
+    await expect.element(card().getByRole('radio', { name: 'app-cccc' })).toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
+    await expect.element(card().getByRole('radio', { name: 'app-aaaa' })).not.toBeChecked();
+  });
+
+  test('NEGATIVE CONTROL: the running-app limit shows no card', async () => {
+    m.list = kept();
+    await mount();
+    await userSends('Make a quiz night app');
+    await createApp(
+      new SandboxApiError(
+        'running-sandbox limit (1) reached: sbx-aaaaaaaaaaaa (app "app-aaaa") is running; suspend it first',
+        409,
+        'limit'
+      )
+    );
+    await settle(100);
+    expect(card().query()).toBeNull();
+  });
+
+  test('Keep it in the confirmation deletes nothing and keeps the card', async () => {
+    await atLimit();
+    await card().getByRole('button', { name: 'Delete and continue' }).click();
+    await expect.element(page.getByRole('dialog', { name: 'Delete app-bbbb?' })).toBeVisible();
+    await page.getByRole('button', { name: 'Keep it' }).click();
+    await settle();
+    expect(m.remove).not.toHaveBeenCalled();
+    expect(m.send).not.toHaveBeenCalled();
+    await expect.element(card()).toBeVisible();
+  });
+
+  test('confirmed, deletes the app picked, then sends the message that hit the limit again, once', async () => {
+    await atLimit();
+    await card().getByRole('radio', { name: 'app-cccc' }).click();
+    await confirmDelete('app-cccc');
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
+    expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
+    expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(m.send.mock.invocationCallOrder[0]);
+    await expect.element(card()).not.toBeInTheDocument();
+    await settle(100);
+    expect(m.send).toHaveBeenCalledTimes(1);
+    expect(m.delivered).toEqual(['Make a quiz night app', 'Make a quiz night app']);
+  });
+
+  test('a delete that fails says why, keeps the card and sends nothing', async () => {
+    await atLimit();
+    m.removeReject = new SandboxApiError('Sandbox service error (500)', 500, 'unavailable');
+    await confirmDelete('app-bbbb');
+    await expect
+      .element(
+        card().getByText('Your apps could not be reached right now. Try again in a moment.', {
+          exact: true,
+        })
+      )
+      .toBeVisible();
+    expect(m.remove.mock.calls).toEqual([['sbx-bbbbbbbbbbbb']]);
+    await settle(100);
+    expect(m.send).not.toHaveBeenCalled();
+    await expect.element(card().getByRole('button', { name: 'Delete and continue' })).toBeEnabled();
+  });
+
+  test('goes once the user sends something else', async () => {
+    await atLimit();
+    await userSends('Actually, change the colors');
+    await expect.element(card()).not.toBeInTheDocument();
+    expect(m.remove).not.toHaveBeenCalled();
+  });
+
+  test('Export first downloads that app’s zip, starting it first, and deletes nothing', async () => {
+    restore = stubExport();
+    await atLimit();
+    m.events = [];
+    await card().getByRole('button', { name: 'Export app-bbbb first' }).click();
+    await vi.waitFor(() => expect(m.downloads.map((d) => d.name)).toEqual(['app-bbbb.zip']));
+    expect(m.events).toEqual([
+      'start app-bbbb',
+      'export sbx-bbbbbbbbbbbb app-bbbb',
+      'download app-bbbb.zip',
+    ]);
+    expect(m.remove).not.toHaveBeenCalled();
+    await expect.element(card()).toBeVisible();
+  });
+
+  test('on the server runner, appears from the reported limit, and not from the running limit', async () => {
+    await page.viewport(1440, 900);
+    m.list = kept();
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
+    await userSends('Make a quiz night app');
+    // What the runner journals (`tool-reported`) and the chat hands the page.
+    m.chat!.onToolResult!({
+      name: 'create_app',
+      input: { name: 'Quiz night' },
+      output: { error: RUNNING },
+      isError: true,
+    });
+    await settle(100);
+    expect(card().query()).toBeNull();
+    m.chat!.onToolResult!({
+      name: 'create_app',
+      input: { name: 'Quiz night' },
+      output: { error: KEEP },
+      isError: true,
+    });
+    await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).toBeChecked();
+    await confirmDelete('app-bbbb');
+    await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
+    expect(m.send).toHaveBeenCalledWith('Make a quiz night app');
   });
 });

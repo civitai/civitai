@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   SandboxApiError,
+  appExportPath,
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
@@ -169,4 +170,54 @@ describe('isSandboxServiceUrl (who may receive the token)', () => {
   it('refuses everything when the configured base cannot be parsed', () => {
     expect(isSandboxServiceUrl(`${BASE}/s/x/mcp`, 'not a url')).toBe(false);
   });
+});
+
+describe('createSandboxClient exportApp (the app as a zip, from the sandbox gateway)', () => {
+  const zip = () =>
+    new Response(new Blob(['PK-zip-bytes'], { type: 'application/zip' }), { status: 200 });
+
+  it('GETs /s/<sandbox>/export?app=<blockId> with the bearer token and hands back the zip', async () => {
+    const { client, call } = setup(zip());
+    const blob = await client.exportApp('sbx-0123456789ab', 'tip-calculator');
+    expect(await blob.text()).toBe('PK-zip-bytes');
+    expect(call(0)).toMatchObject({
+      url: `${BASE}/s/sbx-0123456789ab/export?app=tip-calculator`,
+      method: 'GET',
+      headers: { authorization: 'Bearer cached-token' },
+    });
+  });
+
+  it('the contract lives in one function', () => {
+    expect(appExportPath('sbx-0123456789ab', 'tip-calculator')).toBe(
+      '/s/sbx-0123456789ab/export?app=tip-calculator'
+    );
+  });
+
+  it('asks for a fresh token once after a 401', async () => {
+    const { client, call } = setup(json(401, { error: 'expired' }), zip());
+    await client.exportApp('sbx-0123456789ab', 'tip-calculator');
+    expect(call(1).headers).toMatchObject({ authorization: 'Bearer fresh-token' });
+  });
+
+  it.each([
+    [413, 'bad_request'],
+    [409, 'conflict'],
+    [500, 'unavailable'],
+  ] as const)('a %i is a SandboxApiError with that status', async (status, kind) => {
+    const { client } = setup(json(status, { error: `export refused (${status})` }));
+    const error = await client.exportApp('sbx-0123456789ab', 'tip-calculator').catch((e) => e);
+    expect(error).toBeInstanceOf(SandboxApiError);
+    expect(error).toMatchObject({ status, kind });
+  });
+
+  it.each([['../v1/sandboxes'], ['SBX-AAA'], ['a?x']])(
+    'refuses %j as a sandbox name without sending anything',
+    async (name) => {
+      const { client, fetchMock } = setup();
+      await expect(client.exportApp(name, 'tip-calculator')).rejects.toBeInstanceOf(
+        SandboxApiError
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 });
