@@ -81,6 +81,7 @@ const { useThirdPartyConsent } = await import('~/components/Consent/consent.cont
 const { CivitaiSessionProvider, useCivitaiSessionContext } = await import(
   '~/components/CivitaiWrapped/CivitaiSessionProvider'
 );
+const { IsClientProvider } = await import('~/providers/IsClientProvider');
 const { ReferralsProvider } = await import('~/components/Referrals/ReferralsProvider');
 const { AdsProvider, useAdsContext } = await import('~/components/Ads/AdsProvider');
 const { ShellBootstrapProvider, useShellBootstrap, useShellReady } = await import(
@@ -324,15 +325,19 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
           refetchOnWindowFocus: false,
         } as never,
         h(
-          FeatureFlagsProvider,
-          { flags, userFlags: userFeatureFlags, seed: flagsSeed } as never,
+          IsClientProvider,
+          null,
           h(
-            CivitaiSessionProvider,
-            { disableHidden: cookies.disableHidden } as never,
+            FeatureFlagsProvider,
+            { flags, userFlags: userFeatureFlags, seed: flagsSeed } as never,
             h(
-              ReferralsProvider,
-              { ...cookies.referrals, pending: referralsPending } as never,
-              withAds ? h(AdsProvider, { gated: adsGated } as never, probe) : probe
+              CivitaiSessionProvider,
+              { disableHidden: cookies.disableHidden } as never,
+              h(
+                ReferralsProvider,
+                { ...cookies.referrals, pending: referralsPending } as never,
+                withAds ? h(AdsProvider, { gated: adsGated } as never, probe) : probe
+              )
             )
           )
         )
