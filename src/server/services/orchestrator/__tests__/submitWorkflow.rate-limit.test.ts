@@ -76,12 +76,20 @@ describe('submitWorkflow — orchestrator 429', () => {
     expect((err as TRPCError).message).toBe('Too many requests right now.');
   });
 
-  it('clamps an absurd Retry-After to an hour', async () => {
+  it('clamps an absurd Retry-After to an hour, said in minutes', async () => {
     mockSubmitWorkflow.mockResolvedValue(rateLimited('Slow down', '999999'));
 
     const err = await submit();
 
-    expect((err as TRPCError).message).toBe('Slow down. Please try again in about 3600 seconds.');
+    expect((err as TRPCError).message).toBe('Slow down. Please try again in about 60 minutes.');
+  });
+
+  it('leaves a detail that already says when to retry as it is', async () => {
+    mockSubmitWorkflow.mockResolvedValue(rateLimited('Quota resets soon, try again later', '30'));
+
+    const err = await submit();
+
+    expect((err as TRPCError).message).toBe('Quota resets soon, try again later');
   });
 
   it('control: a 400 keeps BAD_REQUEST and the orchestrator text unchanged', async () => {

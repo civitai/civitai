@@ -817,11 +817,16 @@ export function throwOrchestratorFailure({
       // Not "too many jobs" for every 429: a free-tier quota 429 carries its own detail.
       const retryAfter = getRetryAfterSeconds(response);
       const reason = message || 'Too many requests right now.';
-      const wait = retryAfter === 1 ? 'a second' : `about ${retryAfter} seconds`;
+      // A detail that already says when to retry is left as it is.
+      if (!retryAfter || /try again|retry/i.test(reason)) throw throwRateLimitError(reason);
+      const wait =
+        retryAfter === 1
+          ? 'a second'
+          : retryAfter < 120
+          ? `about ${retryAfter} seconds`
+          : `about ${Math.ceil(retryAfter / 60)} minutes`;
       throw throwRateLimitError(
-        retryAfter
-          ? `${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again in ${wait}.`
-          : reason
+        `${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again in ${wait}.`
       );
     }
     default:

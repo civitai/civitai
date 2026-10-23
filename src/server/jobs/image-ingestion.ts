@@ -33,6 +33,9 @@ const IMAGE_SCANNING_RETRY_LIMIT = 9;
 // died without writing the row at all.
 const SUBMIT_IN_FLIGHT_GRACE = 2;
 
+// Hours a Pending upload that keeps getting 429s is spared the age-out to Error.
+const RATE_LIMIT_AGE_OUT_GRACE_HOURS = 6;
+
 // Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
 // Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
 // image to one concurrency slot. A timed-out image stays queued for a later run.
@@ -88,8 +91,11 @@ type IngestImageRow = IngestImageInput & {
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
-  /** Its last submit was answered 429. A successful submit clears `scanJobs.error`. */
-  rateLimited: boolean;
+  /**
+   * When its current run of 429 submits began; null unless the last submit was a 429.
+   * A successful submit clears `scanJobs.error`, and with it this.
+   */
+  rateLimitedSince: Date | null;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -153,7 +159,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
-           COALESCE(i."scanJobs"->'error'->>'responseStatus' = '429', false) as "rateLimited",
+           CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
+             THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
+           END as "rateLimitedSince",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -215,14 +223,19 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // real retries and then terminalizes, instead of being Pending forever.
   //
   // A rate-limited upload is exempt: it is old because the orchestrator told us to wait,
-  // not because a scan went missing, and it keeps being re-sent as Pending.
+  // not because a scan went missing, and it keeps being re-sent as Pending. Only for
+  // RATE_LIMIT_AGE_OUT_GRACE_HOURS, so a limit that never lifts still surfaces as Error and
+  // a long storm can't hold the oldest-first window forever.
   const pendingTimeoutDate = decreaseDate(now, env.IMAGE_SCANNING_PENDING_TIMEOUT, 'minutes');
+  const rateLimitGraceDate = decreaseDate(now, RATE_LIMIT_AGE_OUT_GRACE_HOURS, 'hours');
+  const isRateLimitExempt = (img: IngestImageRow) =>
+    !!img.rateLimitedSince && img.rateLimitedSince > rateLimitGraceDate;
   const agedOutPendingIds = images
     .filter(
       (img) =>
         img.ingestion === 'Pending' &&
         !img.isBackfill &&
-        !img.rateLimited &&
+        !isRateLimitExempt(img) &&
         img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);

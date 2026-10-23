@@ -76,7 +76,7 @@ function mkRow(overrides: {
   scanRequestedAt: Date | null;
   retryCount?: number;
   failureClass?: string | null;
-  rateLimited?: boolean;
+  rateLimitedSince?: Date | null;
 }) {
   return {
     url: `img-${overrides.id}`,
@@ -86,7 +86,7 @@ function mkRow(overrides: {
     prompt: null,
     retryCount: 0,
     failureClass: null,
-    rateLimited: false,
+    rateLimitedSince: null,
     ...overrides,
   };
 }
@@ -243,13 +243,31 @@ describe('ingest-images pending age-out — rate-limited uploads', () => {
         isBackfill: false,
         scanRequestedAt: COOLED,
         failureClass: 'transient',
-        rateLimited: true,
+        rateLimitedSince: OLD,
       }),
     ]);
 
     expect(result.agedOutPending).toBe(0);
     expect(ageOutUpdate()).toBeUndefined();
     expect(sentIds()).toEqual([6]);
+  });
+
+  // The exemption is bounded: a limit that never lifts must still surface the upload as Error.
+  it('ages out an upload that has been rate limited for more than 6 hours', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 8,
+        ingestion: 'Pending',
+        createdAt: new Date(Date.now() - 8 * HOUR),
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'transient',
+        rateLimitedSince: new Date(Date.now() - 7 * HOUR),
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(1);
+    expect(targetIds(ageOutUpdate())).toEqual([8]);
   });
 
   it('control: the same upload with an unknown-class failure still ages out', async () => {
