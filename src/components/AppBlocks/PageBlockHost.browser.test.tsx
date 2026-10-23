@@ -1655,9 +1655,11 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
  * Before the fix nothing observed the frame reloading, so `onGuestReloaded` was never
  * called and the first test below is red.
  *
- * The signal is the frame element's `load` event: the ONLY one both cases share — a
- * 401 + X-Frame-Options page runs no app code (so no BLOCK_HELLO), but Chromium still
- * fires `load` on the element (measured 2026-10-23). A load is synthesised with
+ * Two signals feed `isDevTunnelGuestReload`: a BLOCK_HELLO while ready (a new document
+ * whose entry was still valid), and the frame element's `load` event when it leaves more
+ * loads than hellos — the refused reload: a 401 + X-Frame-Options page runs no app code
+ * (so no BLOCK_HELLO), but Chromium still fires `load` on the element (measured
+ * 2026-10-23). A load is synthesised with
  * `dispatchEvent`; the REAL initial load is waited for first (a document-level CAPTURE
  * listener, installed before render, so it cannot miss it — `load` does not bubble but
  * capture still reaches the target), so every count below is exact.
@@ -1756,20 +1758,35 @@ describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
   });
 
   // 🔴 REGRESSION (round-1 audit). An app whose boot replaces its document ONCE before
-  // READY (a `location.replace`, Vite's dependency-optimizer reload): the first document's
-  // load, then the second document's hello, READY, and the second document's own load.
-  // Counting loads over the frame's whole life called that last load a reload — on every
-  // remount, a loop. The second document's hello must restart the count.
+  // READY (a `location.replace`, Vite's dependency-optimizer reload): two documents, each
+  // saying hello once, and the second one's own load landing after READY. Counting loads
+  // over the frame's whole life called that last load a reload — on every remount, a loop.
   test('dev-tunnel: a document replaced during boot is not a reload once it is ready', async () => {
     const onGuestReloaded = await mountAt('dev-tunnel'); // document 1 has loaded
+    postFromBlock('BLOCK_HELLO'); // document 1's hello
     postFromBlock('BLOCK_HELLO'); // document 2 announces itself, still loading
     await driveToReady();
-    guestReload(); // document 2's own load, after READY
+    guestReload(); // document 2's own load, after READY: 2 loads, 2 hellos
     await settle();
     expect(onGuestReloaded).not.toHaveBeenCalled();
 
-    // ...and the count is live: a further load on document 2 is a reload.
+    // ...and the count is live: a load no hello accounts for is a reload.
     guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  // 🔴 REGRESSION (round-2 audit). An app that starts its SDK late (e.g. in a React mount
+  // effect) says hello AFTER its own document's load. Resetting a load count on each hello
+  // erased that load, so the later refused (401) reload read as a first load and the
+  // preview stayed frozen. Counting loads against hellos needs no ordering.
+  test('dev-tunnel: a hello AFTER its own load still lets the later 401 reload ask', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // the document has loaded...
+    postFromBlock('BLOCK_HELLO'); // ...and only now says hello
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload(); // the 401 page: no app code, no hello
     await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
   });
 
