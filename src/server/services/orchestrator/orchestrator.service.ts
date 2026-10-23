@@ -16,10 +16,8 @@ import { env } from '~/env/server';
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import {
-  getRetryAfterSeconds,
-  submitWorkflowWithRetry,
-} from '~/server/services/orchestrator/workflows';
+import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
