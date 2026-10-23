@@ -154,9 +154,14 @@ function HydratedMarker() {
   return <span ref={ref} data-hydrated="false" />;
 }
 
-const details = () => (
+const details = ({ ds = false }: { ds?: boolean } = {}) => (
   <Tree>
-    <ModelVersionDetails model={F.MODEL} version={F.MODEL.modelVersions[0]} image={undefined} />
+    <ModelVersionDetails
+      model={F.MODEL}
+      version={F.MODEL.modelVersions[0]}
+      image={undefined}
+      ds={ds}
+    />
     <HydratedMarker />
   </Tree>
 );
@@ -264,5 +269,21 @@ describe('ModelVersionDetails — modelPageDeferBelowFold hydration', () => {
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(container.querySelector(CREATOR_CARD_LINK)).not.toBeNull();
+  });
+
+  test('design-system markup (`ds`): hydration matches, and the client keeps the markup', async () => {
+    mocks.flags = { modelPageDeferBelowFold: true, cosmeticShop: true, air: true };
+    const html = renderToString(details({ ds: true }));
+    // Control: this is the design-system render, not the Mantine one.
+    expect(html).toContain('data-civitai-ui="button"');
+    expect(html).toContain('data-civitai-ui="tooltip"');
+
+    const container = await hydrateInto(html, details({ ds: true }));
+
+    expect(recoverable).toEqual([]);
+    expect(hydrationConsoleErrors()).toEqual([]);
+    expect(
+      container.querySelector('button[aria-label="Share"]')?.getAttribute('data-civitai-ui')
+    ).toBe('button');
   });
 });

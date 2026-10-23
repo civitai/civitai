@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup, renderToString } from 'react-dom/server';
+import { Window } from 'happy-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsProviderModule from '~/providers/FeatureFlagsProvider';
@@ -11,7 +12,8 @@ import type * as SignalsProviderModule from '~/components/Signals/SignalsProvide
 import * as F from './model-page-fixture';
 
 /**
- * The model page's SERVER render under the `modelPageDeferBelowFold` trial.
+ * The model page's SERVER render under the `modelPageDeferBelowFold` trial, and under
+ * `modelPageDesignSystemMarkup` (the last three describes).
  *
  * Renders the real page component (and the real `ModelVersionDetails` under it) to an HTML string
  * in the node unit project, inside the real Theme/App/IsClient/Router/IntersectionObserver
@@ -264,52 +266,283 @@ describe('model page server render — modelPageDeferBelowFold OFF', () => {
   });
 });
 
-describe('model page server render — modelPageDeferBelowFold ON', () => {
-  it('keeps the above-the-fold and SEO content', () => {
-    const { html, head } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: true });
+// Under both markups: the design-system flag must not move what the defer trial defers.
+describe.each([false, true])(
+  'model page server render — modelPageDeferBelowFold ON (design-system markup %s)',
+  (ds) => {
+    const flags = { ...ANON_FLAGS, modelPageDeferBelowFold: true, modelPageDesignSystemMarkup: ds };
 
-    // Title, model description, the selected version's description, details and files.
-    expect(html).toMatch(new RegExp(`<h1[^>]*>${F.MODEL_NAME}</h1>`));
-    expect(html).toContain(F.MODEL_DESCRIPTION_MARKER);
-    expect(html).toContain(F.VERSION_DESCRIPTION_MARKER);
-    expect(html).toContain('Trigger Words');
-    expect(html).toContain('lanternglow');
-    expect(html).toContain('>Download<');
-    expect(html).toContain(`>lantern_glow_v${F.VERSION_IDS[0]}_1.safetensors<`);
-    // The hero carousel's images.
-    expect(html).toContain(F.IMAGES[0].url);
-    // Meta, canonical and structured data.
-    expect(head).toContain(
-      `<title>${F.MODEL_NAME} - v3.0 | Stable Diffusion XL LoRA | Civitai</title>`
+    it('keeps the above-the-fold and SEO content', () => {
+      const { html, head } = renderPage(flags);
+
+      // Title, model description, the selected version's description, details and files.
+      expect(html).toMatch(new RegExp(`<h1[^>]*>${F.MODEL_NAME}</h1>`));
+      expect(html).toContain(F.MODEL_DESCRIPTION_MARKER);
+      expect(html).toContain(F.VERSION_DESCRIPTION_MARKER);
+      expect(html).toContain('Trigger Words');
+      expect(html).toContain('lanternglow');
+      expect(html).toContain('>Download<');
+      expect(html).toContain(`>lantern_glow_v${F.VERSION_IDS[0]}_1.safetensors<`);
+      // The hero carousel's images.
+      expect(html).toContain(F.IMAGES[0].url);
+      // Meta, canonical and structured data.
+      expect(head).toContain(
+        `<title>${F.MODEL_NAME} - v3.0 | Stable Diffusion XL LoRA | Civitai</title>`
+      );
+      expect(head).toMatch(/<meta name="description" content="About lantern-description-marker/);
+      expect(head).toContain(
+        '<link rel="canonical" href="/models/4201/lantern-glow-portrait-lora"/>'
+      );
+      expect(head).toContain('"@type":"SoftwareApplication"');
+      expect(head).toContain('"@type":"BreadcrumbList"');
+    });
+
+    it('replaces the creator card, license and permissions with placeholders and empties the showcase body', () => {
+      const { html } = renderPage(flags);
+
+      expect(count(html, CREATOR_CARD_ROOT)).toBe(0);
+      expect(count(html, CREATOR_CARD_LINK)).toBe(0);
+      expect(count(html, LICENSE_TEXT)).toBe(0);
+      expect(count(html, PERMISSION_ICON)).toBe(0);
+      expect(showcasePanel(html)).not.toContain(SHOWCASE_BODY);
+      expect(count(html, 'data-deferred-section="creator-card"')).toBe(1);
+      expect(count(html, 'data-deferred-section="license"')).toBe(1);
+      // The showcase's header row (its name) is not deferred.
+      expect(html).toContain(F.SHOWCASE_COLLECTION_NAME);
+    });
+
+    it("still server-renders a downloader's own review card (it is not deferred)", () => {
+      m.user = VIEWER;
+      m.downloaded = [F.VERSION_IDS[0]];
+      const { html } = renderPage(flags);
+
+      expect(count(html, USER_REVIEW_PROMPT)).toBe(1);
+      expect(count(html, 'data-deferred-section="user-review"')).toBe(0);
+    });
+  }
+);
+
+// ─── modelPageDesignSystemMarkup ────────────────────────────────────────────────────────────────
+
+// `air` is a signed-in default; switched on here so the AIR row renders for the anonymous viewer.
+const DS_OFF = { ...ANON_FLAGS, air: true, modelPageDesignSystemMarkup: false };
+const DS_ON = { ...ANON_FLAGS, air: true, modelPageDesignSystemMarkup: true };
+
+/** Parsed without installing DOM globals: the page must keep rendering down its SERVER paths. */
+function parse(html: string) {
+  const window = new Window();
+  const root = window.document.createElement('div');
+  root.innerHTML = html;
+  return root as unknown as HTMLElement;
+}
+
+const dsAttrs = (el: Element) => ({
+  ui: el.getAttribute('data-civitai-ui'),
+  variant: el.getAttribute('data-variant'),
+  size: el.getAttribute('data-size'),
+});
+const text = (el: Element) => (el.textContent ?? '').trim();
+
+const ACTION_LABELS = [
+  'Share',
+  'Like',
+  'Get notifications for this model',
+  'Add to collection',
+  'Report',
+];
+
+describe('model page server render — modelPageDesignSystemMarkup ON', () => {
+  it('renders the title as a plain h1 and the stats as large light badges', () => {
+    const root = parse(renderPage(DS_ON).html);
+    const h1 = root.querySelectorAll('h1');
+    expect(h1).toHaveLength(1);
+    expect(text(h1[0])).toBe(F.MODEL_NAME);
+    expect(h1[0].className).not.toContain('mantine-');
+
+    const stats = [...root.querySelectorAll('[data-civitai-ui="badge"][data-size="lg"]')];
+    // Reviews, downloads, generations, collections, Buzz.
+    expect(stats.map(dsAttrs)).toEqual(
+      Array(5).fill({ ui: 'badge', variant: 'light', size: 'lg' })
     );
-    expect(head).toMatch(/<meta name="description" content="About lantern-description-marker/);
-    expect(head).toContain(
-      '<link rel="canonical" href="/models/4201/lantern-glow-portrait-lora"/>'
-    );
-    expect(head).toContain('"@type":"SoftwareApplication"');
-    expect(head).toContain('"@type":"BreadcrumbList"');
+    // Each carries its icon in a leading section, as `IconBadge` does.
+    for (const badge of stats) expect(badge.firstElementChild?.querySelector('svg')).not.toBeNull();
   });
 
-  it('replaces the creator card, license and permissions with placeholders and empties the showcase body', () => {
-    const { html } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: true });
-
-    expect(count(html, CREATOR_CARD_ROOT)).toBe(0);
-    expect(count(html, CREATOR_CARD_LINK)).toBe(0);
-    expect(count(html, LICENSE_TEXT)).toBe(0);
-    expect(count(html, PERMISSION_ICON)).toBe(0);
-    expect(showcasePanel(html)).not.toContain(SHOWCASE_BODY);
-    expect(count(html, 'data-deferred-section="creator-card"')).toBe(1);
-    expect(count(html, 'data-deferred-section="license"')).toBe(1);
-    // The showcase's header row (its name) is not deferred.
-    expect(html).toContain(F.SHOWCASE_COLLECTION_NAME);
+  it('renders the category and tags as badge links, and the overflow toggle as a badge button', () => {
+    const root = parse(renderPage(DS_ON).html);
+    const links = [...root.querySelectorAll('a[href^="/tag/"]')].map((a) => ({
+      text: text(a),
+      href: a.getAttribute('href'),
+      ...dsAttrs(a),
+    }));
+    const tag = { ui: 'badge', size: 'sm', variant: 'filled' };
+    expect(links).toEqual([
+      { text: 'portraits', href: '/tag/portraits', ui: 'badge', size: 'sm', variant: 'light' },
+      { text: 'lighting', href: '/tag/lighting', ...tag },
+      { text: 'warm', href: '/tag/warm', ...tag },
+      { text: 'bokeh', href: '/tag/bokeh', ...tag },
+      { text: 'film', href: '/tag/film', ...tag },
+      { text: 'rim light', href: '/tag/rim%20light', ...tag },
+    ]);
+    const toggle = [...root.querySelectorAll('button')].filter((b) => text(b) === '+ 1');
+    expect(toggle.map(dsAttrs)).toEqual([{ ui: 'badge', variant: 'light', size: 'sm' }]);
+    expect(toggle[0].hasAttribute('type')).toBe(false);
+    // Both dividers of the "Updated" row.
+    expect(
+      root.querySelectorAll('[role="separator"][data-orientation="vertical"]').length
+    ).toBeGreaterThanOrEqual(2);
   });
 
-  it("still server-renders a downloader's own review card (it is not deferred)", () => {
-    m.user = VIEWER;
-    m.downloaded = [F.VERSION_IDS[0]];
-    const { html } = renderPage({ ...ANON_FLAGS, modelPageDeferBelowFold: true });
+  it('renders the version buttons and scroll arrows as design-system buttons', () => {
+    const root = parse(renderPage(DS_ON).html);
+    const list = root.querySelector('.mantine-ScrollArea-root');
+    const buttons = [...(list?.querySelectorAll('button') ?? [])].map((b) => ({
+      text: text(b),
+      label: b.getAttribute('aria-label'),
+      type: b.getAttribute('type'),
+      ...dsAttrs(b),
+    }));
+    const arrow = { text: '', type: 'button', ui: 'button', variant: 'subtle', size: 'sm' };
+    const version = { label: null, type: 'button', ui: 'button', variant: 'filled', size: 'sm' };
+    expect(buttons).toEqual([
+      { ...arrow, label: 'Scroll versions left' },
+      { ...version, text: 'v3.0' },
+      { ...version, text: 'v2.0' },
+      { ...version, text: 'v1.0' },
+      { ...arrow, label: 'Scroll versions right' },
+    ]);
+  });
 
-    expect(count(html, USER_REVIEW_PROMPT)).toBe(1);
-    expect(count(html, 'data-deferred-section="user-review"')).toBe(0);
+  it('renders the action row as full-width design-system buttons in tooltip wrappers', () => {
+    const root = parse(renderPage(DS_ON).html);
+    for (const label of ACTION_LABELS) {
+      const button = root.querySelector(`button[aria-label="${label}"]`);
+      expect(button, label).not.toBeNull();
+      expect(
+        { ...dsAttrs(button as Element), full: button?.getAttribute('data-full-width') },
+        label
+      ).toEqual({
+        ui: 'button',
+        variant: 'filled',
+        size: 'md',
+        full: 'true',
+      });
+      expect(button?.closest('[data-civitai-ui="tooltip"]'), label).not.toBeNull();
+    }
+    // The bubbles are client-only: nothing for the server to clip or hide.
+    expect(root.querySelectorAll('[data-civitai-ui-tooltip-bubble]')).toHaveLength(0);
+    expect(root.querySelectorAll('[role="tooltip"]')).toHaveLength(0);
+  });
+
+  it('renders the Details rows, trigger words, hash and AIR without Mantine', () => {
+    const root = parse(renderPage(DS_ON).html);
+    const badges = new Map(
+      [...root.querySelectorAll('[data-civitai-ui="badge"]')].map((b) => [text(b), dsAttrs(b)])
+    );
+    const sm = (variant: string) => ({ ui: 'badge', size: 'sm', variant });
+    expect(badges.get('LoRA')).toEqual(sm('filled'));
+    expect(badges.get('Steps: 4,200')).toEqual(sm('light'));
+    expect(badges.get('Epochs: 12')).toEqual(sm('light'));
+    expect(badges.get('Clip Skip: 2')).toEqual(sm('light'));
+    expect(badges.get('Strength: 0.8')).toEqual(sm('light'));
+    expect(badges.get('lanternglow')).toEqual(sm('light'));
+    expect(badges.get('warm rim light')).toEqual(sm('light'));
+    expect(badges.get('AutoV2')).toEqual({ ui: 'badge', size: 'md', variant: 'outline' });
+    expect(badges.get('A1B2C3D4E0')).toEqual({ ui: 'badge', size: 'md', variant: 'outline' });
+
+    const codes = [...root.querySelectorAll('code')];
+    expect(codes.map(text).slice(0, 4)).toEqual([
+      'civitai:',
+      `${F.MODEL_ID}`,
+      '@',
+      `${F.VERSION_IDS[0]}`,
+    ]);
+    for (const code of codes) expect(code.className).not.toContain('mantine-');
+  });
+
+  it('emits no Mantine Grid, Title, Code or Divider root and no per-instance grid <style>', () => {
+    const on = renderPage(DS_ON).html;
+    const off = renderPage(DS_OFF).html;
+    for (const name of ['Grid', 'Title', 'Code', 'Divider']) {
+      // Control: each is present with the flag off, so a zero below is not a class that never matched.
+      expect(mantineRoots(off)[name], name).toBeGreaterThan(0);
+      expect(mantineRoots(on)[name] ?? 0, name).toBe(0);
+    }
+    expect(count(on, 'mantine-grid (min-width')).toBe(0);
+    expect(count(off, 'mantine-grid (min-width')).toBeGreaterThan(0);
+  });
+});
+
+/** Every `mantine-<Name>-root` class in the HTML, by component name. */
+function mantineRoots(html: string) {
+  const counts: Record<string, number> = {};
+  for (const match of html.matchAll(/\bmantine-([A-Za-z]+)-root\b/g))
+    counts[match[1]] = (counts[match[1]] ?? 0) + 1;
+  return counts;
+}
+const total = (counts: Record<string, number>) => Object.values(counts).reduce((a, b) => a + b, 0);
+
+describe('model page server render — modelPageDesignSystemMarkup OFF', () => {
+  it('still renders the Mantine page, with no design-system markup', () => {
+    const root = parse(renderPage(DS_OFF).html);
+    expect(root.querySelectorAll('[data-civitai-ui]')).toHaveLength(0);
+    expect(root.querySelector('h1')?.className).toContain('mantine-Title-root');
+    expect(root.querySelector('a[href="/tag/portraits"]')?.className).toContain(
+      'mantine-Badge-root'
+    );
+    expect(root.querySelector('button[aria-label="Share"]')?.className).toContain(
+      'mantine-Button-root'
+    );
+  });
+
+  it('exposes the same names, hrefs, roles and aria as the flag-ON page', () => {
+    // Interactive elements and everything carrying a role or ARIA state, in document order. Ids
+    // come from `useId` and follow tree shape, so only their presence is compared.
+    const semantics = (html: string) =>
+      [
+        ...parse(html).querySelectorAll(
+          'a, button, h1, [role], [aria-label], [aria-haspopup], [aria-expanded], [aria-controls], [aria-describedby], [tabindex]'
+        ),
+      ].map((el) => ({
+        interactive: el.matches('a, button'),
+        text: text(el),
+        href: el.getAttribute('href'),
+        target: el.getAttribute('target'),
+        rel: el.getAttribute('rel'),
+        type: el.getAttribute('type'),
+        title: el.getAttribute('title'),
+        role: el.getAttribute('role'),
+        ariaLabel: el.getAttribute('aria-label'),
+        ariaHaspopup: el.getAttribute('aria-haspopup'),
+        ariaExpanded: el.getAttribute('aria-expanded'),
+        ariaControls: el.hasAttribute('aria-controls'),
+        ariaDescribedby: el.hasAttribute('aria-describedby'),
+        tabIndex: el.getAttribute('tabindex'),
+        disabled: el.hasAttribute('disabled'),
+      }));
+    const off = semantics(renderPage(DS_OFF).html);
+    const on = semantics(renderPage(DS_ON).html);
+    expect(off.length).toBeGreaterThan(30);
+    expect(on).toEqual(off);
+  });
+});
+
+describe('model page server render — modelPageDesignSystemMarkup, Mantine roots OFF vs ON', () => {
+  it('drops the replaced components from the server HTML', () => {
+    const off = mantineRoots(renderPage(DS_OFF).html);
+    const on = mantineRoots(renderPage(DS_ON).html);
+    // The measurement this flag exists for, printed for the PR record.
+    console.info('[modelPageDesignSystemMarkup] mantine-*-root classes', {
+      off: total(off),
+      on: total(on),
+      byComponent: Object.fromEntries(
+        [...new Set([...Object.keys(off), ...Object.keys(on)])]
+          .sort()
+          .map((name) => [name, { off: off[name] ?? 0, on: on[name] ?? 0 }])
+      ),
+    });
+    for (const name of ['Badge', 'Button', 'Group', 'Stack', 'Text'])
+      expect(on[name] ?? 0, name).toBeLessThan(off[name] ?? 0);
+    expect(total(on)).toBeLessThan(total(off));
   });
 });
