@@ -20,7 +20,7 @@ export const load: PageServerLoad = ({ locals, url }) => {
   // Never back to `/` itself: that is this page, and a `?denied=` nested inside one would chain.
   const target = returnTo ? new URL(returnTo, url).pathname : '/';
   if (returnTo && target !== '/' && canAccess(locals.user, target)) redirect(303, returnTo);
-  return { roles: appRoles(locals.user, APP), returnTo };
+  return { roles: appRoles(locals.user, APP), returnTo, wide: true };
 };
 
 /**
