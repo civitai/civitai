@@ -1,8 +1,12 @@
 import { browser } from '$app/environment';
+import type { SidebarCountsResult } from '$lib/server/sidebar-counts.service';
 
 // Fetched client-side (not via SSR load) so the count aggregates never sit in the page-load request path.
 const TTL_MS = 60_000;
-const store = $state<{ value: Record<string, number> | null }>({ value: null });
+const store = $state<{ value: Record<string, number> | null; unavailable: string[] }>({
+  value: null,
+  unavailable: [],
+});
 let lastFetch = 0;
 let inflight = false;
 
@@ -13,7 +17,9 @@ async function fetchCounts() {
   try {
     const r = await fetch('/api/sidebar-counts');
     if (r.ok) {
-      store.value = await r.json();
+      const body: Partial<SidebarCountsResult> = await r.json();
+      store.value = body.counts ?? {};
+      store.unavailable = body.unavailable ?? [];
       lastFetch = Date.now();
     }
   } catch {

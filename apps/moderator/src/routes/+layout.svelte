@@ -45,7 +45,7 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive, navCount, navHref, navPartial } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
@@ -78,6 +78,14 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
+  // A count the server could not read is marked, not left out: "423+" rather than a smaller total.
+  const badgeText = (item: NavLink, cnt: number | null) =>
+    navPartial(item, (key) => counts.unavailable.includes(key))
+      ? `${cnt ?? '?'}+`
+      : cnt === null
+        ? null
+        : String(cnt);
+  const PARTIAL_TITLE = 'Some counts are unavailable';
 
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
@@ -127,7 +135,7 @@
             {#each data.nav as item (item.path ?? item.label)}
                 {@const Icon = iconFor(item)}
                 {#if item.children}
-                  {@const rollup = rollupFor(item)}
+                  {@const rollup = badgeText(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
                     onOpenChange={(o) => (openGroups[item.label] = o)}
@@ -141,6 +149,7 @@
                             {#if rollup !== null}
                               <span
                                 class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                                title={rollup.endsWith('+') ? PARTIAL_TITLE : undefined}
                               >
                                 {rollup}
                               </span>
@@ -163,7 +172,7 @@
                              top-level ones; only the left indent and rule stay as the hierarchy cue. -->
                         <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = navCount(childLink, countFor)}
+                            {@const cnt = badgeText(childLink, navCount(childLink, countFor))}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -182,6 +191,7 @@
                                     {#if cnt !== null}
                                       <span
                                         class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
+                                        title={cnt.endsWith('+') ? PARTIAL_TITLE : undefined}
                                       >
                                         {cnt}
                                       </span>
@@ -196,7 +206,7 @@
                     </SidebarMenuItem>
                   </Collapsible>
                 {:else}
-                  {@const cnt = navCount(item, countFor)}
+                  {@const cnt = badgeText(item, navCount(item, countFor))}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
@@ -208,6 +218,7 @@
                           {#if cnt !== null}
                             <span
                               class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                              title={cnt.endsWith('+') ? PARTIAL_TITLE : undefined}
                             >
                               {cnt}
                             </span>

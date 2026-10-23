@@ -49,6 +49,12 @@ export function navCount(
   return total;
 }
 
+/** Whether a link's badge leaves out a count that could not be read: it, or a child it sums. */
+export function navPartial(link: NavLink, isUnavailable: (key: string) => boolean): boolean {
+  if (!link.children) return !!link.countKey && isUnavailable(link.countKey);
+  return link.children.some((child) => !child.informational && navPartial(child, isUnavailable));
+}
+
 export type SwitcherEntry = { label: string; href: string; external: boolean };
 
 /** Every page the sidebar can open, as "Group › Page"; a `tabs` group is one entry, as in the sidebar. */

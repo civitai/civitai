@@ -8,6 +8,16 @@ const { countPendingCsamHolds, countEvidenceHoldsEnding } = vi.hoisted(() => ({
 vi.mock('../cache', () => ({
   createCache: ({ fetch }: { fetch: () => Promise<unknown> }) => ({ get: () => fetch() }),
 }));
+const redis = vi.hoisted(() => {
+  const store = new Map<string, string>();
+  return {
+    store,
+    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+  };
+});
+
+vi.mock('../redis', () => ({ getRedis: () => redis }));
 vi.mock('../db', () => ({
   dbRead: {
     selectFrom: () => {
@@ -47,17 +57,23 @@ vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
 
 const { getSidebarCounts } = await import('../sidebar-counts.service');
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  redis.store.clear();
+  vi.clearAllMocks();
+});
 
 describe('sidebar count csamTextHolds', () => {
   it('is the pending csam hold total', async () => {
     countPendingCsamHolds.mockResolvedValue(3);
-    expect(await getSidebarCounts()).toMatchObject({ csamTextHolds: 3, modelFlagsAppeals: 4 });
+    expect((await getSidebarCounts()).counts).toMatchObject({
+      csamTextHolds: 3,
+      modelFlagsAppeals: 4,
+    });
   });
 
   it('is dropped, without blanking the other badges, when its query fails', async () => {
     countPendingCsamHolds.mockRejectedValue(new Error('db down'));
-    const counts = await getSidebarCounts();
+    const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('csamTextHolds');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
@@ -66,12 +82,12 @@ describe('sidebar count csamTextHolds', () => {
 describe('sidebar count evidenceHoldsEnding', () => {
   it('is the number of owners whose hold is ending', async () => {
     countEvidenceHoldsEnding.mockResolvedValue({ owners: 2, earliest: new Date() });
-    expect(await getSidebarCounts()).toMatchObject({ evidenceHoldsEnding: 2 });
+    expect((await getSidebarCounts()).counts).toMatchObject({ evidenceHoldsEnding: 2 });
   });
 
   it('is dropped, without blanking the other badges, when its query fails', async () => {
     countEvidenceHoldsEnding.mockRejectedValue(new Error('db down'));
-    const counts = await getSidebarCounts();
+    const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('evidenceHoldsEnding');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });

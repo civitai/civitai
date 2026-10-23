@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
+import { isNavLinkActive, navCount, navHref, navPartial, switcherEntries } from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -142,6 +142,22 @@ describe('the Models section', () => {
         .find((l) => l.label === 'Models')
         ?.children?.[0]?.children?.find((c) => c.path === NEEDS_REVIEW)?.countKey
     ).toBe('modelFlagsNeedsReview');
+  });
+
+  it('marks the Models badge partial while Needs review could not be counted', () => {
+    applyGrants({
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    expect(navPartial(needsReview()!, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    // A count the viewer's badge does not sum leaves it whole.
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReviewMatches']))).toBe(false);
+    expect(navPartial(models, unavailable([]))).toBe(false);
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
