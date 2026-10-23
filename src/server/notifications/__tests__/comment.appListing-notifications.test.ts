@@ -496,7 +496,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       UNNEST(CASE
       WHEN c."parentId" IS NULL THEN (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -538,8 +538,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       CASE WHEN (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) THEN JSONB_BUILD_OBJECT(
       'version', 3,
       'modelId', c."entityId",
-      'commentId', COALESCE(c."legacyV1Id", c.id),
-      'parentId', COALESCE(p."legacyV1Id", p.id),
+      'commentId', c."legacyV1Id",
+      'parentId', p."legacyV1Id",
       'parentType', 'comment',
       'modelName', m.name,
       'username', u.username
@@ -598,8 +598,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       'version', 3,
       'mentionedIn', 'comment',
       'modelId', c."entityId",
-      'commentId', COALESCE(c."legacyV1Id", c.id),
-      'parentId', COALESCE(p."legacyV1Id", p.id),
+      'commentId', c."legacyV1Id",
+      'parentId', p."legacyV1Id",
       'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
       'modelName', m.name,
       'username', u.username

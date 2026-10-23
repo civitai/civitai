@@ -295,7 +295,7 @@ export const getAllTimeTotals = createCache({
       getClickhouse().$query<{ reactions: number | string }>(
         `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
       ),
-      // Replies count too: each carries the image on its own row. Deleted comments do not.
+      // Replies count: each carries the image on its own row.
       sql<{ comments: number | string }>`
         SELECT count(*) AS comments
         FROM "CommentV3" cv JOIN "Image" i ON i.id = cv."entityId"

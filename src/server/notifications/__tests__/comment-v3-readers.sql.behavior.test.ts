@@ -8,11 +8,12 @@ import {
   type DatabaseConnection,
   type Dialect,
 } from 'kysely';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 
-// Against real Postgres, with rows inserted into CommentV3 directly, as a surface writes them after
-// its flip.
+// Against real Postgres, with rows inserted into CommentV3 directly.
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
 const holder = vi.hoisted(() => ({ kysely: null as unknown }));
@@ -44,6 +45,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
   '~/server/services/bot-account-detection/cohort'
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
+const { getThreadMuted } = await import('~/server/services/commentsv2.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -100,8 +102,8 @@ INSERT INTO "UserEngagement" VALUES (6, 3, 'Block');
 // answers 100; 109 (by 4) answers their own 102. 105 (by 9) and 107 (by 7) are more top-level
 // comments, 108 (by 6) a deleted one, 110 (by 10) one written before the cursor.
 // Article 10 shares the image's id: 106 (by 10). Model 1 (owner 1): 200 (by 2, old id 55), its
-// reply 201 (by 8, old id 101 — the same number as image comment 101), and 202 (by 4), a v2 comment
-// on the model thread with no old id. Comic chapter 77 and app listing 9 have a comment and a reply
+// replies 201 (by 8, old id 101 — the same number as image comment 101) and 203 (by 10, old id 57),
+// 202 (by 4), a v2 comment on the model thread with no old id, and 204, a deleted one. Comic chapter 77 and app listing 9 have a comment and a reply
 // each; app listing 10 has no slug.
 const COMMENTS = `
 INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 10), ('article', 10), ('model', 1),
@@ -121,6 +123,8 @@ INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "
   (200, 'model', 1, NULL, NULL, 2, 'model top', 55, NULL, now()),
   (201, 'model', 1, 200, NULL, 8, 'model reply "mention:9"', 101, NULL, now()),
   (202, 'model', 1, NULL, NULL, 4, 'v2 on the model thread', NULL, NULL, now()),
+  (203, 'model', 1, 200, NULL, 10, 'second model reply', 57, NULL, now()),
+  (204, 'model', 1, NULL, NULL, 3, '', 58, now(), now()),
   (300, 'comicChapter', 77, NULL, NULL, 2, 'on a chapter', NULL, NULL, now()),
   (302, 'comicChapter', 77, 300, NULL, 3, 'chapter reply', NULL, NULL, now()),
   (301, 'appListing', 9, NULL, NULL, 2, 'on a listing', NULL, NULL, now()),
@@ -130,9 +134,10 @@ INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "
 -- Mutes: user 7 the whole of image 10, user 6 the conversation under 100, user 9 under 102.
 INSERT INTO "CommentTopicMute"("userId", "entityType", "entityId") VALUES (7, 'image', 10);
 INSERT INTO "CommentMute"("userId", "commentId") VALUES (6, 100), (9, 102);
--- Five reactions on the model reply 201.
+-- Five reactions each on the model reply 201, the deleted model comment 204, image comment 100 and
+-- the v2 comment 202 on the model thread.
 INSERT INTO "CommentV3Reaction"("commentId", "userId", reaction)
-  SELECT 201, u, 'Like' FROM generate_series(1, 5) u;
+  SELECT c, u, 'Like' FROM generate_series(1, 5) u, unnest(ARRAY[201, 204, 100, 202]) c;
 `;
 
 const rows = async <T = Record<string, unknown>>(sql: string) => (await db.pg.query<T>(sql)).rows;
@@ -253,11 +258,15 @@ describe('notification queries on CommentV3', () => {
     const out = await emitted('new-thread-response');
     // Top level on image 10: 100 (by 2), 105 (by 9), 107 (by 7) and the older 110 (by 10), with
     // user 7's section mute and the deleted 108 left out. Replies: everyone answering the same
-    // comment, the clamped 103 included beside 109. 202 is a v2 comment on the model thread.
+    // comment, the clamped 103 included beside 109. 202, a v2 comment on the model thread, shares no
+    // conversation with the v1 comments there.
     expect(pairs(out)).toEqual([
+      // The model replies 201 and 203 under 200, by their old ids.
+      [57, 8],
       [100, 9],
       [100, 10],
       [101, 8],
+      [101, 10],
       [103, 4],
       [104, 3],
       [105, 2],
@@ -266,12 +275,14 @@ describe('notification queries on CommentV3', () => {
       [107, 9],
       [107, 10],
       [109, 5],
-      [202, 2],
     ]);
     const byId = (id: number) => out.find((r) => r.details.commentId === id)!;
     expect(byId(105).details).toMatchObject({ commentParentId: 10, commentParentType: 'image' });
     expect(byId(103).details.commentParentId).toBe(102);
-    expect(byId(202).details).toMatchObject({ threadType: 'model', threadParentId: 1 });
+    const modelReply = out.find((r) => r.details.commentId === 101 && r.userId === 10)!;
+    expect(modelReply.details).toMatchObject({ modelId: 1, parentId: 55, parentType: 'comment' });
+    expect(modelReply.details.threadType).toBeUndefined();
+    expect(modelReply.dedupeKey).toBe('comment:v1:101');
   });
 
   it('the model page processors carry the old ids, and only for comments with one', async () => {
@@ -281,10 +292,19 @@ describe('notification queries on CommentV3', () => {
     expect(comment[0].dedupeKey).toBe('comment:v1:55');
 
     const response = await emitted('new-comment-response');
-    expect(pairs(response)).toEqual([[101, 2]]);
-    expect(response[0].details).toMatchObject({ modelId: 1, parentId: 55 });
+    expect(pairs(response)).toEqual([
+      [57, 2],
+      [101, 2],
+    ]);
+    expect(response.find((r) => r.details.commentId === 101)!.details).toMatchObject({
+      modelId: 1,
+      parentId: 55,
+    });
 
-    expect(pairs(await emitted('new-comment-nested'))).toEqual([[101, 1]]);
+    expect(pairs(await emitted('new-comment-nested'))).toEqual([
+      [57, 1],
+      [101, 1],
+    ]);
   });
 
   it('new-mention notifies the named, keyed as the comment it is in, and honours a block', async () => {
@@ -300,10 +320,12 @@ describe('notification queries on CommentV3', () => {
     expect(out.find((r) => r.userId === 10)!.dedupeKey).toBe(
       replies.find((r) => r.details.commentId === 104)!.dedupeKey
     );
-    expect(out.find((r) => r.userId === 9)!.dedupeKey).toBe(response[0].dedupeKey);
+    expect(out.find((r) => r.userId === 9)!.dedupeKey).toBe(
+      response.find((r) => r.details.commentId === 101)!.dedupeKey
+    );
   });
 
-  it('the comment reaction milestone keys on the old ids', async () => {
+  it('the comment reaction milestone keys on the old ids, for live model comments only', async () => {
     const out = await run(reactionNotifications['comment-reaction-milestone'].prepareQuery);
     expect(out.map((r) => [r.userId, r.details])).toEqual([
       [8, { modelName: 'M', modelId: 1, rootCommentId: 55, commentId: 101, reactionCount: 5 }],
@@ -369,36 +391,123 @@ describe('the detail fetcher', () => {
     `);
   });
 
-  it('resolves every version from CommentV3 and serves nothing of a removed comment', async () => {
-    const ctx = {
-      db: {
-        user: {
-          findMany: async ({ where }: { where: { id: { in: number[] } } }) =>
-            where.id.in.map((id) => ({ id, username: `u${id}` })),
-        },
+  const ctx = {
+    db: {
+      user: {
+        findMany: async ({ where }: { where: { id: { in: number[] } } }) =>
+          where.id.in.map((id) => ({ id, username: `u${id}` })),
       },
-    } as never;
-    const notifications = [
-      // Versionless rows carry old v1 ids: 101 is model reply 201's, not image comment 101.
-      { id: 1, type: 'new-comment', details: { commentId: 55 } },
-      { id: 2, type: 'new-comment', details: { commentId: 101 } },
-      { id: 3, type: 'new-image-comment', details: { version: 2, commentId: 101 } },
-      // A model-page notification since Phase 3 carries a version and the old id.
-      { id: 4, type: 'new-comment-response', details: { version: 3, modelId: 1, commentId: 101 } },
-      { id: 5, type: 'new-thread-response', details: { version: 3, commentId: 400 } },
-      { id: 6, type: 'new-thread-response', details: { version: 3, commentId: 401 } },
-      { id: 7, type: 'new-thread-response', details: { version: 3, commentId: 402 } },
-    ] as never as { details: Record<string, unknown> }[];
+    },
+  } as never;
+  const preview = async (notifications: { type: string; details: Record<string, unknown> }[]) => {
     await commentDetailFetcher.fetcher(notifications as never, ctx);
-    expect(notifications.map((n) => [n.details.content, (n.details.actor as any)?.id])).toEqual([
+    return notifications.map((n) => [n.details.content, (n.details.actor as any)?.id]);
+  };
+
+  it('previews what each processor emits, whichever shape it is', async () => {
+    const take = async (type: keyof typeof commentNotifications, commentId: number) => ({
+      type,
+      details: (await emitted(type)).find((r) => r.details.commentId === commentId)!.details,
+    });
+    // new-image-comment carries a modelId too (null here), and image comment 101 shares its number
+    // with model reply 201's old id: neither may send the lookup down the model page's path. The
+    // thread-response and mention types emit both shapes, so each is fed one of either.
+    const threadResponses = await emitted('new-thread-response');
+    const mentions = await run(mentionNotifications['new-mention'].prepareQuery);
+    const notifications = [
+      await take('new-image-comment', 100),
+      await take('new-comment-reply', 101),
+      await take('new-comment', 55),
+      await take('new-comment-response', 101),
+      ...[8, 10].map((userId) => ({
+        type: 'new-thread-response',
+        details: threadResponses.find((r) => r.details.commentId === 101 && r.userId === userId)!
+          .details,
+      })),
+      ...[101, 104].map((commentId) => ({
+        type: 'new-mention',
+        details: mentions.find((r) => r.details.commentId === commentId)!.details,
+      })),
+    ];
+    expect(await preview(notifications)).toEqual([
+      ['top', 2],
+      ['reply "mention:6"', 3],
       ['model top', 2],
       ['model reply "mention:9"', 8],
       ['reply "mention:6"', 3],
       ['model reply "mention:9"', 8],
+      ['model reply "mention:9"', 8],
+      ['second reply "mention:10"', 8],
+    ]);
+  });
+
+  it('resolves historical rows of each version, and serves nothing of a removed comment', async () => {
+    expect(
+      await preview([
+        // Versionless rows carry old v1 ids: 101 is model reply 201's, not image comment 101.
+        { type: 'new-comment', details: { commentId: 55 } },
+        { type: 'new-comment', details: { commentId: 101 } },
+        // No comment has old id 100 or 202: neither image comment 100 nor the v2 model comment 202
+        // may stand in, as a removed v1 comment's notification would otherwise show them.
+        { type: 'new-comment', details: { commentId: 100 } },
+        { type: 'new-comment', details: { commentId: 202 } },
+        // A v2 image comment notification, with the modelId new-image-comment always stamped.
+        { type: 'new-image-comment', details: { version: 2, commentId: 101, modelId: 1 } },
+        { type: 'new-thread-response', details: { version: 3, commentId: 400 } },
+        { type: 'new-thread-response', details: { version: 3, commentId: 401 } },
+        { type: 'new-thread-response', details: { version: 3, commentId: 402 } },
+      ])
+    ).toEqual([
+      ['model top', 2],
+      ['model reply "mention:9"', 8],
+      [undefined, undefined],
+      [undefined, undefined],
+      ['reply "mention:6"', 3],
       [undefined, undefined],
       [undefined, undefined],
       [undefined, undefined],
     ]);
+  });
+});
+
+describe('the mute menu', () => {
+  // getThreadMuted's raw query, run here as Prisma would send it.
+  const menu = (commentId: number, userId: number) => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
+      tosViolation: false,
+      childThread: null,
+    });
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const q = Prisma.sql(strings, ...values);
+      return db.pg.query(q.text, q.values).then((r) => r.rows);
+    }) as never);
+    return getThreadMuted({ commentId, userId });
+  };
+
+  it("reports the user's own mute, one inherited from an ancestor, and none", async () => {
+    expect(await menu(100, 6)).toEqual({ muted: true, viaAncestor: false, canMute: true });
+    expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
+    expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
+  });
+
+  it('refuses a mute anywhere in a locked chain: an ancestor, or the topic', async () => {
+    await temporarily(
+      `UPDATE "CommentV3" SET locked = true WHERE id = 100`,
+      `UPDATE "CommentV3" SET locked = false WHERE id = 100`,
+      async () => {
+        expect((await menu(102, 9)).canMute).toBe(false);
+        // Another conversation on the same image is not locked.
+        expect((await menu(105, 9)).canMute).toBe(true);
+      }
+    );
+    await temporarily(
+      `UPDATE "CommentTopic" SET locked = true WHERE "entityType" = 'image' AND "entityId" = 10`,
+      `UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'image' AND "entityId" = 10`,
+      async () => expect((await menu(100, 9)).canMute).toBe(false)
+    );
   });
 });
 

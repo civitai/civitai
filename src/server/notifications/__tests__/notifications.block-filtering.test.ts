@@ -87,7 +87,7 @@ describe('actor-derived notifications outside the comment family', () => {
     expect(q).toMatch(/blk\.type = 'Block'/);
   });
 
-  // new-mention UNIONs three branches and derives its recipient with unnest() in the SELECT list,
+  // new-mention UNIONs two branches (comment, model description) and derives its recipient with unnest() in the SELECT list,
   // where no WHERE clause can see it. Each branch carries its author out as `actorId` so the filter
   // can run once on the outer query — a branch that forgets the column is a SQL error, but one that
   // selects the WRONG user silently notifies across the block.

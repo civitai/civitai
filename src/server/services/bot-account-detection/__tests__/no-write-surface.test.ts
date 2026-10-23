@@ -889,7 +889,7 @@ describe('the detector has no write surface', () => {
       '~/server/clickhouse/client',
       '~/server/db/client',
       // For `kyselyRead` in cohort.ts. The module also exports `kyselyWrite`; the Kysely ledger
-      // below is what checks which one is used.
+      // above checks which one is taken.
       '~/server/db/kyselyDb',
       '~/server/logging/client',
       '~/server/services/bot-account-detection/cohort',

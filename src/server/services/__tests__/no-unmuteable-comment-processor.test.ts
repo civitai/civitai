@@ -18,15 +18,14 @@ import { mentionNotifications } from '~/server/notifications/mention.notificatio
  * satisfied it, and a recipient/author swap passed. All three are structural, none was a spelling
  * problem, and none is reachable from here.
  *
- * OUT OF SCOPE, deliberately, in both cases because there is nothing this mechanism could suppress:
- * the model-page discussion (`MODEL_ONLY` below) has no mute control on its page; a model
- * `CommentTopicMute` mirrored from a v2 model-thread section mute reaches `new-thread-response` but
- * not these three, accepted until the model surface flips; and `new-comic-comment` is written
- * by `createNotification` from `comics.router.ts` rather than by a `prepareQuery`, so no producer-side
- * SQL filter reaches it at all. Its comments are always created at the chapter root by that same
- * mutation, and no UI path mutes a root there, so it has nothing to suppress today. Give comics a
- * reply path, or a way to mute a root, and it needs its own filter — this guard cannot see that for
- * you.
+ * OUT OF SCOPE, deliberately:
+ * - the model-page discussion (`MODEL_ONLY` below): no mute control on its page. A model
+ *   `CommentTopicMute` mirrored from a v2 section mute reaches `new-thread-response` but not these
+ *   three; accepted until the model surface flips.
+ * - `new-comic-comment`: written by `createNotification` in `comics.router.ts`, not a
+ *   `prepareQuery`, so no SQL filter reaches it. Its comments are always chapter roots and no UI
+ *   mutes a root. Give comics a reply path or a root mute and it needs its own filter; this guard
+ *   cannot see that.
  */
 
 type Def = { prepareQuery?: (args: { lastSent: string }) => string };

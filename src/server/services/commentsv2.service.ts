@@ -621,9 +621,8 @@ export async function getThreadMuted({
   // neighbour was fixed not to be.
   if (!comment || comment.tosViolation) return { muted: false, viaAncestor: false, canMute: false };
 
-  // The SAME predicate the notification suppression uses (`notCommentMuted`), so the menu and the
-  // notification cannot disagree: `ancestor` is its verdict on this comment, `own` the user's mute
-  // on the comment itself.
+  // The suppression's own predicate (`notCommentMuted`), so the label matches what is delivered:
+  // `ancestor` is its verdict on this comment, `own` the user's mute on the comment itself.
   // `dbWrite`, deliberately: the client invalidates this query the moment a toggle succeeds, so off
   // the replica the refetch can return the pre-toggle state — and because the mutation flips from DB
   // state, the next click then does the opposite of what the label says.

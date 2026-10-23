@@ -15,15 +15,14 @@ export const liveV3Since = (lastSent: string) =>
   `c."deletedAt" IS NULL AND c."createdAt" > '${lastSent}'`;
 
 /**
- * The id the model page's v1 dialog addresses a comment by. A v1 row renumbered by the backfill keeps
- * its old id in `legacyV1Id`; a row written since the tables share one sequence has the same id on
- * both sides, so this is the id whichever table the reader is on.
+ * The id the model page's dialog addresses a comment by: its old Comment id. Every v1-shaped row has
+ * one; a row from the shared sequence carries its own id there.
  */
-export const legacyId = (alias: string) => `COALESCE(${alias}."legacyV1Id", ${alias}.id)`;
+export const legacyId = (alias: string) => `${alias}."legacyV1Id"`;
 
 /**
- * A comment the model page's v1 dialog can open: on a model, with an old `Comment` id. The few v2
- * comments on model threads have none and stay thread-addressed, as they always were.
+ * A comment the model page's v1 dialog can open: on a model, with an old `Comment` id. v2 comments
+ * on model threads have none and stay thread-addressed.
  */
 export const isV1Shaped = (alias: string) =>
   `(${alias}."entityType" = 'model' AND ${alias}."legacyV1Id" IS NOT NULL)`;
@@ -206,9 +205,9 @@ export const commentDedupeKey = (version: 'v1' | 'v2') =>
   `concat('comment:${version}:', details->>'commentId')`;
 
 /**
- * Same, for queries that emit both shapes: a model comment carries the v1 shape (`modelId`, no
- * `threadType`) and its old v1 id, which can equal another surface's id, so it keeps the v1
- * namespace; everything else the v2 one.
+ * Same, for queries that emit both shapes: a v1-shaped model comment (no `threadType`) carries its
+ * old v1 id, which can equal another surface's id, so it keeps the v1 namespace; everything else the
+ * v2 one.
  */
 export const commentDedupeKeyByShape = `concat('comment:', case when details->>'threadType' is not null then 'v2:' else 'v1:' end, details->>'commentId')`;
 
@@ -219,8 +218,8 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `threadType` resolves to the `'comment'` fallback for any entity `threadUrlMap` doesn't address
  * (model3dReview today). Those stay unclaimed, which is what lets a purpose-built owner notification
- * own the key instead. Model comments carry no `threadType` and build their URL from `modelId`, so
- * they always render and always claim.
+ * own the key instead. v1-shaped model comments carry no `threadType` and build their URL from
+ * `modelId`, so they always render and always claim.
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
@@ -253,11 +252,11 @@ export const CommentNotificationPriority = {
 // Moveable (all)
 
 /**
- * Everyone else who wrote a comment beside `c` (same entity, same parent), live, unblocked and not
- * muted, each author checked once. A top-level comment's siblings are the entity's other top-level
- * comments; a reply's are everyone answering the same comment, whether the depth clamp left them
- * under it (`parentId`) or moved them up (`replyToId`), found through that comment alone, since a
- * reply always shares its entity. Two arms rather than `IS NOT DISTINCT FROM`, which no index serves.
+ * Everyone else in `c`'s conversation, live, unblocked and not muted, each author checked once. For a
+ * top-level comment, the entity's other top-level comments of the same shape (a v2 comment on a
+ * model thread never shared a thread with v1 ones); for a reply, everyone answering the same
+ * comment, via `parentId` or the clamp's `replyToId`, found through that comment alone since a reply
+ * shares its entity. Two arms rather than `IS NOT DISTINCT FROM`, which no index serves.
  */
 const siblingAuthors = (sameParent: string) => `(SELECT ARRAY_AGG(s."userId") FROM (
                      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
@@ -455,14 +454,14 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    // Model comments notify on replies only and keep the v1 shape: their page's dialog still reads
-    // `Comment`.
+    // v1-shaped model comments notify on replies only and keep that shape: their page's dialog still
+    // reads `Comment`.
     prepareQuery: ({ lastSent }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
           UNNEST(CASE
             WHEN c."parentId" IS NULL THEN ${siblingAuthors(
-              'cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL'
+              'cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL)'
             )}
             ELSE ${siblingAuthors(
               `((cu."parentId" = ${answeredId(
@@ -753,7 +752,6 @@ export const commentNotifications = createNotificationProcessor({
         LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
         LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
         WHERE c."entityType" = 'appListing'
-          -- TOP-LEVEL comments only; replies stay with new-comment-reply / new-thread-response.
           AND c."parentId" IS NULL
           AND ${liveV3Since(lastSent)}
           AND ${APP_LISTING_OWNER_SQL} > 0

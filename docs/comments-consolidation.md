@@ -45,14 +45,14 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
-- **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: counts that
-  showed `Thread.commentCount` (challenge, the collection judged check, resource reviews, the
-  metrics jobs) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
+- **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: the challenge
+  and resource-review counts (were `Thread.commentCount`), the collection judged check and the
+  metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
   replies and tombstones; model-comment notifications keep the v1 detail shape and `comment:v1:`
   dedupe key and address comments by `legacyV1Id` until the model surface flips (_Notifications
   impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
   block guard, the block hide sweep and the v2 lock check (_Thread mute_); the moderator
-  report-queue joins and CSAM-hold queries stay on the old link tables until `ReportEntity.CommentV3`
+  report-queue joins and `csam-holds.queries.ts` stay on the old link tables until `ReportEntity.CommentV3`
   (_Moderator app impact_); two `createdAt` indexes (`CommentV3`, `CommentV3Reaction`) are added for
   the per-minute notification cursors; CommentV3 is read through Kysely or raw SQL, never the
   Prisma delegate (decision 8).
@@ -940,7 +940,7 @@ Plan:
   space — no headroom guessing, no `setval` choreography at each flip, and dual-written rows carry
   the same id on both sides by construction.
 - **Legacy v1 rows get new ids**, with the original id in `legacyV1Id` (unique). The notification
-  detail-fetcher's `version !== 2` branch resolves via `legacyV1Id` — that shim is permanent (old
+  detail fetcher resolves a model-page row through `legacyV1Id` — that shim is permanent (old
   notification rows never go away) but tiny. A v1 row allocated by the shared sequence (id above
   `commentv3_v1_id_floor()`, the old sequences' frozen position) holds an id that is unique
   across all three tables, so the mirror keeps it as the V3 id with `legacyV1Id` set to the same
@@ -1389,7 +1389,7 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   `CommentV3` rows since Phase 3, not `CommentTopic.commentCount`, which counts replies and
   tombstones), `src/server/services/collection.service.ts` (judged check) and
   `src/server/services/challenge.service.ts` (four counts), both on `CommentV3` the same way,
-  `src/server/metrics/post.metrics-old.ts` (still live behind `simplified-post-metrics`; ported in Phase 3), `src/pages/api/mod/daily-challenge/re-review.ts`,
+  `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3), `src/pages/api/mod/daily-challenge/re-review.ts`,
   `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
   `CommentV3Report` arm since Phase 3), and the
   Q&A thread `_count` reads in `answer.controller.ts`/`question.controller.ts` (retire with the
@@ -1416,30 +1416,31 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 
 ### Notifications impact (Phase 5 detail)
 
-`src/server/notifications/comment.notifications.ts` defines ~16 notification types. Before Phase 3
+`src/server/notifications/comment.notifications.ts` defines 17 notification types. Before Phase 3
 they fell into three shapes:
 
 - **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
-  `reaction.notifications.ts`): read `CommentV3 WHERE entityType = 'model'` since Phase 3. Until the
+  `reaction.notifications.ts`): read v1-shaped model rows of CommentV3 (with a `legacyV1Id`) since Phase 3. Until the
   model surface flips, its dialog reads the v1 `Comment` table, so they keep the v1 detail shape and
-  `comment:v1:` dedupe namespace and address comments by `COALESCE("legacyV1Id", id)`; a comment
-  written since the shared sequence has the same id on both sides. They switch to the v3 id with the
+  `comment:v1:` dedupe namespace and address comments by their old id in `legacyV1Id` (a v1 row from
+  the shared sequence carries its own id there). They switch to the v3 id with the
   model flip.
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
-  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`,
+  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`,
   `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since
   Phase 3 each is `WHERE entityType = X AND parentId IS [NOT] NULL` on CommentV3, the near-copies the
   Phase 5 builder collapses.
 - **Both-table UNIONs** (`new-thread-response`, `mention.notifications.ts`): one CommentV3 query
   each since Phase 3. Thread participants are a comment's siblings: for a top-level comment the
-  entity's other top-level comments, for a reply everyone answering the same comment.
+  entity's other top-level comments of the same shape (v2 comments on a model thread never shared a
+  thread with the v1 ones), for a reply everyone answering the same comment.
 
 Two things must hold through the transition:
 
 - **Historical rows are forever.** `Notification.details` carries `version: 3` (since Phase 3),
   `version: 2`, or no version (v1), with the ids of their day. `comment.detail-fetcher.ts` reads
-  all of them from CommentV3 permanently: a model-page row (no version, or the v1 shape) by its old
-  id in `legacyV1Id`, anything else by id (v2 ids are preserved).
+  all of them from CommentV3 permanently: a model-page row (versionless, one of the three model-page types, or a `new-thread-response`
+  or `new-mention` with no `threadType`) by its old id in `legacyV1Id`, anything else by id (v2 ids are preserved).
 - **Cutover alignment.** Notification `prepareQuery`s run off `lastSent` windows against whichever
   table they query. Because CommentV3 is complete during dual-write, the simple safe order is:
   rewrite **all** notification queries against CommentV3 once, during the dual-write window, before
@@ -1466,7 +1467,7 @@ What v2 has today:
   top-level composer) via `toggleSectionMute`, which is the only writer that targets an entity-root
   thread.
 - `getThreadMuted` / `getSectionMuted` read the suppression's own predicate (`notCommentMuted`;
-  `CommentTopicMute` for the section), so the menu label and the suppression cannot disagree.
+  `CommentTopicMute` for the section), so the menu label and the suppression agree (past the depth clamp, one hop only).
 - A convention guard, `no-unmuteable-comment-processor`, wired into `test:lint-rules`.
 
 #### What consolidation changes
@@ -1479,8 +1480,8 @@ the v2 write path), with three consequences:
 
 - **The depth cap stops being a correctness hole.** `MAX_THREAD_CHAIN_DEPTH` is a bound on work, not
   a proof; past it `notThreadMuted` failed open and sent. Measured on prod 2026-08-27: 149 chains
-  were past the cap, where a mute silently stopped suppressing until the Phase 3 re-point. A containment test has no cap, and the
-  stored depth cap of 20 makes the question moot regardless.
+  were past the cap, where a mute silently stopped suppressing until the Phase 3 re-point. A containment test has no cap. The stored depth cap of 20 leaves one residue: past it,
+  `replyToId` carries a mute one hop only (checklist, Phase 3, Accepted).
 - **The `parentThreadId` exclusion becomes unnecessary.** The v2 walk deliberately refuses that edge
   because it is written from client input, so trusting it would let a replier steer their reply into
   a chain the recipient muted and have the notification dropped — a suppression operated by someone
@@ -1565,7 +1566,7 @@ deletes about half of each:
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
 after flips would leave mod tooling blind to new comments on flipped surfaces), except the
-report-queue joins and CSAM-hold queries, which move with `ReportEntity.CommentV3` at the first
+report-queue joins and `csam-holds.queries.ts`, which move with `ReportEntity.CommentV3` at the first
 write flip. Its old-table code
 paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.

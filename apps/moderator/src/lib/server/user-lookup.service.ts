@@ -690,8 +690,8 @@ async function getModelFlags(userId: number) {
 }
 
 /**
- * The two comment rows. "Model comments" are the model-page discussion (rows with an old `Comment`
- * id, the same split as the lists), "Image comments" everything else (the label is Retool's). Deleted comments are left out: a tombstone keeps its `userId`.
+ * "Model comments" = rows with an old `Comment` id (the lists' split); "Image comments" is Retool's
+ * label for everything else. Tombstones keep their `userId`, so are excluded.
  */
 async function getCommentCounts(userId: number) {
   const r = await dbRead
@@ -752,7 +752,6 @@ export async function getCounts(userId: number): Promise<UserCounts> {
     getModelFlags(userId),
     getCommentFlags(userId),
   ]);
-  // The comment rows sit where Retool listed them, after Collections.
   const after = tableCounts.findIndex((c) => c.label === 'Collections') + 1;
   const counts = [...tableCounts.slice(0, after), ...commentCounts, ...tableCounts.slice(after)];
 

@@ -136,7 +136,7 @@ and flip order.
 - [ ] **(moved to Phase 4)** Clavata trigger migration (`EntityType` value + `trg_moderation_commentv3`,
       pulled out of Phase 1 in #6449), the `entity-moderation.ts` consumer, and the text-scan
       `CommentV3` profile/entity type: see Phase 4, "With the first write flip"
-- [ ] **(moved to Phase 4)** report-queue / hold readers and the verdict/retention ledger alias: see
+- [ ] **(moved to Phase 4)** report-queue readers, `csam-holds.queries.ts` and the verdict/retention ledger alias: see
       Phase 4, "With the first write flip"
 - [x] `packages/civitai-db-schema/src/kysely/updated-at-tables.ts` gains the new tables — under
       D8 this is the only thing that maintains `updatedAt` on them (generated)
@@ -478,8 +478,8 @@ flip — these MUST land before the first Phase 4 write flip):
       and ids the moderation wiring writes, and move with `ReportEntity.CommentV3` in Phase 4
 - [x] Creator-studio analytics (`analytics.ts`: all-time comments on the creator's images and the
       per-image daily count). `analytics-detail.ts` has no Postgres comment read
-- [x] Metrics jobs (`article/bounty/post/model3d.metrics.ts` and `post.metrics-old.ts`, still
-      live behind `simplified-post-metrics`) count top-level live comments, which is what the
+- [x] Metrics jobs (`article/bounty/post/model3d.metrics.ts` and `post.metrics-old.ts`, used while
+      `simplified-post-metrics` is off) count top-level live comments, which is what the
       root thread counted; `model.metrics.ts`'s distinct commenters read CommentV3 too. The
       disabled question and answer jobs have no entity type and are left as they are
 - [x] `daily-challenge-processing.ts` judge gate (both reads), `getJudgeCommentForImage`,
@@ -492,7 +492,7 @@ flip — these MUST land before the first Phase 4 write flip):
 - [x] **(review)** `events/points/hooks.ts` counts the actor's remaining comments on CommentV3
       (its thread lookup is the v2 write path's input and goes with it);
       `creator-score-self-activity.service.ts` and `bot-account-detection/cohort.ts` read
-      CommentV3 (the cohort's two comment reads became one). Left for Phase 4, as writes:
+      CommentV3 (the v1 and v2 comment reads, visible and membership each, became one pair). Left for Phase 4, as writes:
       `scam-cleanup.service.ts` (hide and restore are UPDATEs), the reaction toggle reads, and
       `assertCommentEntityVisible` / `getCommentThreadBounty` / `getCommentThreadCrucibleId`,
       which guard v2 writes on the thread they are given
@@ -521,6 +521,8 @@ deploys; reverse-copy proven on a prod sample.
 
 Repeat this block per surface, in the Phase 0 order (model **last**):
 
+- [ ] Notification deep links switch `commentParentId` from `replyToId` to `parentId` with the read
+      flip: under v3 reads a clamped reply hangs off its parent
 - [ ] Read flip on → soak → verify (comments render, counts match, hidden/blocked exclusions hold,
       pinned order, deep-links/`targetCommentId`, reply pagination, mute menu state matches whether
       notifications actually arrive)
@@ -535,7 +537,7 @@ Repeat this block per surface, in the Phase 0 order (model **last**):
 
 With the first write flip (the moderation items moved here from Phases 1 and 2):
 
-- [ ] Report-queue and hold readers move with `ReportEntity.CommentV3`: `report-entities.ts` gains a
+- [ ] Report-queue readers and `csam-holds.queries.ts` move with `ReportEntity.CommentV3`: `report-entities.ts` gains a
       `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two, read by `reports.service.ts`
       context URLs, `user-reports`, `moderation-board`, `text-relabel-snapshot` and
       `getReportedContent`; `csam-holds.queries.ts` likewise; `assertCommentEntityVisible` /
@@ -543,11 +545,9 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       with the v3 write path
 - [ ] Verdict/retention ledgers alias old `Comment` ids via `legacyV1Id`, with the scam-cleanup v3
       branch
-- [ ] The v3 write path sets `CommentV3."updatedAt"` on every edit: nothing else bumps it, and
-      `new-mention` re-emits for a mention added by editing only when it moves
-- [ ] With each surface's READ flip, the notification deep links switch `commentParentId` from the
-      answered comment (`replyToId`) to `parentId`: under v3 reads a clamped reply hangs off its
-      parent, so the answered comment's conversation no longer contains it
+- [ ] The v3 write path's edits go through Kysely so `updated-at-tables.ts` bumps
+      `CommentV3."updatedAt"` (no trigger does): `new-mention` re-emits for a mention added by
+      editing only when it moves
 - [ ] Clavata trigger migration (`EntityType` value `CommentV3` + `trg_moderation_commentv3`;
       the Phase 1 client already knows the value, so deploy-before-apply holds; apply only if
       comments have not cut over to text-scan, `text-scan/clavata-cutover.ts`, and after the
@@ -627,9 +627,10 @@ safe at any time; everything below requires old write paths to be gone.)
 
 Notifications:
 
-- [x] `comment.detail-fetcher.ts` reads every version from CommentV3 (v3 and v2 by id, v1 via
-      `legacyV1Id`) since Phase 3, so a takedown after a write flip still hides old previews
-      (permanent shim)
+- [x] `comment.detail-fetcher.ts` reads every version from CommentV3 since Phase 3, so a takedown
+      after a write flip still hides old previews: a model-page row (versionless, one of the
+      three model-page types, or a `new-thread-response`/`new-mention` with no `threadType`) by
+      `legacyV1Id`, anything else by id (permanent shim)
 - [ ] Verify the detail fetcher against real historical notification rows of each version
 - [ ] Consolidate the per-entity notification queries into one parameterized builder — **no longer
       optional**: one builder is one place the mute filter can go missing, instead of 14
@@ -670,7 +671,7 @@ Main app cleanup:
       `block-check.service.ts` (`threadAncestorsCte`), `block-hide-comments.service.ts`
       (`seededThreadChainCte`) and `throwIfThreadChainLocked` move to `path @>` or go
 
-Moderator app cleanup (reads moved in Phase 3; this is the write/UX side):
+Moderator app cleanup (reads moved in Phases 3 and 4; this is the write/UX side):
 
 - [ ] `report-entities.ts` drops the old `Comment`/`CommentV2` entries, leaving the `CommentV3` one
 - [ ] `entity-url.ts` single builder; `CommentsPanel.svelte` single checkbox list

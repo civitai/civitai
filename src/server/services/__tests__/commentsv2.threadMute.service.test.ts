@@ -286,10 +286,10 @@ describe('getThreadMuted', () => {
   ) => dbMock.dbWrite.$queryRaw.mockResolvedValue(rows);
 
   /**
-   * The select is what makes `ownThreadId` reachable at all, and a mocked client ignores it — the
-   * write-side test two describes up exists for exactly this and the read side had no equivalent.
+   * The select is what lets `canMute` see a reply thread and the ToS refusal fire, and a mocked
+   * client ignores it — the write-side test two describes up exists for exactly this.
    */
-  it('reads the child thread the mute is keyed on', async () => {
+  it('reads the child thread canMute depends on, and the ToS flag', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
     walk([{ own: true, ancestor: false }]);
 
@@ -317,29 +317,16 @@ describe('getThreadMuted', () => {
     expect(predicate.sql).toBe(notCommentMuted('u.id', 'c'));
     // Caller first, comment second: swapped, a mute set by user 5 on comment 42 would answer.
     expect(values).toEqual([42, 5]);
-
-    const statement = (call[0] as string[]).join('?');
-    // `ancestor` is the suppression's verdict inverted; `own` is this user's mute on this comment.
-    expect(statement).toContain('NOT ? "ancestor"');
-    expect(statement).toContain(
-      'EXISTS (SELECT 1 FROM "CommentMute" m WHERE m."userId" = u.id AND m."commentId" = c.id) "own"'
-    );
-    expect(statement).toContain('FROM "CommentV3" c, (SELECT ?::int AS id) u');
-    // The lock covers the comment itself, every ancestor and the topic, as the create refuses.
-    expect(statement).toContain('lk.path @> c.path AND lk.locked');
-    expect(statement).toContain(
-      'ct."entityType" = c."entityType" AND ct."entityId" = c."entityId"'
-    );
+    // What the statement does with them runs against Postgres in comment-v3-readers.sql.behavior.
   });
 
   /**
-   * What Postgres actually returns when the caller has muted nothing: one all-NULL row from the
-   * aggregate. Both `?? false` defaults could be flipped to `?? true` with the suite green, and this
-   * is the path nearly every call takes.
+   * What a comment with no CommentV3 row yields: no row at all. Both `?? false` defaults could be
+   * flipped to `?? true` with the suite green.
    */
-  it('reports not-muted for the common case of no mute rows at all', async () => {
+  it('reports not-muted for a comment with no CommentV3 row', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
-    walk([{ own: null, ancestor: null } as unknown as { own: boolean; ancestor: boolean }]);
+    walk([]);
 
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: false,

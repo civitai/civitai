@@ -1,7 +1,6 @@
 -- Apply by hand, off-peak, before the deploy that ships the CommentV3 reader re-point: the comment
 -- notification processors and the comment reaction milestone run every minute on a createdAt
--- cursor, and without these indexes each run scans its whole table. Applying early is harmless:
--- nothing before the re-point reads these tables by createdAt.
+-- cursor, and without these indexes each run scans its whole table. Applying early is harmless.
 --
 -- CONCURRENTLY cannot run inside a transaction, so run each statement on its own. A cancelled build
 -- leaves an invalid index under its name, which IF NOT EXISTS then skips. After applying, check

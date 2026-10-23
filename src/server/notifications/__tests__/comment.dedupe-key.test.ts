@@ -72,7 +72,7 @@ describe('comment notifications — shared dedupe key', () => {
       // (model3dReview), which renders a dead link. Claiming there would suppress a working owner
       // notification — that is exactly how the mention/challenge regression got in.
       expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
-      // Model comments have no threadType and build their URL from modelId, so they always claim.
+      // v1-shaped model comments have no threadType and build their URL from modelId, so they always claim.
       expect(sqlFor(type)).toContain(`when details->>'threadType' is null then`);
     }
   );
@@ -91,16 +91,13 @@ describe('comment notifications — shared dedupe key', () => {
     expect(sql).toContain(commentDedupeKeyByShape);
   });
 
-  it.each([...V1_TYPES, ...V2_TYPES])(
-    '%s stamps details.version 3, which routes the detail fetch to CommentV3',
-    (type) => {
-      // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and
-      // reads CommentV3 for all of them: a versionless row by `legacyV1Id`, a versioned one by
-      // `id`. A processor that drops the version doesn't fail — it silently attaches a DIFFERENT
-      // comment's body, avatar and username, or none. Nothing else guards it.
-      expect(sqlFor(type)).toContain(`'version', 3`);
-    }
-  );
+  it.each([...V1_TYPES, ...V2_TYPES])('%s stamps details.version 3', (type) => {
+    // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and
+    // looks a versionless row up by its old v1 id. A thread-addressed processor that drops the
+    // version doesn't fail — it silently attaches whichever model comment has that old id, or
+    // none. Nothing else guards it.
+    expect(sqlFor(type)).toContain(`'version', 3`);
+  });
 
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
     // A key that varied per user or per type would dedupe nothing; this is the whole mechanism.
@@ -283,7 +280,7 @@ describe('a type that claims the dedupe key must render', () => {
           },
           { ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' },
         ];
-      // Non-model comments only — always the thread-addressed shape.
+      // Never the v1 shape: model-page comments belong to the model processors.
       case 'new-comment-reply':
         return [
           { ...base, version: 3, threadType: 'model', threadParentId: 1 },

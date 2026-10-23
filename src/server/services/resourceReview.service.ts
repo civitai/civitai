@@ -204,7 +204,7 @@ export const getResourceReviewsInfinite = async ({
   };
 };
 
-/** Top-level live comments per review. Not `CommentTopic.commentCount`: it counts replies and tombstones, so the shown number would jump. */
+/** Not `CommentTopic.commentCount`: that counts replies and tombstones, so the shown number would jump. */
 async function getReviewCommentCounts(reviewIds: number[]) {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ reviewId: number; count: number }[]>`

@@ -226,16 +226,12 @@ export type UserComment = {
   modelId: number | null;
 };
 
-/**
- * The model-page discussion: rows with an old `Comment` id, which the bulk actions act on. A
- * deleted comment is left out: a tombstone keeps its row and `userId`, and would otherwise read as
- * something the user still has up.
- */
+/** Rows with an old `Comment` id. Tombstones keep their `userId`, so are excluded. */
 export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
     .selectFrom('CommentV3')
     .select([
-      sql<number>`coalesce("legacyV1Id", id)`.as('id'),
+      sql<number>`"legacyV1Id"`.as('id'),
       'createdAt',
       'content',
       'tosViolation',

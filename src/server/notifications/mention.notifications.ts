@@ -65,8 +65,6 @@ export const mentionNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}`,
       };
     },
-    // A model comment keeps the v1 shape and permalink; every other entity gets the
-    // thread-addressed shape `threadUrlMap` reads.
     prepareQuery: ({ lastSent }) => `
       WITH new_mentions AS (
         SELECT DISTINCT
