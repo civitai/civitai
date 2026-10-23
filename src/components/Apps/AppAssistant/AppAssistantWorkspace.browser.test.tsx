@@ -5,6 +5,7 @@ import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { gateToolSet } from '@civitai/components-chat/core';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
+import type * as NotificationsMod from '~/utils/notifications';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -390,7 +391,8 @@ vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) 
     return { getToken: m.getToken, enable: m.enable };
   },
 }));
-vi.mock('~/utils/notifications', () => ({
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
   showSuccessNotification: ({ title, message }: { title?: string; message: unknown }) =>
     m.toasts.push({ kind: 'success', title, message }),
   showErrorNotification: ({

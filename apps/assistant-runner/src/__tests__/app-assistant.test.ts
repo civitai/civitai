@@ -593,8 +593,8 @@ describe('the kept-apps limit, as the page is told of it', () => {
     fake.keepLimit = 3;
     const { tools, reported } = await open();
     const before = opensApps().length;
-    await call(tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
-    await call(tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
+    await call(tools.tools, 'create_app', { name: 'Fourth app' }).catch(() => undefined);
     const creates = reported.filter((r) => r.name === 'create_app');
     expect(creates).toHaveLength(2);
     expect(creates.map(isKeepLimitResult)).toEqual([true, true]);
@@ -606,7 +606,7 @@ describe('the kept-apps limit, as the page is told of it', () => {
     fake.add('my-app');
     fake.keepLimit = 3;
     const { tools, reported } = await open();
-    await call(tools, 'create_app', { name: 'Fourth app' });
+    await call(tools.tools, 'create_app', { name: 'Fourth app' });
     const creates = reported.filter((r) => r.name === 'create_app');
     expect(creates).toHaveLength(1);
     expect(creates[0].isError).toBe(false);
