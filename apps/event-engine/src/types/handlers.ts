@@ -41,6 +41,7 @@ export interface HandlerContext<T = any> extends DatabaseProxies {
   current: T | null | undefined   // Only populated for Debezium
   record: T                       // Either after/before (Debezium) or raw payload (topic-based)
   operation: Operation            // Debezium operation or 'create' for non-Debezium
+  eventTimestamp: Date            // Source commit time; what metric events are stamped with
   actions: HandlerActions
 }
 

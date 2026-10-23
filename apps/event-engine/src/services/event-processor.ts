@@ -340,6 +340,7 @@ export class EventProcessor {
       current: isDebezium ? payload.after : payload,
       record: isDebezium ? (['create', 'update'].includes(operation) ? payload.after : payload.before) : payload,
       operation,
+      eventTimestamp,
       actions: this.createActions(kafkaMeta, eventTimestamp)
     }
   }
