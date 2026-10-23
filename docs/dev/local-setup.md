@@ -2,14 +2,14 @@
 
 ## Toolchain
 
-Use node `24.19.0` and pnpm 10.x. `.nvmrc` is the authority (CI reads it via `node-version-file:`, the Dockerfile base image tracks it); `package.json` declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake derives its node major from `.nvmrc`, and `nix flake check` fails if they disagree.
+Use node `24.22.1` and pnpm 10.x. `.nvmrc` is the authority (CI reads it via `node-version-file:`, the Dockerfile base image tracks it); `package.json` declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake derives its node major from `.nvmrc`, and `nix flake check` fails if they disagree.
 
 ## From nothing to a running app
 
 Default path, no Nix:
 
 ```bash
-nvm use                                        # .nvmrc -> 24.19.0
+nvm use                                        # .nvmrc -> 24.22.1
 corepack enable
 git submodule update --init event-engine-common
 cp .env-example .env.development

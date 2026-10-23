@@ -39,7 +39,7 @@ supervises. So the node you happened to have on `PATH` the first time you typed 
 node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.
 
 That is not academic. Measured on a dev box: the daemon was running on ambient node **26.7.0**, while
-`.nvmrc` pins **24.19.0**, `package.json` declares `engines.node: ">=24.0.0 <25"`, and production is built
+`.nvmrc` pinned **24.19.0**, `package.json` declares `engines.node: ">=24.0.0 <25"`, and production was built
 on `node:24.19.0-alpine3.24`. It had been started from a shell outside the dev shell, and that shell also
 had no `pnpm` at all — which silently disables the daemon's own auto-install path (it shells out to
 `pnpm install` / `pnpm run db:generate` when it sees the lockfile or the schema move).

@@ -72,7 +72,7 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
-All of these need the repo's own toolchain — node `24.19.0` (the version in
+All of these need the repo's own toolchain — node `24.22.1` (the version in
 `.nvmrc`) and pnpm 10.x. **Nothing stops you running them on the wrong node**:
 `engines.node` is advisory, so `pnpm install` prints `WARN Unsupported engine`
 and continues. That is why this is worth stating rather than leaving to the
