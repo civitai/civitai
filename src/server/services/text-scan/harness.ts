@@ -1,4 +1,4 @@
-import { submitWorkflow } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import {
   MODEL_RULE_LIMITS,
   modelRuleAliasesField,

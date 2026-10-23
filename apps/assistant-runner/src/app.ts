@@ -150,8 +150,10 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   app.setErrorHandler((error, request, reply) => {
     // Fastify's own refusals (a body that is not JSON, or too large): asking again would not help.
-    // Anything else, whatever status it carries, is the runner's failure.
-    if ((error as { code?: string }).code?.startsWith('FST_'))
+    // Anything else, whatever status it carries, is the runner's failure. Not every error's code is a
+    // string: a DOMException's is a number (a TimeoutError's is 23).
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string' && code.startsWith('FST_'))
       return refuse(reply, 'bad-request', 'The request is not one this runner reads.');
     request.log.error({ err: error }, 'request failed');
     const body: RunErrorResponse = {

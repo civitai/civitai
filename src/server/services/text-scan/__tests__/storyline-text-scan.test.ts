@@ -28,7 +28,7 @@ const { applyStorylineTextScan } = await import('~/server/services/text-scan/act
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { isFlipt } = await import('~/server/flipt/client');
 const { createNotification } = await import('~/server/services/notification.service');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(
   '~/server/services/text-scan/prompt'
 );

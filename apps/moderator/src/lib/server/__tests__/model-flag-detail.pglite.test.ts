@@ -109,10 +109,8 @@ afterEach(async () => {
 });
 
 describe('getModelFlagDetail', () => {
-  it('counts the owner previews and the open reports on the model', async () => {
+  it('counts the open reports on the model', async () => {
     const detail = await getModelFlagDetail({ modelId: 10 });
-    // Images only, on the owner's posts: not the video, not another user's post.
-    expect(detail?.previewCount).toBe(3);
     // Pending and Processing only, and only reports on this model.
     expect(detail?.openReports).toBe(2);
   });
@@ -171,7 +169,7 @@ describe('getModelFlagDetail', () => {
     await pg.exec('DROP TABLE "UserStrike"');
     memory.notes.mockRejectedValue(new Error('down'));
     const detail = await getModelFlagDetail({ modelId: 10 });
-    expect(detail).toMatchObject({ strikes: null, notes: null, previewCount: 3 });
+    expect(detail).toMatchObject({ strikes: null, notes: null });
   });
 
   it('copes with a model that has no versions, files or metrics', async () => {
@@ -181,7 +179,6 @@ describe('getModelFlagDetail', () => {
       latestPublishedAt: null,
       mainFile: null,
       downloads: null,
-      previewCount: 0,
       openReports: 0,
     });
   });

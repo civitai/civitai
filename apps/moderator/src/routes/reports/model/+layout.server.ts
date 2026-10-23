@@ -1,7 +1,7 @@
 import type { LayoutServerLoad } from './$types';
 import { getOwnerFlaggedMinorModelIds, getReportedModelStates } from '$lib/server/reports.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
-import { canAccess } from '$lib/server/access';
+import { canViewTrainingData } from '$lib/server/access';
 import { ReportEntity } from '$lib/reports';
 import { getMergePermissionChecks } from '$lib/server/merge-permission.service';
 
@@ -32,13 +32,10 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
     ownerFlaggedMinor,
     models,
     mergePermission,
-    // The preview's training-data viewer: shown to whoever `/api/training-data` would serve, so a
-    // moderator never gets a button that only answers 403.
-    canViewTrainingData:
-      canAccess(locals.user, '/audit/training-data') ||
-      canAccess(locals.user, '/audit/training-models'),
+    canViewTrainingData: canViewTrainingData(locals.user),
     // The queue and the two detail columns each scroll on their own, sized against the viewport, which
     // `wide` cannot do — its padding puts the page an unknown distance down.
     fullBleed: true,
+    headerInline: true,
   };
 };

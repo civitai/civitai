@@ -11,7 +11,7 @@ vi.mock('$lib/train-core', async (importOriginal) => ({
   submitTrainingBatch: core.submitTrainingBatch,
   continueTraining: core.continueTraining,
 }));
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: () => ({ interceptors: { response: { use: () => undefined } } }),
 }));
 

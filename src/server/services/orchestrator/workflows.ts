@@ -5,7 +5,7 @@ import type {
   UpdateWorkflowRequest,
   Workflow,
   WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -17,7 +17,7 @@ import {
   updateWorkflow as clientUpdateWorkflow,
   handleError,
   refreshBlob,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
@@ -430,7 +430,7 @@ type ClientSubmitResult = Awaited<ReturnType<typeof clientSubmitWorkflow>>;
  * Merge the ambient W3C trace context into an outbound submit's headers WITHOUT clobbering anything the
  * caller set (caller-supplied values always win, per-key).
  *
- * Why this is not a one-line spread: `@civitai/client`'s `headers` is a UNION — a plain record, a
+ * Why this is not a one-line spread: `@civitai/orchestration-client`'s `headers` is a UNION — a plain record, a
  * `Headers` instance, or a `[name, value][]` array. Spreading a `Headers` instance yields `{}`, which
  * would silently DROP every header the caller set; spreading an array yields index keys. So the plain
  * record (the only shape any caller in this repo actually uses today) is spread, and the other two are
@@ -479,7 +479,7 @@ export type SubmitWorkflowRetryOptions = {
 };
 
 /**
- * Thin wrapper around the `@civitai/client` `submitWorkflow` that re-submits on
+ * Thin wrapper around the `@civitai/orchestration-client` `submitWorkflow` that re-submits on
  * transient infra failures (5xx responses, or a network error / no response) with
  * bounded exponential backoff. 4xx responses are returned immediately — client
  * errors won't recover. Returns the raw client result of the final attempt plus an
@@ -740,7 +740,7 @@ export async function updateWorkflow({
 
 /**
  * Moves the workflow's pending downloads to the high lane. With `whatif` the orchestrator prices the
- * change without charging for it. `@civitai/client`, which every call here goes through, predates
+ * change without charging for it. `@civitai/orchestration-client`, which every call here goes through, predates
  * `downloadPriority` and this route's `whatif` query, hence the casts.
  */
 export async function setWorkflowDownloadPriority({
@@ -792,7 +792,7 @@ export function throwOrchestratorFailure({
   message: string | undefined;
 }): never {
   // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
-  // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+  // @civitai/orchestration-client RESOLVES (it does NOT reject) when the underlying fetch throws —
   // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
   // `{ error, response: undefined }`. We must map that to a retry-able 503 — mirroring the
   // read-path (queryWorkflows/getWorkflow) default — BEFORE the `response.status` switch

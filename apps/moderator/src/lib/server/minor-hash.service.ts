@@ -1,6 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
 import {
@@ -836,11 +836,7 @@ const flaggedPageSql = <R>(
          pg."modelType", pg."modelCreatedAt", pg."flaggedAt", pg.flags,
          -- Any label: must match the main app's rule in resolveTextScanRedetection, which refuses
          -- a ruling while the model has a Pending appeal.
-         EXISTS (
-           SELECT 1 FROM "Appeal" a
-           WHERE a."entityType" = 'Model' AND a."entityId" = pg."modelId"
-             AND a.status::text = 'Pending' AND a.category IS NULL
-         ) AS "hasPendingAppeal",
+         ${pendingModelAppealExists(sql`pg."modelId"`)} AS "hasPendingAppeal",
          v."baseModel", COALESCE(v."trainedWords", '{}') AS "trainedWords",
          COALESCE(v."trainedWordCount", 0) AS "trainedWordCount",
          COALESCE(t.tags, '{}') AS tags, COALESCE(t."tagCount", 0) AS "tagCount",
@@ -1199,6 +1195,54 @@ export async function getModelMinor(modelId: number) {
   return result.rows[0]?.minor ?? false;
 }
 
+/** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal
+ *  carries a category and is not one. */
+const pendingModelAppealExists = (modelId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
+  SELECT 1 FROM "Appeal" a
+  WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
+    AND a.status::text = 'Pending' AND a.category IS NULL
+)`;
+
+const textScanEntryView = (label: 'minor' | 'poi') => sql`jsonb_build_object(
+  'textHash', m.meta->'textScanFlags'->${sql.lit(label)}->>'textHash',
+  'redetectedTextHash', m.meta->'textScanFlags'->${sql.lit(label)}->'redetected'->>'textHash'
+)`;
+
+type TextScanEntryView = { textHash: string | null; redetectedTextHash: string | null };
+
+/** What an Auto-flagged ruling decides from, read from the primary: a replica lagging behind a
+ *  just-resolved appeal would send it down the wrong path. `minor` and `poi` count as flagged by the
+ *  appeal resolver's rule (`resolveMinorFlagAppeal`): `poi` only with an open text-scan flag, since
+ *  owners set it by hand. `textScan` is what the main app's `ruleModelTextScanFlag` checks a ruling's
+ *  text hash against. */
+export async function getModelAppealState(modelId: number) {
+  const result = await sql<{
+    pendingAppeal: boolean;
+    minor: boolean;
+    poi: boolean;
+    textScan: Record<'minor' | 'poi', TextScanEntryView>;
+  }>`
+    SELECT ${pendingModelAppealExists(sql`m.id`)} AS "pendingAppeal",
+           m.minor,
+           (m.poi
+             AND COALESCE(m.meta->'textScanFlags'->'poi'->>'workflowId', '') <> ''
+             AND m.meta->'textScanFlags'->'poi'->>'appealGranted' IS NULL) AS poi,
+           jsonb_build_object('minor', ${textScanEntryView('minor')}, 'poi', ${textScanEntryView(
+    'poi'
+  )}) AS "textScan"
+    FROM "Model" m WHERE m.id = ${modelId}
+  `.execute(dbWrite);
+  const none = { textHash: null, redetectedTextHash: null };
+  return (
+    result.rows[0] ?? {
+      pendingAppeal: false,
+      minor: false,
+      poi: false,
+      textScan: { minor: none, poi: none },
+    }
+  );
+}
+
 /** Models with a held detection: the detections part of the Needs review badge. Rides
  *  `Model_textScanRedetected_idx`. */
 export async function getHeldDetectionModelCount() {
@@ -1217,6 +1261,11 @@ export type MinorHashMatchDetail = {
   minorModelCoverUrl: string | null;
   minorModelCoverType: string | null;
   minorModelStatus: string | null;
+  /** `TakenDown` sits on top of `status`, so a taken-down seed can still read Published. */
+  minorModelMode: string | null;
+  /** From the seed's `meta`, as the model page writes them on a moderator's unpublish. */
+  minorModelUnpublishedAt: string | null;
+  minorModelUnpublishedReason: string | null;
   minorModelDeletedAt: Date | null;
   minorUsername: string | null;
   minorFlaggedAt: Date | null;
@@ -1258,6 +1307,9 @@ export async function getMinorHashMatchDetail({
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
       mm.status::text AS "minorModelStatus",
+      mm.mode::text AS "minorModelMode",
+      mm.meta->>'unpublishedAt' AS "minorModelUnpublishedAt",
+      mm.meta->>'unpublishedReason' AS "minorModelUnpublishedReason",
       mm."deletedAt" AS "minorModelDeletedAt",
       mu.username AS "minorUsername",
       ma."createdAt" AS "minorFlaggedAt",
@@ -1448,12 +1500,6 @@ export async function getModelFlagDetail({
              CASE WHEN f.name IS NOT NULL THEN jsonb_build_object(
                'name', f.name, 'sizeKB', f."sizeKB", 'scansOk', f."scansOk", 'otherFiles', f."otherFiles"
              ) END AS "mainFile",
-             -- The same set the cover images come from: images on the owner's posts of the model.
-             (SELECT count(*)::int
-              FROM "ModelVersion" pv
-              JOIN "Post" p ON p."modelVersionId" = pv.id AND p."userId" = m."userId"
-              JOIN "Image" i ON i."postId" = p.id AND i.type::text = 'image'
-              WHERE pv."modelId" = m.id) AS "previewCount",
              (SELECT count(*)::int
               FROM "ModelReport" mr
               JOIN "Report" r ON r.id = mr."reportId"

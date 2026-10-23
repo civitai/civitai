@@ -5410,7 +5410,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
   // strings) can't be asserted here — the global test setup mocks
-  // `@civitai/client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
+  // `@civitai/orchestration-client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
   // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
   // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
   // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
@@ -5503,7 +5503,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // ---- viewer-picked accountType (money page blocks) ----------------------
   // The exact reordered orchestrator currency VALUES can't be asserted here
-  // (the global @civitai/client mock nulls out BuzzClientAccount, so
+  // (the global @civitai/orchestration-client mock nulls out BuzzClientAccount, so
   // toOrchestratorType yields non-comparable values — the ORDERING is asserted
   // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
   // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a

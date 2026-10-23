@@ -169,6 +169,11 @@ export const cosmeticPurchaseMeta = z.object({
   // Stamped before a withdrawn-item refund moves any money for this purchase: the terms it is
   // finished on, even if the item's own marker is cleared before it is.
   withdrawnRefund: withdrawnRefundTerms.optional(),
+  // A box purchase whose draw a takedown revoked: flagged refunded when claimed, with the Buzz owed
+  // until `paidAt`. A re-run of that takedown pays any still owed.
+  takedownRefund: z
+    .object({ shopItemId: z.number(), at: z.string(), paidAt: z.string().optional() })
+    .optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -237,6 +242,12 @@ export const upsertCosmeticShopSectionInput = z.object({
   image: comfylessImageSchema.nullish(),
   published: z.boolean().optional(),
   meta: cosmeticShopSectionMeta.optional(),
+});
+
+export type ShopItemSectionInput = z.infer<typeof shopItemSectionInput>;
+export const shopItemSectionInput = z.object({
+  shopItemId: z.number().int().positive(),
+  sectionId: z.number().int().positive(),
 });
 
 export type UpdateCosmeticShopSectionsOrderInput = z.infer<

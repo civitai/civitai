@@ -1,6 +1,6 @@
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
-// web-component host (direct @civitai/client calls — $lib/element/backend).
+// web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type {
   ArchiveKind,

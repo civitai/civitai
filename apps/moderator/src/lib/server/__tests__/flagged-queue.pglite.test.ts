@@ -26,6 +26,7 @@ const {
   getFlaggedModels,
   getFlaggedSourceCounts,
   getHeldDetectionModelCount,
+  getModelAppealState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   reviewDaysLeft,
@@ -506,6 +507,34 @@ describe('Auto-flagged: hash auto-flags', () => {
     expect(Object.fromEntries(items.map((r) => [r.modelId, r.hasPendingAppeal]))).toEqual({
       20: true,
       21: false,
+    });
+  });
+
+  it('reads the appeal state the Auto-flagged ruling routes on, ignoring site-form appeals', async () => {
+    await pg.exec(`INSERT INTO "Appeal" (id, "entityType", "entityId", "status", "userId", "category")
+      VALUES (1, 'Model', 20, 'Pending', 1, NULL), (2, 'Model', 21, 'Pending', 1, 'Model')`);
+    expect(await getModelAppealState(20)).toMatchObject({ pendingAppeal: true, minor: true });
+    expect(await getModelAppealState(21)).toMatchObject({ pendingAppeal: false });
+  });
+
+  it('counts poi as flagged only with an open text-scan poi flag, as the appeal resolver does', async () => {
+    await seedModel(40, 1, {});
+    await seedModel(41, 1, { poi: { workflowId: 'wf', textHash: 'a' } });
+    await seedModel(42, 1, { poi: { workflowId: 'wf', textHash: 'a', appealGranted: grant } });
+    await pg.exec(`UPDATE "Model" SET minor = TRUE, poi = TRUE WHERE id IN (40, 41, 42)`);
+    expect(await getModelAppealState(40)).toMatchObject({ minor: true, poi: false });
+    expect(await getModelAppealState(41)).toMatchObject({ minor: true, poi: true });
+    expect(await getModelAppealState(42)).toMatchObject({ minor: true, poi: false });
+  });
+
+  it('reads the text each text-scan flag is bound to, and any newer held text', async () => {
+    await seedModel(43, 1, {
+      minor: { workflowId: 'wf', textHash: 'a', redetected: redetected('2026-10-01T00:00:00Z') },
+      poi: { workflowId: 'wf', textHash: 'a' },
+    });
+    expect((await getModelAppealState(43)).textScan).toEqual({
+      minor: { textHash: 'a', redetectedTextHash: 'new' },
+      poi: { textHash: 'a', redetectedTextHash: null },
     });
   });
 

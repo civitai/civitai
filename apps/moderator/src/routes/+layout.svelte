@@ -14,6 +14,7 @@
     IconListSearch,
     IconScanLetterT,
     IconChartBar,
+    IconScale,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -61,6 +62,7 @@
     '/models': IconBox,
     '/audit': IconListSearch,
     '/text-scan': IconScanLetterT,
+    '/ratings': IconScale,
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
@@ -194,6 +196,7 @@
                     </SidebarMenuItem>
                   </Collapsible>
                 {:else}
+                  {@const cnt = navCount(item, countFor)}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
@@ -202,6 +205,13 @@
                         <a href={item.path} {...props}>
                           <Icon size={18} stroke={1.5} />
                           <span>{item.label}</span>
+                          {#if cnt !== null}
+                            <span
+                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                            >
+                              {cnt}
+                            </span>
+                          {/if}
                         </a>
                       {/snippet}
                     </SidebarMenuButton>

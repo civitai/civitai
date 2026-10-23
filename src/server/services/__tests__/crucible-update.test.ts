@@ -666,3 +666,22 @@ describe('updateCrucible — content and images', () => {
     expect(written()).toMatchObject({ heroImage: { disconnect: true } });
   });
 });
+
+// The edited row goes back to the creator, and event tags are moderator data. Prisma returns every
+// scalar column unless told otherwise, so the write has to leave them out.
+describe('updateCrucible — event tags', () => {
+  it('returns the edited crucible without its event tags', async () => {
+    update.mockImplementation(
+      async ({ data, omit }: { data: object; omit?: Record<string, boolean> }) => {
+        const row: Record<string, unknown> = { ...crucible(), ...data, eventTags: ['halloween'] };
+        for (const [key, omitted] of Object.entries(omit ?? {})) if (omitted) delete row[key];
+        return row;
+      }
+    );
+
+    const updated = await edit({ name: 'New name' });
+
+    expect(updated).toMatchObject({ id: 1, name: 'New name' });
+    expect(updated).not.toHaveProperty('eventTags');
+  });
+});

@@ -79,7 +79,9 @@ import {
   getStorylineEarlyAccessStats,
   getStorylineEarlyAccessStatus,
   getStorylinesInfinite,
+  getPendingChapterForPost,
   joinStorylineEarlyAccess,
+  linkPendingChapter,
   moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
@@ -444,6 +446,173 @@ describe('createStoryline', () => {
     ).rejects.toThrow(/your own posts/);
     expect(w.storyline.create).not.toHaveBeenCalled();
   });
+
+  it('starts an empty storyline when no post is given, and scans its title', async () => {
+    await expect(
+      createStoryline({ title: 't', maxNsfwLevel: NsfwLevel.R, userId: OWNER })
+    ).resolves.toEqual({ id: 10, rootChapterId: null });
+    expect(w.storyline.create.mock.calls[0][0]).toMatchObject({
+      data: { userId: OWNER, title: 't', maxNsfwLevel: NsfwLevel.R },
+    });
+    expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Storyline', entityId: 10 });
+  });
+
+  it('refuses a cover pick on a storyline with no chapters to pick from', async () => {
+    w.image.findMany.mockResolvedValue([
+      {
+        id: 77,
+        nsfwLevel: NsfwLevel.PG,
+        minor: false,
+        poi: false,
+        post: { storylineChapter: null },
+      },
+    ] as never);
+    await expect(
+      createStoryline({ title: 't', maxNsfwLevel: NsfwLevel.R, coverImageId: 77, userId: OWNER })
+    ).rejects.toThrow(/your own chapters/);
+    expect(w.storyline.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('linkPendingChapter', () => {
+  const POST = 900;
+  const link = (input: { storylineId?: number; parentChapterId?: number }, userId = OWNER) =>
+    linkPendingChapter(tx, { postId: POST, userId, ...input });
+  /** Chapter 30 of storyline 10, whose post is 300: found by its id and by its post id. */
+  const parentChapter = (storyline: Record<string, unknown> = {}) =>
+    w.storylineChapter.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id?: number; postId?: number };
+    }) =>
+      where.id === 30 || where.postId === 300
+        ? {
+            id: 30,
+            storylineId: 10,
+            postId: 300,
+            depth: 2,
+            userId: PARENT_AUTHOR,
+            removedAt: null,
+            storyline: {
+              userId: OWNER,
+              maxNsfwLevel: NsfwLevel.R,
+              minorByScan: false,
+              tosViolation: false,
+              whoCanContinue: 'Anyone',
+              ...storyline,
+            },
+          }
+        : null) as never);
+
+  describe('starting chapter 1', () => {
+    const owned = (overrides: Record<string, unknown> = {}) =>
+      w.storyline.findUnique.mockResolvedValue({
+        userId: OWNER,
+        tosViolation: false,
+        chapters: [],
+        ...overrides,
+      } as never);
+
+    it("links the owner's draft as chapter 1", async () => {
+      owned();
+      await link({ storylineId: 10 });
+      expect(w.storylinePendingChapter.create).toHaveBeenCalledWith({
+        data: { postId: POST, storylineId: 10, parentChapterId: null, userId: OWNER },
+      });
+    });
+
+    it.each([
+      ["someone else's storyline", {}, STRANGER, /creator/],
+      ['a taken-down storyline', { tosViolation: true }, OWNER, /taken down/],
+      ['a storyline that has its chapter 1', { chapters: [{ id: 1 }] }, OWNER, /first chapter/],
+    ])('refuses %s', async (_name, overrides, userId, message) => {
+      owned(overrides);
+      await expect(link({ storylineId: 10 }, userId)).rejects.toThrow(message);
+      expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second chapter-1 draft as a 400, not a 500', async () => {
+      owned();
+      w.storylinePendingChapter.create.mockRejectedValue(
+        Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }) as never
+      );
+      await expect(link({ storylineId: 10 })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'This storyline already has a draft of its first chapter',
+      });
+    });
+  });
+
+  describe('continuing a chapter', () => {
+    it("links the draft under the parent, in the parent's storyline", async () => {
+      parentChapter();
+      await link({ parentChapterId: 30 }, STRANGER);
+      expect(w.storylinePendingChapter.create).toHaveBeenCalledWith({
+        data: { postId: POST, storylineId: 10, parentChapterId: 30, userId: STRANGER },
+      });
+    });
+
+    it('holds a continuation to the same rule as submitting one', async () => {
+      parentChapter({ whoCanContinue: 'Collaborators' });
+      await expect(link({ parentChapterId: 30 }, STRANGER)).rejects.toThrow(
+        'storyline: only collaborators on this storyline can continue it'
+      );
+      blockedPairs = [[OWNER, STRANGER]];
+      parentChapter();
+      await expect(link({ parentChapterId: 30 }, STRANGER)).rejects.toThrow(
+        'Continuations are not available on this chapter'
+      );
+      expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a chapter of another storyline than the one named', async () => {
+      parentChapter();
+      await expect(link({ storylineId: 11, parentChapterId: 30 })).rejects.toThrow(
+        'That chapter is not in this storyline'
+      );
+      expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a chapter that does not exist', async () => {
+      parentChapter();
+      await expect(link({ parentChapterId: 31 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.storylinePendingChapter.create).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('getPendingChapterForPost', () => {
+  beforeEach(() => {
+    w.storylinePendingChapter.findUnique.mockResolvedValue({
+      postId: 900,
+      userId: STRANGER,
+      parentChapterId: 30,
+      storyline: { ...storylineRow(), minorByScan: true },
+      parentChapter: { id: 30, depth: 2, postId: 300 },
+    } as never);
+  });
+
+  it("gives the draft's author the storyline it was started from", async () => {
+    const pending = await getPendingChapterForPost({ postId: 900, userId: STRANGER });
+    expect(pending).toMatchObject({
+      postId: 900,
+      storyline: { id: 10, title: 'A story', takenDown: false },
+      parentChapter: { id: 30, depth: 2, postId: 300 },
+    });
+    // The ceiling the chapter is held to, never the scan's minor finding itself.
+    expect(pending?.storyline.maxNsfwLevel).toBe(NsfwLevel.PG13);
+    expect(pending?.storyline).not.toHaveProperty('minorByScan');
+  });
+
+  it('is null for anyone else, and for a post with no link', async () => {
+    await expect(getPendingChapterForPost({ postId: 900, userId: OWNER })).resolves.toBeNull();
+    await expect(
+      getPendingChapterForPost({ postId: 900, userId: MODERATOR, isModerator: true })
+    ).resolves.not.toBeNull();
+    w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
+    await expect(getPendingChapterForPost({ postId: 900, userId: STRANGER })).resolves.toBeNull();
+  });
 });
 
 describe('authorization', () => {
@@ -649,6 +818,8 @@ describe('getStoryline', () => {
       { ...row(), chapters: [{ id: 20, postId: null, post: null }] },
       [],
     ],
+    // Started before its first post. PG ceiling, so the level check alone would not hide it.
+    ['with no chapter 1 yet', { ...row({ maxNsfwLevel: PG }), chapters: [] }, []],
   ])(
     'is not found for a stranger when %s, but the owner and moderators still see it',
     async (_n, value, blocked) => {
@@ -856,6 +1027,14 @@ describe('reading', () => {
             storylineRow({
               user: { id: OWNER, username: 'o', bannedAt: new Date(), deletedAt: null },
             }) as never
+          ),
+      ],
+      [
+        'with no chapter 1 yet',
+        () =>
+          // PG ceiling, so the level check alone would not hide it.
+          r.storyline.findUnique.mockResolvedValue(
+            storylineRow({ chapters: [], maxNsfwLevel: NsfwLevel.PG }) as never
           ),
       ],
     ])('when %s, has no path, children or map for them', async (_name, arrange) => {

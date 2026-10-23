@@ -131,6 +131,8 @@ export type FeedQueryMode = 'shadow' | 'primary';
 /** Who is asking: the site's own pages, or the public API. A few shapes are served only to one. */
 export type FeedQueryCaller = 'website' | 'rest';
 const MAX_POST_IDS = 50;
+// The feed answers at most this many rows a page.
+export const FEED_MAX_LIMIT = 200;
 
 export { encodeFeedCursor, parseFeedCursor };
 
@@ -146,14 +148,24 @@ export function mapSearchInputToFeedQuery(
   // A post's media. The site's own post page shows the author's order, which the feed cannot
   // give (the mirror has no Image.index), and the website already serves it from Postgres; the
   // public API sorts a post's page like any other, as the search index did, and asks for one
-  // post 150k times a day.
+  // post 150k times a day. The gallery's post completion takes the requested sort too, and
+  // without this sent 10-15 requests a second to the search index from site 5.1.344 on.
   const postIds = ints([
     ...(Array.isArray(input.postIds) ? input.postIds : []),
     ...(present(input.postId) ? [Number(input.postId)] : []),
   ]);
   if (postIds.length) {
-    if (caller !== 'rest') return skip('input:postId');
+    const inRequestedSort = caller === 'rest' || input.postIdsInRequestedSort === true;
+    if (!inRequestedSort) return skip('input:postId');
     if (postIds.length > MAX_POST_IDS) return skip(`postIds>${MAX_POST_IDS}`);
+    // A completion needs every row it asks for; past the feed's page it would come back short
+    // without a sign, so it stays on the search index instead.
+    if (
+      input.postIdsInRequestedSort === true &&
+      typeof input.limit === 'number' &&
+      input.limit > FEED_MAX_LIMIT
+    )
+      return skip(`postIds:limit>${FEED_MAX_LIMIT}`);
   }
   // These only narrow a model version's gallery; without one they filter nothing.
   if (present(input.modelVersionId))

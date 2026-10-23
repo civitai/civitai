@@ -29,9 +29,17 @@ vi.mock('~/server/services/promotion.service', () => ({
   getSponsoredGalleryPost: async () => undefined,
 }));
 
-const { getImagesAsPostsInfiniteHandler } = await import('~/server/controllers/image.controller');
+const { getImagesAsPostsInfiniteHandler, packPostCompletions } = await import(
+  '~/server/controllers/image.controller'
+);
 
-type FetchArgs = { postIds?: number[]; cursor?: string; limit: number; browsingLevel: number };
+type FetchArgs = {
+  postIds?: number[];
+  postIdsInRequestedSort?: boolean;
+  cursor?: string;
+  limit: number;
+  browsingLevel: number;
+};
 
 const toImage = (row: Row) => ({
   ...row,
@@ -129,8 +137,17 @@ describe('getImagesAsPostsInfiniteHandler post completion', () => {
     const [completion] = completionCalls();
     expect(completion.cursor).toBeUndefined();
     expect(completion.limit).toBe(9 + 2);
+    // Only the completion opts in to the feed service's post walk; the page keeps its path.
+    expect(completion.postIdsInRequestedSort).toBe(true);
+    expect(page.postIdsInRequestedSort).toBeUndefined();
     const { cursor, limit, postIds, ...pageFilters } = page;
-    const { cursor: c2, limit: l2, postIds: p2, ...completionFilters } = completion;
+    const {
+      cursor: c2,
+      limit: l2,
+      postIds: p2,
+      postIdsInRequestedSort,
+      ...completionFilters
+    } = completion;
     expect(completionFilters).toEqual(pageFilters);
   });
 
@@ -157,6 +174,25 @@ describe('getImagesAsPostsInfiniteHandler post completion', () => {
     expect(completionCalls()).toHaveLength(0);
     expect(idsOf(items, 500)).toEqual([1, 2]);
     expect(items.find((p) => p.postId === 500)?.imageCount).toBeUndefined();
+  });
+
+  it('packs completions by posts and rows, a post larger than a fetch alone', () => {
+    const counts = new Map([
+      [1, 120],
+      [2, 90],
+      [3, 50],
+      [4, 250],
+      [5, 30],
+    ]);
+    const batches = packPostCompletions([1, 2, 3, 4, 5], (id) => counts.get(id) ?? 0);
+    expect(batches).toEqual([[1], [2, 3], [4], [5]]);
+    for (const b of batches.filter((b) => b.length > 1))
+      expect(b.reduce((sum, id) => sum + (counts.get(id) ?? 0), 0)).toBeLessThanOrEqual(200);
+    const small = packPostCompletions(
+      Array.from({ length: 60 }, (_, i) => i + 1),
+      () => 2
+    );
+    expect(small.map((b) => b.length)).toEqual([25, 25, 10]);
   });
 
   it('asks for no more than a bounded number of posts at a time', async () => {

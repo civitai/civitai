@@ -206,19 +206,19 @@ ComfyUI-GGUF custom node, not core).
 
 ## How the orchestrator actually routes *(answers Open Question 1)*
 
-Investigated `@civitai/client` **v0.2.0-beta.76** (`node_modules/@civitai/client/dist`). The
+Investigated `@civitai/orchestration-client` **v0.2.0-beta.76** (`node_modules/@civitai/orchestration-client/dist`). The
 finding reframes the problem: **the AIR `type` segment is mostly *not* how resources get routed.**
 
 ### 1. The `Air` class treats `type` as a free-form string — no enum, no validation
 
-[`dist/utils/Air.js`](../../node_modules/@civitai/client/dist/utils/Air.js) is a single regex
+[`dist/utils/Air.js`](../../node_modules/@civitai/orchestration-client/dist/utils/Air.js) is a single regex
 where `type` is just `[a-zA-Z0-9_\-\/]+`. `parse` / `parseSafe` / `stringify` / `isAir` never
 enumerate or check the type value. So the client will happily emit `textencoder`, `diffusionmodel`,
 or anything else — **the client is not a blocker; it won't reject new type strings.**
 
 ### 2. Orchestrator step inputs route by **named slot**, not by the AIR type
 
-The typed inputs in [`dist/generated/types.gen.d.ts`](../../node_modules/@civitai/client/dist/generated/types.gen.d.ts)
+The typed inputs in [`dist/generated/types.gen.d.ts`](../../node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts)
 expose explicit slots, and a resource object carries **only `air` (+ `strength`)** — there is no
 `type` field on the resource for routing:
 
@@ -272,7 +272,7 @@ ecosystem inputs named slots to route them into.
 > **Still open (server-side, not visible in the client):** when the orchestrator resolves an AIR
 > placed in `loras`, does it trust the AIR `type` segment or re-resolve the
 > resource via the Civitai API and read its real type? The full package scan (v0.2.0-beta.76) found
-> **no** type enum/validation anywhere in `@civitai/client` and **no** resource field other than
+> **no** type enum/validation anywhere in `@civitai/orchestration-client` and **no** resource field other than
 > `air` (+ `strength`) — strong evidence the orchestrator resolves the AIR opaquely server-side and
 > does **not** branch on the segment. But that's an inference from the client surface, not a
 > guarantee; confirm with the orchestrator team before relying on it. Note the segment is *also*

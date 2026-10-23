@@ -1094,6 +1094,13 @@ model Model {
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
   isOfficial          Boolean         @default(false)
+  // The .com face, shown to viewers who see no mature content; unrelated to `sfwOnly`. Set
+  // `sfwName` means the face is on. The cover ids have no FK: Image is too hot to constrain,
+  // and a dangling id falls back to the derived cover.
+  sfwName             String?         @db.Citext
+  sfwDescription      String?
+  coverImageId        Int?
+  sfwCoverImageId     Int?
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -2040,6 +2047,7 @@ model Post {
   reports         PostReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
+  storylinePendingChapter StorylinePendingChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -6529,6 +6537,9 @@ model CsamReport {
   details          Json           @default("{}")
   images           Json           @default("[]")
   type             CsamReportType @default(Image)
+  /// The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+  sendClaimId      String?        @db.Uuid
+  sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
 }
 
@@ -6549,6 +6560,22 @@ model CsamReportAudit {
   changedBy       String    @default(dbgenerated("SESSION_USER"))
 
   @@index([csamReportId])
+}
+
+/// One admin release of a held user's removed-image review flags. Its images are the ModActivity
+/// rows written in the same transaction.
+model CsamFlagRelease {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  moderatorId    Int
+  approvalRef    String
+  reason         String
+  /// The hold legs the release overrode.
+  overriddenLegs Json
+  imageCount     Int
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
 }
 
 /// An object a CSAM report's evidence archive stored. Written once by the archive; never changed.
@@ -10036,6 +10063,7 @@ model Storyline {
   heroImagePosition Int    @default(50)
 
   chapters      StorylineChapter[]
+  pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
 
@@ -10078,12 +10106,34 @@ model StorylineChapter {
   branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
   branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
   createClicks      StorylineCreateClick[]
+  pendingContinuations StorylinePendingChapter[]
 
   /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
   /// join chapters from two storylines.
   @@unique([id, storylineId])
   @@index([storylineId])
   @@index([userId])
+}
+
+/// A post draft written from the storyline flow, before it is a chapter: which storyline it will
+/// join and, for a continuation, which chapter it continues. Readers never see it; chapter rows
+/// stay the only live chapters. Removed once the chapter is written, the continuation submitted,
+/// or the author detaches the draft.
+model StorylinePendingChapter {
+  postId          Int               @id
+  post            Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  storylineId     Int
+  storyline       Storyline         @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+  /// migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+  parentChapterId Int?
+  parentChapter   StorylineChapter? @relation(fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  /// The draft's author when it was linked. Not a relation, as on StorylineChapter.
+  userId          Int
+  createdAt       DateTime          @default(now())
+
+  @@index([storylineId])
+  @@index([parentChapterId])
 }
 
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
@@ -10691,6 +10741,9 @@ model Crucible {
   // Placement bar scaled to the time each entry was live. Rows from before it keep the old bar
   // (the migration backfills false); new rows default to true.
   timeAdjustedPlacement Boolean    @default(true)
+  // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
+  // shown to non-moderators.
+  eventTags         String[]       @default([])
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
@@ -10701,6 +10754,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([eventTags], type: Gin)
   @@index([status, ingestion])
 }
 

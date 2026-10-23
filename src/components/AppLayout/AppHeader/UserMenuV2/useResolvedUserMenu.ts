@@ -9,9 +9,11 @@ import { useUserMenuRegistry } from './useUserMenuRegistry';
 export function useResolvedUserMenu({
   opened,
   pins,
+  muted,
 }: {
   opened: boolean;
   pins: readonly UserMenuItemId[];
+  muted: readonly UserMenuItemId[];
 }) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
@@ -20,7 +22,7 @@ export function useResolvedUserMenu({
   const events = useEventMenuItems(theme.colors.grape[getPrimaryShade(theme, colorScheme)]);
 
   const { pinned, nodes } = currentUser
-    ? resolveUserMenu(USER_MENU_LAYOUT, registry, pins)
+    ? resolveUserMenu(USER_MENU_LAYOUT, registry, pins, new Set(muted))
     : resolveUserMenu(USER_MENU_SIGNED_OUT_LAYOUT, registry, []);
 
   return { signedIn: !!currentUser, events, pinned, nodes };

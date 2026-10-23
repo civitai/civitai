@@ -6,7 +6,7 @@ const { getConsumerBlobUploadUrl } = vi.hoisted(() => ({ getConsumerBlobUploadUr
 const { logToAxiom } = loggingMock;
 
 // Hand-listed: the real package cannot load in the node test environment (directory imports).
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   getConsumerBlobUploadUrl,
   handleError: (error: { detail?: string }) => error.detail,
 }));

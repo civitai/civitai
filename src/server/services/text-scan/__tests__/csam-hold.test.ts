@@ -484,6 +484,23 @@ describe('one pending hold per entity', () => {
     expect(held.meta).not.toHaveProperty('decisionClaim');
   });
 
+  it('keeps a claim that lands between reading the pending hold and replacing its text', async () => {
+    await scan(edited(1));
+    // A decision's claim does not take the entity lock: land one right after the pending read.
+    const run = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...values) => {
+        const result = await run(strings, ...values);
+        if (strings.join('').includes('AS "claimed"')) await claimAt('0 minutes');
+        return result;
+      }
+    );
+    await expect(scan(edited(2))).rejects.toThrow(CsamHoldBusyError);
+    const [held] = await rows();
+    expect(held).toMatchObject({ id: 1, textHash: 'hash-1', status: 'Pending' });
+    expect(held.meta).toHaveProperty('decisionClaim.by', 7);
+  });
+
   it('takes the per-entity lock before it looks for rulings', async () => {
     await scan(edited(1));
     const lock = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>

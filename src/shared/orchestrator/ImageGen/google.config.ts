@@ -1,4 +1,4 @@
-import type { Imagen4ImageGenInput } from '@civitai/client';
+import type { Imagen4ImageGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 

@@ -1,4 +1,4 @@
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_TOKEN_BUDGET,

@@ -993,6 +993,10 @@ export interface Model {
   scannedAt: Date | null;
   sfwOnly: boolean;
   isOfficial: boolean;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -1619,6 +1623,7 @@ export interface Post {
   reports?: PostReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
+  storylinePendingChapter?: StorylinePendingChapter | null;
 }
 
 export interface PostMetric {
@@ -4028,6 +4033,8 @@ export interface CsamReport {
   details: JsonValue;
   images: JsonValue;
   type: CsamReportType;
+  sendClaimId: string | null;
+  sendClaimedAt: Date | null;
 }
 
 export interface CsamReportAudit {
@@ -4043,6 +4050,17 @@ export interface CsamReportAudit {
   oldReportSentAt: Date | null;
   changedAt: Date;
   changedBy: string;
+}
+
+export interface CsamFlagRelease {
+  id: number;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  overriddenLegs: JsonValue;
+  imageCount: number;
+  createdAt: Date;
 }
 
 export interface CsamReportArchiveObject {
@@ -6429,6 +6447,7 @@ export interface Storyline {
   heroImage?: Image | null;
   heroImagePosition: number;
   chapters?: StorylineChapter[];
+  pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
 }
@@ -6449,6 +6468,18 @@ export interface StorylineChapter {
   branchChoicesFrom?: StorylineBranchChoice[];
   branchChoicesTo?: StorylineBranchChoice[];
   createClicks?: StorylineCreateClick[];
+  pendingContinuations?: StorylinePendingChapter[];
+}
+
+export interface StorylinePendingChapter {
+  postId: number;
+  post?: Post;
+  storylineId: number;
+  storyline?: Storyline;
+  parentChapterId: number | null;
+  parentChapter?: StorylineChapter | null;
+  userId: number;
+  createdAt: Date;
 }
 
 export interface StorylineChapterEdge {
@@ -6762,6 +6793,7 @@ export interface Crucible {
   scannedAt: Date | null;
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
+  eventTags: string[];
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

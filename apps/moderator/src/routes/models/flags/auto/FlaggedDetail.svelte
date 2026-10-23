@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { browser } from '$app/environment';
   import { IconMessage } from '@tabler/icons-svelte';
-  import { page } from '$app/state';
+  import { heldModelFlagTabs } from '../model-flag-tabs';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import EnforcementChip from '$lib/components/minor-flags/EnforcementChip.svelte';
   import FlagBadge from '$lib/components/minor-flags/FlagBadge.svelte';
@@ -10,19 +9,15 @@
   import FlagVerdictBlock from '$lib/components/minor-flags/FlagVerdictBlock.svelte';
   import FlaggedSourceBadge from '$lib/components/minor-flags/FlaggedSourceBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
-  import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
-  import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
-  import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
   import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import ScannedNamesCard from '$lib/components/minor-flags/ScannedNamesCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
-  import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
+  import ModelFlagDetailFrame from '$lib/components/minor-flags/ModelFlagDetailFrame.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import { ago, modelUrl } from '$lib/minor-flags/appeal-row';
+  import { ago } from '$lib/minor-flags/appeal-row';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import {
     FLAG_LABEL_NAMES,
@@ -31,14 +26,13 @@
   } from '$lib/minor-flags/flagged-decision';
   import {
     HASH_FLAG_REASON,
-    fetchModelFlagDetail,
     flagPromptId,
     hashSweepText,
     flagScanSource,
     textSinceFlag,
   } from '$lib/minor-flags/model-detail';
   import { MODEL_FLAGS_APPEALS_PATH, MODEL_FLAGS_AUTO_PATH } from '$lib/minor-flags/paths';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { modelFlagDetail, promptKeyOf } from '$lib/minor-flags/model-detail-request';
   import { latestScanDisagrees, scanVerdictProvenance } from '$lib/minor-flags/text-scan-verdicts';
   import type { FlaggedFlagItem, FlaggedRow } from '$lib/server/minor-hash.service';
   import type { Outcome } from '$lib/triage/queue';
@@ -49,6 +43,7 @@
   let {
     row,
     civitaiUrl,
+    canViewTrainingData,
     verdict,
     error,
     submit,
@@ -57,6 +52,7 @@
   }: {
     row: FlaggedRow;
     civitaiUrl: string;
+    canViewTrainingData: boolean;
     verdict: string | undefined;
     error: string | undefined;
     submit: (outcome: Outcome) => SubmitFunction;
@@ -65,7 +61,7 @@
   } = $props();
 
   const heldTabs = $derived(
-    (page.data.modelFlagTabs ?? []).map((tab: { href: string }) => tab.href) as string[]
+    heldModelFlagTabs()
   );
   const canOpenAppeals = $derived(heldTabs.includes(MODEL_FLAGS_APPEALS_PATH));
   const appealsHref = $derived(`${MODEL_FLAGS_APPEALS_PATH}?q=${row.modelId}`);
@@ -86,25 +82,10 @@
   const sources = $derived([...new Map(flags.map((f) => [f.source, f])).values()]);
   const labels = $derived([...new Set(flags.map((f) => f.label))]);
 
-  // Derived, never an effect: the shell keys the detail per row. Primitives first, so a reload that
-  // hands back an equal row keeps the request.
   const modelId = $derived(row.modelId);
   const promptIdOf = (flag: FlaggedFlagItem) => flagPromptId(flag.scanEntry?.promptIds, flag.label);
-  const promptKey = $derived(
-    flags
-      .map(promptIdOf)
-      .filter((id): id is number => id !== null)
-      .join(',')
-  );
-  const detail = $derived(
-    browser
-      ? fetchModelFlagDetail(
-          MODEL_FLAGS_AUTO_PATH,
-          modelId,
-          promptKey ? promptKey.split(',').map(Number) : []
-        )
-      : SSR_PENDING
-  );
+  const promptKey = $derived(promptKeyOf(flags.map(promptIdOf)));
+  const detail = $derived(modelFlagDetail(MODEL_FLAGS_AUTO_PATH, modelId, promptKey));
   // One scanned-text card per row: the scan writes every label it flags from one text.
   const scanned = $derived(textScans.find((f) => f.textHash) ?? null);
   const names = $derived([...new Set(textScans.flatMap((f) => f.scanEntry?.names ?? []))]);
@@ -118,8 +99,9 @@
   >
     <IconMessage class="mt-px size-3.5 shrink-0" aria-hidden="true" />
     <p class="m-0">
-      The owner has an open appeal on this model. Reverting a flag here closes it with the same reason;
-      keeping a flag has to wait for the appeal.
+      The owner has an open appeal on this model. Deciding here resolves it: keeping every flag
+      rejects the appeal, reverting every flag approves it, and a split rules each label. The reason
+      is recorded on the appeal.
       {#if canOpenAppeals}
         <a href={appealsHref} class={LINK_CLASS}>Open it in Appeals</a>.
       {:else}
@@ -164,59 +146,48 @@
   </FlagVerdictBlock>
 {/snippet}
 
-<TriageDetailFrame {verdict} {error}>
-  {#snippet children()}
-    <ModelDetailHeader
-      modelId={row.modelId}
-      modelName={row.modelName}
-      userId={row.userId}
-      {civitaiUrl}
-      {detail}
-    >
-      {#snippet chips()}
-        <EnforcementChip applied />
-        {#each sources as flag (flag.source)}<FlaggedSourceBadge row={flag} />{/each}
-        {#each labels as label (label)}<FlagBadge {label} />{/each}
-        <CrossTabChips chips={alsoIn} linked tone="amber" />
-        {#if hashFlag?.daysLeft != null}
-          <MetaChip tone="amber"
-            >{hashFlag.daysLeft === 0
-              ? 'review window closed'
-              : `${hashFlag.daysLeft} d left in review window`}</MetaChip
-          >
-        {/if}
-      {/snippet}
-    </ModelDetailHeader>
+<ModelFlagDetailFrame
+  {row}
+  {detail}
+  {civitaiUrl}
+  {canViewTrainingData}
+  {verdict}
+  {error}
+>
+  {#snippet chips()}
+    <EnforcementChip applied />
+    {#each sources as flag (flag.source)}<FlaggedSourceBadge row={flag} />{/each}
+    {#each labels as label (label)}<FlagBadge {label} />{/each}
+    <CrossTabChips chips={alsoIn} linked tone="amber" />
+    {#if hashFlag?.daysLeft != null}
+      <MetaChip tone="amber"
+        >{hashFlag.daysLeft === 0
+          ? 'review window closed'
+          : `${hashFlag.daysLeft} d left in review window`}</MetaChip
+      >
+    {/if}
+  {/snippet}
 
-    <PreviewImagesCard
-      images={row.coverImages}
-      allHref={modelUrl(civitaiUrl, row.modelId)}
-      {detail}
-    />
-
+  {#snippet info()}
+    {#if hashFlag}
+      <SharedFileCard {row} {civitaiUrl} status={{ label: 'under review', tone: 'blue' }} />
+    {/if}
     {#if textScans.length || hashFlag}
-      <div class="grid gap-4 {hashFlag ? 'lg:grid-cols-[1fr_400px]' : 'lg:grid-cols-[1fr_360px]'}">
-        <TriageCard dense title="Why it was flagged">
-          <div class="space-y-3">
-            {#each flags as flag (`${flag.label}:${flag.source}`)}
-              {#if flag.source === 'text-scan'}
-                {@render textScanWhy(flag)}
-              {:else if flag.source === 'hash'}
-                {@render hashWhy(flag)}
-              {/if}
-            {/each}
-            {#if row.hasPendingAppeal}{@render appealNotice()}{/if}
-          </div>
-        </TriageCard>
-        <div class="space-y-4">
-          {#if names.length || scanned?.textHash}
-            <ScannedNamesCard {names} textHash={scanned?.textHash} {since} />
-          {/if}
-          {#if hashFlag}
-            <SharedFileCard {row} {civitaiUrl} status={{ label: 'under review', tone: 'blue' }} />
-          {/if}
+      <TriageCard dense title="Why it was flagged">
+        <div class="space-y-3">
+          {#each flags as flag (`${flag.label}:${flag.source}`)}
+            {#if flag.source === 'text-scan'}
+              {@render textScanWhy(flag)}
+            {:else if flag.source === 'hash'}
+              {@render hashWhy(flag)}
+            {/if}
+          {/each}
+          {#if row.hasPendingAppeal}{@render appealNotice()}{/if}
         </div>
-      </div>
+      </TriageCard>
+      {#if names.length || scanned?.textHash}
+        <ScannedNamesCard {names} textHash={scanned?.textHash} {since} />
+      {/if}
     {:else if row.hasPendingAppeal}
       {@render appealNotice()}
     {/if}
@@ -234,26 +205,26 @@
         showPriorClear={false}
         showRulings
         pastAppeals={i === 0 ? row.pastAppeals : undefined}
-          sameFileAppeals={i === 0 ? row.sameFileAppeals : undefined}
+        sameFileAppeals={i === 0 ? row.sameFileAppeals : undefined}
         appealOpen={i === 0 ? row.hasPendingAppeal : undefined}
       />
     {/each}
 
-    <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard {row} {detail} />
-      <UploaderCard {row} {detail} />
-    </div>
   {/snippet}
-  {#snippet actions()}
+
+  {#snippet decision()}
     <FlagDecisionForm
       modelId={row.modelId}
       flags={flagRefs}
       {decisions}
       hasPendingAppeal={row.hasPendingAppeal}
+      canRuleAppeals={canOpenAppeals}
       {submit}
       {actionHref}
-      hint="Every decision here is stored as a labelled example for tuning the text-scan prompts."
+      hint={row.hasPendingAppeal
+        ? "This decision resolves the owner's appeal; the reason is recorded on it."
+        : 'Every decision here is stored as a labelled example for tuning the text-scan prompts.'}
       bind:draft
     />
   {/snippet}
-</TriageDetailFrame>
+</ModelFlagDetailFrame>

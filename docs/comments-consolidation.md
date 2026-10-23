@@ -45,6 +45,12 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-21 — the Phase 3 backfill is built** as steps of one admin endpoint that reuse the
+  mirror's row functions, with an `unmirrored` report (skipped rows by reason), a `parity`
+  report (the old-versus-new checks in the checklist, as counts with sample ids) and the two
+  residue sweeps. Run on prod 2026-10-21, converged with parity all zero. The parity monitor job
+  and the reverse-copy script (not yet proven on a prod sample) followed the same day; the reader
+  re-point is still open (_Phase 3_).
 - **2026-10-20 — the Phase 2 mirror is built (`20261120120000_comment_v3_mirror`), and the
   moderation work moves to Phase 4.** The lock pair (`toggleLockCommentsThread`) and the mutes
   (`toggleThreadMute`/`toggleSectionMute`) are mirrored by triggers on `Thread` and `ThreadMute`,
@@ -1027,9 +1033,12 @@ one-for-one would hit `parentId ON DELETE RESTRICT` and fail the user's delete. 
 parent has not been backfilled yet is the other trap (blocker 1): the insert trigger copies any
 missing ancestors first (the loop bullet below). Before the comment it ensures the `CommentTopic`
 (`commentv3_ensure_topic`: `FOR KEY SHARE SKIP LOCKED` on the topic row, else on the entity row,
-then an `ON CONFLICT DO NOTHING` insert on the full PK); if the topic row is held by a deleter or
-cascade, or the entity row is already gone or held by an entity hard-delete — a comment insert
-racing that delete — nothing is inserted, the
+then an `ON CONFLICT DO NOTHING` insert on the full PK followed by a second
+`FOR KEY SHARE SKIP LOCKED` probe of the row, since an insert that no-opped means a concurrent
+creator won and the caller's comment insert needs the row held before an entity cascade can take
+it); if the topic row is held by a deleter or cascade, if that second probe finds it held, or if
+the entity row is already gone or held by an entity hard-delete — a comment insert racing that
+delete — nothing is inserted, the
 mirror skips the V3 write and the old-side write proceeds. The reverse race, entity delete → `Thread` cascade → mirror
 delete, must not collide with the partition cascade in the same statement (covered by
 `comment-v3-mirror.sql.behavior.test.ts`; the mirror's delete never hard-deletes a row with
@@ -1182,14 +1191,20 @@ in `apps/event-engine/src/config/index.ts`), the `postgres.CommentV3` topic
 copied twice; a mirrored row is always at least as fresh as the copy). With the trigger mirror in
 place there is no read-then-insert window for a live edit or delete to fall into; if the mirror is
 ever app-level instead, add an `updatedAt` comparison pass and a delete log to the parity checks.
-Idempotent, batched copy jobs:
+The jobs are steps of one admin endpoint (`src/pages/api/admin/temp/comment-v3-backfill.ts`,
+service `comment-v3-backfill.service.ts`), each range-based over the source table's id and
+re-runnable; the comment copies call the mirror's own `commentv3_mirror_v2`/`commentv3_mirror_v1`
+per source row, so a backfilled row is exactly what the mirror would have written (entity
+resolution, clamp, id floor, timestamps) and ancestors are copied before each row, which makes
+batch order irrelevant. Idempotent, batched copy jobs:
 
 - v2 comments: `threadId → (entityType, entityId)` via the thread's root chain; `parentId` = the
-  thread's `commentId`. **Insert in depth order** (parents before children — one recursive pass
-  over `parentThreadId` produces the order; prod has 2 child threads with a null `parentThreadId`,
-  handled by hand) so the `commentv3_set_path` trigger finds each parent's path. **Clamp rows
-  deeper than 20** to a sibling at depth 20 with `replyToId` set, as the write path does — 692
-  comments in prod, and without the clamp `commentv3_depth_cap` aborts the batch. Ids and
+  thread's `commentId`. Ancestors are copied before each row (the step calls the mirror's own
+  `commentv3_mirror_v2`), so the `commentv3_set_path` trigger always finds the parent's path and
+  batch order does not matter; the 2 child threads in prod with a null `parentThreadId` resolve
+  through `commentId` like any other. **Clamp rows deeper than 20** to a sibling at depth 20 with
+  `replyToId` set, as the write path does — 692 comments in prod, and without the clamp
+  `commentv3_depth_cap` aborts the batch. Ids and
   `createdAt`/`updatedAt` preserved; nullable `hidden`/`locked` coalesce to false; `replyToId`
   stays null for every other migrated row. Each batch reads its source rows
   `FOR KEY SHARE SKIP LOCKED`, so it never waits on a deleter and never commits a copy of a
@@ -1198,31 +1213,43 @@ Idempotent, batched copy jobs:
   sequence for pre-existing rows (rows the mirror already copied keep the id it gave them — the
   `legacyV1Id` conflict no-ops). `createdAt` is copied verbatim and is what the Newest sort reads,
   so the order the backfill hands out ids in does not matter (_ID strategy_). Most models with
-  v1 comments have no `Thread`, so this job upserts the model topics itself before the comments
+  v1 comments have no `Thread`, so the model topic is created on demand by the row function
   (`ON CONFLICT DO NOTHING`); a model that no longer exists is skipped and counted.
-- Topics: one `CommentTopic` per entity-bearing Thread whose entity row exists (join to the
-  entity table; a Thread whose entity is gone is skipped and counted, like orphaned threads —
-  the partition FK would otherwise abort the batch), inserted with `ON CONFLICT DO NOTHING` on
-  the full PK, copying `locked`; `commentCount` recomputed
-  by trigger-equivalent count. **The counted set must match today's trigger exactly — all rows,
+- Topics: one `CommentTopic` per entity-bearing root Thread that carries information — a
+  comment, a lock or a mute — whose entity row exists (a Thread whose entity is gone is skipped
+  and counted, like orphaned threads — the partition FK would otherwise abort the batch),
+  inserted with `ON CONFLICT DO NOTHING` on the full PK, copying `locked` and re-syncing it
+  where a topic's lock drifted from its thread. The other 3.6M root threads in prod would only
+  add empty topics, which every reader must already treat as "no comments" (most entities have
+  no Thread at all), so they are left out (decided 2026-10-21 while building the step; veto by
+  widening the predicate). `commentCount` is maintained by the deferred trigger as the comment
+  copies land, never copied from `Thread.commentCount`. **The counted set must match today's trigger exactly — all rows,
   including hidden and self-authored** — because `challenge.service.ts` and `getCommentCount` read
   it raw.
 - Reactions: `CommentV2Reaction` copies with the same `commentId`; `CommentReaction` maps through
-  `legacyV1Id`. Recompute `CommentV3.reactionCount` from the copied rows at the end.
+  `legacyV1Id`. `reactionCount` is maintained by the reaction-count trigger as the links insert;
+  `parity` checks it against the copied rows.
 - Reports: `CommentV2Report` copies as-is; `CommentReport` maps through `legacyV1Id`. The `Report`
   rows themselves don't move.
 - Orphaned-thread comments and their reactions/report links are **skipped** and the counts
-  logged. Both existing classes were purged 2026-10-19. Entity-less root threads can no longer
+  logged. Both classes known then were purged 2026-10-19; the dev rehearsal found two more that
+  the FK cascades predate (v2 comments whose `Thread` row is gone, v1 replies whose parent is
+  gone), which the `unmirrored` report names and the parity counts leave aside. Entity-less root threads can no longer
   occur, so that skip is a guard; the dead-parent class (replies whose `Thread.commentId` was
   nulled by a v2 hard-delete) still can until V3 lands, so that skip matters. Comments under a
   Thread the topic copy skipped (entity gone) are skipped with it and counted.
-- Parity checks: per-entity counts vs `Thread.commentCount` (recomputed from `CommentV2` first —
-  comic threads were over-counted until the double increment was removed), reaction counts vs the
-  two source tables, spot checksums, locked state (`CommentTopic.locked` / `CommentV3.locked` vs
-  `Thread.locked`), an `updatedAt`/`deletedAt` comparison against the old rows, and live v3 rows
-  whose old row is gone (v2 by id, v1 by `legacyV1Id`; the mirror's delete yields to an entity
-  cascade holding the row, and a cascade that later rolls back leaves it live).
-- Two sweeps the mirror can leave behind, safe to run any time: tombstones with neither a reply
+- Parity checks (step `parity`, old side against new, every finding zero after `sweep`): live v3
+  rows whose old row is gone (v2 by id, v1 by `legacyV1Id`; the mirror's delete yields to an
+  entity cascade holding the row, and a cascade that later rolls back leaves it live) and deletes
+  that were resurrected; per-Thread (root and reply thread) and per-model counts against the live
+  old rows, not `Thread.commentCount` (which over-counted comic threads until the double
+  increment was removed; a clamped reply answers through `replyToId`); `CommentTopic.commentCount`
+  against its own rows (the trigger counts tombstones); reaction counts against the copied links;
+  link and mute extras; locked state (`CommentTopic.locked` / `CommentV3.locked` vs
+  `Thread.locked`); full-row column drift against the old rows (replaces spot checksums and the
+  `updatedAt`/`deletedAt` comparison); and v1 parent mismatches.
+- Two sweeps the mirror can leave behind (the topic-mute sweep only after the topic copy has
+  converged): tombstones with neither a reply
   nor an answerer (a delete that yielded to another delete's probe of the same tombstone, or a
   last reply and last answerer deleted concurrently), and `CommentTopicMute` rows whose entity is
   gone (no FK to the topic by design; an entity delete cascades `ThreadMute` after its `Thread`
@@ -1234,8 +1261,13 @@ Phase 4 prerequisite) — still before any write flip.
 **Rollback story** (why reads flip before writes): while writes still land in the old tables,
 flipping a surface's reads back is instant and lossless — dual-write kept both sides current. Once
 a surface's _writes_ flip, new rows exist only in CommentV3; rolling that back requires a
-reverse-copy (CommentV3 → old tables, trivial since ids are shared) — keep that script ready
-before the first write flip, and don't remove a surface's old write path until it has soaked.
+reverse-copy (CommentV3 → old tables: ids are shared, but a v3-only comment also needs its entity's
+root `Thread` and its parent's reply `Thread` recreated, a model comment follows its parent's
+shape into the v1 or v2 table, and edits, deletes and links must flow back; the `reverse*` steps of
+the backfill endpoint do this, scoped to the flip's window and surface so a comment the mirror
+yielded on is never taken for a v3 delete, nor a post-rollback ghost for a v3 write) — proven on a
+prod sample before the first write flip, and don't remove a surface's old write path until it has
+soaked.
 
 **Phase 4 — flip reads, then writes, per surface, behind Flipt.** **Prerequisite — readers move
 first:** dual-write makes CommentV3 a complete superset of both old tables, so every cross-surface

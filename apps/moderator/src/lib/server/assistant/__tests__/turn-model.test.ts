@@ -5,9 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * to. Either alone would let the audit name a model that never ran, or run one nobody chose.
  */
 
-const { complete, startTurn } = vi.hoisted(() => ({
+const { complete, startTurn, finishTurn, listPrices, recordTurnTokens } = vi.hoisted(() => ({
+  recordTurnTokens: vi.fn(),
   complete: vi.fn(),
   startTurn: vi.fn(),
+  finishTurn: vi.fn(),
+  listPrices: vi.fn(),
 }));
 
 // The real model resolution; only the network call is faked.
@@ -15,6 +18,7 @@ vi.mock('../../xguard-api', () => ({ openrouterKey: () => 'test-key' }));
 vi.mock('../openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../openrouter')>()),
   complete,
+  listPrices,
 }));
 vi.mock('../tools', () => ({ LOOKUP: '/lookup', toolSpec: () => ({}), toolsFor: () => [] }));
 vi.mock('../store', () => ({
@@ -25,7 +29,8 @@ vi.mock('../store', () => ({
   getPlaybook: vi.fn(async () => null),
   getMaskSalt: vi.fn(async () => 'salt'),
   startTurn,
-  finishTurn: vi.fn(async () => {}),
+  finishTurn,
+  recordTurnTokens,
   renameChat: vi.fn(async () => true),
   hasRunningTurn: vi.fn(async () => false),
   tokensToday: vi.fn(async () => 0),
@@ -33,7 +38,7 @@ vi.mock('../store', () => ({
 
 const { executeTurn } = await import('../turn.service');
 
-const ask = (model: string | null) =>
+const ask = (model: string | null, allowance = { spentUsd: 0, capUsd: 1, usedTokens: 0 }) =>
   executeTurn({
     chatId: 1,
     moderator: { id: 1, username: 'mod' },
@@ -42,12 +47,15 @@ const ask = (model: string | null) =>
     model,
     canAccess: () => true,
     hasGrant: () => true,
-    used: 0,
+    allowance,
     emit: () => {},
   });
 
 beforeEach(() => {
   startTurn.mockReset().mockResolvedValue(9);
+  finishTurn.mockReset().mockResolvedValue(undefined);
+  recordTurnTokens.mockReset().mockResolvedValue(undefined);
+  listPrices.mockReset().mockResolvedValue({});
   complete.mockReset().mockResolvedValue({
     message: { content: 'ok' },
     finishReason: 'stop',
@@ -72,5 +80,41 @@ describe('executeTurn', () => {
         expect.objectContaining({ model: 'z-ai/glm-5.3-flash' })
       );
     }
+  });
+
+  it('records the cost at the list price when the live price reads lower', async () => {
+    complete.mockResolvedValue({
+      message: { content: 'ok' },
+      finishReason: 'stop',
+      usage: { prompt: 1_000_000, completion: 1_000_000 },
+    });
+    listPrices.mockResolvedValue({
+      'stepfun/step-5-preview': { input: 0.5, output: 3, current: true },
+    });
+    await ask('stepfun/step-5-preview');
+    // List is 1 in / 2.7 out: input at list (1), output at live (3).
+    expect(finishTurn).toHaveBeenCalledTimes(1);
+    expect(finishTurn).toHaveBeenCalledWith(9, expect.anything(), { usd: 4, source: 'live' });
+  });
+
+  it('stops the turn once it has spent the dollars left, priced at the model’s dearer direction', async () => {
+    // One cent left on Step 5 (dearest direction $2.70/M) is 3,703 tokens; the call spends 5,000.
+    complete.mockResolvedValue({
+      message: {
+        content: null,
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'none', arguments: '{}' } }],
+      },
+      finishReason: 'tool_calls',
+      usage: { prompt: 4_000, completion: 1_000 },
+    });
+    const outcome = await ask('stepfun/step-5-preview', {
+      spentUsd: 0.99,
+      capUsd: 1,
+      usedTokens: 0,
+    });
+    expect(outcome.status).toBe('capped');
+    expect(complete).toHaveBeenCalledTimes(1);
+    // Recorded before the turn ends, so a process that dies here still leaves the spend on the row.
+    expect(recordTurnTokens).toHaveBeenCalledWith(9, 4_000, 1_000);
   });
 });

@@ -22,7 +22,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * the actual clamp on a real `modelLocked` ecosystem — not by hand-feeding a
  * collector — so a change to the graph that stops recording also fails here.
  *
- * 🔴 `TimeSpan` IS STUBBED, AND HAS TO BE. `@civitai/client`'s entry does
+ * 🔴 `TimeSpan` IS STUBBED, AND HAS TO BE. `@civitai/orchestration-client`'s entry does
  * `export * from './generated'` — a directory specifier Node ESM rejects — so
  * under vitest `TimeSpan` resolves to an OBJECT, not a constructor, and
  * `new TimeSpan(...)` throws at import time. `vi.importActual` fails the same
@@ -32,7 +32,9 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * more mocking here.
  */
 
-vi.mock('@civitai/client', async () => (await import('./civitai-client.stub')).civitaiClientStub());
+vi.mock('@civitai/orchestration-client', async () =>
+  (await import('./civitai-client.stub')).civitaiClientStub()
+);
 
 // `vi.hoisted` because `vi.mock` factories are lifted above every top-level
 // binding — referencing a plain `const` from one throws "Cannot access
@@ -393,8 +395,7 @@ describe('generateFromGraph — creator tip vs resource eligibility', () => {
     canGenerate: true,
     hasAccess: true,
     strength: 1,
-    minStrength: -1,
-    maxStrength: 2,
+    settings: { strength: { min: -1, max: 2, default: 1 } },
     model: { id: 1, name: 'Qwen', type: 'Checkpoint', poi: false },
     tipsEnabled,
     isOwnedByUser,

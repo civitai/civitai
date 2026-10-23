@@ -2828,6 +2828,7 @@ export type Crucible = {
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
+  eventTags: Generated<string[]>;
 };
 export type CrucibleEngagement = {
   userId: number;
@@ -2888,6 +2889,19 @@ export type CryptoWallet = {
   smartAccount: string | null;
   payCurrency: Generated<string>;
 };
+export type CsamFlagRelease = {
+  id: Generated<number>;
+  userId: number;
+  moderatorId: number;
+  approvalRef: string;
+  reason: string;
+  /**
+   * The hold legs the release overrode.
+   */
+  overriddenLegs: unknown;
+  imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
 export type CsamReport = {
   id: Generated<number>;
   userId: number | null;
@@ -2900,6 +2914,11 @@ export type CsamReport = {
   details: Generated<unknown>;
   images: Generated<unknown>;
   type: Generated<CsamReportType>;
+  /**
+   * The send run holding this unsent report, and when it took it. A filing never folds into a held report.
+   */
+  sendClaimId: string | null;
+  sendClaimedAt: Timestamp | null;
 };
 export type CsamReportArchiveObject = {
   id: Generated<number>;
@@ -3665,6 +3684,10 @@ export type Model = {
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
   isOfficial: Generated<boolean>;
+  sfwName: string | null;
+  sfwDescription: string | null;
+  coverImageId: number | null;
+  sfwCoverImageId: number | null;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -5309,6 +5332,20 @@ export type StorylineEarlyAccessSignup = {
   storylineId: number | null;
   createdAt: Generated<Timestamp>;
 };
+export type StorylinePendingChapter = {
+  postId: number;
+  storylineId: number;
+  /**
+   * null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+   * migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+   */
+  parentChapterId: number | null;
+  /**
+   * The draft's author when it was linked. Not a relation, as on StorylineChapter.
+   */
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineReport = {
   storylineId: number;
   reportId: number;
@@ -6153,6 +6190,7 @@ export type DB = {
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
+  CsamFlagRelease: CsamFlagRelease;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
@@ -6334,6 +6372,7 @@ export type DB = {
   StorylineCollaborator: StorylineCollaborator;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;
   TagEngagement: TagEngagement;

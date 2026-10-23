@@ -25,7 +25,8 @@ const picksSchema = {
 };
 
 export const createStorylineSchema = z.object({
-  postId: z.number().int().positive(),
+  /** Chapter 1, when the storyline starts from a post already published. Omitted, it starts empty. */
+  postId: z.number().int().positive().optional(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
@@ -90,6 +91,8 @@ export const storylineLinkTargetsSchema = z.object({
 });
 
 export const storylineIdSchema = z.object({ id: z.number().int().positive() });
+
+export const storylinePendingForPostSchema = z.object({ postId: z.number().int().positive() });
 
 export const getStorylineSchema = z.object({
   id: z.number().int().positive(),

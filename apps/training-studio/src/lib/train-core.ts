@@ -14,7 +14,7 @@ import {
   type WorkflowCallback,
   type WorkflowStepTemplate,
   type WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -436,7 +436,7 @@ type EpochOutput = {
 
 // An epoch's trained-LoRA reference (`continueFrom`, the generate hand-off): the orchestrator resolves it
 // as a LoRA only when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is
-// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same
+// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/orchestration-client's `Air` (the same
 // builder the main app's stringifyAIR wraps) for a blob-backed epoch:
 // urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
 export const loraBlobAir = (ecosystem: string, blobKey: string) =>

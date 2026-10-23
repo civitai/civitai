@@ -68,8 +68,28 @@ const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], tru
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
+const getRegistrationEmails = vi.fn(
+  async (ids: number[]) => new Map(ids.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+);
+vi.mock('../email', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../email')>()),
+  getRegistrationEmails,
+}));
 
+const getAccounts = vi.fn(async (ids: number[]) => ({
+  accounts: ids.map((userId) => ({ userId, username: `u${userId}` })),
+  missing: [],
+}));
+vi.mock('../reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../reads')>()),
+  getAccounts,
+}));
+
+const addPlaybookVersion = vi.fn(async () => ({ version: 1 }));
+const fileToolRequest = vi.fn(async () => 1);
 vi.mock('../store', () => ({
+  addPlaybookVersion,
+  fileToolRequest,
   getPlaybook: vi.fn(async (slug: string) => ({
     slug,
     version: 2,
@@ -82,6 +102,7 @@ vi.mock('../store', () => ({
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
+const { DAILY_TOKEN_CAP, MAX_TOOL_CHARS, fitJson } = await import('../loop');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -181,6 +202,199 @@ describe('reads User Lookup gates beyond the page', () => {
     expect(out.data).toMatchObject({ found: false });
     await run('find_user', { query: 'someone@example.com' }, ['/retool/user-lookup']);
     expect(resolveUserId).toHaveBeenCalledWith('someone@example.com');
+  });
+});
+
+describe('registration emails', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  beforeEach(() => {
+    getRegistrationEmails.mockClear();
+  });
+
+  it('are never read for a User Lookup holder without assistant.emails', async () => {
+    const out = JSON.stringify(await run('find_linked_accounts', { userId: 5 }, [LOOKUP_PAGE]));
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('are never read with assistant.emails but without User Lookup', async () => {
+    const out = JSON.stringify(
+      await run('get_user_dossier', { userId: 5 }, ['/reports/user'], ['assistant.emails'])
+    );
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('reach the model with their inbox for a User Lookup holder with assistant.emails', async () => {
+    const linkedOut = await run(
+      'find_linked_accounts',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect((linkedOut.data as { accounts: unknown[] }).accounts[0]).toMatchObject({
+      userId: 7,
+      email: 'Sock.7+x@GoogleMail.com',
+      normalizedEmail: 'sock7@gmail.com',
+    });
+    const dossier = await run(
+      'get_user_dossier',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect(dossier.data).toMatchObject({
+      normalizedEmail: 'sock5@gmail.com',
+      linked: { accounts: [{ userId: 7, normalizedEmail: 'sock7@gmail.com' }] },
+    });
+  });
+
+  it.each([
+    ['find_user', { query: '9' }],
+    ['get_accounts', { userIds: [9] }],
+  ])('%s carries them only with both User Lookup and assistant.emails', async (name, args) => {
+    resolveUserId.mockImplementation(async () => 9 as never);
+    expect(JSON.stringify(await run(name, args, [LOOKUP_PAGE]))).not.toContain('@');
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    const out = JSON.stringify(await run(name, args, [LOOKUP_PAGE], ['assistant.emails']));
+    expect(out).toContain('"normalizedEmail":"sock9@gmail.com"');
+    resolveUserId.mockImplementation(async () => null);
+  });
+
+  describe('get_accounts fields', () => {
+    const data = async (args: unknown, paths = [LOOKUP_PAGE], grants = ['assistant.emails']) =>
+      (await run('get_accounts', args, paths, grants)).data as {
+        accounts: object[];
+        emailsWithheld?: true;
+      };
+    const accounts = async (args: unknown, grants?: string[]) =>
+      (await data(args, undefined, grants)).accounts;
+    // Every column `getAccounts` returns, so a column lost on the way out shows.
+    const fullRow = (userId: number) => ({
+      userId,
+      username: `u${userId}`,
+      createdAt: new Date('2025-01-02T03:04:05Z'),
+      bannedAt: null,
+      banReason: 'spam',
+      deletedAt: null,
+      muted: true,
+      strikes: 2,
+    });
+
+    it('returns only the columns asked for, and always the id', async () => {
+      expect(await accounts({ userIds: [3, 4], fields: ['normalizedEmail'] })).toEqual([
+        { userId: 3, normalizedEmail: 'sock3@gmail.com' },
+        { userId: 4, normalizedEmail: 'sock4@gmail.com' },
+      ]);
+      expect(await accounts({ userIds: [3], fields: ['email'] })).toEqual([
+        { userId: 3, email: 'Sock.3+x@GoogleMail.com' },
+      ]);
+    });
+
+    it('returns every column when none are named, as before', async () => {
+      getAccounts.mockImplementationOnce(async (ids: number[]) => ({
+        accounts: ids.map(fullRow) as never,
+        missing: [],
+      }));
+      expect(await data({ userIds: [3] })).toEqual({
+        accounts: [
+          { ...fullRow(3), email: 'Sock.3+x@GoogleMail.com', normalizedEmail: 'sock3@gmail.com' },
+        ],
+        missing: [],
+      });
+    });
+
+    it('never gives an email without both User Lookup and assistant.emails, and says so', async () => {
+      const fields = ['email', 'normalizedEmail'];
+      for (const [paths, grants] of [
+        [[LOOKUP_PAGE], []],
+        [['/reports/user'], ['assistant.emails']],
+      ]) {
+        const out = await data({ userIds: [3], fields }, paths, grants);
+        expect(out.accounts).toEqual([{ userId: 3 }]);
+        expect(out.emailsWithheld).toBe(true);
+      }
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('does not read emails unless they are asked for', async () => {
+      expect(await accounts({ userIds: [3], fields: ['username'] })).toEqual([
+        { userId: 3, username: 'u3' },
+      ]);
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('fits a full list of inboxes into one result, where every column does not', async () => {
+      // The model sees a result through `fitJson`; a trimmed one has silently lost accounts.
+      const ids = Array.from({ length: 200 }, (_, i) => 9_000_000 + i);
+      const address = (id: number) => `firstname.lastname${id % 1000}@outlook.com`;
+      getRegistrationEmails.mockImplementation(
+        async (list: number[]) => new Map(list.map((id) => [id, address(id)]))
+      );
+      getAccounts.mockImplementation(async (list: number[]) => ({
+        accounts: list.map(fullRow) as never,
+        missing: [],
+      }));
+      const seen = async (fields?: string[]) =>
+        fitJson({ data: await data({ userIds: ids, fields }), truncated: false }, MAX_TOOL_CHARS)
+          .trimmed;
+      try {
+        expect(await seen(['normalizedEmail'])).toBe(false);
+        expect(await seen()).toBe(true);
+      } finally {
+        getRegistrationEmails.mockImplementation(
+          async (list: number[]) => new Map(list.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+        );
+        getAccounts.mockImplementation(async (list: number[]) => ({
+          accounts: list.map((userId) => ({ userId, username: `u${userId}` })) as never,
+          missing: [],
+        }));
+      }
+    });
+
+    it('refuses a column it does not have', () => {
+      const tool = TOOLS.find((t) => t.name === 'get_accounts')!;
+      expect(tool.input.safeParse({ userIds: [3], fields: ['passwordHash'] }).success).toBe(false);
+      expect(tool.input.safeParse({ userIds: [3], fields: [] }).success).toBe(false);
+    });
+  });
+
+  const EMAIL = 'b.o.t+1@gmail.com';
+  const pilot = { ...ctx([LOOKUP_PAGE], ['assistant.emails']) };
+
+  it('are dropped from a proposed playbook, which every assistant user reads', async () => {
+    const tool = TOOLS.find((t) => t.name === 'propose_playbook')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        slug: 'chain',
+        title: `Chains like ${EMAIL}`,
+        summary: `Accounts sharing ${EMAIL} as one inbox.`,
+        body: `Example:\n${EMAIL}\nand ${EMAIL.toUpperCase()}`,
+        note: EMAIL,
+      }),
+      pilot
+    );
+    const saved = JSON.stringify(addPlaybookVersion.mock.lastCall);
+    expect(saved).toContain('[email]');
+    expect(saved.toLowerCase()).not.toContain('gmail');
+  });
+
+  it('are dropped from a tool request, its attached conversation included', async () => {
+    const tool = TOOLS.find((t) => t.name === 'request_tool')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        need: `Group accounts by inbox, e.g. ${EMAIL}`,
+        reason: `The chain all used ${EMAIL}.`,
+        example: EMAIL,
+      }),
+      {
+        ...pilot,
+        conversation: () => [{ prompt: `who is ${EMAIL}?`, answer: `${EMAIL} is a sock.` }],
+      }
+    );
+    const filed = JSON.stringify(fileToolRequest.mock.lastCall);
+    expect(filed).toContain('[email]');
+    expect(filed).not.toContain('gmail');
   });
 });
 
@@ -327,7 +541,7 @@ describe('turnTokenBudget', () => {
   it('clamps a setting into range, so a tighter budget never comes out looser', () => {
     expect(turnTokenBudget('3000')).toBe(5_000);
     expect(turnTokenBudget('40000')).toBe(40_000);
-    expect(turnTokenBudget('99000000')).toBe(2_000_000);
+    expect(turnTokenBudget('99000000')).toBe(DAILY_TOKEN_CAP);
   });
 
   it('falls back to the default when unset or not a whole number', () => {

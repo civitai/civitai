@@ -897,6 +897,9 @@ export const serverSchema = z
     // webhook is created; unset disables the receiver (503) rather than trusting
     // unsigned deliveries.
     CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+    // HQ task.closed -> Known Issues board sync. Standard Webhooks secret (`whsec_…`); unset
+    // disables the receiver (503) rather than trusting unsigned deliveries.
+    HQ_WEBHOOK_SECRET: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),

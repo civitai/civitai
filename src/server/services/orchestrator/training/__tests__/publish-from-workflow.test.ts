@@ -38,7 +38,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   updateWorkflow: mockUpdateWorkflow,
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {

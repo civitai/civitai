@@ -14,7 +14,7 @@ import { optionFallback, imagesDef, sliderDef } from '../defs';
  * self-contained panels — they exist so every workflow value has an arm.
  *
  * The preprocess kind list and per-kind param specs are imported from the shared
- * module: they mirror the @civitai/client `PreprocessImageInput` union, not
+ * module: they mirror the @civitai/orchestration-client `PreprocessImageInput` union, not
  * the graph engine, and duplicating 36 kinds' specs would only drift.
  */
 

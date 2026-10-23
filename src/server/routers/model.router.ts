@@ -50,6 +50,8 @@ import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
+  checkSfwFaceSchema,
+  draftSfwFaceSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
@@ -110,6 +112,8 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
+import { getCoverCandidates } from '~/server/services/model-cover.service';
+import { checkSfwFace, draftSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
   middleware,
@@ -322,6 +326,21 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)
     .mutation(upsertModelHandler),
+  checkSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(checkSfwFaceSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
+  getCoverCandidates: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getCoverCandidates({ modelId: input.id })),
+  draftSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(draftSfwFaceSchema)
+    .use(rateLimit({ limit: 20, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => draftSfwFace({ ...input, userId: ctx.user.id })),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsDelete })
     .input(deleteModelSchema)

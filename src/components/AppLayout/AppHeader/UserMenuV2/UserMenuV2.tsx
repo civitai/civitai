@@ -3,8 +3,10 @@ import { UserMenuTrigger } from '~/components/AppLayout/AppHeader/UserMenu';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import type { UserMenuBadgeItemId } from '~/shared/constants/user-menu.constants';
 import { UserMenuDesktop } from './UserMenuDesktop';
 import { UserMenuMobile } from './UserMenuMobile';
+import { attentionCount, toAttentionCounts } from './attentionCount';
 import { useUserMenuPins } from './useUserMenuPins';
 
 export type UserMenuShellProps = {
@@ -23,7 +25,7 @@ export default function UserMenuV2() {
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const [open, setOpenState] = useState(false);
   const pins = useUserMenuPins();
-  const attention = useAttentionCount();
+  const attention = useAttentionCount(pins.mutedBadges);
 
   const setOpen = (next: boolean) => {
     if (!next) pins.flush();
@@ -51,14 +53,10 @@ export default function UserMenuV2() {
   return <Shell open={open} setOpen={setOpen} pins={pins} trigger={trigger} />;
 }
 
-/** Everything in the menu waiting on the viewer, from the counts query the header already runs. */
-function useAttentionCount() {
-  const { pendingPlacements, pendingCollectionReviews, unopenedBoxes, unclaimedPrizes } =
-    useQueryNotificationsCount();
-  return (
-    (pendingPlacements ?? 0) +
-    (pendingCollectionReviews ?? 0) +
-    (unopenedBoxes ?? 0) +
-    (unclaimedPrizes ?? 0)
-  );
+/**
+ * Everything in the menu waiting on the viewer that they have not muted, from the counts query the
+ * header already runs.
+ */
+function useAttentionCount(muted: UserMenuBadgeItemId[]) {
+  return attentionCount(toAttentionCounts(useQueryNotificationsCount()), muted);
 }

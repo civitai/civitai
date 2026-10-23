@@ -4,9 +4,11 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getSysRedis } from './redis';
 
+import { ORIGIN_FILTERS, type OriginFilter } from '$lib/restriction-filters';
 import {
   defaultSortFor,
   RESTRICTION_TYPE,
+  RESTRICTION_TYPES,
   type RestrictionType,
   type SortOrder,
 } from '$lib/restriction-types';
@@ -108,8 +110,7 @@ export type RestrictionQuery = {
   sort?: SortOrder;
 };
 
-export const ORIGIN_FILTERS = ['remix', 'typed', 'unchanged-remix'] as const;
-export type OriginFilter = (typeof ORIGIN_FILTERS)[number];
+export { ORIGIN_FILTERS, type OriginFilter };
 
 // `triggers` is an array, or a single object on rows from before the backfill. jsonpath's default lax
 // mode unwraps an array when a member is accessed on it, so one path covers both shapes.
@@ -305,6 +306,8 @@ export type RestrictionFacets = {
   status: Record<string, number>;
   /** By origin, under the current status filter. */
   origin: Record<'all' | OriginFilter, number>;
+  /** By type, under the current status and origin filters. */
+  type: Record<RestrictionType, number>;
 };
 
 /**
@@ -316,15 +319,15 @@ export async function getRestrictionFacets(
 ): Promise<RestrictionFacets> {
   const { type = RESTRICTION_TYPE, status, username, userId, origin } = query;
 
-  const base = dbRead
+  const anyType = dbRead
     .selectFrom('UserRestriction as ur')
     .innerJoin('User as u', 'u.id', 'ur.userId')
-    .$if(type !== 'any', (qb) => qb.where('ur.type', '=', type))
     .where('u.deletedAt', 'is', null)
     .$if(!!userId, (qb) => qb.where('ur.userId', '=', userId!))
     .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`));
+  const base = anyType.$if(type !== 'any', (qb) => qb.where('ur.type', '=', type));
 
-  const [byStatus, byOrigin] = await Promise.all([
+  const [byStatus, byOrigin, byType] = await Promise.all([
     base
       .$if(!!origin, (qb) => qb.where(originPredicate(origin!)))
       .select(['ur.status', (eb) => eb.fn.countAll<string>().as('count')])
@@ -339,7 +342,19 @@ export async function getRestrictionFacets(
         sql<string>`count(*) filter (where ${UNCHANGED_REMIX_SQL})`.as('unchangedRemix'),
       ])
       .executeTakeFirst(),
+    anyType
+      .$if(!!status, (qb) => qb.where('ur.status', '=', status!))
+      .$if(!!origin, (qb) => qb.where(originPredicate(origin!)))
+      .select(['ur.type', (eb) => eb.fn.countAll<string>().as('count')])
+      .groupBy('ur.type')
+      .execute(),
   ]);
+
+  const typeCounts = Object.fromEntries(RESTRICTION_TYPES.map((t) => [t, 0])) as Record<
+    RestrictionType,
+    number
+  >;
+  for (const row of byType) typeCounts[row.type as RestrictionType] = Number(row.count);
 
   const statusCounts: Record<string, number> = {
     any: 0,
@@ -360,6 +375,7 @@ export async function getRestrictionFacets(
       typed: Number(byOrigin?.typed ?? 0),
       'unchanged-remix': Number(byOrigin?.unchangedRemix ?? 0),
     },
+    type: typeCounts,
   };
 }
 

@@ -106,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       switch (event.type) {
         case 'payeeDetailsChanged':
           // Handle payee details changed event
-          await updateByTipaltiAccount({
+          const updatedPaymentConfiguration = await updateByTipaltiAccount({
             // In this webhook, the payeeId is the refCode which is our userId, not the actual payeeId.
             userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: parsePayeeStatus(event.eventData.status),
@@ -117,6 +117,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? (event.eventData.unpayableReasons as string[])
               : undefined,
           });
+          // withdrawCash reads its ready/pending status from this cache (TTL one day).
+          await userCashCache.bust(updatedPaymentConfiguration.userId);
           break;
         case 'paymentGroupApproved':
         case 'paymentGroupDeclined':

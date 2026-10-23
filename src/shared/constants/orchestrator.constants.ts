@@ -1,4 +1,4 @@
-import { NsfwLevel, WorkflowStatus } from '@civitai/client';
+import { NsfwLevel, WorkflowStatus } from '@civitai/orchestration-client';
 
 export const PENDING_STATUSES: WorkflowStatus[] = [
   WorkflowStatus.UNASSIGNED,

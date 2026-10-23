@@ -30,9 +30,11 @@ import {
   type RunnerDeps,
 } from '../runner';
 import { createTokenVerifier } from '../tokens';
+import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
 import { bearerAuthenticator, fakeTools, untilAborted } from '../test-support/fakes';
 import { signGrant, testKeys } from '../test-support/keys';
+import { MemoryModelCalls } from '../test-support/memory-model-calls';
 import { freshDatabase, rowsContaining, tableCount, TEST_DATABASE_URL } from '../test-support/pg';
 import { scriptedModel, toolResults } from '../test-support/scripted-model';
 import { readEvents, type ReadEntry } from '../test-support/sse';
@@ -186,10 +188,24 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return new Response('', { status: 500 });
     },
   });
+  /**
+   * The real model provider against a fake orchestration chat (`FakeChatOrchestration`), keeping its
+   * calls in a ledger: what a Stop does to the orchestration workflow of a model call in flight.
+   */
+  const chat = new FakeChatOrchestration();
+  const chatModels = new OrchestrationModels({
+    baseUrl: 'https://orchestration.example',
+    orchestration: new OrchestrationClient('https://orchestration.example', chat.fetch),
+    tokens: (runId) => credentials.forRun(runId),
+    fetch: chat.fetch,
+    calls: new MemoryModelCalls(),
+  } as ConstructorParameters<typeof OrchestrationModels>[0]);
   const models: ModelProvider = {
+    settle: (runId) => (chatModels as ModelProvider).settle?.(runId) ?? Promise.resolve(),
     languageModel: (context) => {
       const { model, runId } = context;
       if (model === 'refused-mint') return refusingModels.languageModel(context);
+      if (model === 'orchestration') return chatModels.languageModel(context);
       if (model === 'mint') {
         // As a real provider does: the token is minted inside the request, from the run's grant.
         const scripted = scriptedModel(() => ({ text: 'Minted.' }));
@@ -539,6 +555,31 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(head!.v).toBe(2);
     expect(head!.turns[0]!.assistant).toMatchObject({ status: 'aborted' });
     expect(await runner.lookup(user, 'c-stop')).toBeNull();
+  });
+
+  it('Stop cancels the orchestration workflow of the model call in flight, before the run ends', async () => {
+    const user = 'u-stop-model';
+    const workflowId = 'wf-3d8f60-stopped';
+    chat.next(workflowId, { text: 'Never finished.' }, { hold: true });
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-stop-model', model: 'orchestration', tier: 'paid' })
+    );
+    expect(start.status).toBe(201);
+    const runId = start.body!.runId as string;
+    const deadline = Date.now() + 20_000;
+    while (!chat.order.includes(`read ${workflowId}`)) {
+      if (Date.now() > deadline) throw new Error('the model call was never sent');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+    expect(ended(await events(runId, user)).status).toBe('stopped');
+    // Cancelled before the run journaled its end (so while its grant could still mint).
+    expect(chat.puts).toEqual([{ id: workflowId, body: { status: 'canceled' } }]);
+    expect(chat.workflows.get(workflowId)!.status).toBe('canceled');
+    expect(chat.posts.map((p) => p.id)).toEqual([workflowId]);
   });
 
   it('a stop by key that arrives before its start makes that start end at once, stopped, without asking the model', async () => {

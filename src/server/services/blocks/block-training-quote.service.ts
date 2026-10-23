@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
-import type { TrainingStepTemplate } from '@civitai/client';
+import type { TrainingStepTemplate } from '@civitai/orchestration-client';
 import { OrchPriorityTypes } from '~/server/common/enums';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { BlockTrainingBody } from '~/server/schema/blocks/workflow.schema';

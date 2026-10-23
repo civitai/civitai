@@ -439,6 +439,48 @@ describe('the run API', () => {
     expect(await garbled.json()).toMatchObject({ v: 1, error: 'bad-request' });
   });
 
+  // A regression guard: the error handler once called `code.startsWith` on every error, so one whose
+  // code is a number (a DOMException's, e.g. an AbortSignal.timeout) threw inside the handler and was
+  // answered a bare 500 with the original error never logged.
+  it('answers a failure whose error code is not a string as unavailable, and logs the original error', async () => {
+    const failures: [string, () => Error][] = [
+      ['a numeric code', () => Object.assign(new Error('numeric code 5b1d'), { code: 23 })],
+      ['a DOMException', () => new DOMException('timeout 9e2c', 'TimeoutError')],
+    ];
+    for (const [name, failure] of failures) {
+      const lines: string[] = [];
+      const stream = new Writable({
+        write(chunk, _encoding, done) {
+          lines.push(String(chunk));
+          done();
+        },
+      });
+      const { service } = fakeService({
+        start: async () => {
+          throw failure();
+        },
+      });
+      const logger = { ...(loggerOptions('info') as object), stream };
+      const base = await serve({ service, authenticator: bearerAuthenticator, grants, logger });
+      const response = await fetch(`${base}/runs`, {
+        method: 'POST',
+        headers: await startHeaders(),
+        body: JSON.stringify(startRequest),
+      });
+      expect(response.status, name).toBe(503);
+      expect(await response.json(), name).toEqual({
+        v: 1,
+        error: 'unavailable',
+        message: 'The runner could not do that just now.',
+      });
+      const failedLine = lines.find((line) => line.includes('request failed'));
+      expect(failedLine, name).toBeDefined();
+      expect(failedLine, name).toContain(failure().message);
+      await app?.close();
+      app = undefined;
+    }
+  });
+
   // An invariant guard: Fastify's default request serializer already logs no headers. It fails if a
   // serializer that does is ever configured.
   it('never logs a request header (they carry the viewer’s credentials)', async () => {

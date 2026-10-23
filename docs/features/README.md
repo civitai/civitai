@@ -36,3 +36,4 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Avatar Gen (portrait to stylised avatar workflow)            | [docs/features/avatar-gen.md](avatar-gen.md)                                 |
 | Account settings deep links (`?setting=`)                    | [docs/features/account-settings-links.md](account-settings-links.md)         |
 | Storylines (branching stories told in posts) | [docs/features/storylines.md](storylines.md) |
+| Model civitai.com face (separate .com title, description and cover) | [docs/features/model-com-face.md](model-com-face.md) |

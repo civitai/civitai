@@ -8,6 +8,32 @@ const pack = (
 ) => reviewActions({ status, isMysteryPack: true, hasEdit, hasLive, loaded });
 
 describe('reviewActions', () => {
+  // Retrying finishes refunds a takedown left owed; nothing else archived has a takedown to finish.
+  it('offers Retry takedown only on an archived item that was taken down', () => {
+    const item = (status: CosmeticShopItemStatus, takenDown: boolean) =>
+      reviewActions({
+        status,
+        isMysteryPack: false,
+        hasEdit: false,
+        hasLive: false,
+        loaded: true,
+        takenDown,
+      }).retryTakedown;
+    expect(item(CosmeticShopItemStatus.Archived, true)).toBe(true);
+    expect(item(CosmeticShopItemStatus.Archived, false)).toBe(false);
+    expect(item(CosmeticShopItemStatus.Published, true)).toBe(false);
+    expect(
+      reviewActions({
+        status: CosmeticShopItemStatus.Archived,
+        isMysteryPack: true,
+        hasEdit: false,
+        hasLive: true,
+        loaded: true,
+        takenDown: true,
+      }).retryTakedown
+    ).toBe(false);
+  });
+
   // The server refuses a takedown of a box listing and deleting one would orphan the box.
   it('never offers a mystery pack takedown or delete, where a live item gets both', () => {
     expect(

@@ -1,6 +1,7 @@
 import { Button, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
 import { useState } from 'react';
+import { DEFAULT_STRENGTH_RANGE } from '~/shared/constants/generation.constants';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { usePostPresets } from '~/components/Post/post-presets.utils';
@@ -41,8 +42,7 @@ export function fromPresetData(
       trainedWords: [],
       canGenerate: false,
       hasAccess: true,
-      minStrength: -1,
-      maxStrength: 2,
+      settings: { strength: DEFAULT_STRENGTH_RANGE },
       strength: 1,
     }));
   return {

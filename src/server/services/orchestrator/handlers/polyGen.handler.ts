@@ -107,7 +107,9 @@ export async function handlePolyGenWorkflowResult(
   // ---------------------------------------------------------------------------
   const blobs: { format: string; variant: string; blob: Model3dBlob }[] = [];
   const pushBlob = (variant: string, blob: Model3dBlob | undefined | null) => {
-    if (!blob) return;
+    // An unavailable blob has nothing to copy — e.g. the placeholder GLB older
+    // Tripo quad (FBX-only) workflows carry.
+    if (!blob || !blob.available) return;
     blobs.push({ format: normalizeFormat(blob.format), variant, blob });
   };
 

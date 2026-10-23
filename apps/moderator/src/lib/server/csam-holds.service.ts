@@ -89,7 +89,7 @@ const BATCH_MAX = 50;
 // The main app decides the holds one after another inside one request.
 const BATCH_TIMEOUT_MS = 120_000;
 
-/** Decides the author's other pending holds in one call, each against the hash the moderator saw; a changed hold is reported, never forced. Call only after the on-screen hold is decided, so a refused strike or ban never leaves the others removed. */
+/** Decides the author's other pending holds in one call, each against the hash its listing gave; a changed hold is reported, never forced. Call only after the on-screen hold is decided, so a refused strike or ban never leaves the others removed. */
 export async function decideAuthorHolds({
   holdId,
   also,

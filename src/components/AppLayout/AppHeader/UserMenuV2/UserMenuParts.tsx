@@ -1,7 +1,7 @@
 import { Badge } from '@mantine/core';
-import { IconPin, IconPinFilled } from '@tabler/icons-react';
+import { IconBell, IconBellOff, IconPin, IconPinFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useEffect, useRef, useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
@@ -15,11 +15,12 @@ import {
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TrackActionInput } from '~/server/schema/track.schema';
+import { isUserMenuBadgeItemId } from '~/shared/constants/user-menu.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import { USER_MENU_HEADER_GROUP } from '~/shared/constants/user-menu-groups.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
-export function MenuItemLabel({ item }: { item: UserMenuItem }) {
+export function MenuItemLabel({ item }: { item: UserMenuItem & { badgeMuted?: boolean } }) {
   return (
     <span className="flex items-center gap-1">
       <span className="text-sm leading-none">{item.label}</span>
@@ -29,7 +30,12 @@ export function MenuItemLabel({ item }: { item: UserMenuItem }) {
           NEW
         </Badge>
       )}
-      <QueueCountBadge count={item.badge ?? 0} max={99} ml={4} />
+      <QueueCountBadge
+        count={item.badge ?? 0}
+        max={99}
+        ml={4}
+        color={item.badgeMuted ? 'gray' : undefined}
+      />
     </span>
   );
 }
@@ -54,22 +60,64 @@ export function PinGlyph({ pinned, touch }: { pinned: boolean; touch?: boolean }
   );
 }
 
+export type PinTarget = Pick<ResolvedMenuItem, 'id' | 'label'>;
+
+/** The profile row above the menu is in no group, but it is a pinnable item. */
+export const PROFILE_PIN: PinTarget = { id: 'profile', label: 'Your Profile' };
+
+/** Bell on a row whose count lights the avatar; crossed out while that count is muted. */
+export function MuteGlyph({ muted, touch }: { muted: boolean; touch?: boolean }) {
+  const Glyph = muted ? IconBellOff : IconBell;
+  return (
+    <Glyph
+      size={16}
+      stroke={1.5}
+      aria-hidden
+      className={clsx(
+        'transition-opacity',
+        touch
+          ? muted
+            ? 'opacity-80'
+            : 'opacity-40'
+          : muted
+          ? 'opacity-60'
+          : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70 group-data-[hovered]:opacity-70'
+      )}
+    />
+  );
+}
+
+/** Toggles the mute on a row's count; absent where counts cannot be muted (signed out, legacy). */
+export const BadgeMuteCtx = createContext<
+  ((item: Pick<ResolvedMenuItem, 'id' | 'label'>) => void) | undefined
+>(undefined);
+
+/** A count can be muted only where it is shown: a mutable item with something waiting. */
+export const canMuteBadge = (item: { id?: UserMenuItemId; badge?: number }, toggleMute: unknown) =>
+  !!toggleMute && isUserMenuBadgeItemId(item.id) && (item.badge ?? 0) > 0;
+
 /** Render `region` once in the menu: it is the live region the announcements go to. */
 export function usePinActions(pins: ReturnType<typeof useUserMenuPins>) {
   const [message, setMessage] = useState('');
   const announce = useCallback((text: string) => setMessage(text), []);
-  const toggle = (item: ResolvedMenuItem) => {
+  const toggle = (item: PinTarget) => {
     if (!pins.canEdit) return;
     const wasPinned = pins.pins.includes(item.id);
     pins.toggle(item.id);
     announce(`${wasPinned ? 'Unpinned' : 'Pinned'} ${item.label}`);
+  };
+  const toggleMute = (item: Pick<ResolvedMenuItem, 'id' | 'label'>) => {
+    if (!pins.canEdit || !isUserMenuBadgeItemId(item.id)) return;
+    const wasMuted = pins.mutedBadges.includes(item.id);
+    pins.toggleBadgeMute(item.id);
+    announce(`${wasMuted ? 'Unmuted' : 'Muted'} the count on ${item.label}`);
   };
   const region = (
     <div aria-live="polite" className="sr-only">
       {message}
     </div>
   );
-  return { toggle, announce, region };
+  return { toggle, toggleMute, announce, region };
 }
 
 /**
@@ -156,6 +204,13 @@ export function useTrackHeaderOpen(surface: UserMenuSurface) {
 
 export const isPinKey = (event: React.KeyboardEvent) =>
   event.key.toLowerCase() === 'p' &&
+  !event.altKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey;
+
+export const isMuteKey = (event: React.KeyboardEvent) =>
+  event.key.toLowerCase() === 'm' &&
   !event.altKey &&
   !event.ctrlKey &&
   !event.metaKey &&

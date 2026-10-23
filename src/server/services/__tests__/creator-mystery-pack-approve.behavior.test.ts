@@ -5,6 +5,7 @@ import { creatorBoxWeights } from '@civitai/shared/creator-box-rules';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
@@ -74,6 +75,11 @@ const MIGRATIONS = [
     join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`),
     'utf8'
   )
+);
+
+const LABEL_STORE_ATTACH_BYTES = join(
+  process.cwd(),
+  'packages/civitai-db-schema/prisma/migrations/20261124120000_label_store_attach_bytes/migration.sql'
 );
 
 const CREATOR = 10;
@@ -270,6 +276,14 @@ beforeAll(async () => {
     );
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(migration);
+  await bootLabelStore(holder.db);
+  await holder.db.exec(`
+    ${readFileSync(LABEL_STORE_ATTACH_BYTES, 'utf8')}
+    ALTER TABLE "Cosmetic" ADD COLUMN "pHashHex" text, ADD COLUMN "pHashUrl" text, ADD COLUMN "pHashVersion" text;
+    CREATE TABLE IF NOT EXISTS "CosmeticShopItemCosmetic" (
+      "shopItemId" int NOT NULL, "cosmeticId" int NOT NULL, index int NOT NULL DEFAULT 0
+    );
+  `);
 });
 
 beforeEach(async () => {
@@ -281,6 +295,7 @@ beforeEach(async () => {
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
   await holder.db.exec(`
     TRUNCATE "BoxRevision", "BoxOddsSnapshot", "BoxContent", "BoxTier", "CosmeticShopItem" RESTART IDENTITY CASCADE;
+    TRUNCATE label_store.subject, label_store.change, label_store.record_failure RESTART IDENTITY CASCADE;
     DELETE FROM "ItemDefinition";
     DELETE FROM "Cosmetic";
     DELETE FROM "User";
@@ -743,6 +758,73 @@ describe('the box row lock', () => {
     expect((await revisionsOf(boxId)).at(-1)).toMatchObject({ status: 'stale' });
     expect(await listingOf(boxId)).toMatchObject({ unitAmount: 500 });
     expect(await snapshotsOf(boxId)).toHaveLength(1);
+  });
+});
+
+describe('the label a verdict records', () => {
+  const labels = () =>
+    q<{ value: string; subjectType: string; snapshot: { boxRevisionId: number | null } }>(
+      `SELECT l.value, s."subjectType", s.snapshot
+       FROM label_store.label l JOIN label_store.subject s ON s.id = l."subjectId" ORDER BY l.id`
+    );
+
+  it('approving an edit labels that edit', async () => {
+    const boxId = await submit();
+    const revisionId = await pendingRevisionId(boxId);
+
+    await verdict(boxId, 'approve');
+
+    expect(await labels()).toEqual([
+      {
+        value: 'approve',
+        subjectType: 'shop_mystery_pack',
+        snapshot: expect.objectContaining({ boxRevisionId: revisionId }),
+      },
+    ]);
+  });
+
+  it('rejecting an edit labels that edit', async () => {
+    const boxId = await submit();
+    const revisionId = await pendingRevisionId(boxId);
+
+    await verdict(boxId, 'reject', 'Not allowed');
+
+    expect(await labels()).toEqual([
+      expect.objectContaining({
+        value: 'reject',
+        snapshot: expect.objectContaining({ boxRevisionId: revisionId }),
+      }),
+    ]);
+  });
+
+  it('reverting a pack on sale labels the pack on sale, not an edit waiting', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await reprice(boxId, 600);
+    expect(await pendingRevisionId(boxId)).toBeDefined();
+
+    await verdict(boxId, 'revert', 'Checking a report');
+
+    expect((await labels()).at(-1)).toMatchObject({
+      value: 'revert',
+      snapshot: expect.objectContaining({ boxRevisionId: null }),
+    });
+  });
+
+  it('records nothing when a stale edit sends the pack back', async () => {
+    const boxId = await submit();
+    await apply(boxId);
+    await verdict(boxId, 'revert', 'Checking a report');
+    await q(
+      `INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
+       SELECT "boxDefinitionId", 1, proposal, "submittedById" FROM "BoxRevision" WHERE "boxDefinitionId" = $1 LIMIT 1`,
+      [boxId]
+    );
+    const before = (await labels()).length;
+
+    await expect(verdict(boxId, 'approve')).rejects.toThrow('The creator has to edit it again');
+
+    expect(await labels()).toHaveLength(before);
   });
 });
 

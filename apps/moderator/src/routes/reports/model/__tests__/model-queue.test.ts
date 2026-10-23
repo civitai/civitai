@@ -36,7 +36,7 @@ vi.mock('$lib/server/model-moderation.service', () => modelActions);
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/users.service', () => ({ MAX_INT4: 2_147_483_647 }));
 const canAccess = vi.fn(() => true);
-vi.mock('$lib/server/access', () => ({ canAccess }));
+vi.mock('$lib/server/access', () => ({ canAccess, canViewTrainingData: () => true }));
 const MERGE_CHECKS = { 501: { sourceModelId: 115 } };
 const getMergePermissionChecks = vi.fn(async (_reports: unknown[]) => MERGE_CHECKS);
 vi.mock('$lib/server/merge-permission.service', () => ({ getMergePermissionChecks }));

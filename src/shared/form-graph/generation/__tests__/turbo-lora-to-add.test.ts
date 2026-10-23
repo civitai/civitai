@@ -3,8 +3,17 @@ import { turboLoraToAdd, turboLoraValue } from '~/shared/form-graph/generation/t
 
 const FAMILY = 3411385;
 const pick = turboLoraValue(9000002);
-const hydrated = { ...pick, baseModel: 'MOSS Image', strength: 0.8, canGenerate: true };
-const familyDefault = { ...turboLoraValue(FAMILY), strength: 0.5 };
+const data = (id: number, strength: number) =>
+  ({
+    id,
+    name: 'v',
+    baseModel: 'MOSS Image',
+    canGenerate: true,
+    settings: { strength: { min: -1, max: 2, default: strength } },
+    model: { id: 1, name: 'M', type: 'LORA' },
+  } as unknown as NonNullable<Parameters<typeof turboLoraToAdd>[0]['hydrated']>);
+const hydrated = data(pick.id, 0.8);
+const familyDefault = data(FAMILY, 0.5);
 
 describe('turboLoraToAdd', () => {
   it.each([

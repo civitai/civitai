@@ -138,6 +138,9 @@ const featureFlags = createFeatureFlags({
   // the server render and the hydrating render read the same serialised flags. gSSP does not read
   // the flag: its prefetches are the same in both states.
   modelPageDeferBelowFold: { availability: [], fliptKey: 'model-page-defer-below-fold' },
+  // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
+  // moderator cohort is a Flipt rollout, never this static list.
+  shellImages: { availability: [], fliptKey: 'shell-images' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
@@ -149,6 +152,21 @@ const featureFlags = createFeatureFlags({
   // `['mod']` is the fallback only, as for `accountSettingsV2`: the `user-menu-v2` rollout
   // decides while Flipt answers. Also gates the unclaimed-prize query in `checkNotifications`.
   userMenuV2: { availability: ['mod'], fliptKey: 'user-menu-v2' },
+  // SSR-CPU kill switch for the page shell (header row, sub-nav tab pills, footer). When ON, the
+  // shell's buttons, links, icon buttons and grid render as plain `@civitai/components` markup
+  // (`data-civitai-ui="button"` + a CSS module that maps civitai's Mantine values onto it) instead
+  // of Mantine `Button`/`ActionIcon`/`Grid`/`Text`/`Divider`, which resolve styles per instance on
+  // every page render. Menus, popovers and hover cards in the shell stay on Mantine either way.
+  // `availability: []` = DARK and fails CLOSED when the Flipt key is absent or Flipt is down, so
+  // the `shell-design-system-markup` rollout is the only on-switch (NOT `['mod']`: the client's
+  // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
+  // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
+  shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
+  // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
+  // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
+  // []` = DARK by default and fails CLOSED when the key is absent or Flipt is down.
+  shellImagesRenderSample: { availability: [], fliptKey: 'shell-images-render-sample' },
   // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
   // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
   // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
@@ -287,6 +305,8 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
+  // Model editor: the .com title, description and per-site covers. Reads are not flagged.
+  modelComFace: { availability: ['mod'], fliptKey: 'model-com-face' },
   // The embedded Training Studio (/training-studio), the default trainer for whoever Flipt grants.
   // Keep `availability: ['mod']`: it is the static fallback when the Flipt flag is missing or
   // unreachable, and with `default: true` anything wider makes the Studio everyone's trainer.

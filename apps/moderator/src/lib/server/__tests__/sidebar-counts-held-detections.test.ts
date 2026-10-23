@@ -126,3 +126,23 @@ describe('sidebar count site appeals', () => {
     expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
 });
+
+describe('Needs review badge while the file-match counts refill', () => {
+  it('keeps the last counts instead of blanking when a refill outlasts the wait', async () => {
+    expect(await getSidebarCounts()).toMatchObject({ modelFlagsNeedsReview: 12 });
+
+    vi.useFakeTimers();
+    try {
+      // A verdict busted the cache: the refill takes longer than the badge waits.
+      getMinorQueueCounts.mockReturnValue(new Promise(() => {}));
+      const pending = getSidebarCounts();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await pending).toMatchObject({
+        modelFlagsNeedsReview: 12,
+        modelFlagsNeedsReviewMatches: 10,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

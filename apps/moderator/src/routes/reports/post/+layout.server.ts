@@ -25,5 +25,6 @@ export const load: LayoutServerLoad = async ({ url }) => {
     ...queue,
     items: queue.items.map((r) => ({ ...r, post: posts.get(r.entityId ?? 0) ?? null })),
     fullBleed: true,
+    headerInline: true,
   };
 };

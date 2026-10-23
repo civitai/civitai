@@ -972,7 +972,7 @@ describe('training — maturity and currency', () => {
     return snapshot.trainingQuote.quoteId;
   }
 
-  // Currencies are not asserted: the global `@civitai/client` mock leaves the
+  // Currencies are not asserted: the global `@civitai/orchestration-client` mock leaves the
   // orchestrator account enum unmapped, so every currency reads `undefined` here.
   it('a SFW token prices and submits with mature output off', async () => {
     const quoteId = await confirmedQuote();

@@ -4,7 +4,7 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -19,7 +19,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 
 const { scanEntity } = await import('~/server/services/text-scan/submit');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { getTextScanMode, getTextScanWebSearchMode } = await import(
   '~/server/services/text-scan/mode'
 );

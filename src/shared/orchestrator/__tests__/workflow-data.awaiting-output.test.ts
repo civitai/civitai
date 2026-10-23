@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 
 /**
  * Regression guard for the queue card's never-ending "Generating" tile.
@@ -52,7 +52,7 @@ describe('WorkflowData.awaitingOutput', () => {
   });
 
   // `canUpgrade` is set here rather than derived from `nsfwLevel: 'r'`, because the
-  // global `@civitai/client` mock in src/__tests__/setup.ts substitutes an NsfwLevel
+  // global `@civitai/orchestration-client` mock in src/__tests__/setup.ts substitutes an NsfwLevel
   // enum whose members don't exist in the real package, which makes `isMature` return
   // false for every level under test.
   it('is false when the delivered outputs are locked behind a yellow-Buzz unlock', () => {

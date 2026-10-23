@@ -985,7 +985,7 @@ that reporter to that build.
       page**, which `docs/moderator-app/page-migration-checklist.md` already has a pattern for
       (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
       nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
-      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, under the **Models**
+      Now the three tabs of **Model Flags** (`/models/flags/{appeals,review,matches}`, since renamed `{appeals,auto,needs-review}`, under the **Models**
       nav group); the old `/models/minor-hash-matches`, `/models/flag-appeals` and `/models/held-detections`
       URLs redirect (see `docs/features/moderator-model-flags.md`).
       **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns

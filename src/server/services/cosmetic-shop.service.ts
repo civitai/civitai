@@ -33,6 +33,7 @@ import type {
   UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
+  ShopItemSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
   computeCreatorShopSplit,
@@ -60,6 +61,10 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
+import {
+  excludeDeletedShopListing,
+  SHOP_VERDICT_TRANSACTION,
+} from '~/server/services/creator-shop-labels.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
@@ -540,6 +545,35 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
   };
 };
 
+// Creator-listed items may only be featured when published AND opted into
+// resale — a creator who never marked their item sellable-by-others hasn't
+// consented to official-shop placement.
+async function assertSectionPlaceable(items: number[]) {
+  // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
+  const boxes = await dbWrite.cosmeticShopItem.count({
+    where: { id: { in: items }, itemDefinitionId: { not: null } },
+  });
+  if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
+
+  const ineligible = await dbWrite.cosmeticShopItem.findMany({
+    where: {
+      id: { in: items },
+      cosmetic: { createdById: { not: null } },
+      OR: [
+        { status: { not: CosmeticShopItemStatus.Published } },
+        { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+      ],
+    },
+    select: { title: true },
+  });
+  if (ineligible.length)
+    throw new Error(
+      `These creator items are not published resellable cosmetics: ${ineligible
+        .map((i) => i.title)
+        .join(', ')}`
+    );
+}
+
 export const upsertCosmeticShopSection = async ({
   userId,
   id,
@@ -547,34 +581,7 @@ export const upsertCosmeticShopSection = async ({
   image, // TODO
   ...cosmeticShopSection
 }: UpsertCosmeticShopSectionInput & { userId: number }) => {
-  // Creator-listed items may only be featured when published AND opted into
-  // resale — a creator who never marked their item sellable-by-others hasn't
-  // consented to official-shop placement.
-  if (items?.length) {
-    // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
-    const boxes = await dbWrite.cosmeticShopItem.count({
-      where: { id: { in: items }, itemDefinitionId: { not: null } },
-    });
-    if (boxes) throw new Error('Mystery box listings cannot be placed in a shop section');
-
-    const ineligible = await dbWrite.cosmeticShopItem.findMany({
-      where: {
-        id: { in: items },
-        cosmetic: { createdById: { not: null } },
-        OR: [
-          { status: { not: CosmeticShopItemStatus.Published } },
-          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-        ],
-      },
-      select: { title: true },
-    });
-    if (ineligible.length)
-      throw new Error(
-        `These creator items are not published resellable cosmetics: ${ineligible
-          .map((i) => i.title)
-          .join(', ')}`
-      );
-  }
+  if (items?.length) await assertSectionPlaceable(items);
 
   const shouldCreateImage = image && !image.id;
   const [imageRecord] = shouldCreateImage
@@ -653,6 +660,53 @@ export const upsertCosmeticShopSection = async ({
   return getSectionById({ id });
 };
 
+/** The sections a shop item is placed in, for the review drawer's section picker. */
+export const getShopItemSections = async ({
+  shopItemId,
+}: Pick<ShopItemSectionInput, 'shopItemId'>) => {
+  const rows = await dbWrite.cosmeticShopSectionItem.findMany({
+    where: { shopItemId },
+    select: { shopSection: { select: { id: true, title: true, published: true } } },
+    orderBy: { shopSection: { placement: 'asc' } },
+  });
+  return rows.map((row) => row.shopSection);
+};
+
+/**
+ * One item into one section, appended after what the section already holds so the curated order
+ * is left alone. The same placement rules as the section editor, which replaces the whole list.
+ */
+export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSectionInput) => {
+  // The editor's rules only constrain creator cosmetics; a picker on the review queue also reaches
+  // creator packs and items still in review, and neither is on sale.
+  const item = await dbWrite.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: { status: true, archivedAt: true },
+  });
+  if (!item) throw throwNotFoundError(`No cosmetic shop item with id ${shopItemId}`);
+  if (item.status !== CosmeticShopItemStatus.Published || item.archivedAt)
+    throw new Error('Only published items can be placed in a shop section');
+  await assertSectionPlaceable([shopItemId]);
+  await dbWrite.$executeRaw`
+    INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
+    SELECT ${sectionId}, ${shopItemId}, COALESCE(MAX("index") + 1, 0)
+    FROM "CosmeticShopSectionItem"
+    WHERE "shopSectionId" = ${sectionId}
+    ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING
+  `;
+  return getShopItemSections({ shopItemId });
+};
+
+export const removeShopItemFromSection = async ({
+  shopItemId,
+  sectionId,
+}: ShopItemSectionInput) => {
+  await dbWrite.cosmeticShopSectionItem.deleteMany({
+    where: { shopSectionId: sectionId, shopItemId },
+  });
+  return getShopItemSections({ shopItemId });
+};
+
 export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
   const deleteItemFindArgs = {
     where: { id },
@@ -674,9 +728,11 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
     throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');
   }
 
-  return dbWrite.cosmeticShopItem.delete({
-    where: { id },
-  });
+  return dbWrite.$transaction(async (tx) => {
+    const deleted = await tx.cosmeticShopItem.delete({ where: { id } });
+    await excludeDeletedShopListing(tx, id);
+    return deleted;
+  }, SHOP_VERDICT_TRANSACTION);
 };
 
 export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {

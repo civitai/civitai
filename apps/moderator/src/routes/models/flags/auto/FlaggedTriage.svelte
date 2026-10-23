@@ -1,5 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { heldModelFlagTabs } from '../model-flag-tabs';
+  import ModelFlagTabs from '../ModelFlagTabs.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
@@ -23,6 +25,7 @@
     FLAG_CHIP_VALUES,
     flaggedFilterParams,
   } from '$lib/minor-flags/flagged-filters';
+  import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import { uniqueBy } from '$lib/triage/unique-by';
@@ -36,7 +39,10 @@
   let {
     data,
     form,
-  }: { data: FlaggedQueueData & { civitaiUrl: string }; form: QueueForm | undefined } = $props();
+  }: {
+    data: FlaggedQueueData & { civitaiUrl: string; canViewTrainingData: boolean };
+    form: QueueForm | undefined;
+  } = $props();
 
   type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
 
@@ -48,8 +54,15 @@
     /^(\d+)(?::(?:minor|poi):(?:hash|redetected|text-scan))?$/.exec(raw)?.[1] ?? null;
 
   // Each decision key is on only when every flag allows its part; the first two confirm and revert every flag.
+  const canRuleAppeals = $derived(
+    heldModelFlagTabs().includes(MODEL_FLAGS_APPEALS_PATH)
+  );
   const rowDecisionEnabled = (row: FlaggedRow) => {
-    const flags = row.flags.map((f) => ({ ...f, hasPendingAppeal: row.hasPendingAppeal }));
+    const flags = row.flags.map((f) => ({
+      ...f,
+      hasPendingAppeal: row.hasPendingAppeal,
+      canRuleAppeals,
+    }));
     return flaggedDecisions(flags)
       .map((d) => decisionEnabled(flags, d));
   };
@@ -107,7 +120,10 @@
 </script>
 
 {#snippet listHeader()}
-  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  <div class="flex flex-col gap-2.5">
+    <ModelFlagTabs />
+    <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  </div>
 {/snippet}
 
 {#snippet empty()}
@@ -183,6 +199,7 @@
     <FlaggedDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       verdict={state.verdict}
       error={state.error}
       submit={state.submit}

@@ -2,10 +2,16 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
+  '/api/admin/temp/creator-shop-label-backfill': () =>
+    import('~/pages/api/admin/temp/creator-shop-label-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
+  '/api/mod/bounty-entry-file/clear-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/clear-check'),
+  '/api/mod/bounty-entry-file/reblock-check': () =>
+    import('~/pages/api/mod/bounty-entry-file/reblock-check'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
@@ -31,6 +37,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
+  '/api/mod/membership-gift/refund-unfulfilled': () =>
+    import('~/pages/api/mod/membership-gift/refund-unfulfilled'),
+  '/api/mod/membership-gift/revoke-unpaid': () =>
+    import('~/pages/api/mod/membership-gift/revoke-unpaid'),
   '/api/mod/minor-flag/confirm': () => import('~/pages/api/mod/minor-flag/confirm'),
   '/api/mod/minor-flag/dismiss': () => import('~/pages/api/mod/minor-flag/dismiss'),
   '/api/mod/minor-flag/resolve-appeal': () => import('~/pages/api/mod/minor-flag/resolve-appeal'),

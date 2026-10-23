@@ -82,8 +82,7 @@ export function ModelVersionMultiSelect({
         baseModel: v.baseModel || 'Unknown',
         canGenerate: true,
         hasAccess: true,
-        minStrength: 0,
-        maxStrength: 1,
+        settings: { strength: { min: 0, max: 1, default: 1 } },
         strength: 1,
         model: {
           id: v.modelId,

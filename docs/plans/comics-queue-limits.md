@@ -59,7 +59,7 @@ Currently, comics generation does NOT respect these limits:
 Location: `src/server/services/orchestrator/queue-limits.ts`
 
 ```typescript
-import { WorkflowStatus } from '@civitai/client';
+import { WorkflowStatus } from '@civitai/orchestration-client';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import { defaultsByTier, getGenerationStatus } from '~/server/services/generation/generation.service';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';

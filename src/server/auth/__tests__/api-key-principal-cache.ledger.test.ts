@@ -57,6 +57,7 @@ vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
   invalidateCivitaiUser: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
@@ -277,7 +278,10 @@ beforeEach(() => {
     where,
   }: {
     where: Record<string, unknown>;
-  }) => rows.filter((r) => matches(r, where)).map(({ id, key }) => ({ id, key }))) as never);
+  }) =>
+    rows
+      .filter((r) => matches(r, where))
+      .map(({ id, key, userId }) => ({ id, key, userId }))) as never);
   dbMock.dbWrite.apiKey.deleteMany.mockImplementation((async ({
     where,
   }: {
@@ -323,6 +327,12 @@ describe('writes that evict the bearer cache', () => {
     await deleteApiKey({ id: 51, userId: 501 });
     expect(tombstoned('hash-of-personal')).toBe(true);
     expect(await getSessionFromBearerToken('personal')).toBeNull();
+  });
+
+  it("deleteApiKey also revokes the user's tokens in the orchestrator's auth cache", async () => {
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    await deleteApiKey({ id: 51, userId: 501 });
+    expect(revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 501 });
   });
 
   it('deleteApiKeys evicts every row it deletes and only those', async () => {

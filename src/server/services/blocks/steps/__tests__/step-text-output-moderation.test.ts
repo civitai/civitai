@@ -1,5 +1,5 @@
 import type * as StepsModule from '~/server/services/blocks/steps';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
 
@@ -125,7 +125,7 @@ const fixtureParamSchema = z.object({ value: z.number().int().min(1).max(10) }).
  *
  * 🔴 `status` IS PART OF THE SHAPE AND WAS MISSING, which is exactly how the
  * no-silent-success invariant shipped without a status gate. `WorkflowStep.status`
- * is REQUIRED (non-optional) on the generated `@civitai/client` type, so a
+ * is REQUIRED (non-optional) on the generated `@civitai/orchestration-client` type, so a
  * fixture omitting it is not orchestrator-shaped at all — and every test built on
  * it was blind to the difference between a step that SUCCEEDED with no output and
  * one that had simply not run yet. Keep it on every step fixture, and use

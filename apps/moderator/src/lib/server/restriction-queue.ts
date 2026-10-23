@@ -4,6 +4,12 @@ import type { Actions } from '@sveltejs/kit';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { requiresGrant } from '$lib/server/access';
 import type { RestrictionType } from '$lib/restriction-types';
+import {
+  DEFAULT_RESTRICTION_FILTERS,
+  ORIGIN_FILTERS,
+  RESTRICTION_STATUSES,
+  resolveRestrictionFilters,
+} from '$lib/restriction-filters';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
@@ -11,7 +17,6 @@ import { planRemixSources } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
   getRemixSources,
-  ORIGIN_FILTERS,
   SORT_ORDERS,
   getRestrictionFacets,
   saveSuspiciousMatches,
@@ -20,7 +25,6 @@ import {
   type RestrictionRow,
 } from '$lib/server/user-restriction.service';
 
-const PAGE_SIZE = 20;
 const TRIAGE_PAGE_SIZE = 50;
 
 type QueueConfig = {
@@ -38,7 +42,7 @@ type QueueConfig = {
 function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, extra: S) {
   const base = z.object({
     type: z.enum(queue.types).catch(queue.fallback),
-    status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
+    status: z.enum(RESTRICTION_STATUSES).catch(DEFAULT_RESTRICTION_FILTERS.status),
     q: z.string().trim().max(100).catch(''),
     page: z.coerce.number().int().min(1).max(500).catch(1),
   });
@@ -56,46 +60,7 @@ function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, 
 const selectedSchema = z.coerce.number().int().positive().optional().catch(undefined);
 
 /**
- * The list read shared by every restriction queue. Defaults to Pending, as the main app's page did:
- * without it the queue opens with already-ruled rows interleaved at the top, and `advance()` has
- * nothing to advance past.
- *
- * `type` has no "any" member, unlike `status`. Mixing two kinds of review into one list would put a
- * moderator one keystroke from ruling on a case with the wrong queue's assumptions in mind, and the
- * ruling copy differs per type — so each queue names the types it offers and `.catch()` sends an
- * unknown or absent value back to its default.
- */
-export async function restrictionQueueLoad(url: URL, queue: QueueConfig) {
-  const { type, status, q, page, selected, username, userId } = parseQueueQuery(url, queue, {
-    selected: selectedSchema,
-  });
-
-  const { items, totalCount } = await getGenerationRestrictions({
-    page,
-    limit: PAGE_SIZE,
-    type,
-    status: status === 'any' ? undefined : status,
-    username,
-    userId,
-  });
-
-  const current: RestrictionRow | null = items.find((i) => i.id === selected) ?? null;
-
-  return {
-    items,
-    current,
-    totalCount,
-    page,
-    pageCount: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
-    type,
-    status,
-    q,
-    wide: true,
-  };
-}
-
-/**
- * The two-pane triage read. Same filters as `restrictionQueueLoad` plus the origin facet, but the whole
+ * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
  * page ships at once: selection is client state, so the remix sources for every row have to be on it.
  */
 export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
@@ -108,7 +73,7 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
       selected: selectedSchema,
     }
   );
-  const filters = {
+  const query = {
     type,
     status: status === 'any' ? undefined : status,
     origin,
@@ -117,8 +82,12 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
   };
 
   const [{ items, totalCount }, facets] = await Promise.all([
-    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...filters, sort }),
-    getRestrictionFacets(filters),
+    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...query, sort }),
+    // Counts are decoration: a failed count must not take the list down with it.
+    getRestrictionFacets(query).catch((err) => {
+      console.error('Restriction facet counts failed', err);
+      return undefined;
+    }),
   ]);
 
   // A deep link may name a restriction the filters or paging leave off this page; it opens regardless
@@ -155,11 +124,10 @@ export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
     hasMore: page * TRIAGE_PAGE_SIZE < totalCount,
     offset: (page - 1) * TRIAGE_PAGE_SIZE,
     type,
-    status,
-    origin: origin ?? null,
-    sort: sort ?? null,
+    filters: resolveRestrictionFilters({ status, origin, sort }),
     q,
-    wide: true,
+    fullBleed: true,
+    headerInline: true,
   };
 }
 
@@ -198,7 +166,7 @@ async function restrictionById(
  *
  * This is a refusal rather than a hidden button because the check has to hold against a posted id, not
  * just against what the page chose to render. (The buttons are disabled as well — see
- * `RestrictionDetail.svelte`. That is an addition to this check, never a substitute for it.)
+ * `RestrictionDecisionForm.svelte`. That is an addition to this check, never a substitute for it.)
  *
  * 🔴 KEPT even though the refusal is now enforced by `resolveUserRestriction` itself — which is what
  * closes the surfaces this check could never reach: the retool User Lookup panel, the tRPC router and
