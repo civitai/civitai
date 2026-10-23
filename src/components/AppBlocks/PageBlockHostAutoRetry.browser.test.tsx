@@ -244,8 +244,9 @@ async function advance(ms: number) {
  *
  * Two budgets, deliberately decoupled: at most 500ms of VIRTUAL time (well inside
  * the shortest recovery window, 2s, so a poll can never silently trip the very
- * behaviour the test is about to assert) and up to 5s of REAL time for the
- * browser to actually do the work. Advancing virtual time alone would give the
+ * behaviour the test is about to assert) and at least 5s of REAL time (500 x
+ * 10ms of sleep, plus the advance overhead — ~14.5s was observed on a loaded CI
+ * runner) for the browser to actually do the work. Advancing virtual time alone would give the
  * page only microtasks — the failure mode that makes a fake-timer poll report
  * "iframe never mounted" on a saturated runner.
  */
@@ -933,7 +934,7 @@ function listenForHostPosts(frame: HTMLIFrameElement) {
 /**
  * Like `pollFor`, but REPORTS instead of throwing, so the caller's own `expect` is
  * the failure — and on a much smaller budget (100 iterations: ≤100 ms virtual,
- * ~1–3 s real). `pollFor`'s 500-iteration budget can outlast the 15 s test
+ * ≥1 s real; ~3 s observed on a loaded CI runner). `pollFor`'s 500-iteration budget can outlast the 15 s test
  * timeout on a loaded runner, and then a "the limit moved" regression surfaces as
  * a generic "Test timed out" instead of this test's assertion (seen in CI under a
  * 30-s-for-every-surface mutant). Used only where the awaited thing is a React
@@ -1033,7 +1034,10 @@ describe('PageBlockHost dev-tunnel ready window — 30 s, wait in place, dev-ser
     expect(iframeEl()).toBe(frame);
 
     await advance(400);
-    expect(await reaches(() => fallbackEl() !== null)).toBe(true);
+    expect(
+      await reaches(() => fallbackEl() !== null),
+      'dev-tunnel must time out at the 30 s limit'
+    ).toBe(true);
     expect(timeoutCopy()).toEqual({
       title: DEV_TUNNEL_TIMEOUT_TITLE,
       hint: DEV_TUNNEL_TIMEOUT_HINT,
