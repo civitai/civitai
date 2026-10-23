@@ -24,7 +24,7 @@ import {
   IconGripVertical,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import React, { useContext, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   AccountSwitcher,
   BuzzMenuItem,
@@ -146,6 +146,14 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return;
+    // dnd-kit cancels a keyboard drag on this same Escape, from a listener on the document that a
+    // stopped event never reaches.
+    if (
+      (event.target as HTMLElement).closest?.(
+        '[aria-roledescription="sortable"][aria-pressed="true"]'
+      )
+    )
+      return;
     event.stopPropagation();
     if (switching) setSwitching(false);
     else if (path.length) back();
@@ -328,13 +336,19 @@ export function MobilePinned({
   const [reordering, setReordering] = useState(false);
   // No PointerSensor: a finger emits pointer events too, so it would start a drag on any swipe.
   // Reordering drags by a handle that opts out of scrolling, so a touch needs no hold first.
+  // The keyboard sensor takes Enter and Space from any row it can reach, so only the handles get it.
+  const keyboard = useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates });
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, {
       activationConstraint: reordering ? { distance: 4 } : { delay: 250, tolerance: 6 },
     }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    reordering ? keyboard : undefined
   );
+
+  useEffect(() => {
+    if (!pinned.length) setReordering(false);
+  }, [pinned.length]);
 
   if (!pinned.length)
     return (
@@ -352,7 +366,7 @@ export function MobilePinned({
   };
 
   // Holding a link opens iOS's preview instead of lifting the row, so a phone reorders in a mode.
-  const canReorder = !!onToggle && pinned.length > 1;
+  const canReorder = !!onToggle && pins.canEdit && pinned.length > 1;
   const finishReordering = () => {
     setReordering(false);
     pins.flush();

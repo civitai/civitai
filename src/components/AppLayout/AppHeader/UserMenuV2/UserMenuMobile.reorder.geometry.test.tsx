@@ -1,6 +1,7 @@
 import { IconBox } from '@tabler/icons-react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 import {
   box,
@@ -8,6 +9,7 @@ import {
   PHONE_VIEWPORT,
   renderAtViewport,
 } from '../../../../../test/geometry-setup';
+import type * as UserMenu from '~/components/AppLayout/AppHeader/UserMenu';
 import type * as TrackUtils from '~/components/TrackView/track.utils';
 
 /**
@@ -15,9 +17,19 @@ import type * as TrackUtils from '~/components/TrackView/track.utils';
  * non-navigating rows with a drag handle each. Real Chromium, real Tailwind and layout at 390px;
  * the touch drag is dispatched as touch events on the handle (a real finger is not verified here).
  */
+const mocks = vi.hoisted(() => ({ pinned: [] as unknown[] }));
+
+// Signed out of the header rows, so the sheet's own key handling is what runs around the pins.
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useCurrentUser: () => ({ id: 1, username: 'tester' }),
+  useCurrentUser: () => null,
+}));
+vi.mock('~/components/AppLayout/AppHeader/UserMenu', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserMenu>()),
+  UserMenuFooter: () => null,
+}));
+vi.mock('./useResolvedUserMenu', () => ({
+  useResolvedUserMenu: () => ({ signedIn: true, events: [], pinned: mocks.pinned, nodes: [] }),
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
@@ -25,7 +37,7 @@ vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
 }));
 
 const { UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
-const { MobilePinned } = await import('./UserMenuMobile');
+const { MobilePinned, UserMenuMobile } = await import('./UserMenuMobile');
 const { ContainerProvider } = await import('~/components/ContainerProvider/ContainerProvider');
 
 afterEach(cleanup);
@@ -34,13 +46,19 @@ const ITEMS = [
   { id: 'inventory' as const, label: 'Inventory', icon: IconBox, href: '/inventory' },
   { id: 'vault' as const, label: 'Vault', icon: IconBox, href: '/vault' },
   { id: 'bounties' as const, label: 'Bounties', icon: IconBox, href: '/bounties' },
+  // No link: a row that runs an action, so tapping it is what closes the menu.
+  { id: 'getting-started' as const, label: 'Help', icon: IconBox, onClick: vi.fn() },
 ];
 
-async function renderPinned(items = ITEMS) {
+async function renderPinned(
+  items = ITEMS,
+  { toggle = true, canEdit = true }: { toggle?: boolean; canEdit?: boolean } = {}
+) {
+  const announce = vi.fn();
   const move = vi.fn();
   const flush = vi.fn();
   const handleClose = vi.fn();
-  const pins = { pins: items.map((i) => i.id), canEdit: true, toggle: vi.fn(), move, flush };
+  const pins = { pins: items.map((i) => i.id), canEdit, toggle: vi.fn(), move, flush };
   await renderAtViewport(
     <ContainerProvider containerName="main">
       <UserMenuCtx.Provider value={{ handleClose }}>
@@ -48,15 +66,15 @@ async function renderPinned(items = ITEMS) {
           {createElement(MobilePinned, {
             pinned: items,
             pins: pins as never,
-            onToggle: vi.fn(),
-            announce: vi.fn(),
+            onToggle: toggle ? vi.fn() : undefined,
+            announce,
           })}
         </div>
       </UserMenuCtx.Provider>
     </ContainerProvider>,
     PHONE_VIEWPORT
   );
-  return { move, flush, handleClose };
+  return { move, flush, handleClose, announce };
 }
 
 const reorderButton = () =>
@@ -121,10 +139,26 @@ describe('pin reorder mode on a phone', () => {
     expect(reorderButton()).toBeUndefined();
   });
 
+  test('offers no Reorder while edits are refused', async () => {
+    await renderPinned(ITEMS, { canEdit: false });
+    expect(reorderButton()).toBeUndefined();
+  });
+
+  test('offers no Reorder to a viewer who cannot pin', async () => {
+    await renderPinned(ITEMS, { toggle: false });
+    expect(reorderButton()).toBeUndefined();
+  });
+
   test('swaps the rows for handles that do not navigate, then back on Done', async () => {
     const { flush, handleClose } = await renderPinned();
     expect(document.querySelectorAll('a[href]').length).toBe(3);
     expect(handle('Inventory')).toBeNull();
+    const pinColumn = box(document.querySelector('[aria-label="Unpin Inventory"]')!).right;
+
+    // A row that runs an action closes the menu when tapped: the control for the reorder-mode tap below.
+    await tap([...document.querySelectorAll('span, p')].find((e) => e.textContent === 'Help'));
+    expect(handleClose).toHaveBeenCalledTimes(1);
+    handleClose.mockClear();
 
     await tap(reorderButton());
     expect(reorderButton()!.textContent).toBe('Done');
@@ -134,13 +168,15 @@ describe('pin reorder mode on a phone', () => {
       const grip = box(handle(label)!);
       // A finger-sized target at the pin column, on screen.
       expect(grip.width).toBeGreaterThanOrEqual(34);
-      expect(grip.right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+      // In the column the pin icons sat in, so the rows do not jump when the mode toggles.
+      expect(Math.abs(grip.right - pinColumn)).toBeLessThanOrEqual(2);
       // Without this a finger on the handle scrolls the menu instead of dragging the row.
       expect(getComputedStyle(handle(label)!).touchAction).toBe('none');
     }
 
     // Tapping a row's name leaves the menu and the page alone.
     await tap([...document.querySelectorAll('span, p')].find((e) => e.textContent === 'Vault'));
+    await tap([...document.querySelectorAll('span, p')].find((e) => e.textContent === 'Help'));
     expect(handleClose).not.toHaveBeenCalled();
 
     await tap(reorderButton());
@@ -150,7 +186,7 @@ describe('pin reorder mode on a phone', () => {
   });
 
   test('drags a row by its handle with touch', async () => {
-    const { move } = await renderPinned();
+    const { move, announce } = await renderPinned();
     await tap(reorderButton());
     const grip = handle('Inventory')!;
     const from = box(grip);
@@ -162,6 +198,7 @@ describe('pin reorder mode on a phone', () => {
 
     expect(move).toHaveBeenCalledTimes(1);
     expect(move).toHaveBeenCalledWith('inventory', 'bounties');
+    expect(announce).toHaveBeenCalledWith('Moved Inventory');
   });
 
   test('a touch on the row itself, not the handle, does not drag', async () => {
@@ -175,5 +212,84 @@ describe('pin reorder mode on a phone', () => {
     await dragWithTouch(row, box(row).top + 4, third.top + third.height / 2);
 
     expect(move).not.toHaveBeenCalled();
+  });
+
+  test('drags a row by its handle with the keyboard', async () => {
+    const { move } = await renderPinned();
+    await tap(reorderButton());
+    handle('Inventory')!.focus();
+
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard('{ArrowDown}');
+    await userEvent.keyboard('{ArrowDown}');
+    await userEvent.keyboard('{Enter}');
+    await nextLayout();
+
+    expect(move).toHaveBeenCalledWith('inventory', 'bounties');
+  });
+
+  test('leaves Enter on a pinned row to the row until the mode is on', async () => {
+    const { move } = await renderPinned();
+    const link = document.querySelector<HTMLElement>('a[href="/inventory"]')!;
+    link.addEventListener('click', (event) => event.preventDefault());
+    link.focus();
+
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard('{ArrowDown}');
+    await userEvent.keyboard('{Enter}');
+    await nextLayout();
+
+    // A keyboard drag would have started, moved and dropped; the row only got its Enter.
+    expect(move).not.toHaveBeenCalled();
+  });
+});
+
+describe('Escape while reordering', () => {
+  async function renderSheet() {
+    mocks.pinned = ITEMS;
+    const setOpen = vi.fn();
+    const move = vi.fn();
+    const pins = {
+      pins: ITEMS.map((i) => i.id),
+      canEdit: true,
+      toggle: vi.fn(),
+      move,
+      flush: vi.fn(),
+      mutedBadges: [],
+    };
+    await renderAtViewport(
+      <ContainerProvider containerName="main">
+        <UserMenuMobile
+          open
+          setOpen={setOpen}
+          pins={pins as never}
+          trigger={<button>menu</button>}
+        />
+      </ContainerProvider>,
+      PHONE_VIEWPORT
+    );
+    await tap(reorderButton());
+    return { setOpen, move };
+  }
+
+  test('cancels a keyboard drag first, and closes the sheet only when nothing is held', async () => {
+    const { setOpen, move } = await renderSheet();
+    const grip = handle('Inventory')!;
+    grip.focus();
+
+    await userEvent.keyboard('{Enter}');
+    await nextLayout();
+    expect(grip.getAttribute('aria-pressed')).toBe('true');
+    await userEvent.keyboard('{ArrowDown}');
+    await userEvent.keyboard('{Escape}');
+    await nextLayout();
+
+    expect(grip.getAttribute('aria-pressed')).not.toBe('true');
+    expect(setOpen).not.toHaveBeenCalled();
+    expect(move).not.toHaveBeenCalled();
+
+    // The same key with nothing held closes the sheet: the control that Escape is wired here at all.
+    await userEvent.keyboard('{Escape}');
+    expect(setOpen).toHaveBeenCalledWith(false);
   });
 });
