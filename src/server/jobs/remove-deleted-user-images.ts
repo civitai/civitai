@@ -9,7 +9,11 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  holdMarkerTableExists,
+  holdMarkerViewExists,
+} from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -419,6 +423,13 @@ export const removeDeletedUserImages = createJob(
     };
 
     const markerView = await holdMarkerViewExists();
+    // A marker table without its view holds every account, so the drain goes idle: say why.
+    if (!markerView && (await holdMarkerTableExists()))
+      await logToAxiom({
+        type: 'warning',
+        name: 'remove-deleted-user-images',
+        message: 'hold marker table has no view: every account is held',
+      }).catch(() => undefined);
     const [freshMark, setFreshMark] = await getJobDate(FRESH_CURSOR_KEY, new Date());
     const [backlogCursor, setBacklogCursor] = await getJobDate(BACKLOG_CURSOR_KEY, CURSOR_START);
 

@@ -223,6 +223,9 @@ describe('remove-deleted-user-images under a legal hold', () => {
 
 describe('remove-deleted-user-images under any account hold', () => {
   const holdsByImage = {
+    'an image flagged for CSAM review': `
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${MANY};
+    `,
     'a CSAM-blocked image on no sent report': `
       UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${MANY};
     `,
@@ -265,6 +268,11 @@ describe('remove-deleted-user-images under any account hold', () => {
        INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
        VALUES (${HELD}, now() - interval '2 years', now(), '[{"id": ${MANY}}]');`,
     ],
+    [
+      'an image listed on a report that no longer holds',
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${REPORT_SUBJECT}, now() - interval '2 years', now(), '[{"id": ${MANY}}]');`,
+    ],
   ])('drains an account with only %s', async (_, state) => {
     await holder.db.exec(state);
 
@@ -288,5 +296,41 @@ describe('remove-deleted-user-images under any account hold', () => {
     expect(held).toBe(true);
     expect(await imagesOf(HELD)).toBe(MANY);
     expect(await postsOf(HELD)).toBe(1);
+  });
+
+  it('holds every account while the marker table has no view', async () => {
+    await holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int);`);
+
+    await run();
+
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await imagesOf(UNHELD)).toBe(5);
+  });
+
+  it('holds an account once the marker view appears mid-run', async () => {
+    let appeared = false;
+    hooks.beforeDelete = async (ids) => {
+      if (!appeared && ids.every((id) => id <= MANY)) {
+        await holder.db.exec(holdsByImage['a hold marker']);
+        appeared = true;
+      }
+    };
+
+    await run();
+
+    expect(appeared).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+  });
+
+  it('keeps the images of the placeholder owner', async () => {
+    await holder.db.exec(`
+      INSERT INTO "User" (id, "deletedAt", meta) VALUES (-1, now() - interval '1 day', '{}');
+      INSERT INTO "Image" (id, "userId") VALUES (5000, -1);
+    `);
+
+    await run();
+
+    expect(await imagesOf(-1)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
   });
 });
