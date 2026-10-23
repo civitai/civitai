@@ -37,6 +37,6 @@ export function syncShellRouteQuery(router: Pick<NextRouter, 'pathname' | 'repla
   return router.replace(`${router.pathname}${search}`, `${pathname}${search}${hash}`, {
     shallow: true,
     scroll: false,
-    // MUTATION M3
+    _h: 1,
   } as TransitionOptions);
 }

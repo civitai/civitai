@@ -61,7 +61,7 @@ export function useShellPagePending() {
     // Once per pending period: the router object changes on every route update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryPending]);
-  return !!context && context.status !== 'ready'; // MUTATION M5
+  return !!context && (context.status !== 'ready' || queryPending);
 }
 
 /** The `_app` values a shell boot replaces, as the current page passed them. */
@@ -113,7 +113,7 @@ function seedShellCaches(queryClient: QueryClient, data: ShellPageData) {
       data.navBanners
     );
   // The shell carries a `liveNow` the edge may have held for a minute; the page data's is current.
-  if (data.liveNow !== undefined && false) // MUTATION M6
+  if (data.liveNow !== undefined)
     queryClient.setQueryData(getQueryKey(trpc.system.getLiveNow, undefined, 'query'), data.liveNow);
 }
 

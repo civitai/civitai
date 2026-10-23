@@ -25,7 +25,7 @@ export async function resolveShellRender(
   const route = await resolveShellMode(req, pathname);
   if (!route) return null;
   const [flags, seeds] = await Promise.all([
-    getFeatureFlagsAsync({ host: req.headers.host, req }), // MUTATION M9
+    getFeatureFlagsAsync({ host: req.headers.host }),
     resolveShellSeeds(req),
   ]);
   return { route, flags, seeds };

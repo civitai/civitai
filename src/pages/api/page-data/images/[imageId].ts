@@ -119,7 +119,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
     if ('notFound' in result) return send(404, { error: 'Not found' });
 
-    syncShellRouteCookie(req, res, 'images', !!session?.user); // MUTATION M8
+    syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
 
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
     // gains later is not published here unreviewed.
