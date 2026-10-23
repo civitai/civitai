@@ -15,23 +15,41 @@ const mocks = vi.hoisted(() => ({
   forPosts: {} as Record<number, unknown>,
   enabled: true,
   userId: 1 as number | undefined,
+  removePending: vi.fn(),
+  invalidatePending: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcMod>()),
-    trpc: makeTrpcProxy({
-      'storyline.getPendingForPost': {
-        useQuery: () => ({ data: mocks.pending, isLoading: false }),
+    trpc: makeTrpcProxy(
+      {
+        'storyline.getPendingForPost': {
+          useQuery: () => ({ data: mocks.pending, isLoading: false }),
+        },
+        'storyline.getForPosts': {
+          useQuery: (_input: unknown, options?: { enabled?: boolean }) => ({
+            data: options?.enabled === false ? undefined : mocks.forPosts,
+            isLoading: false,
+          }),
+        },
+        'storyline.removePending': {
+          useMutation: (options?: { onSuccess?: () => unknown }) => ({
+            mutate: (input: unknown) => {
+              mocks.removePending(input);
+              return options?.onSuccess?.();
+            },
+            isPending: false,
+          }),
+        },
       },
-      'storyline.getForPosts': {
-        useQuery: (_input: unknown, options?: { enabled?: boolean }) => ({
-          data: options?.enabled === false ? undefined : mocks.forPosts,
-          isLoading: false,
+      {
+        useUtils: () => ({
+          storyline: { getPendingForPost: { invalidate: mocks.invalidatePending } },
         }),
-      },
-    }),
+      }
+    ),
   };
 });
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -54,6 +72,8 @@ beforeEach(() => {
   mocks.forPosts = {};
   mocks.enabled = true;
   mocks.userId = 1;
+  mocks.removePending.mockReset();
+  mocks.invalidatePending.mockReset();
 });
 
 describe('StorylineEditorHeader', () => {
@@ -117,6 +137,33 @@ describe('StorylineEditorHeader', () => {
       .element(page.getByRole('link', { name: 'The Patch' }))
       .toHaveAttribute('href', '/storylines/2');
     expect(page.getByText('Chapter 1', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test.each([
+    ['chapter 1', null],
+    ['continuation', { id: 5, depth: 2, postId: 7 }],
+  ])(
+    'the author removes a %s draft from its storyline, and the draft header is re-read',
+    async (_kind, parentChapter) => {
+      mocks.pending = pendingLink(parentChapter);
+      renderWithProviders(<StorylineEditorHeader post={draft} />);
+
+      await page.getByRole('button', { name: 'Storyline options' }).click();
+      await page.getByRole('menuitem', { name: 'Remove from storyline' }).click();
+      expect(mocks.removePending).toHaveBeenCalledWith({ postId: 41 });
+      expect(mocks.invalidatePending).toHaveBeenCalledWith({ postId: 41 });
+    }
+  );
+
+  test.each([
+    ['a moderator viewing the draft', 99, null],
+    ['a scheduled post', 1, new Date('2099-01-01')],
+  ])('%s gets no remove menu', async (_case, userId, publishedAt) => {
+    mocks.pending = pendingLink();
+    mocks.userId = userId;
+    renderWithProviders(<StorylineEditorHeader post={{ ...draft, publishedAt }} />);
+
+    await expect.element(page.getByText('Chapter 1', { exact: true })).toBeVisible();
     expect(page.getByRole('button', { name: 'Storyline options' }).elements()).toHaveLength(0);
   });
 });

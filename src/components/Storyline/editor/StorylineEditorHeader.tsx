@@ -1,5 +1,8 @@
 import { StorylineEditorBanner } from '~/components/Storyline/editor/StorylineEditorBanner';
 import { usePostStorylineMode } from '~/components/Storyline/editor/usePostStorylineMode';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type EditorPost = { id: number; user: { id: number }; publishedAt?: Date | null };
 
@@ -8,7 +11,24 @@ type EditorPost = { id: number; user: { id: number }; publishedAt?: Date | null 
  * storyline flow, or a post that is already a chapter. Any other post gets no storyline UI.
  */
 export function StorylineEditorHeader({ post }: { post: EditorPost }) {
+  const currentUser = useCurrentUser();
   const { pending, chapter } = usePostStorylineMode(post);
+  const isOwner = currentUser?.id === post.user.id;
+  const utils = trpc.useUtils();
+  const removePending = trpc.storyline.removePending.useMutation({
+    onSuccess: () => utils.storyline.getPendingForPost.invalidate({ postId: post.id }),
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not remove the post from the storyline', error }),
+  });
+  // A moderator also sees the link, but only the author may remove it; a scheduled post counts
+  // as published here, as it does on the server.
+  const removal =
+    isOwner && !post.publishedAt
+      ? {
+          onRemove: () => removePending.mutate({ postId: post.id }),
+          removing: removePending.isPending,
+        }
+      : {};
 
   if (pending?.parentChapter)
     return (
@@ -16,6 +36,7 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
         variant="continue"
         storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
         chapterNumber={pending.parentChapter.depth + 2}
+        {...removal}
       />
     );
   if (pending)
@@ -23,6 +44,7 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
       <StorylineEditorBanner
         variant="start"
         storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
+        {...removal}
       />
     );
   if (!pending && chapter)

@@ -84,7 +84,10 @@ describe('prize pool surfaces', () => {
     ]);
     groupBy.mockResolvedValue([{ crucibleId: 1, _count: { _all: 2 } }]);
 
-    const [active] = await getUserActiveCrucibles({ userId: 7 });
+    const [active] = await getUserActiveCrucibles({
+      userId: 7,
+      site: { isGreen: false, isModerator: false },
+    });
 
     expect(active.prizePool).toBe(700);
   });
