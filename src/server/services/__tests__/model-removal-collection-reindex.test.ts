@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
  * Coverage for the two model removal paths, which want OPPOSITE things.
@@ -150,9 +154,14 @@ function primeCollectionLookup(collectionIds: number[]) {
     const sql = Array.from(strings).join('?');
     if (sql.includes('"CollectionItem"'))
       return collectionIds.map((collectionId) => ({ collectionId }));
+    if (isModelDelete(sql)) return [DELETED_MODEL];
     return [];
   });
 }
+
+/** The permanent delete's own statement; it returns the row it deleted. */
+const isModelDelete = (sql: string) => sql.includes('DELETE FROM "Model"');
+const DELETED_MODEL = { id: MODEL_ID, userId: OWNER_ID, nsfwLevel: 1 };
 
 const expectedUpdatePayload = (ids: number[]) =>
   ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
@@ -252,7 +261,6 @@ describe('permaDeleteModelById — permanent delete', () => {
     });
     mockDbWrite.post.findMany.mockResolvedValue([{ id: 7012 }]);
     mockDbWrite.image.findMany.mockResolvedValue([{ id: 6631 }]);
-    mockDbWrite.model.delete.mockResolvedValue({ id: MODEL_ID, userId: OWNER_ID });
   });
 
   it('queues an Update for every collection that contained the model or its images', async () => {
@@ -271,11 +279,11 @@ describe('permaDeleteModelById — permanent delete', () => {
         order.push('resolve');
         return [{ collectionId: COLLECTION_A }];
       }
+      if (isModelDelete(sql)) {
+        order.push('delete');
+        return [DELETED_MODEL];
+      }
       return [];
-    });
-    mockDbWrite.model.delete.mockImplementation(async () => {
-      order.push('delete');
-      return { id: MODEL_ID, userId: OWNER_ID };
     });
 
     await permaDeleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
@@ -297,11 +305,96 @@ describe('permaDeleteModelById — permanent delete', () => {
   });
 
   it('still deletes the model when the collections lookup fails', async () => {
-    mockDbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isModelDelete(Array.from(strings).join('?'))) return [DELETED_MODEL];
+      throw new Error('connection reset');
+    });
 
     await permaDeleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
-    expect(mockDbWrite.model.delete).toHaveBeenCalled();
+    expect(
+      mockDbWrite.$queryRaw.mock.calls.some(([strings]: [string[]]) =>
+        isModelDelete(strings.join('?'))
+      )
+    ).toBe(true);
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// The DELETE runs on a Postgres stand-in with the evidence-hold migration applied, so the hold
+// predicate inside it is what decides.
+describe('permaDeleteModelById — legal hold', () => {
+  const HELD_OWNER = 61;
+  const HOLD_MIGRATION = path.resolve(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+  );
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TABLE "Image" (
+        id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 0,
+        ingestion "ImageIngestionStatus" NOT NULL, "blockedFor" text, metadata jsonb, "updatedAt" timestamp(3)
+      );
+      CREATE TABLE "Post" (
+        id int PRIMARY KEY, "userId" int NOT NULL, title text, detail text,
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(), "publishedAt" timestamp(3),
+        "modelVersionId" int, "collectionId" int, metadata jsonb
+      );
+      CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
+      CREATE TABLE "CsamReport" (
+        id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+        images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+      );
+    `);
+    await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+    await db.exec(
+      `INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${HELD_OWNER}, 'manual', 'review')`
+    );
+  });
+  afterAll(() => db.close());
+
+  async function permaDeleteOwnedBy(userId: number) {
+    await db.exec(`
+      DELETE FROM "Model";
+      INSERT INTO "Model" (id, "userId") VALUES (${MODEL_ID}, ${userId});
+    `);
+    mockDbWrite.model.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      userId,
+      nsfwLevel: 1,
+      modelVersions: [{ id: VERSION_ID }],
+    });
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const flat = Prisma.sql(strings, ...(values as never[]));
+      if (!isModelDelete(flat.text)) return [];
+      return (await db.query(flat.text, flat.values as unknown[])).rows;
+    }) as never);
+    const result = await permaDeleteModelById({ id: MODEL_ID, userId: 1 } as any).then(
+      () => 'deleted',
+      (e: { code?: string }) => e.code
+    );
+    const left = (await db.query(`SELECT id FROM "Model"`)).rows.length;
+    return { result, left };
+  }
+
+  beforeEach(() => {
+    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
+    mockDbWrite.post.findMany.mockResolvedValue([]);
+  });
+
+  it("refuses a held owner's model and keeps it", async () => {
+    expect(await permaDeleteOwnedBy(HELD_OWNER)).toEqual({ result: 'FORBIDDEN', left: 1 });
+    expect(mockDeleteBidsForModel).not.toHaveBeenCalled();
+  });
+
+  it('deletes a model whose owner is not held', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({ result: 'deleted', left: 0 });
   });
 });

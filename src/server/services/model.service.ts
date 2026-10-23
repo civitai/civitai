@@ -10,9 +10,11 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
   assertOwnersNotUnderLegalHold,
+  LEGAL_HOLD_REFUSAL,
   LegalHoldError,
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -2270,7 +2272,16 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      const deletedModel = await tx.model.delete({ where: { id } });
+      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
+      // checked in the DELETE itself, so one placed during this transaction still stops it.
+      const [deletedModel] = await tx.$queryRaw<
+        { id: number; userId: number; nsfwLevel: number }[]
+      >`
+        DELETE FROM "Model" m
+        WHERE m.id = ${id} AND NOT ${userUnderLegalHoldSql(Prisma.raw('m."userId"'))}
+        RETURNING m.id, m."userId", m."nsfwLevel"
+      `;
+      if (!deletedModel) throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
       return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }
