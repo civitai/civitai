@@ -1,9 +1,12 @@
+import { Prisma } from '@prisma/client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { REPLACED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -48,6 +51,29 @@ export async function getStillReferencedImageIds(ids: number[]) {
   return rows.map((r) => r.id);
 }
 
+/** Ids from `ids` whose image still exists, read on the primary. */
+async function getStillPresentImageIds(ids: number[]) {
+  if (!ids.length) return [];
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Image" WHERE id = ANY(${ids}::integer[])
+  `;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, and the
+ * placeholder owner. Only valid on a statement over an unaliased "Image". `markerView` is what
+ * `holdMarkerViewExists` returned.
+ */
+export function replacedImageHoldGuard(markerView: boolean) {
+  const owner = Prisma.raw('"Image"."userId"');
+  return Prisma.sql`
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
+    "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, markerView)})
+  `;
+}
+
 export const removeReplacedImages = createJob(
   'remove-replaced-images',
   '25 5 * * *',
@@ -80,32 +106,47 @@ export const removeReplacedImages = createJob(
     if (!env.DATABASE_IS_PROD)
       return { wouldDelete: deletableIds.length, readopted: readopted.size };
 
+    const deleted: number[] = [];
     if (deletableIds.length) {
       // Deletes the row, the stored object, and the caches keyed on it. Past the retention
       // window there is nothing left to preserve, so this is the same destruction the inline
       // call used to do — just late enough that no live cache can still be pointing at it.
-      await deleteImages(deletableIds);
+      // A held account's images are the exception, and the guard leaves them in place.
+      const markerView = await holdMarkerViewExists();
+      const rows = await deleteImages(deletableIds, true, {
+        onlyWhere: replacedImageHoldGuard(markerView),
+      });
+      deleted.push(...rows.map((x) => x.id));
     }
+    const deletedSet = new Set(deleted);
+    const held = new Set(
+      await getStillPresentImageIds(deletableIds.filter((id) => !deletedSet.has(id)))
+    );
 
-    // Both cohorts leave the queue: the deleted ones are done, and a re-adopted one has no
-    // pending replacement to reap. If it is replaced again, the enqueue re-inserts it with a
-    // fresh clock (ON CONFLICT DO UPDATE in `queueReplacedImageDeletion`).
-    await dbWrite.$executeRaw`
-      DELETE FROM "JobQueue"
-      WHERE type = ${JobQueueType.ReplacedImageDelete}::"JobQueueType"
-        AND "entityType" = ${EntityType.Image}::"EntityType"
-        AND "entityId" = ANY(${queuedIds}::integer[])
-    `;
+    // A held image stays queued until its hold ends. Everything else leaves: the deleted ones are
+    // done, one deleted some other way has nothing left to reap, and a re-adopted one has no pending
+    // replacement. If it is replaced again, the enqueue re-inserts it with a fresh clock (ON CONFLICT
+    // DO UPDATE in `queueReplacedImageDeletion`).
+    const dequeueIds = queuedIds.filter((id) => !held.has(id));
+    if (dequeueIds.length) {
+      await dbWrite.$executeRaw`
+        DELETE FROM "JobQueue"
+        WHERE type = ${JobQueueType.ReplacedImageDelete}::"JobQueueType"
+          AND "entityType" = ${EntityType.Image}::"EntityType"
+          AND "entityId" = ANY(${dequeueIds}::integer[])
+      `;
+    }
 
     logToAxiom({
       name: 'remove-replaced-images',
       type: 'info',
       message: 'finished',
-      deleted: deletableIds.length,
+      deleted: deleted.length,
       readopted: readopted.size,
+      heldAtDelete: held.size,
     }).catch(() => undefined);
 
-    return { deleted: deletableIds.length, readopted: readopted.size };
+    return { deleted: deleted.length, readopted: readopted.size, heldAtDelete: held.size };
   },
   // A full batch means thousands of S3 deletes; a second pod grabbing the default 5-minute
   // lock mid-run would double-delete against S3 and the DB.

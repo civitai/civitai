@@ -46,7 +46,7 @@ const QUEUE = [
 const LIVE_PROFILE_PICTURE_IDS = [READOPTED_ID];
 
 const { mockDeleteImages, mockEnv } = vi.hoisted(() => ({
-  mockDeleteImages: vi.fn(async () => undefined),
+  mockDeleteImages: vi.fn(async (ids: number[]) => ids.map((id) => ({ id }))),
   mockEnv: { DATABASE_IS_PROD: true },
 }));
 
