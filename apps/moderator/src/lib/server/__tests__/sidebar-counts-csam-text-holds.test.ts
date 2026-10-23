@@ -73,6 +73,6 @@ describe('sidebar count evidenceHoldsEnding', () => {
     countEvidenceHoldsEnding.mockRejectedValue(new Error('db down'));
     const counts = await getSidebarCounts();
     expect(counts).not.toHaveProperty('evidenceHoldsEnding');
-    expect(counts).toMatchObject({ heldDetections: 5 });
+    expect(counts).toMatchObject({ modelFlagsAppeals: 4 });
   });
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -9,6 +9,7 @@ import {
   listEvidenceHeldOwners,
 } from '@civitai/db-queries/evidence-hold';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
@@ -57,13 +58,14 @@ beforeAll(async () => {
   // A zoneless timestamp is parsed as host-local time, so on a UTC host a dropped
   // `AT TIME ZONE 'UTC'` would read correctly. Off UTC, it reads hours out.
   process.env.TZ = 'America/Chicago';
-  pg = await PGlite.create();
+  pg = await freshPglite();
   // As the app's sessions run: the zoneless columns hold UTC, which `now()` only writes in a UTC session.
   await pg.exec(`
     SET TIME ZONE 'UTC';
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
     CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "postId" INTEGER, "metadata" JSONB);
     CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+    CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
     CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "reportSentAt" TIMESTAMP(3), "details" JSONB);
   `);
   await pg.exec(HOLD_MIGRATION);
