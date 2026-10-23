@@ -76,6 +76,19 @@ vi.mock('./useResolvedUserMenu', () => ({
             kind: 'item',
             item: { id: 'downloads', label: 'Downloads', icon: IconBox, href: '/downloads' },
           },
+          {
+            kind: 'group',
+            id: 'more',
+            label: 'More',
+            icon: IconBox,
+            badge: 0,
+            children: [
+              {
+                kind: 'item',
+                item: { id: 'vault', label: 'Vault', icon: IconBox, href: '/vault' },
+              },
+            ],
+          },
         ],
       },
     ],
@@ -254,6 +267,67 @@ describe('dragging a nested level back', () => {
     touch.lift(FLICK_PX);
     await vi.waitFor(() => expect(downloads()).toBeNull());
     expect(groupRow()).not.toBeNull();
+  });
+
+  test('a drag released where it began frees the panel at once', async () => {
+    await renderNested();
+    const touch = finger(downloads()!);
+    touch.to(40);
+    touch.to(80);
+    await nextLayout();
+    expect(behindLayer()).not.toBeNull();
+    touch.to(0);
+    touch.lift(0);
+    // No slide to wait for: a transition that never runs would hold the panel for the fallback timer.
+    await nextLayout();
+    expect(behindLayer()).toBeNull();
+
+    const again = finger(downloads()!);
+    again.to(40);
+    again.to(80);
+    await nextLayout();
+    expect(behindLayer()).not.toBeNull();
+    again.lift(0);
+    await vi.waitFor(() => expect(behindLayer()).toBeNull());
+  });
+
+  test('a level change during the slide off is not followed by a second step back', async () => {
+    await renderMenu();
+    await press(groupRow()!);
+    finishAnimations(scrollPanel(downloads()));
+    await press(document.querySelector<HTMLElement>('[data-group-row="more"]')!);
+    const vault = () => document.querySelector('a[href="/vault"]');
+    finishAnimations(scrollPanel(vault()));
+    expect(vault()).not.toBeNull();
+
+    const touch = finger(vault()!);
+    touch.to(40);
+    touch.to(220);
+    await nextLayout();
+    await sleep(160);
+    touch.lift(220);
+    // Escape lands while the panel is still sliding off: one step back, from the second level to the first.
+    await act(async () => {
+      backRow()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(downloads()).not.toBeNull();
+
+    // Past the slide's end and its fallback timer, which must not step back again.
+    await sleep(450);
+    expect(downloads()).not.toBeNull();
+    expect(groupRow()).toBeNull();
+  });
+
+  test('a swipe back leaves focus on the row of the group it came from', async () => {
+    await renderNested();
+    const touch = finger(downloads()!);
+    touch.to(40);
+    touch.to(220);
+    await nextLayout();
+    await sleep(160);
+    touch.lift(220);
+    await vi.waitFor(() => expect(downloads()).toBeNull());
+    await vi.waitFor(() => expect(document.activeElement).toBe(groupRow()));
   });
 
   test('a drag begun while the panel is still sliding in does not start', async () => {

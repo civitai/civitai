@@ -105,7 +105,8 @@ export function useSwipeBack({ enabled, onBack }: { enabled: boolean; onBack: ()
         panel.style.transform = '';
       }
       setDragging(false);
-      if (goBack) onBackRef.current();
+      // The panel is gone if something else already changed the level (Escape, a tap on the back row).
+      if (goBack && panel?.isConnected) onBackRef.current();
     };
     const onEnd = (event: TransitionEvent) => {
       if (event.target === panel && event.propertyName === 'transform') finish();
@@ -113,7 +114,8 @@ export function useSwipeBack({ enabled, onBack }: { enabled: boolean; onBack: ()
     const timer = window.setTimeout(finish, SLIDE_MS + 100);
     settling.current = { cancel: stop };
 
-    if (!panel || reduceMotion) return finish();
+    // Letting go where it began has nothing to slide, so no transition would end.
+    if (!panel || reduceMotion || (!goBack && from.offset === 0)) return finish();
     panel.addEventListener('transitionend', onEnd);
     const transition = `transform ${SLIDE_MS}ms ${SLIDE_EASING}`;
     panel.style.transition = transition;

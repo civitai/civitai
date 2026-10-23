@@ -115,10 +115,18 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     const left = path[path.length - 1];
     setDirection(slide ? 'back' : 'none');
     setPath((current) => current.slice(0, -1));
-    window.requestAnimationFrame(() =>
-      container.current?.querySelector<HTMLElement>(`[data-group-row="${left?.id}"]`)?.focus()
-    );
+    focusGroupRow(left?.id);
   };
+  // After a swipe the level that is landing may not have committed yet, and the copy of it still
+  // behind the panel is inert and cannot take focus.
+  const focusGroupRow = (id: string | undefined, attempts = 3) =>
+    window.requestAnimationFrame(() => {
+      const row = [
+        ...(container.current?.querySelectorAll<HTMLElement>(`[data-group-row="${id}"]`) ?? []),
+      ].find((candidate) => !candidate.closest('[inert]'));
+      if (row) row.focus();
+      else if (attempts > 1) focusGroupRow(id, attempts - 1);
+    });
 
   const toggle = signedIn ? pinActions.toggle : undefined;
 
