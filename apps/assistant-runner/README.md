@@ -37,7 +37,8 @@ See [Not built yet](#not-built-yet).
   and a chat named after its first message is named after the edited one). An edit is a new reply,
   charged as one. A page shows Edit only once a runner lists `edit`; it sends `edit` without
   `retry`, so a runner without this answers `stale-turn` instead of replying to the old message.
-  A retry carries on only from a run that answered the message the turn holds now. Rolling back to
+  A retry carries on only from a run that answered the message the turn holds now, and a retry
+  carrying another message than the head holds is refused as `stale-turn`. Rolling back to
   a runner without this while an edit's run is queued and has not begun would reply to the edited
   message but keep the old one in the head (`WORKFLOW_VERSION` is unchanged).
 

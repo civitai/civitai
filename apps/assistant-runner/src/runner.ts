@@ -416,7 +416,15 @@ export class Runner implements RunService {
       throw error;
     }
     const edit = request.turn.edit === true;
-    if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true, edit)) {
+    const retry = !edit && request.turn.retry === true;
+    // A retry asks again for the reply to the message the head holds: one carrying another message
+    // (a page that edited it locally and whose edit never began, or a tab behind an edit made in
+    // another) would answer words the head does not show.
+    const saved = retry ? savedTurn(head, request.turn.seq) : undefined;
+    if (
+      !acceptsTurn(head, request.turn.seq, request.turn.retry === true, edit) ||
+      (saved !== undefined && !sameMessage(saved.user, request.turn.user))
+    ) {
       return refused({
         ok: false,
         error: 'stale-turn',
@@ -431,7 +439,7 @@ export class Runner implements RunService {
       seq: request.turn.seq,
       user: request.turn.user,
       // An edit starts the turn afresh: it is not a retry, whatever the request said.
-      retry: !edit && request.turn.retry === true,
+      retry,
       ...(edit ? { edit: true } : {}),
       model: request.model,
       settings: request.settings,

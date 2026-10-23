@@ -877,6 +877,44 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     ]);
   });
 
+  it('refuses a retry that carries another message than the head holds, and saves nothing', async () => {
+    const user = 'u-retry-other';
+    flaky.failNext = true;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-retry-other', model: 'flaky', content: 'Record it.' })
+    );
+    expect(ended(await events(first.body!.runId as string, user)).status).toBe('error');
+    const before = await store.load(user, 'c-retry-other');
+
+    const other = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record something else.',
+        retry: true,
+      })
+    );
+    expect(other).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+    expect(await store.load(user, 'c-retry-other')).toEqual(before);
+    // The same message asked again is the ordinary retry (the control).
+    const same = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-retry-other',
+        model: 'flaky',
+        content: 'Record it.',
+        retry: true,
+      })
+    );
+    expect(same.status).toBe(201);
+    expect(ended(await events(same.body!.runId as string, user)).status).toBe('done');
+  });
+
   it('refuses an edit of a turn that is not the latest', async () => {
     const user = 'u-edit-stale';
     const first = await post(
@@ -1019,7 +1057,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       const retry = await post(
         '/runs',
         as(user),
-        startBody({ conversationId, model: 'tools', retry: true })
+        // The message the head holds: a retry asks again for the reply to it.
+        startBody({ conversationId, model: 'tools', retry: true, content: 'Parked.' })
       );
       expect(retry.status).toBe(201);
       const runB = retry.body!.runId as string;
@@ -1246,7 +1285,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const retry = await post(
       '/runs',
       as(user),
-      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true })
+      startBody({ conversationId: 'c-stranded', model: 'tools', retry: true, content: 'Old run.' })
     );
     expect(retry.status).toBe(201);
     const entries = await events(retry.body!.runId as string, user);
