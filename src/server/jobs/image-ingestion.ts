@@ -11,12 +11,12 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { legalHoldUserIdsSql, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import {
-  legalHoldUserIdsSql,
-  PLACEHOLDER_OWNER_ID,
-  userUnderLegalHoldSql,
-} from '~/server/utils/legal-hold';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+  accountHoldSql,
+  holdMarkerTableExists,
+  holdMarkerViewExists,
+} from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -519,9 +519,9 @@ export { MODERATOR_TAKEDOWN_ACTIVITIES };
  * The Blocked images of accounts under an account hold, read over the owners those holds can name:
  * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
  * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
- * Blocked image.
+ * Blocked image. `markerView` is what `holdMarkerViewExists` returned.
  */
-export const accountHeldBlockedImagesSql = Prisma.sql`
+export const accountHeldBlockedImagesSql = (markerView: boolean) => Prisma.sql`
   WITH owners AS MATERIALIZED (
     SELECT c."userId" FROM (
       SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
@@ -536,7 +536,7 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
       JOIN "Image" ri
         ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
     ) c
-    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), markerView)}
   )
   SELECT i.id FROM "Image" i
   WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -546,16 +546,22 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
 /**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
- * on a statement over an unaliased "Image".
+ * on a statement over an unaliased "Image". `markerView` is what `holdMarkerViewExists` returned.
  */
-export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: boolean }) {
+export function purgeHoldGuard({
+  holdForTrainingCopy,
+  markerView,
+}: {
+  holdForTrainingCopy: boolean;
+  markerView: boolean;
+}) {
+  const owner = Prisma.raw('"Image"."userId"');
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
     -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
-    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+    AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, markerView)})
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -568,6 +574,18 @@ export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
+    const startedAt = Date.now();
+    // The run's counts, in Axiom: the job runner logs only that a run succeeded.
+    const finished = <T extends Record<string, number>>(summary: T) => {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'finished',
+        ...summary,
+        durationMs: Date.now() - startedAt,
+      }).catch(() => undefined);
+      return summary;
+    };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
 
     // Fails closed: a run that cannot read the legal holds deletes nothing.
@@ -650,12 +668,26 @@ export const removeBlockedImages = createJob(
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
+    // A statement naming the marker view fails on a database without it, so each one asks first.
+    const markerView = await holdMarkerViewExists();
+    // The table without its view holds every account: there is nothing this run may delete.
+    if (!markerView && (await holdMarkerTableExists())) {
+      logToAxiom({
+        type: 'warning',
+        name: 'remove-blocked-images',
+        message: 'hold marker table has no view: every account is held',
+      }).catch(() => undefined);
+      return { skipped: 'hold-marker-view-missing' };
+    }
+
     // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
     // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
     // planner misjudges how many owners match and scans every Blocked image instead of each owner's.
-    const evidenceHeldUserIds = (
-      await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
-    ).map((x) => x.userId);
+    const evidenceHeldUserIds = markerView
+      ? (
+          await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
+        ).map((x) => x.userId)
+      : [];
     const evidenceHeld = evidenceHeldUserIds.length
       ? (
           await dbWrite.$queryRaw<{ id: number }[]>`
@@ -669,7 +701,7 @@ export const removeBlockedImages = createJob(
     // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
     // reason above.
     const accountHeld = (
-      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql(markerView))
     ).map((x) => x.id);
 
     const held = [
@@ -699,14 +731,14 @@ export const removeBlockedImages = createJob(
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
       });
-      return {
+      return finished({
         processed: 0,
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
         accountHeld: accountHeld.length,
-      };
+      });
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -865,7 +897,10 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
-    const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
+    const onlyWhere = purgeHoldGuard({
+      holdForTrainingCopy: isAppealTrainingConfigured(),
+      markerView,
+    });
     const deleted: number[] = [];
     if (takedowns.length > 0) {
       const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
@@ -889,7 +924,7 @@ export const removeBlockedImages = createJob(
     `;
     }
 
-    return {
+    return finished({
       deleted: deleted.length,
       heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
@@ -904,7 +939,8 @@ export const removeBlockedImages = createJob(
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
       evidenceHeld: evidenceHeld.length,
-    };
+      accountHeld: accountHeld.length,
+    });
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
   // grabbing the lock mid-run would double-delete and hit S3/DB twice.

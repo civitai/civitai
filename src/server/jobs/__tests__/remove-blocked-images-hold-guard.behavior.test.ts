@@ -66,7 +66,7 @@ import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
-const NO_COPY = { holdForTrainingCopy: false };
+const NO_COPY = { holdForTrainingCopy: false, markerView: true };
 
 const HOLD_MIGRATION = path.resolve(
   __dirname,
@@ -362,7 +362,7 @@ describe('purgeHoldGuard on the delete', () => {
 
     it('keeps a rejected image waiting for its copy when the copy job is configured', async () => {
       await imageService.deleteImages(ALL, true, {
-        onlyWhere: purgeHoldGuard({ holdForTrainingCopy: true }),
+        onlyWhere: purgeHoldGuard({ holdForTrainingCopy: true, markerView: true }),
       });
 
       expect(await remaining()).toEqual(sorted([PLAIN, ...KEPT]));
@@ -1210,19 +1210,60 @@ describe('purgeHoldGuard holds every image of an account under any account hold'
   });
 });
 
+// A database the marker migration has not reached, or one whose view was dropped: the statements
+// built for it must run rather than fail on a relation that is not there.
+describe('the job statements without the marker view', () => {
+  const NO_VIEW = { holdForTrainingCopy: false, markerView: false };
+  const renamed = async (from: string[], run: () => Promise<void>) => {
+    await holder.db.exec(
+      from.map((n) => `ALTER ${n} RENAME TO "${n.split('"')[1]}Moved";`).join('')
+    );
+    try {
+      await run();
+    } finally {
+      await holder.db.exec(
+        from
+          .map(
+            (n) =>
+              `ALTER ${n.split(' ')[0]} "${n.split('"')[1]}Moved" RENAME TO "${n.split('"')[1]}";`
+          )
+          .join('')
+      );
+    }
+  };
+
+  it('holds every image when the marker table is there without its view', () =>
+    renamed(['VIEW "EvidenceHeldUser"'], async () => {
+      const deleted = await imageService.deleteImages(ALL, true, {
+        onlyWhere: purgeHoldGuard(NO_VIEW),
+      });
+      const batch = accountHeldBlockedImagesSql(false);
+      await holder.db.query(batch.text, batch.values as unknown[]);
+
+      expect(deleted).toEqual([]);
+      expect(await remaining()).toEqual(sorted(ALL));
+    }));
+
+  it('applies every other hold when neither marker object exists', () =>
+    renamed(['VIEW "EvidenceHeldUser"', 'TABLE "EvidenceHold"'], async () => {
+      const deleted = await imageService.deleteImages(ALL, true, {
+        onlyWhere: purgeHoldGuard(NO_VIEW),
+      });
+
+      expect(sorted(deleted.map((r) => r.id))).toEqual(DELETED);
+    }));
+});
+
 describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
   const [FLAG_OWNER, BLOCK_OWNER, PAST_OWNER, LISTED_OWNER, LONG_LISTED_OWNER] = [
     66, 67, 68, 69, 70,
   ];
-  const read = async () =>
-    sorted(
-      (
-        await holder.db.query<{ id: number }>(
-          accountHeldBlockedImagesSql.text,
-          accountHeldBlockedImagesSql.values as unknown[]
-        )
-      ).rows.map((r) => r.id)
+  const read = async () => {
+    const q = accountHeldBlockedImagesSql(true);
+    return sorted(
+      (await holder.db.query<{ id: number }>(q.text, q.values as unknown[])).rows.map((r) => r.id)
     );
+  };
 
   it('returns every Blocked image of an account held by a flag, a CSAM block or a listed image, and nothing else', async () => {
     await holder.db.exec(`
