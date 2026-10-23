@@ -239,11 +239,11 @@
 
   <div class="flex flex-wrap items-center gap-3">
     <Input bind:value={q} placeholder="Search rules" class="w-56" aria-label="Search rules" />
-    <label class="flex items-center gap-2 text-sm text-dark-1">
+    <label class="flex items-center gap-2 text-sm text-dark-1" data-touch-target>
       <Checkbox checked={showAll} onCheckedChange={(on) => (showAll = on === true)} />
       Show rules that already have aliases
     </label>
-    <label class="flex items-center gap-2 text-sm text-dark-1">
+    <label class="flex items-center gap-2 text-sm text-dark-1" data-touch-target>
       <Checkbox checked={allShownSelected} onCheckedChange={(on) => toggleAll(on === true)} />
       Select all shown
     </label>

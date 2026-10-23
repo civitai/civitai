@@ -68,7 +68,11 @@ export type ModelRuleHoldRow = {
   editedSince: boolean;
 };
 
-const STATUS_COLUMN = { pending: 'Pending', confirmed: 'Confirmed', dismissed: 'Dismissed' } as const;
+const STATUS_COLUMN = {
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  dismissed: 'Dismissed',
+} as const;
 
 // A duplicate or edited-away hold closed without a ruling is not history.
 const notSuperseded = sql<boolean>`h.meta->>'decision' is distinct from 'superseded'`;
@@ -222,7 +226,9 @@ export type ModelRuleHoldHistoryEntry = {
 };
 
 /** The other holds on the hold's model, newest first. */
-export async function getModelRuleHoldHistory(holdId: number): Promise<ModelRuleHoldHistoryEntry[]> {
+export async function getModelRuleHoldHistory(
+  holdId: number
+): Promise<ModelRuleHoldHistoryEntry[]> {
   const rows = await dbRead
     .selectFrom('TextScanHold as h')
     .innerJoin('TextScanHold as self', (join) =>

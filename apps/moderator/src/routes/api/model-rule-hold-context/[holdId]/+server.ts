@@ -2,10 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
 import { requireIdParam } from '$lib/server/api-guard';
-import {
-  getModelRuleHoldHistory,
-  getOwnerRuleHolds,
-} from '$lib/server/model-rule-holds.queries';
+import { getModelRuleHoldHistory, getOwnerRuleHolds } from '$lib/server/model-rule-holds.queries';
 
 // Each part degrades on its own: a failing history read must not hide what a batch decision covers.
 const orNull = <T>(read: Promise<T>) =>

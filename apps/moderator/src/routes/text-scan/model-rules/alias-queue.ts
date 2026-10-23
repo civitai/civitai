@@ -41,7 +41,8 @@ export function createRunner<T, R>(opts: {
 
   return {
     enqueue(items: readonly T[]) {
-      for (const item of items) if (!running.has(item) && !waiting.includes(item)) waiting.push(item);
+      for (const item of items)
+        if (!running.has(item) && !waiting.includes(item)) waiting.push(item);
       pump();
     },
     /** Drops what has not started and returns it; work already running is left to finish. */

@@ -11,7 +11,10 @@ function snapStart(text: string, at: number) {
     : at;
 }
 function snapEnd(text: string, at: number) {
-  return at > 0 && at < text.length && isHighSurrogate(text.charCodeAt(at - 1)) && isLowSurrogate(text.charCodeAt(at))
+  return at > 0 &&
+    at < text.length &&
+    isHighSurrogate(text.charCodeAt(at - 1)) &&
+    isLowSurrogate(text.charCodeAt(at))
     ? at + 1
     : at;
 }

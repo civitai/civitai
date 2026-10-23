@@ -24,7 +24,12 @@ describe('decideModelRuleHold', () => {
       body: { holdId: 3, status: 'Dismissed', decision: 'dismiss_allowed', userId: 1 },
     });
     expect(
-      await decideModelRuleHold({ holdId: 3, textHash: 'h-3', decision: 'dismiss_allowed', note: 'fine' })
+      await decideModelRuleHold({
+        holdId: 3,
+        textHash: 'h-3',
+        decision: 'dismiss_allowed',
+        note: 'fine',
+      })
     ).toEqual({ ok: true });
     expect(callModEndpoint).toHaveBeenCalledWith(
       'text-scan/model-rules-hold/resolve',
@@ -55,13 +60,18 @@ describe('decideModelRuleHold', () => {
       status: 409,
       error: 'The text changed since you opened this hold.',
     });
-    expect(
-      await decideModelRuleHold({ holdId: 3, textHash: 'h', decision: 'confirm' })
-    ).toEqual({ ok: false, error: 'The text changed since you opened this hold.' });
+    expect(await decideModelRuleHold({ holdId: 3, textHash: 'h', decision: 'confirm' })).toEqual({
+      ok: false,
+      error: 'The text changed since you opened this hold.',
+    });
   });
 
   it('warns that the decision may have completed when nobody answered', async () => {
-    callModEndpoint.mockResolvedValue({ ok: false, error: 'Decide failed.', requestNeverSent: false });
+    callModEndpoint.mockResolvedValue({
+      ok: false,
+      error: 'Decide failed.',
+      requestNeverSent: false,
+    });
     const result = await decideModelRuleHold({ holdId: 3, textHash: 'h', decision: 'confirm' });
     expect(result).toMatchObject({ ok: false });
     expect(!result.ok && result.error).toMatch(/may already have completed/);
@@ -130,7 +140,11 @@ describe('decideOwnerHolds', () => {
     filterOwnerPendingHolds.mockResolvedValue([{ id: 4 }]);
     callModEndpoint.mockResolvedValue({ ok: false, status: 500, error: 'Boom.' });
     expect(
-      await decideOwnerHolds({ holdId: 3, also: [{ holdId: 4, textHash: 'a' }], decision: 'confirm' })
+      await decideOwnerHolds({
+        holdId: 3,
+        also: [{ holdId: 4, textHash: 'a' }],
+        decision: 'confirm',
+      })
     ).toEqual([{ holdId: 4, ok: false, error: 'Boom.' }]);
   });
 });

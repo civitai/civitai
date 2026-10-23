@@ -117,9 +117,12 @@ describe('createRunner', () => {
 
 describe('progressOf', () => {
   it('counts finished, failed and remaining work', () => {
-    expect(
-      progressOf(['done', 'done', 'failed', 'queued', 'running', 'idle', 'idle'])
-    ).toEqual({ done: 2, failed: 1, remaining: 2, total: 5 });
+    expect(progressOf(['done', 'done', 'failed', 'queued', 'running', 'idle', 'idle'])).toEqual({
+      done: 2,
+      failed: 1,
+      remaining: 2,
+      total: 5,
+    });
   });
 
   it('is empty when nothing was selected', () => {

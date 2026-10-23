@@ -86,7 +86,10 @@ describe('parseAliasSuggestions', () => {
     const result = parseAliasSuggestions(
       step(JSON.stringify({ suggestions: [suggestion('Name Here', { kind: 'nickname' })] }))
     );
-    expect(result).toMatchObject({ ok: true, suggestions: [{ alias: 'Name Here', kind: 'other' }] });
+    expect(result).toMatchObject({
+      ok: true,
+      suggestions: [{ alias: 'Name Here', kind: 'other' }],
+    });
   });
 
   it.each([

@@ -11,9 +11,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ checkModelRulesOnEdit }));
 
-const { scanModelAndRules } = await import(
-  '~/server/services/text-scan/submit'
-);
+const { scanModelAndRules } = await import('~/server/services/text-scan/submit');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 
 beforeEach(() => {

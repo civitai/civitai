@@ -32,7 +32,10 @@ const MIGRATIONS = [
   '20261112120000_text_scan_hold_one_pending',
 ].map((name) =>
   readFileSync(
-    join(HERE, `../../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`),
+    join(
+      HERE,
+      `../../../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
     'utf-8'
   )
 );
@@ -48,7 +51,12 @@ const PENDING: ModelRuleHoldQuery = {
 
 let db: PGlite;
 
-const rule = (id: number, subject = `Subject ${id}`) => ({ id, subject, description: `About ${id}`, aliases: [] });
+const rule = (id: number, subject = `Subject ${id}`) => ({
+  id,
+  subject,
+  description: `About ${id}`,
+  aliases: [],
+});
 const meta = (extra: Record<string, unknown> = {}) => ({
   mode: 'shadow',
   fields: [{ heading: 'Name', text: 'Some model name' }],
@@ -112,7 +120,9 @@ beforeEach(async () => {
       "userId" INTEGER, "type" TEXT NOT NULL DEFAULT 'LORA', "poi" BOOLEAN NOT NULL DEFAULT false,
       "minor" BOOLEAN NOT NULL DEFAULT false);
   `);
-  await db.query(`INSERT INTO "User" ("id","username") VALUES (10,'owner_a'), (11,'Mod_Person'), (12,'owner_b')`);
+  await db.query(
+    `INSERT INTO "User" ("id","username") VALUES (10,'owner_a'), (11,'Mod_Person'), (12,'owner_b')`
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -149,7 +159,9 @@ describe('listModelRuleHolds', () => {
     expect(ids((await listModelRuleHolds({ ...PENDING, rule: 2 })).items)).toEqual([3]);
     expect(ids((await listModelRuleHolds({ ...PENDING, status: 'confirmed' })).items)).toEqual([4]);
     expect(ids((await listModelRuleHolds({ ...PENDING, status: 'dismissed' })).items)).toEqual([5]);
-    expect(ids((await listModelRuleHolds({ ...PENDING, status: 'all', sort: 'newest' })).items)).toEqual([5, 4, 3, 2, 1]);
+    expect(
+      ids((await listModelRuleHolds({ ...PENDING, status: 'all', sort: 'newest' })).items)
+    ).toEqual([5, 4, 3, 2, 1]);
   });
 
   it('searches by model id, owner id and username prefix', async () => {
@@ -176,13 +188,20 @@ describe('listModelRuleHolds', () => {
       ('Model', 10, '{"textHash":"new"}'), ('Model:shadow', 40, '{"textHash":"same"}')`);
     const { items } = await listModelRuleHolds(PENDING);
     const byId = new Map(items.map((i) => [i.id, i]));
-    expect(byId.get(1)).toMatchObject({ otherPendingByOwner: 1, otherHeldModels: 2, editedSince: true });
+    expect(byId.get(1)).toMatchObject({
+      otherPendingByOwner: 1,
+      otherHeldModels: 2,
+      editedSince: true,
+    });
     expect(byId.get(2)).toMatchObject({ otherPendingByOwner: 1, editedSince: false });
     expect(byId.get(4)).toMatchObject({ otherPendingByOwner: 0, editedSince: false });
   });
 
   it('narrows to one owner’s holds', async () => {
-    await seed([{ id: 1, userId: 10 }, { id: 2, userId: 12 }]);
+    await seed([
+      { id: 1, userId: 10 },
+      { id: 2, userId: 12 },
+    ]);
     expect(ids((await listModelRuleHolds({ ...PENDING, owner: 12 })).items)).toEqual([2]);
     expect(await countModelRuleHoldsByRule({ status: 'pending', mode: 'all', owner: 12 })).toEqual([
       { id: 1, subject: 'Subject 1', count: 1 },
@@ -245,7 +264,14 @@ describe('counts', () => {
 describe('history and owner holds', () => {
   it('lists the earlier holds on a model, without superseded ones or the hold itself', async () => {
     await seed([
-      { id: 1, entityId: 7, status: 'Dismissed', decidedById: 11, decidedAt: '2026-10-18T00:00:00Z', meta: meta({ decision: 'dismiss_allowed' }) },
+      {
+        id: 1,
+        entityId: 7,
+        status: 'Dismissed',
+        decidedById: 11,
+        decidedAt: '2026-10-18T00:00:00Z',
+        meta: meta({ decision: 'dismiss_allowed' }),
+      },
       { id: 2, entityId: 7, status: 'Dismissed', meta: meta({ decision: 'superseded' }) },
       { id: 3, entityId: 7 },
       { id: 4, entityId: 8 },
@@ -264,13 +290,24 @@ describe('history and owner holds', () => {
     await seed([
       { id: 1, entityId: 7, userId: 10 },
       { id: 2, entityId: 8, userId: 10, textHash: 'two' },
-      { id: 3, entityId: 9, userId: 10, status: 'Confirmed', decidedById: 11, decidedAt: '2026-10-18T00:00:00Z' },
+      {
+        id: 3,
+        entityId: 9,
+        userId: 10,
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-10-18T00:00:00Z',
+      },
       { id: 4, entityId: 5, userId: 12 },
     ]);
-    await db.exec(`INSERT INTO "Model" ("id","name","status","userId") VALUES (8,'Other model','Published',10)`);
+    await db.exec(
+      `INSERT INTO "Model" ("id","name","status","userId") VALUES (8,'Other model','Published',10)`
+    );
     const owner = await getOwnerRuleHolds(1);
     expect(owner?.userId).toBe(10);
-    expect(owner?.pending).toEqual([{ id: 2, modelId: 8, modelName: 'Other model', textHash: 'two' }]);
+    expect(owner?.pending).toEqual([
+      { id: 2, modelId: 8, modelName: 'Other model', textHash: 'two' },
+    ]);
   });
 
   it('returns null for a hold without an owner', async () => {

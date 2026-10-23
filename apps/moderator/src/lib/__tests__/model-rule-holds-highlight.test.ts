@@ -15,12 +15,28 @@ describe('fieldSegments', () => {
   });
 
   it('merges overlapping and adjacent spans into one highlight', () => {
-    expect(show('abcdefgh', [{ start: 1, end: 4 }, { start: 3, end: 6 }])).toEqual(['a', '[bcdef]', 'gh']);
-    expect(show('abcdefgh', [{ start: 1, end: 3 }, { start: 3, end: 5 }])).toEqual(['a', '[bcde]', 'fgh']);
+    expect(
+      show('abcdefgh', [
+        { start: 1, end: 4 },
+        { start: 3, end: 6 },
+      ])
+    ).toEqual(['a', '[bcdef]', 'gh']);
+    expect(
+      show('abcdefgh', [
+        { start: 1, end: 3 },
+        { start: 3, end: 5 },
+      ])
+    ).toEqual(['a', '[bcde]', 'fgh']);
   });
 
   it('handles spans given out of order and a span inside another', () => {
-    expect(show('abcdefgh', [{ start: 5, end: 7 }, { start: 0, end: 8 }, { start: 2, end: 3 }])).toEqual(['[abcdefgh]']);
+    expect(
+      show('abcdefgh', [
+        { start: 5, end: 7 },
+        { start: 0, end: 8 },
+        { start: 2, end: 3 },
+      ])
+    ).toEqual(['[abcdefgh]']);
   });
 
   it('renders a whole-field fallback span as one highlight', () => {
@@ -31,7 +47,13 @@ describe('fieldSegments', () => {
 
   it('clamps spans past the end and ignores empty or inverted ones', () => {
     expect(show('abc', [{ start: 1, end: 99 }])).toEqual(['a', '[bc]']);
-    expect(show('abc', [{ start: 2, end: 2 }, { start: 3, end: 1 }, { start: -4, end: -1 }])).toEqual(['abc']);
+    expect(
+      show('abc', [
+        { start: 2, end: 2 },
+        { start: 3, end: 1 },
+        { start: -4, end: -1 },
+      ])
+    ).toEqual(['abc']);
   });
 
   it('never splits a surrogate pair at a span edge', () => {
@@ -42,7 +64,9 @@ describe('fieldSegments', () => {
 
   it('keeps the text intact end to end', () => {
     const text = 'x 日本語 y';
-    const joined = fieldSegments(text, [{ start: 2, end: 5 }]).map((s) => s.text).join('');
+    const joined = fieldSegments(text, [{ start: 2, end: 5 }])
+      .map((s) => s.text)
+      .join('');
     expect(joined).toBe(text);
   });
 });

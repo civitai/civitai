@@ -87,7 +87,10 @@ export async function syncModelRulesHold(
       if (!detection.applied || pending.hiddenAt) return 'unchanged';
       const updated = await tx.$executeRaw`
         UPDATE "TextScanHold"
-        SET "hiddenAt" = (now() AT TIME ZONE 'UTC'), "meta" = ${JSON.stringify({ ...pending.meta, ...meta })}::jsonb,
+        SET "hiddenAt" = (now() AT TIME ZONE 'UTC'), "meta" = ${JSON.stringify({
+          ...pending.meta,
+          ...meta,
+        })}::jsonb,
             "updatedAt" = now()
         WHERE "id" = ${pending.id} AND "status" = 'Pending' AND "textHash" = ${pending.textHash}
           AND ("meta"->'decisionClaim' IS NULL
