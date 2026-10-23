@@ -1,5 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -41,6 +43,7 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const HELD = 1; // the secondary user on a report sent within the year
 const UNHELD = 2;
 const REPORT_SUBJECT = 3; // owns nothing
+const MARKED = 4; // no report; under a hold marker set by a person
 const MANY = 150; // more than one delete batch
 
 const run = () =>
@@ -70,6 +73,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), meta jsonb);
     CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -86,6 +90,23 @@ beforeAll(async () => {
       details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]'
     );
+  `);
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  // Off, so what stays is the drain's doing: the delete triggers would keep a held owner's rows
+  // whatever the drain asked for, and the report trigger would add markers to the report cases.
+  await holder.db.exec(`
+    ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold";
+    ALTER TABLE "Post" DISABLE TRIGGER "Post_evidence_hold";
+    ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
+    INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
   `);
 });
 
@@ -217,6 +238,24 @@ describe('remove-deleted-user-images under a legal hold', () => {
     expect(held).toBe(true);
     expect(await imagesOf(HELD)).toBe(0);
     expect(await postsOf(HELD)).toBe(1);
+    expect(await postsOf(UNHELD)).toBe(0);
+  });
+
+  // Like any other hold: nothing of the account is touched until the marker ends.
+  it('leaves the images and posts of an account under a hold marker', async () => {
+    await holder.db.exec(`
+      INSERT INTO "User" (id, "deletedAt", meta) VALUES (${MARKED}, now() - interval '1 day', '{}');
+      INSERT INTO "Post" (id, "userId") VALUES (903, ${MARKED});
+      INSERT INTO "Image" (id, "userId", "postId")
+        SELECT g, ${MARKED}, 903 FROM generate_series(2001, 2003) g;
+    `);
+
+    await run();
+
+    expect(await imagesOf(MARKED)).toBe(3);
+    expect(await postsOf(MARKED)).toBe(1);
+    // The control: the unheld account in the same run is drained.
+    expect(await imagesOf(UNHELD)).toBe(0);
     expect(await postsOf(UNHELD)).toBe(0);
   });
 });

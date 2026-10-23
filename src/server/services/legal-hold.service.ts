@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { reportHolds, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  reportHolds,
+  userNamedOnHoldingReportSql,
+  userUnderLegalHoldSql,
+} from '~/server/utils/legal-hold';
 
 /** What a moderator is told. Never says which hold applies. */
 export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
@@ -209,6 +213,38 @@ export async function assertAccountNotUnderLegalHold(
     name: 'account-legal-hold',
     message: 'Account deletion refused',
     details: { userId, legs: hold.legs },
+  });
+  throw new LegalHoldError();
+}
+
+/**
+ * For moving content between owners: the hold the purge jobs read (`userUnderLegalHoldSql`, which
+ * includes the placeholder owner) and every account hold, whose image legs follow the images moved.
+ * Throws `LegalHoldError` when any of `userIds` is held, `LegalHoldUnconfirmedError` when that cannot
+ * be read. Names the marker view, so it needs its migration.
+ */
+export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
+  const owner = Prisma.raw('o."userId"');
+  const rows = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
+    SELECT o."userId", (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)}) AS held
+    FROM unnest(${userIds}::int[]) AS o("userId")
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+    return null;
+  });
+  if (!rows || rows.length !== userIds.length) throw new LegalHoldUnconfirmedError();
+  const held = rows.filter((r) => r.held !== false).map((r) => r.userId);
+  if (!held.length) return;
+  logToAxiom({
+    type: 'info',
+    name: 'account-legal-hold',
+    message: 'Owner change refused',
+    details: { userIds: held },
   });
   throw new LegalHoldError();
 }

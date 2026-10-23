@@ -143,14 +143,12 @@ class EmerchantPayCaller extends HttpCaller {
     };
 
     const xmlBody = this.buildXML(wpfPaymentData);
-    console.log(xmlBody);
 
     const response = await this.postRaw('/wpf', {
       body: xmlBody,
     });
 
     if (!response.ok) {
-      console.log(this);
       const errorText = await response.text();
       console.error('EmerchantPay WPF creation failed:', errorText);
       throw new Error(`Failed to create WPF payment: ${response.statusText}`);
