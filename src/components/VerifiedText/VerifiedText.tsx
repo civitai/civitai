@@ -1,7 +1,7 @@
 import type { ButtonProps, DefaultMantineColor } from '@mantine/core';
 import { Popover, Text, Group } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
-import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconRadar2, IconRadarOff } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -20,10 +20,10 @@ const statusColors: Record<ScanResultCode, DefaultMantineColor> = {
   Error: 'orange',
 };
 const statusIcon: Record<ScanResultCode, JSX.Element> = {
-  Pending: <IconShieldOff size={12} />,
-  Success: <IconShieldCheck size={12} />,
-  Danger: <IconShieldX size={12} />,
-  Error: <IconShieldOff size={12} />,
+  Pending: <IconRadarOff size={12} />,
+  Success: <IconRadar2 size={12} />,
+  Danger: <IconAlertTriangle size={12} />,
+  Error: <IconRadarOff size={12} />,
 };
 const statusMessage: Record<ScanResultCode, string> = {
   Pending: "This file hasn't been scanned yet, check back soon.",
