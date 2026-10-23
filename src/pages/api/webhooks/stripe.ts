@@ -182,18 +182,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   instrumentApiResponse(req, res);
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
-    if (!stripe) {
-      return;
-    }
+    if (!stripe) return res.status(503).send('Stripe is not configured');
 
     const buf = await buffer(req);
     const rawPayload = buf.toString('utf8');
     const sig = req.headers['stripe-signature'];
     const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
     let event: Stripe.Event;
-
-    // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('stripe', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) throw new Error('Missing signature or webhook secret');
@@ -207,6 +202,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
+
+    // Only a verified payload is recorded. Fire and forget, never throws.
+    trackWebhookEvent('stripe', rawPayload).catch(() => null);
 
     if (relevantEvents.has(event.type)) {
       try {

@@ -121,6 +121,8 @@ vi.mock('~/server/auth/session-invalidation', () => ({
 }));
 
 import handler from '~/pages/api/webhooks/stripe';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { getServerStripe } from '~/server/utils/get-server-stripe';
 
 type Reward = {
   id: number;
@@ -1179,5 +1181,67 @@ describe('stripe webhook: signature', () => {
     expect(res.statusCode).toBe(400);
     expect(mockStripe.webhooks.constructEvent).not.toHaveBeenCalled();
     expect(rewardStatus(1)).toBe('Settled');
+  });
+
+  it('records nothing from a request whose signature fails, and logs the failure without its body', async () => {
+    mockStripe.webhooks.constructEvent.mockImplementation(() => {
+      throw new Error('No signatures found matching the expected signature');
+    });
+    const req = Object.assign(Readable.from([Buffer.from('{"id":"evt_forged"}')]), {
+      method: 'POST',
+      headers: { 'stripe-signature': 'bad' },
+    });
+    const res = {
+      statusCode: 200,
+      status: vi.fn(function (this: any, code: number) {
+        this.statusCode = code;
+        return this;
+      }),
+      send: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+    };
+
+    await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+
+    expect(res.statusCode).toBe(400);
+    expect(trackWebhookEvent).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'signature-verification' }),
+      'webhooks'
+    );
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('evt_forged');
+  });
+
+  it('records a verified event', async () => {
+    await deliver('charge.dispute.closed', dispute('pi_buzz', 5000, 'won'));
+
+    expect(trackWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(trackWebhookEvent).toHaveBeenCalledWith('stripe', '{}');
+  });
+
+  it('records a verified event whose handling fails', async () => {
+    seedBuzzPurchase();
+    mockStripe.paymentIntents.retrieve.mockRejectedValueOnce(new Error('stripe unavailable'));
+
+    const res = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+
+    expect(res.statusCode).toBe(400);
+    expect(trackWebhookEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a verified event this webhook does not handle', async () => {
+    const res = await deliver('customer.created', { id: 'cus_new', object: 'customer' });
+
+    expect(res.statusCode).toBe(200);
+    expect(trackWebhookEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers 503 when Stripe is not configured', async () => {
+    vi.mocked(getServerStripe).mockResolvedValueOnce(null as never);
+
+    const res = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+
+    expect(res.statusCode).toBe(503);
+    expect(trackWebhookEvent).not.toHaveBeenCalled();
   });
 });
