@@ -4,7 +4,6 @@ import {
   blankPromptKeys,
   describeBlankPrompts,
   describeVerdict,
-  labRuleMatches,
   promptKeyName,
   verdictsDiffer,
 } from './labels';
@@ -21,7 +20,6 @@ describe('friendly names', () => {
       'Minor definition',
       'Scam / phishing definition',
       'CSAM definition',
-      'Model rules definition',
     ]);
   });
 
@@ -100,124 +98,6 @@ describe('verdictsDiffer', () => {
     expect(verdictsDiffer('scam', failed('no'), ok({ scam: { detected: false } }))).toBe(true);
     expect(verdictsDiffer('nsfw', failed('a'), failed('b'))).toBe(false);
     expect(verdictsDiffer('scam', { ok: true, output: null, parseError: 'x' }, ok({}))).toBe(false);
-  });
-});
-
-describe('model rules verdict', () => {
-  const rules = (matched: unknown) => ok({ modelRules: { matched } });
-
-  it('names the matched rules by subject when the run listed them, else by id', () => {
-    const matched = rules([
-      { ruleId: 378, reason: ' a ' },
-      { ruleId: 12, reason: 'b' },
-    ]);
-    expect(describeVerdict('modelRules', matched)).toEqual({
-      headline: 'Matched #378, #12',
-      tone: 'flagged',
-      reason: '#378: a\n#12: b',
-    });
-    expect(describeVerdict('modelRules', matched, [{ id: 378, subject: 'Example' }])).toMatchObject(
-      {
-        headline: 'Matched Example, #12',
-      }
-    );
-  });
-
-  it('counts a literal-only hit as a match', () => {
-    const literal = {
-      ok: true as const,
-      output: { modelRules: { matched: [] } },
-      literalRuleIds: [5],
-    };
-    expect(describeVerdict('modelRules', literal, [{ id: 5, subject: 'Named' }])).toMatchObject({
-      headline: 'Matched Named',
-      tone: 'flagged',
-    });
-    expect(labRuleMatches(literal, [{ id: 5, subject: 'Named' }])).toEqual([
-      { ruleId: 5, subject: 'Named', reason: null, llm: false, literal: true },
-    ]);
-  });
-
-  it('marks a rule matched both ways once, with the model reason', () => {
-    const both = {
-      ok: true as const,
-      output: { modelRules: { matched: [{ ruleId: -1, reason: 'variant spelling' }] } },
-      literalRuleIds: [-1],
-    };
-    expect(labRuleMatches(both, [{ id: -1, subject: 'New rule' }])).toEqual([
-      { ruleId: -1, subject: 'New rule', reason: 'variant spelling', llm: true, literal: true },
-    ]);
-  });
-
-  it('reads an empty match list as clear', () => {
-    expect(describeVerdict('modelRules', rules([]))).toEqual({
-      headline: 'No rule matched',
-      tone: 'clear',
-    });
-  });
-
-  it('could not judge without a matched list', () => {
-    expect(describeVerdict('modelRules', ok({ modelRules: {} })).tone).toBe('unknown');
-    expect(describeVerdict('modelRules', ok({})).tone).toBe('unknown');
-  });
-
-  it('still shows literal hits when the model gave no answer', () => {
-    const subjects = [{ id: 5, subject: 'Named' }];
-    for (const output of [{}, { modelRules: {} }, null]) {
-      const verdict = describeVerdict(
-        'modelRules',
-        { ok: true, output, parseError: 'bad json', literalRuleIds: [5, 8] },
-        subjects
-      );
-      expect(verdict).toEqual({
-        headline: 'Literal match: Named, #8',
-        tone: 'flagged',
-        reason: 'The model gave no Model rules answer; these rules are named in the text.',
-      });
-    }
-  });
-
-  it('could not judge with neither a model answer nor a literal hit', () => {
-    expect(describeVerdict('modelRules', { ok: true, output: {}, literalRuleIds: [] }).tone).toBe(
-      'unknown'
-    );
-    expect(
-      describeVerdict('modelRules', { ok: true, output: null, parseError: 'bad json' }).tone
-    ).toBe('unknown');
-  });
-
-  it('differs when the matched rules differ, not the reasons', () => {
-    expect(
-      verdictsDiffer(
-        'modelRules',
-        rules([{ ruleId: 1, reason: 'x' }]),
-        rules([{ ruleId: 1, reason: 'y' }])
-      )
-    ).toBe(false);
-    expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([{ ruleId: 2 }]))).toBe(true);
-    expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([]))).toBe(true);
-  });
-
-  it('ignores the order the model listed its matches in', () => {
-    expect(
-      verdictsDiffer(
-        'modelRules',
-        rules([{ ruleId: 1 }, { ruleId: 2 }]),
-        rules([{ ruleId: 2 }, { ruleId: 1 }])
-      )
-    ).toBe(false);
-  });
-
-  it('differs when the model verdict on a literal hit flips', () => {
-    const literal = (matched: unknown[]) => ({
-      ok: true as const,
-      output: { modelRules: { matched } },
-      literalRuleIds: [1],
-    });
-    expect(verdictsDiffer('modelRules', literal([{ ruleId: 1 }]), literal([]))).toBe(true);
-    expect(verdictsDiffer('modelRules', literal([{ ruleId: 1 }]), literal([{ ruleId: 1 }]))).toBe(
-      false
-    );
   });
 });
 

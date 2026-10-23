@@ -1,5 +1,10 @@
-import { submitWorkflow } from '@civitai/orchestration-client';
 import {
+  getWorkflow,
+  submitWorkflow,
+  type ChatCompletionStepTemplate,
+} from '@civitai/orchestration-client';
+import {
+  aliasWorkflowIdField,
   MODEL_RULE_LIMITS,
   modelRuleAliasesField,
   modelRuleDescriptionField,
@@ -26,11 +31,17 @@ import {
 } from '~/server/services/text-scan/mode';
 import {
   applyModelRuleOverrides,
-  getModelRulesForPrompt,
-  type ModelRuleOverride,
+  getEnabledModelRules,
 } from '~/server/services/text-scan/model-rules';
-import { findLiteralHitsInSubject } from '~/server/services/text-scan/model-rules-literal';
-import { loadModelScanSubjects } from '~/server/services/text-scan/profiles/model.profile';
+import {
+  ALIAS_SUGGEST_RESPONSE_FORMAT,
+  buildAliasSuggestionMessages,
+  filterAliasSuggestions,
+  parseAliasSuggestions,
+  suggestAliasesInput,
+  ALIAS_WORKFLOW_TAG,
+} from '~/server/services/text-scan/model-rule-aliases';
+import { findLiteralMatchesInSubject } from '~/server/services/text-scan/model-rules-literal';
 import {
   getTextScanProfile,
   isTextScanEntityType,
@@ -80,6 +91,9 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'composeEntities',
   'scanTexts',
   'quoteTexts',
+  'literalModelRules',
+  'suggestModelRuleAliases',
+  'aliasSuggestionResult',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -267,7 +281,6 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     entityId: z.number().int().positive(),
     pass: harnessPass,
     promptOverrides,
-    ruleOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
     wait: waitSecondsSchema,
@@ -321,7 +334,6 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       pass: harnessPass,
       labels: labelsOverride,
       promptOverrides,
-      ruleOverrides,
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
@@ -330,6 +342,21 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     .superRefine(({ texts, concurrency, wait }, ctx) =>
       textsWithinBudget({ items: texts.length, concurrency, wait }, ctx)
     ),
+  z.object({
+    action: z.literal('literalModelRules'),
+    texts,
+    ruleOverrides,
+  }),
+  z.object({
+    action: z.literal('suggestModelRuleAliases'),
+    ...suggestAliasesInput,
+  }),
+  z.object({
+    action: z.literal('aliasSuggestionResult'),
+    workflowId: aliasWorkflowIdField,
+    subject: suggestAliasesInput.subject,
+    existingAliases: suggestAliasesInput.existingAliases,
+  }),
   z.object({
     action: z.literal('quoteTexts'),
     entityType,
@@ -393,7 +420,6 @@ type ComposeInput = {
   pass?: HarnessPass;
   labels?: TextScanLabel[];
   promptOverrides?: Record<string, string>;
-  ruleOverrides?: ModelRuleOverride[];
   model?: string;
   thinking?: boolean;
 };
@@ -404,17 +430,11 @@ async function composeSteps({
   pass = 'main',
   labels: labelsOverride,
   promptOverrides,
-  ruleOverrides,
   model,
   thinking,
 }: ComposeInput) {
   const labels = await labelsForPass(profile, pass, labelsOverride);
-  const [config, active, liveRules] = await Promise.all([
-    getTextScanConfig(),
-    getActiveTextScanPrompts(),
-    labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
-  ]);
-  const modelRules = liveRules && applyModelRuleOverrides(liveRules, ruleOverrides);
+  const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
@@ -426,7 +446,6 @@ async function composeSteps({
       labels,
       subject,
       maxInputChars: config.maxInputChars,
-      modelRules,
       maxSegments: config.maxSegments,
     });
   } catch (e) {
@@ -438,7 +457,6 @@ async function composeSteps({
   return {
     ok: true as const,
     composed,
-    modelRules,
     labels,
     pass,
     thinking: useThinking,
@@ -506,6 +524,111 @@ function unfinishedWorkflowError(
       .join(': ');
   }
   return `workflow ${workflow.id} still ${status} after ${wait}s`;
+}
+
+// Short on purpose: a web search routinely outlasts any request window, so the caller polls
+// `aliasSuggestionResult` instead of holding a connection open.
+const SUGGEST_ALIASES_WAIT_SECONDS = 8;
+const SUGGEST_ALIASES_MAX_TOKENS = 2048;
+
+type AliasWorkflow = {
+  id: string;
+  status?: string;
+  tags?: string[];
+  steps?: unknown;
+  cost?: { total?: number };
+};
+
+/** Pending while the orchestrator still works, otherwise the filtered suggestions or a readable failure. */
+function aliasWorkflowOutcome(
+  workflow: AliasWorkflow,
+  rule: { subject: string; existingAliases: string[] }
+) {
+  const step = (Array.isArray(workflow.steps) ? workflow.steps[0] : undefined) as
+    | ChatCompletionStepLike
+    | undefined;
+  const status = workflow.status;
+  if (status && status !== 'succeeded' && !FAILED_WORKFLOW_STATUSES.includes(status))
+    return { ok: true as const, status: 'pending' as const, workflowId: workflow.id };
+
+  const unfinished = unfinishedWorkflowError(workflow, step, 0);
+  if (unfinished) return { ok: false as const, error: unfinished, workflowId: workflow.id };
+  const parsed = parseAliasSuggestions(step);
+  if (!parsed.ok) return { ok: false as const, error: parsed.error, workflowId: workflow.id };
+  return {
+    ok: true as const,
+    status: 'done' as const,
+    suggestions: filterAliasSuggestions(parsed.suggestions, rule),
+    costTotal: workflow.cost?.total,
+  };
+}
+
+/** One billed web-search completion per call, never retried; a search still running is returned as pending, not awaited. */
+async function suggestAliases(input: {
+  subject: string;
+  description: string;
+  existingAliases: string[];
+}) {
+  const config = await getTextScanConfig();
+  const { data, error } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: { wait: SUGGEST_ALIASES_WAIT_SECONDS },
+    body: {
+      currencies: [],
+      tags: [ALIAS_WORKFLOW_TAG],
+      steps: [
+        {
+          $type: 'chatCompletion',
+          name: 'suggestModelRuleAliases',
+          input: {
+            model: config.model,
+            messages: buildAliasSuggestionMessages(input),
+            temperature: 0,
+            maxTokens: SUGGEST_ALIASES_MAX_TOKENS,
+            responseFormat: ALIAS_SUGGEST_RESPONSE_FORMAT,
+            tools: [{ type: 'civitai:web_search' }],
+          },
+        } as ChatCompletionStepTemplate,
+      ],
+    },
+  });
+  if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
+  return aliasWorkflowOutcome(data as AliasWorkflow, input);
+}
+
+/**
+ * Reads back a search `suggestAliases` started. Only workflows carrying this feature's tag are
+ * readable, so the action cannot be used to fetch arbitrary workflows.
+ */
+async function aliasSuggestionResult(input: {
+  workflowId: string;
+  subject: string;
+  existingAliases: string[];
+}) {
+  const { data, error, response } = await getWorkflow({
+    client: internalOrchestratorClient,
+    path: { workflowId: input.workflowId },
+  });
+  // `reason` is what the caller branches on: a gone or foreign workflow will never answer, while
+  // `unavailable` (any other read failure) may succeed on the next poll.
+  if (!data) {
+    const status = response?.status;
+    return {
+      ok: false as const,
+      reason: status === 404 || status === 410 ? ('not_found' as const) : ('unavailable' as const),
+      error: workflowErrorText(error, 'workflow not found'),
+    };
+  }
+  const workflow = data as AliasWorkflow;
+  if (!(workflow.tags ?? []).includes(ALIAS_WORKFLOW_TAG))
+    return {
+      ok: false as const,
+      reason: 'not_alias_workflow' as const,
+      error: 'workflow is not an alias suggestion',
+    };
+  const outcome = aliasWorkflowOutcome(workflow, input);
+  // A finished workflow that failed is an answer, not a transport error: the caller stops polling.
+  return outcome.ok ? outcome : { ...outcome, ok: true as const, status: 'failed' as const };
 }
 
 async function scanComposed(input: ComposeInput & { wait: number }) {
@@ -576,12 +699,6 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
     flaggedSegments: merged.flaggedSegments,
     elapsedMs: Date.now() - startedAt,
     system: ctx.composed.system,
-    ...(ctx.modelRules
-      ? {
-          rules: ctx.modelRules.map(({ id, subject }) => ({ id, subject })),
-          literalRuleIds: findLiteralHitsInSubject(input.subject, ctx.modelRules),
-        }
-      : {}),
     ...segmentInfo,
   };
 }
@@ -665,36 +782,21 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
-// Lab reads model text regardless of visibility; production profiles stay public-only.
-const LAB_LOADERS: Partial<Record<TextScanEntityType, TextScanProfile['load']>> = {
-  ModelRules: (ids) => loadModelScanSubjects(ids),
-};
-
-/** Up to 50 results share one system prompt and rule list, so a request carries them once. */
+/** Up to 50 results share one system prompt, so a request carries it once. */
 function hoistSharedPrompt<T extends object>(results: T[]) {
-  const shared: { system: string | null; rules: { id: number; subject: string }[] | null } = {
-    system: null,
-    rules: null,
-  };
-  const slim: Omit<T, 'system' | 'rules'>[] = [];
+  let system: string | null = null;
+  const slim: Omit<T, 'system'>[] = [];
   for (const result of results) {
-    const { system, rules, ...rest } = result as T & {
-      system?: string;
-      rules?: { id: number; subject: string }[];
-    };
-    if (system !== undefined && shared.system === null) {
-      shared.system = system;
-      shared.rules = rules ?? null;
-    }
-    slim.push(rest as Omit<T, 'system' | 'rules'>);
+    const { system: own, ...rest } = result as T & { system?: string };
+    if (own !== undefined && system === null) system = own;
+    slim.push(rest as Omit<T, 'system'>);
   }
-  return { ...shared, results: slim };
+  return { system, results: slim };
 }
 
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
-  const load = LAB_LOADERS[entityType] ?? profile.load;
-  const [subjects, config] = await Promise.all([load(entityIds), getTextScanConfig()]);
+  const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
   const results = entityIds.map((entityId) => {
     const subject = subjects.get(entityId);
     if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
@@ -734,10 +836,6 @@ type ShadowRow = {
 function verdictSummary(verdict: TextScanOutput[TextScanLabel] | undefined) {
   if (!verdict) return null;
   if ('level' in verdict) return verdict.level;
-  if ('matched' in verdict)
-    return verdict.matched.length
-      ? `matched: ${verdict.matched.map((m) => m.ruleId).join(', ')}`
-      : 'clear';
   if ('names' in verdict)
     return verdict.detected ? `detected: ${verdict.names.join(', ')}` : 'clear';
   return verdict.detected ? 'detected' : 'clear';
@@ -790,10 +888,7 @@ async function sampleShadow(input: ShadowSampleInput) {
       scannedAt: new Date(row.updatedAt).toISOString(),
       triggered: row.triggeredLabels.includes(input.label),
       verdict: verdictSummary(verdict),
-      reason:
-        verdict && 'matched' in verdict
-          ? verdict.matched.map((m) => `[${m.ruleId}] ${m.reason}`).join(' | ') || null
-          : verdict?.reason ?? null,
+      reason: verdict?.reason ?? null,
       declared: (subject?.declared ?? null) as TextScanDeclared | null,
       promptIds: row.result.promptIds,
       model: row.result.model,
@@ -807,7 +902,6 @@ async function sampleShadow(input: ShadowSampleInput) {
               promptIds: row.result.promptIds,
               model: row.result.model,
               thinking: config.thinking,
-              rulesFingerprint: row.result.modelRules?.fingerprint,
               segmentBudget: config,
             }) !== row.contentHash,
     };
@@ -1029,6 +1123,30 @@ export async function runTextScanHarnessAction(
         kind: 'json',
         body: { ...summarizeScans(input.entityType, results), ...hoistSharedPrompt(results) },
       };
+    }
+
+    case 'literalModelRules': {
+      const rules = applyModelRuleOverrides(await getEnabledModelRules(), input.ruleOverrides);
+      return {
+        kind: 'json',
+        body: {
+          rules: rules.map(({ id, subject }) => ({ id, subject })),
+          results: input.texts.map(({ key, fields }) => ({
+            key,
+            matches: findLiteralMatchesInSubject(freeTextSubject(fields), rules),
+          })),
+        },
+      };
+    }
+
+    case 'suggestModelRuleAliases': {
+      const { action: _action, ...rule } = input;
+      return { kind: 'json', body: await suggestAliases(rule) };
+    }
+
+    case 'aliasSuggestionResult': {
+      const { action: _action, ...lookup } = input;
+      return { kind: 'json', body: await aliasSuggestionResult(lookup) };
     }
 
     case 'quoteTexts': {

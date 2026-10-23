@@ -1,31 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RulesService from '$lib/server/model-rules.service';
-import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/cache', () => ({ bustKeyBestEffort: vi.fn(async () => true) }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
-vi.mock('$lib/server/civitai-url', () => ({ civitaiLinkUrl: () => 'https://civitai.com' }));
 const axiom = vi.hoisted(() => ({ logAxiomError: vi.fn() }));
 vi.mock('$lib/server/axiom', () => axiom);
 
-const harness = vi.hoisted(() => ({
-  getPrompts: vi.fn(),
-  putPrompt: vi.fn(),
-  scanTexts: vi.fn(),
-  composeEntities: vi.fn(),
-}));
-vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
-  ...(await importOriginal<typeof HarnessClient>()),
-  ...harness,
-}));
+const tryRun = vi.hoisted(() => vi.fn());
+vi.mock('../literal-try.server', () => ({ runLiteralTry: tryRun }));
 const service = vi.hoisted(() => ({
   createModelRule: vi.fn(),
   updateModelRule: vi.fn(),
   setModelRuleEnabled: vi.fn(),
   restoreModelRuleVersion: vi.fn(),
   listModelRules: vi.fn(),
+  countNotSubjectDismissalsByRule: vi.fn(),
 }));
+const suggest = vi.hoisted(() => ({
+  runSuggestAliases: vi.fn(),
+  runAliasSuggestionResult: vi.fn(),
+}));
+vi.mock('../suggest-aliases.server', () => suggest);
 vi.mock('$lib/server/model-rules.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RulesService>()),
   ...service,
@@ -56,32 +52,27 @@ const post = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  service.countNotSubjectDismissalsByRule.mockResolvedValue({});
 });
 
 describe('permissions', () => {
-  it.each(['save', 'saveAll', 'toggle', 'restoreRule', 'savePolicy', 'restorePolicy'] as const)(
+  it.each([
+    'save',
+    'saveAll',
+    'toggle',
+    'restoreRule',
+    'suggestAliases',
+    'aliasSuggestionResult',
+  ] as const)(
     '%s returns 403 without textScan.modelRules.edit, even with the prompt publish permission',
     async (action) => {
       expect(await post(action, {}, { 'textScan.prompt.publish': true })).toMatchObject({
         status: 403,
       });
-      for (const fn of [...Object.values(service), harness.putPrompt])
+      for (const fn of [...Object.values(service), ...Object.values(suggest)])
         expect(fn).not.toHaveBeenCalled();
     }
   );
-});
-
-describe('savePolicy', () => {
-  it('saves the Model rules policy whatever key the form names', async () => {
-    harness.putPrompt.mockResolvedValue({ id: 9, key: 'label:modelRules' });
-    expect(await post('savePolicy', { key: 'base', content: 'POLICY', baseId: '5' })).toEqual({
-      saved: { key: 'label:modelRules', id: 9 },
-    });
-    expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('label:modelRules', 'POLICY', {
-      note: undefined,
-      baseId: 5,
-    });
-  });
 });
 
 describe('save', () => {
@@ -150,6 +141,29 @@ describe('saveAll', () => {
   });
 });
 
+describe('saveAll as the alias approval path', () => {
+  it('appends to each rule against its saved version and reports a stale rule by id', async () => {
+    service.updateModelRule
+      .mockResolvedValueOnce({ cacheStale: false })
+      .mockRejectedValueOnce(new ModelRuleStaleError());
+    const base = { subject: 'Example', description: '', note: '', baseUpdatedAt: 't1' };
+    const rules = [
+      { ...base, draftId: 3, id: 3, aliases: 'Old\nNew' },
+      { ...base, draftId: 4, id: 4, aliases: 'Other' },
+    ];
+    expect(await post('saveAll', { rules: JSON.stringify(rules) })).toMatchObject({
+      status: 422,
+      data: { saved: [{ draftId: 3, id: 3 }], failed: [{ draftId: 4 }] },
+    });
+    expect(service.updateModelRule).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ aliases: ['Old', 'New'] }),
+      1,
+      { baseUpdatedAt: 't1' }
+    );
+  });
+});
+
 describe('restoreRule', () => {
   it('refuses a restore that would change nothing', async () => {
     service.restoreModelRuleVersion.mockRejectedValue(new RestoreRefusedError('same'));
@@ -176,10 +190,10 @@ describe('restoreRule messages', () => {
 });
 
 describe('try', () => {
-  it('always judges as Model rules, with only the page grant', async () => {
-    harness.scanTexts.mockResolvedValue({ results: [], system: null, rules: null });
-    await post('try', { input: 'some model text', judgeAs: 'CommentV2' }, {});
-    expect(harness.scanTexts.mock.calls[0][0]).toBe('ModelRules');
+  it('runs the literal try with only the page grant', async () => {
+    tryRun.mockResolvedValue({ tried: true });
+    expect(await post('try', { input: 'some model text' }, {})).toEqual({ tried: true });
+    expect(tryRun).toHaveBeenCalledOnce();
   });
 });
 
@@ -241,18 +255,67 @@ describe('toggle', () => {
   });
 });
 
+describe('suggestAliases', () => {
+  it('hands the form to the suggester for a moderator who can edit rules', async () => {
+    suggest.runSuggestAliases.mockResolvedValue({
+      suggested: true,
+      status: 'done',
+      suggestions: [],
+    });
+    expect(await post('suggestAliases', { subject: 'Example' })).toEqual({
+      suggested: true,
+      status: 'done',
+      suggestions: [],
+    });
+    expect(suggest.runSuggestAliases).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a poll to the result reader', async () => {
+    suggest.runAliasSuggestionResult.mockResolvedValue({ suggested: true, status: 'pending' });
+    expect(
+      await post('aliasSuggestionResult', { workflowId: 'wf_0123456789', subject: 'Example' })
+    ).toEqual({
+      suggested: true,
+      status: 'pending',
+    });
+    expect(suggest.runAliasSuggestionResult).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('load', () => {
-  it('still lists the rules when the policy prompt cannot load', async () => {
-    const rule = { id: 3, subject: 'Example' };
-    service.listModelRules.mockResolvedValue([rule]);
-    harness.getPrompts.mockRejectedValue(new Error('down'));
+  it('returns the not-this-subject dismissal counts by rule', async () => {
+    service.listModelRules.mockResolvedValue([]);
+    service.countNotSubjectDismissalsByRule.mockResolvedValue({ 3: 2 });
     const data = (await load({
       url: new URL('http://x/text-scan/model-rules'),
     } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
-    expect(data).toMatchObject({
-      rules: [rule],
-      policy: { ok: false, error: 'Could not load the policy prompt: unexpected error' },
-      authors: {},
-    });
+    expect(data.dismissals).toEqual({ 3: 2 });
+  });
+
+  it('still lists the rules when the dismissal counts fail', async () => {
+    service.listModelRules.mockResolvedValue([{ id: 3 }]);
+    service.countNotSubjectDismissalsByRule.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data).toMatchObject({ rules: [{ id: 3 }], dismissals: {} });
+  });
+
+  it('lists the rules with the filters from the url', async () => {
+    const rule = { id: 3, subject: 'Example' };
+    service.listModelRules.mockResolvedValue([rule]);
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules?q=ex&status=disabled'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data).toMatchObject({ rules: [rule], query: { q: 'ex', status: 'disabled' } });
+  });
+
+  it('falls back to all rules for an unknown status', async () => {
+    service.listModelRules.mockResolvedValue([]);
+    const data = (await load({
+      url: new URL('http://x/text-scan/model-rules?status=nope&tab=matches'),
+    } as unknown as Parameters<typeof load>[0])) as Record<string, unknown>;
+    expect(data.query).toEqual({ q: '', status: 'all' });
   });
 });

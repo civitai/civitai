@@ -250,6 +250,7 @@ export type ModEndpoint =
   | 'strike/void'
   | 'text-scan'
   | 'text-scan/csam-hold/resolve'
+  | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
