@@ -55,7 +55,7 @@ import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils
 import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
-  LegalHoldError,
+  LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { imagesSearchIndex } from '~/server/search-index';
@@ -411,18 +411,34 @@ describe('purgeHoldGuard on the delete', () => {
           return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
         }) as never);
 
-      routeToPostgres();
-      await expect(assertOwnersNotUnderLegalHold([PLAIN_USER, MANUAL_USER])).rejects.toBeInstanceOf(
-        LegalHoldError
-      );
-      routeToPostgres();
-      await expect(assertOwnersNotUnderLegalHold([PLACEHOLDER_OWNER])).rejects.toBeInstanceOf(
-        LegalHoldError
-      );
+      // Held, as opposed to unreadable, which is a subclass of the same error.
+      const held = { name: 'LegalHoldError' };
+
       routeToPostgres();
       await expect(
-        assertOwnersNotUnderLegalHold([PLAIN_USER, RELEASED_USER])
+        assertOwnersNotUnderLegalHold([LONG_CLOSED_USER, MANUAL_USER])
+      ).rejects.toMatchObject(held);
+      routeToPostgres();
+      await expect(assertOwnersNotUnderLegalHold([PLACEHOLDER_OWNER])).rejects.toMatchObject(held);
+      // An account leg: PLAIN_USER is on no report but has an image under CSAM review.
+      routeToPostgres();
+      await expect(assertOwnersNotUnderLegalHold([PLAIN_USER])).rejects.toMatchObject(held);
+      // The control.
+      routeToPostgres();
+      await expect(
+        assertOwnersNotUnderLegalHold([LONG_CLOSED_USER, RELEASED_USER])
       ).resolves.toBeUndefined();
+    });
+
+    it('refuses an owner change when the hold cannot be read', async () => {
+      // Unrouted, the query answers no rows.
+      await expect(assertOwnersNotUnderLegalHold([LONG_CLOSED_USER])).rejects.toBeInstanceOf(
+        LegalHoldUnconfirmedError
+      );
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockRejectedValueOnce(new Error('db down'));
+      await expect(assertOwnersNotUnderLegalHold([LONG_CLOSED_USER])).rejects.toBeInstanceOf(
+        LegalHoldUnconfirmedError
+      );
     });
   });
 
@@ -735,6 +751,7 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     it.each([
+      ['its id', `id = 999999`],
       ['its owner', `"userId" = 999`],
       ['its report', `"csamReportId" = 999`],
       ['its role', `role = 'secondary'`],
@@ -758,11 +775,51 @@ describe('purgeHoldGuard on the delete', () => {
       ).rejects.toThrow(/only with a new one/);
     });
 
-    it('refuses release columns without the release itself', async () => {
-      const id = await holdIdOf(MANUAL_USER);
+    it.each([`"releaseReason" = 'r'`, `"releasedById" = 1`])(
+      'refuses release columns without the release itself (%s)',
+      async (set) => {
+        const id = await holdIdOf(MANUAL_USER);
+        await expect(
+          holder.db.exec(`UPDATE "EvidenceHold" SET ${set} WHERE id = ${id}`)
+        ).rejects.toThrow(/only with "releasedAt"/);
+      }
+    );
+
+    it('refuses a new hold row that carries release columns but no release', async () => {
       await expect(
-        holder.db.exec(`UPDATE "EvidenceHold" SET "releaseReason" = 'r' WHERE id = ${id}`)
-      ).rejects.toThrow(/only with "releasedAt"/);
+        holder.db.exec(`
+          INSERT INTO "EvidenceHold" ("userId", role, reason, "releaseReason")
+          VALUES (${PLAIN_USER}, 'manual', 'review', 'r')
+        `)
+      ).rejects.toThrow(/release_whole_check/);
+    });
+
+    it('refuses to clear an extension, even once the end has moved past it', async () => {
+      const id = await holdIdOf(EXTENDED_USER);
+      await holder.db.exec(
+        `UPDATE "EvidenceHold" SET "releaseAt" = now() + interval '2 years' WHERE id = ${id}`
+      );
+      await expect(
+        holder.db.exec(`
+          UPDATE "EvidenceHold" SET "extendedUntil" = NULL, "extensionRequestedBy" = NULL,
+            "extensionReference" = NULL
+          WHERE id = ${id}
+        `)
+      ).rejects.toThrow(/cannot clear its extension/);
+    });
+
+    it.each([
+      ['who asked', `"extensionRequestedBy" = ' '`],
+      ['the reference', `"extensionReference" = ' '`],
+    ])('refuses an extension with a blank %s', async (_name, blank) => {
+      const id = await holdIdOf(RECENT_REPORT_USER);
+      await expect(
+        holder.db.exec(`
+          UPDATE "EvidenceHold" SET "extendedUntil" = now() + interval '2 years',
+            "extensionRequestedBy" = 'a', "extensionReference" = 'r', ${blank}
+          WHERE id = ${id}
+        `)
+      ).rejects.toThrow(/extension_logged_check/);
     });
 
     // The control for the end check: an edit that keeps the same end goes through.
@@ -824,6 +881,7 @@ describe('purgeHoldGuard on the delete', () => {
     it.each([
       ['its end', `"releaseAt" = now() - interval '1 day'`, RECENT_REPORT_USER],
       ['its extension', `"extendedUntil" = now() + interval '3 years'`, EXTENDED_USER],
+      ['who asked for its extension', `"extensionRequestedBy" = 'x'`, EXTENDED_USER],
     ])('refuses a release that also moves %s', async (_name, set, userId) => {
       const id = await holdIdOf(userId);
       await expect(
@@ -1127,7 +1185,8 @@ describe('the migration functions', () => {
          FROM pg_proc WHERE proname LIKE 'evidence_hold%' ORDER BY proname`
       )
     ).rows;
-    expect(rows.length).toBeGreaterThan(0);
+    // Every function the migration creates, so one added later is counted here too.
+    expect(rows).toHaveLength(9);
     expect(rows.filter((r) => !r.pinned)).toEqual([]);
   });
 });

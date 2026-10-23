@@ -26,6 +26,9 @@ CREATE TABLE "EvidenceHold" (
   CONSTRAINT "EvidenceHold_release_logged_check" CHECK (
     "releasedAt" IS NULL OR ("releasedById" IS NOT NULL AND btrim(COALESCE("releaseReason", '')) <> '')
   ),
+  CONSTRAINT "EvidenceHold_release_whole_check" CHECK (
+    "releasedAt" IS NOT NULL OR ("releasedById" IS NULL AND "releaseReason" IS NULL)
+  ),
   -- An extension records who asked for it and their reference.
   CONSTRAINT "EvidenceHold_extension_logged_check" CHECK (
     "extendedUntil" IS NULL OR (
@@ -170,7 +173,8 @@ FOR EACH ROW EXECUTE FUNCTION evidence_hold_keep_owner();
 
 -- A hold only ends by date or by a recorded release, and its row is a record that stays: it is never
 -- deleted and a released row never changes. While unreleased, only its end and its extension change,
--- and the end only stays or moves later; an extension's who and reference change only with a new end.
+-- and the end only stays or moves later; an extension is never cleared, and its who and reference
+-- change only with a changed "extendedUntil".
 -- A release sets only the release columns, stamped now.
 CREATE OR REPLACE FUNCTION evidence_hold_guard_end() RETURNS trigger AS $$
 DECLARE
@@ -202,6 +206,9 @@ BEGIN
   END IF;
   IF NEW."releasedById" IS NOT NULL OR NEW."releaseReason" IS NOT NULL THEN
     RAISE EXCEPTION 'EvidenceHold % is released only with "releasedAt"', OLD."id";
+  END IF;
+  IF OLD."extendedUntil" IS NOT NULL AND NEW."extendedUntil" IS NULL THEN
+    RAISE EXCEPTION 'EvidenceHold % cannot clear its extension', OLD."id";
   END IF;
   IF NEW."extendedUntil" IS NOT DISTINCT FROM OLD."extendedUntil"
     AND (NEW."extensionRequestedBy", NEW."extensionReference")

@@ -6312,8 +6312,7 @@ export async function transferModelOwnership({
     throw throwBadRequestError('One or more models already belong to the target user');
 
   // Every hold is keyed on the owner, so moving a held owner's models, posts and images to another
-  // account would take them out of it. The database refuses those moves too; this is the legible
-  // refusal.
+  // account would take them out of it. For a marker-held owner the database refuses the moves too.
   await assertOwnersNotUnderLegalHold(sourceUserIds).catch((e: unknown) => {
     if (e instanceof LegalHoldError)
       throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });

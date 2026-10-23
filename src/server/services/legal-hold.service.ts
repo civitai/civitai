@@ -210,15 +210,25 @@ export async function assertAccountNotUnderLegalHold(
 }
 
 /**
- * The owner-level hold the purge jobs read (`userUnderLegalHoldSql`), for moving content between
- * owners. Throws `LegalHoldError` when any of `userIds` is held, `LegalHoldUnconfirmedError` when that
- * cannot be read.
+ * For moving content between owners: the hold the purge jobs read (`userUnderLegalHoldSql`, which
+ * includes the placeholder owner) and every account hold, whose image legs follow the images moved.
+ * Throws `LegalHoldError` when any of `userIds` is held, `LegalHoldUnconfirmedError` when that cannot
+ * be read. Names the marker view, so it needs its migration.
  */
 export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
+  const owner = Prisma.raw('o."userId"');
   const rows = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
-    SELECT o."userId", ${userUnderLegalHoldSql(Prisma.raw('o."userId"'))} AS held
+    SELECT o."userId", (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)}) AS held
     FROM unnest(${userIds}::int[]) AS o("userId")
-  `.catch(() => null);
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+    return null;
+  });
   if (!rows || rows.length !== userIds.length) throw new LegalHoldUnconfirmedError();
   const held = rows.filter((r) => r.held !== false).map((r) => r.userId);
   if (!held.length) return;
