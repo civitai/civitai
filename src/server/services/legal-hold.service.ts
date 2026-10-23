@@ -131,6 +131,14 @@ export async function holdMarkerViewExists(): Promise<boolean> {
   return row?.present === true;
 }
 
+/** Whether the marker table exists. Without its view, `accountHoldSql` holds every account. */
+export async function holdMarkerTableExists(): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS present
+  `;
+  return row?.present === true;
+}
+
 /**
  * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
  * goes no further than here. An author with no hold of their own had a row kept for a held reply
