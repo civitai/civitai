@@ -21,6 +21,8 @@ import { CollectionUploadSettingsWrapper } from '~/components/Collections/compon
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import { StorylineCreateBanner } from '~/components/Storyline/editor/StorylineCreateBanner';
+import { STORYLINES_URL } from '~/components/Storyline/storyline-routes';
 import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
 import {
   EditUserResourceReviewV2,
@@ -58,6 +60,7 @@ export default Page(
       modelId,
       modelVersionId,
       model3dId,
+      storyline: storylineId,
       tag: tagId,
       video: postingVideo,
       reviewing,
@@ -99,6 +102,7 @@ export default Page(
       : '/';
 
     if (model3dId) backButtonUrl = `/3d-models/${model3dId}`;
+    if (storylineId) backButtonUrl = STORYLINES_URL;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (collectionIds?.length)
       backButtonUrl =
@@ -131,6 +135,8 @@ export default Page(
               <Title>
                 {displayReview
                   ? 'Create a Review'
+                  : storylineId
+                  ? 'Write Chapter 1'
                   : (collectionIdsAggregate?.length ?? 0) > 0
                   ? 'Submit Entry'
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
@@ -160,6 +166,7 @@ export default Page(
             </Group>
           )}
           {model3dId && <PostingToModel3DCard model3dId={model3dId} />}
+          {storylineId && <StorylineCreateBanner storylineId={storylineId} />}
           {versions && !reviewing && (
             <Select
               description="Select a resource to ensure that all uploaded images receive correct resource attribution"

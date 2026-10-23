@@ -44,7 +44,7 @@ vi.mock('~/utils/trpc', () => ({
   // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because
   // `vi.mock` replaces the module wholesale, the factory MUST re-declare that named
   // export or the ESM link fails ("does not provide an export named …") and the whole
-  // test file fails to import — silently, since this suite is report-only.
+  // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both

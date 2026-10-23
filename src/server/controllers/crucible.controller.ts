@@ -375,6 +375,7 @@ export const getUserActiveCruciblesHandler = async ({ ctx }: { ctx: ProtectedCon
   return getUserActiveCrucibles({
     userId: ctx.user.id,
     blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
+    site: { isGreen: !!ctx.features?.isGreen, isModerator: !!ctx.user.isModerator },
   });
 };
 

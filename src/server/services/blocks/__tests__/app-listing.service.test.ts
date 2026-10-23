@@ -477,6 +477,10 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'coverUrl',
         'creator',
         'description',
+        // Fork opt-in + provenance. `forkOf` is viewer-scoped: the parent's name/slug are
+        // present only when this viewer may open the parent (see `ListingDetail.forkOf`).
+        'forkOf',
+        'forkable',
         'iconUrl',
         'id',
         // 🔴 The two fields added for the store-detail header. Both are in the
@@ -595,9 +599,8 @@ describe('projectListingDetail — public allowlist + gallery', () => {
    * PRE-LAUNCH PERMISSION DISCLOSURE (`ListingDetail.scopes`).
    *
    * 🔴 THE GATING HALF of this change. The sibling browser test renders the section,
-   * but the `component` project is report-only in CI and cannot block a merge; these
-   * assertions run in the blocking node project and are what actually hold the
-   * source-of-truth decision in place.
+   * and these assertions, in the node project, hold the source-of-truth decision in
+   * place.
    *
    * 🔴 The claim is about WHICH COLUMN feeds the disclosure, not merely that a
    * `scopes` key exists. `hydratedRow`'s `approvedScopes` and `manifest.scopes` are

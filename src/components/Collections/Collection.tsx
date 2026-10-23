@@ -40,7 +40,11 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  BrowsingLevelProvider,
+  useBrowsingLevelContext,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { viewerCollectionCap } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { Model3DsInfinite } from '~/components/Model3D/Infinite/Model3DsInfinite';
 import {
   contestCollectionReactionsHidden,
@@ -518,6 +522,7 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -649,26 +654,30 @@ export function Collection({
 
   if (!collection) return null;
 
+  const bypassRating =
+    permissions?.manage ||
+    currentUser?.id === collection.user.id ||
+    (currentUser?.isModerator ?? false);
+  const collectionCap = viewerCollectionCap(
+    collection.metadata.forcedBrowsingLevel,
+    userBrowsingLevel,
+    bypassRating
+  );
+
   return (
     /* 🔴 `forcedBrowsingLevel`, not `browsingLevel`. This is a policy ceiling —
-       the same value `Gated` below treats as a gate, bypassed only for mods and
-       owners — and the override slot it used to sit in is one any component may
+       the collection's level, which `Gated` below treats as a gate, bypassed only
+       for mods and owners — and the override slot it used to sit in is one any component may
        decline to read. `useViewerBrowsingLevelDebounced` does exactly that by
        design, so as an override this cap silently stopped applying to the remix
        gallery and to avatars. Caps are intersected by the provider, so this
        cannot lift the domain cap either. */
-    <BrowsingLevelProvider
-      forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider forcedBrowsingLevel={collectionCap}>
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
           nsfw={collection.nsfw ?? undefined}
-          bypassRating={
-            permissions?.manage ||
-            currentUser?.id === collection.user.id ||
-            (currentUser?.isModerator ?? false)
-          }
+          bypassRating={bypassRating}
           suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${

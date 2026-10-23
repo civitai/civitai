@@ -76,14 +76,18 @@ describe('prize pool surfaces', () => {
           freeEntriesPerUser: 1,
           seededPrizePool: 500,
           endAt: new Date(Date.now() + 60_000),
-          image: null,
+          ingestion: 'Scanned',
+          image: { url: null, ingestion: 'Scanned' },
           _count: { entries: 3 },
         },
       },
     ]);
     groupBy.mockResolvedValue([{ crucibleId: 1, _count: { _all: 2 } }]);
 
-    const [active] = await getUserActiveCrucibles({ userId: 7 });
+    const [active] = await getUserActiveCrucibles({
+      userId: 7,
+      site: { isGreen: false, isModerator: false },
+    });
 
     expect(active.prizePool).toBe(700);
   });

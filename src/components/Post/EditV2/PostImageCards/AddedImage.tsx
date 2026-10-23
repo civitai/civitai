@@ -65,6 +65,7 @@ import {
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import {
   DEFAULT_EDGE_IMAGE_WIDTH,
@@ -393,6 +394,9 @@ function Preview() {
   return (
     <div className="flex flex-col">
       <PostImage />
+      <div className="p-3 empty:hidden">
+        <StorylineCaption />
+      </div>
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
@@ -785,6 +789,7 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
                   this narrow column is the one on the RIGHT. Renders nothing
                   without remix provenance, which is the ordinary case. */}
@@ -1271,6 +1276,13 @@ function EditDetail() {
       </div>
     </div>
   );
+}
+
+function StorylineCaption() {
+  const { image } = useAddedImageContext();
+  const post = usePostEditStore((state) => state.post);
+  if (!post) return null;
+  return <StorylineCaptionSlot post={post} image={image} />;
 }
 
 function PostImage() {

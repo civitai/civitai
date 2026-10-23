@@ -22,6 +22,7 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
 import {
   DIRECT_LIFT_APPEAL_NOTE,
@@ -248,12 +249,12 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
-const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
+export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
 
 /**
  * Shared by every path that adds a chapter, so the rules cannot drift between them.
  */
-async function assertPostCanBeChapter(
+export async function assertPostCanBeChapter(
   db: Db,
   {
     postId,
@@ -467,7 +468,7 @@ export async function isOpenStorylineChapter(postId: number, placerId: number) {
   );
 }
 
-const isUniqueViolation = (error: unknown) =>
+export const isUniqueViolation = (error: unknown) =>
   typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
 
 /**
@@ -576,6 +577,36 @@ export async function getPendingChapterForPost({
 }
 
 /**
+ * Unlinks a draft from the storyline it was started from; the post stays an ordinary draft. Only
+ * its author, and only while unpublished: once published, the link is publish's to resolve.
+ */
+export async function removePendingChapter({ postId, userId }: { postId: number; userId: number }) {
+  const link = await dbWrite.storylinePendingChapter.findUnique({
+    where: { postId },
+    select: { userId: true, post: { select: { userId: true, publishedAt: true } } },
+  });
+  if (!link) return { removed: false };
+  if (link.userId !== userId || link.post.userId !== userId)
+    throw throwAuthorizationError('Only the author of this draft can remove it from the storyline');
+  if (link.post.publishedAt) throw throwBadRequestError('This post is already published');
+  // Conditional, so a publish that lands between the read and here keeps its link.
+  const { count } = await dbWrite.storylinePendingChapter.deleteMany({
+    where: { postId, userId, post: { userId, publishedAt: null } },
+  });
+  return { removed: count > 0 };
+}
+
+/** Chapter 1's row, once `assertPostCanBeChapter` has passed the post. */
+export const createRootChapter = (
+  db: Db,
+  { storylineId, postId, userId }: { storylineId: number; postId: number; userId: number }
+) =>
+  db.storylineChapter.create({
+    data: { storylineId, postId, userId, depth: 0 },
+    select: { id: true },
+  });
+
+/**
  * Without `postId` the storyline starts empty: its chapter 1 is a post written afterwards (see
  * `linkPendingChapter`), and until that is written only its owner and moderators see it.
  */
@@ -612,10 +643,7 @@ export async function createStoryline({
         select: { id: true },
       });
       const root = postId
-        ? await tx.storylineChapter.create({
-            data: { storylineId: storyline.id, postId, userId, depth: 0 },
-            select: { id: true },
-          })
+        ? await createRootChapter(tx, { storylineId: storyline.id, postId, userId })
         : null;
       // Checked once chapter 1 exists, by the same rule as later picks: at this point that means
       // an image of the post the storyline starts from, and with no post any pick is refused.
@@ -997,53 +1025,57 @@ async function assertCeilingKeepsFirstChapter(storylineId: number, maxNsfwLevel:
  * keep, because the post is gone, taken down, not yet rated or rated Blocked. Shared by the floor
  * and the owner's settings read, so the two cannot disagree.
  */
-function firstChapterFloor(post: { nsfwLevel: number; tosViolation: boolean } | null | undefined) {
+export function firstChapterFloor(
+  post: { nsfwLevel: number; tosViolation: boolean } | null | undefined
+) {
   if (!post || post.tosViolation || !post.nsfwLevel) return null;
   const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
   return highest === NsfwLevel.Blocked ? null : highest;
 }
 
 /** The owner continuing their own story directly; everyone else continues through a placement. */
-export async function addOwnerChapter({
-  parentChapterId,
-  postId,
-  userId,
-}: {
+export async function addOwnerChapter(input: {
   parentChapterId: number;
   postId: number;
   userId: number;
 }) {
-  return dbWrite.$transaction(async (tx) => {
-    const parent = await tx.storylineChapter.findUnique({
-      where: { id: parentChapterId },
-      select: {
-        id: true,
-        storylineId: true,
-        depth: true,
-        removedAt: true,
-        storyline: {
-          select: { userId: true, maxNsfwLevel: true, minorByScan: true, tosViolation: true },
-        },
-      },
-    });
-    if (!parent) throw throwNotFoundError('Chapter not found');
-    if (parent.storyline.userId !== userId) throw throwAuthorizationError();
-    if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-    if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
+  return dbWrite.$transaction((tx) => writeOwnerChapter(tx, input));
+}
 
-    await assertPostCanBeChapter(tx, {
-      postId,
-      authorId: userId,
-      maxNsfwLevel: storylineCeiling(parent.storyline),
-    });
-    const chapterId = await insertChildChapter(tx, {
-      parent,
-      ownerId: parent.storyline.userId,
-      postId,
-      authorId: userId,
-    });
-    return { chapterId };
+/** `addOwnerChapter` inside the caller's transaction. */
+export async function writeOwnerChapter(
+  tx: Prisma.TransactionClient,
+  { parentChapterId, postId, userId }: { parentChapterId: number; postId: number; userId: number }
+) {
+  const parent = await tx.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: {
+      id: true,
+      storylineId: true,
+      depth: true,
+      removedAt: true,
+      storyline: {
+        select: { userId: true, maxNsfwLevel: true, minorByScan: true, tosViolation: true },
+      },
+    },
   });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  if (parent.storyline.userId !== userId) throw throwAuthorizationError();
+  if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+  if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
+
+  await assertPostCanBeChapter(tx, {
+    postId,
+    authorId: userId,
+    maxNsfwLevel: storylineCeiling(parent.storyline),
+  });
+  const chapterId = await insertChildChapter(tx, {
+    parent,
+    ownerId: parent.storyline.userId,
+    postId,
+    authorId: userId,
+  });
+  return { chapterId };
 }
 
 /**
@@ -1952,6 +1984,16 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   };
 }
 
+/** Throws NotFound unless this viewer could open the storyline's page. */
+export async function assertStorylineVisible(
+  storylineId: number,
+  viewer: Viewer,
+  browsingLevel: number
+) {
+  const { storyline } = await getStorylineForRead(storylineId, viewer, browsingLevel);
+  return { userId: storyline.userId, tosViolation: storyline.tosViolation };
+}
+
 /**
  * The reading path ending at `chapterId`, in order. A chapter this reader may not see is a
  * tombstone carrying the reason, never an error, so the chapters after it stay reachable.
@@ -2052,12 +2094,28 @@ export async function getStorylinePath({
     };
   });
 
+  const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
+  const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
+  const [routeChapters, captions] = await Promise.all([
+    withFirstImages(gate, onRoute(rows, chapters)),
+    (async () => {
+      if (!captionPostIds.length) return new Map<number, string>();
+      const { hiddenImageIds, hiddenTagIds } = await gate();
+      return getStorylineImageCaptions({
+        postIds: captionPostIds,
+        browsingLevel,
+        maxNsfwLevel: storyline.maxNsfwLevel,
+        viewerId: viewer?.id,
+        hiddenImageIds,
+        hiddenTagIds,
+      });
+    })(),
+  ]);
   return {
     storyline,
-    chapters: await withFirstImages(
-      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      onRoute(rows, chapters)
-    ),
+    chapters: routeChapters,
+    /** Caption text by image id. */
+    captions: Object.fromEntries(captions) as Record<number, string>,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
 }

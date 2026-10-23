@@ -1,5 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -48,6 +50,8 @@ const OLD_REPORT_NOT_ARCHIVED = 8;
 const OLD_AND_PENDING_REPORTS = 11;
 const MODEL_KEPT_AFTER_ACCOUNT_DELETION = 12; // the model now belongs to the placeholder owner
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_ON_REPORT
+const MARKER_HELD = 13; // no report; a hold marker set by a person
+const MARKER_RELEASED = 14; // no report; a hold marker that was released
 const OWNERS = [
   UNHELD,
   PENDING_REPORT,
@@ -59,8 +63,10 @@ const OWNERS = [
   OLD_REPORT_NOT_ARCHIVED,
   OLD_AND_PENDING_REPORTS,
   MODEL_KEPT_AFTER_ACCOUNT_DELETION,
+  MARKER_HELD,
+  MARKER_RELEASED,
 ];
-const ELIGIBLE = [UNHELD, SENT_OVER_A_YEAR_AGO, SENT_JUST_OVER_A_YEAR_AGO];
+const ELIGIBLE = [UNHELD, SENT_OVER_A_YEAR_AGO, SENT_JUST_OVER_A_YEAR_AGO, MARKER_RELEASED];
 const HELD = OWNERS.filter((owner) => !ELIGIBLE.includes(owner));
 
 const trainingFileUrl = (owner: number) => `https://example.invalid/training-${owner}`;
@@ -93,6 +99,25 @@ beforeAll(async () => {
       "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}'
     );
+    -- Only what the hold migration's triggers attach to.
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+  `);
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  // The report legs are pinned by the reports below on their own; the marker legs by these rows.
+  await holder.db.exec(`
+    ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
+    INSERT INTO "EvidenceHold" ("userId", role, reason, "releasedAt", "releasedById", "releaseReason") VALUES
+      (${MARKER_HELD}, 'manual', 'review', NULL, NULL, NULL),
+      (${MARKER_RELEASED}, 'manual', 'review', now(), 1, 'done');
   `);
 });
 

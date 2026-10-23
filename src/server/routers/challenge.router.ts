@@ -108,7 +108,9 @@ export const challengeRouter = router({
   getDaily: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getDailyChallenges()),
+    .query(({ ctx }) =>
+      getDailyChallenges({ isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })
+    ),
 
   // Current user's own challenges — entered or created — most-recent-activity first.
   getMyChallenges: protectedProcedure
@@ -344,14 +346,25 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
+    .query(({ ctx }) =>
+      getActiveEvents(
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Public: Get single event by ID
   getEventById: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ id: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEventById(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeEventById(
+        input.id,
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure

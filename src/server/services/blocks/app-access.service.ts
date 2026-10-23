@@ -13,6 +13,7 @@ import {
   readLastModerationAction,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { readListingForkable } from '~/server/services/blocks/app-fork.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
@@ -1050,6 +1051,10 @@ export type AppListingAuthoringContext = Omit<
    * that refusal remains authoritative.
    */
   visibilityAvailable: boolean;
+  /** The author's fork opt-in ("Let others fork this app's source"), off the PARENT listing. */
+  forkable: boolean;
+  /** `false` ⇒ the fork migration is not applied here; the setting must not be offered. */
+  forkableAvailable: boolean;
   /**
    * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
    *
@@ -1564,6 +1569,14 @@ export async function getAppListingAuthoringContext(opts: {
    * those would turn an outage into a silently wrong audience.
    */
   const visibilityRead = await readListingVisibility(access.seatListingId, dbRead);
+  /**
+   * The fork opt-in, for the Details tab's "Let others fork this app's source" setting. Keyed on
+   * the PARENT for the same reason the level is: the opt-in lives on the live listing only. Same
+   * offer-here/grant-there split — this only decides whether the box shows ticked, and whether it
+   * shows at all (`forkableAvailable: false` ⇒ the migration is not applied here, and the panel
+   * says so instead of offering a write the server would refuse). The write re-checks everything.
+   */
+  const forkRead = await readListingForkable(access.seatListingId, dbRead);
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
@@ -1580,6 +1593,8 @@ export async function getAppListingAuthoringContext(opts: {
     capabilities: capabilitiesForKind(access.kind),
     visibility: visibilityRead.visibility,
     visibilityAvailable: visibilityRead.available,
+    forkable: forkRead.forkable,
+    forkableAvailable: forkRead.available,
   };
 }
 

@@ -399,7 +399,7 @@ describe('StorylineEndOfChapter', () => {
     expect([
       container.querySelector('[data-testid="storyline-continue-closed"]'),
       container.querySelector('[data-testid="storyline-continue-with-post"]'),
-      !!container.querySelector('[data-testid="storyline-create-next"]'),
+      !!container.querySelector('[data-testid="storyline-write-next"]'),
     ]).toEqual([null, null, true]);
     document.body.innerHTML = '';
     expect(
@@ -408,21 +408,32 @@ describe('StorylineEndOfChapter', () => {
     ).toBe('Closed to new chapters');
   });
 
-  // The owner adds their own chapter through the picker, parented on the chapter they are at the
-  // end of.
+  // The owner adds a chapter they already made, or joins one that exists, through the picker,
+  // parented on the chapter they are at the end of.
   it('offers the owner the picker, parented on this chapter, and nobody else', () => {
     mocks.children = [];
     mocks.terms = { open: true, price: 0, closedReason: null };
-    const sel = '[data-testid="storyline-add-own-chapter"]';
+    const own = '[data-testid="storyline-add-own-chapter"]';
+    const join = '[data-testid="storyline-join-existing-chapter"]';
     const owned = render({ parentPostId: 15, isOwner: true });
-    const button = owned.querySelector<HTMLButtonElement>(sel);
-    expect(button?.textContent).toBe('Add the next chapter');
-    act(() => button?.click());
-    expect(mocks.openContinue.mock.calls).toEqual([[{ parentPostId: 15, parentChapterId: 4 }]]);
+    const useOwn = owned.querySelector<HTMLButtonElement>(own);
+    const rejoin = owned.querySelector<HTMLButtonElement>(join);
+    expect([useOwn?.textContent, rejoin?.textContent]).toEqual([
+      'or use a post you already made',
+      'Join an existing chapter',
+    ]);
+    act(() => useOwn?.click());
+    act(() => rejoin?.click());
+    expect(mocks.openContinue.mock.calls).toEqual([
+      [{ parentPostId: 15, parentChapterId: 4 }],
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join' }],
+    ]);
     document.body.innerHTML = '';
-    expect(render({ parentPostId: 15 }).querySelector(sel)).toBeNull();
+    const reader = render({ parentPostId: 15 });
+    expect([own, join].map((sel) => reader.querySelector(sel))).toEqual([null, null]);
     document.body.innerHTML = '';
-    expect(render({ isOwner: true }).querySelector(sel)).toBeNull();
+    const noPost = render({ isOwner: true });
+    expect([own, join].map((sel) => noPost.querySelector(sel))).toEqual([null, null]);
   });
 
   it('puts writing below every path, outside the cards', () => {
@@ -442,18 +453,87 @@ describe('StorylineEndOfChapter', () => {
     ]).toEqual([true, false]);
   });
 
-  it('records the click on Create the next section and opens the early access prompt', () => {
-    mocks.children = [];
-    const container = render();
-    expect(container.textContent).toContain('The story stops here, for now');
-    const button = [...container.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Create the next section')
-    );
-    act(() => button?.click());
-    expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 4 }]]);
-    expect(mocks.trigger).toHaveBeenCalledWith(
-      expect.objectContaining({ props: { chapterId: 4, storylineId: 9 } })
-    );
+  describe('writing the next chapter', () => {
+    const write = (c: HTMLElement) =>
+      c.querySelector<HTMLAnchorElement>('[data-testid="storyline-write-next"]');
+    const waitlist = (c: HTMLElement) =>
+      c.querySelector<HTMLButtonElement>('[data-testid="storyline-early-access-link"]');
+
+    beforeEach(() => {
+      mocks.children = [];
+      mocks.openContinue.mockClear();
+    });
+
+    // The end of chapter 4 (depth 3) writes chapter 5; `n` only labels the page.
+    it('leads with it, on the editor with the chapter it continues, and counts the click', () => {
+      mocks.terms = { open: true, price: 0, closedReason: null };
+      const container = render({ parentPostId: 15 });
+      const button = write(container);
+      expect(button?.textContent).toBe('Write the next chapter');
+      expect(button?.getAttribute('href')).toBe('/posts/create?continues=4&n=5');
+      expect(mocks.trackCreateClick).not.toHaveBeenCalled();
+      act(() => button?.click());
+      expect(mocks.trackCreateClick.mock.calls).toEqual([[{ chapterId: 4 }]]);
+      expect(mocks.trigger).not.toHaveBeenCalled();
+    });
+
+    it('says what it costs before the reader starts', () => {
+      mocks.terms = { open: true, price: 50, closedReason: null };
+      const container = render({ parentPostId: 15 });
+      expect(within(container, 'storyline-write-next-price')?.textContent).toBe(
+        '50 Buzz when you publish'
+      );
+      document.body.innerHTML = '';
+      mocks.terms = { open: true, price: 0, closedReason: null };
+      expect(within(render({ parentPostId: 15 }), 'storyline-write-next-price')?.textContent).toBe(
+        'Free to submit'
+      );
+    });
+
+    it('is not offered where the terms are closed to the reader, who is told so', () => {
+      mocks.terms = { open: false, price: 0, closedReason: 'collaboratorsOnly' };
+      const container = render({ parentPostId: 15 });
+      expect([
+        write(container),
+        within(container, 'storyline-continue-closed')?.textContent,
+        !!waitlist(container),
+      ]).toEqual([null, 'Collaborators only', true]);
+    });
+
+    it('waits for the terms before offering it, and needs a chapter with a post', () => {
+      mocks.terms = null;
+      expect(write(render({ parentPostId: 15 }))).toBeNull();
+      document.body.innerHTML = '';
+      mocks.terms = { open: true, price: 0, closedReason: null };
+      expect(write(render({}))).toBeNull();
+    });
+
+    // The terms answer the owner "closed" for their own storyline; that is not theirs to be refused.
+    it('is always offered to the storyline owner', () => {
+      mocks.terms = { open: false, price: 0, closedReason: 'closed' };
+      const container = render({ parentPostId: 15, isOwner: true });
+      expect(write(container)?.getAttribute('href')).toBe('/posts/create?continues=4&n=5');
+      expect(within(container, 'storyline-write-next-price')).toBeNull();
+    });
+
+    // A waitlist for a tool that is not built: it must not read as a way to write a chapter.
+    it('keeps the early access waitlist as a small link that says what it is, and opens it', () => {
+      mocks.terms = { open: true, price: 0, closedReason: null };
+      const container = render({ parentPostId: 15 });
+      expect(waitlist(container)?.textContent).toBe('Story tool coming soon · get early access');
+      expect(container.textContent).not.toContain('Create the next section');
+      act(() => waitlist(container)?.click());
+      expect(mocks.trigger).toHaveBeenCalledWith(
+        expect.objectContaining({ props: { chapterId: 4, storylineId: 9 } })
+      );
+      // Joining the list is not a click on writing a chapter.
+      expect(mocks.trackCreateClick).not.toHaveBeenCalled();
+    });
+
+    it('keeps the waitlist where there is nothing to write on', () => {
+      mocks.terms = null;
+      expect(!!waitlist(render({}))).toBe(true);
+    });
   });
 });
 
@@ -482,17 +562,12 @@ describe('StorylineContinueWithPost', () => {
     mocks.openContinue.mockClear();
   });
 
-  it('offers it free when the storyline is open at no price, and opens the flow for this chapter', () => {
-    mocks.terms = { open: true, price: 0, closedReason: null };
+  it('is a text link under the primary action that opens the flow for this chapter', () => {
+    mocks.terms = { open: true, price: 50, closedReason: null };
     const c = renderButton();
-    expect(button(c)?.textContent).toContain('Free');
+    expect(button(c)?.textContent).toBe('or use a post you already made');
     act(() => button(c)?.click());
     expect(mocks.openContinue).toHaveBeenCalledWith({ parentPostId: 15 });
-  });
-
-  it('shows the price when there is one', () => {
-    mocks.terms = { open: true, price: 50, closedReason: null };
-    expect(button(renderButton())?.textContent).toContain('50 Buzz');
   });
 
   it('has no button and says why when the storyline is closed', () => {

@@ -451,7 +451,7 @@ export function ImageDetail2() {
                           loop={!storyline.active}
                           {...navigation}
                         />
-                        <StorylineStageOverlay isLastImage={isLastImage} />
+                        <StorylineStageOverlay isLastImage={isLastImage} imageId={image?.id} />
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">

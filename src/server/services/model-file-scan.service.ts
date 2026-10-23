@@ -16,6 +16,7 @@ import {
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
+import { checkPoiHashOnScan } from '~/server/services/poi-hash.service';
 import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
@@ -290,6 +291,20 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
     ) {
       await checkMinorHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      (await isFlipt(FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG))
+    ) {
+      await checkPoiHashOnScan({
         fileId,
         modelId: scannedModelId,
         userId: scannedUserId,

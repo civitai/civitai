@@ -4,9 +4,7 @@
  * Pure, and separate from the component, for two reasons. It is the only place the
  * count cap and the size cap are applied, so having one function makes "the rules"
  * a single object rather than a predicate open-coded across handlers. And it lives
- * in the `unit` test project, which is the tier that actually gates — a rule pinned
- * only by a browser-mode component test rides on the PR preview pipeline, which is
- * report-only and skipped whenever the preview build fails.
+ * in the `unit` test project, which needs no browser.
  */
 export type AttachmentSelection = {
   /** In picked order, already trimmed to the remaining slots. */

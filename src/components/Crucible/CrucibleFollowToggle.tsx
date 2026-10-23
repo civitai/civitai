@@ -7,7 +7,7 @@ import {
 } from '~/components/Crucible/crucible.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CRUCIBLE_FOLLOWABLE_STATUSES } from '~/shared/constants/crucible.constants';
-import type { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 type Props = {
   crucible: { id: number; status: CrucibleStatus };
@@ -22,7 +22,11 @@ export function CrucibleFollowToggle({ crucible }: Props) {
   if (!currentUser || !followable) return null;
 
   const following = followedIds.has(crucible.id);
-  const label = following ? 'Unfollow this crucible' : 'Follow: notify me before this ends';
+  const label = following
+    ? 'Unfollow this crucible'
+    : crucible.status === CrucibleStatus.Pending
+    ? 'Follow: notify me when this starts and before it ends'
+    : 'Follow: notify me before this ends';
 
   return (
     <Tooltip label={label} withinPortal>
