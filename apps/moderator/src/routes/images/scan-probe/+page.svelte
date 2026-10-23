@@ -42,6 +42,10 @@
     and rejected wherever else it is used. A block also stops this tool until an admin resets it.
   </div>
 
+  {#if !data.enabled}
+    <p class="text-sm text-dark-2">Scanning is turned off. Past runs are below.</p>
+  {/if}
+
   {#if data.stopped === null}
     <ErrorAlert message="Could not load the probe's state." />
   {:else if stopped}
@@ -79,7 +83,7 @@
     </div>
   {/if}
 
-  {#if data.grants['image.scanProbe.run'] && data.stopped === false}
+  {#if data.enabled && data.grants['image.scanProbe.run'] && data.stopped === false}
     <form
       method="POST"
       action="?/run"
@@ -108,7 +112,7 @@
         {submitting ? 'Submitting…' : 'Run scan'}
       </Button>
     </form>
-  {:else if !data.grants['image.scanProbe.run']}
+  {:else if data.enabled && !data.grants['image.scanProbe.run']}
     <p class="text-sm text-dark-2">You do not hold the grant to run the probe.</p>
   {/if}
 

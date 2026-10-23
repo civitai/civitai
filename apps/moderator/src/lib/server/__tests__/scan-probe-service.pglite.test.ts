@@ -95,6 +95,7 @@ let probePg: PGlite;
 
 beforeAll(async () => {
   process.env.PUBLIC_IMAGE_LOCATION = 'https://image.example.test/acct';
+  process.env.SCAN_PROBE_ENABLED = 'true';
   [mainPg, probePg] = await Promise.all([freshPglite(), freshPglite()]);
   await mainPg.exec(MAIN_DDL);
   await probePg.exec(PROBE_DDL);
@@ -142,6 +143,41 @@ const rows = async () =>
 const finished = (status: string, output: Record<string, unknown>) => ({
   status,
   steps: [{ $type: 'imageScanning', output }],
+});
+
+// Decision: off by default. A hit acts on the real image, so scanning is enabled deliberately.
+describe('runProbe: the kill switch', () => {
+  it.each([
+    ['unset', undefined],
+    ['anything but "true"', '1'],
+  ])('submits nothing and writes nothing while it is %s', async (_label, value) => {
+    if (value === undefined) delete process.env.SCAN_PROBE_ENABLED;
+    else process.env.SCAN_PROBE_ENABLED = value;
+    try {
+      h.nextIds = ['0-wf-1'];
+      expect(await runProbe(MODERATOR, [777001])).toEqual({
+        ok: false,
+        reason: 'disabled',
+        refused: [],
+      });
+      expect(h.submits).toHaveLength(0);
+      expect(await rows()).toEqual([]);
+    } finally {
+      process.env.SCAN_PROBE_ENABLED = 'true';
+    }
+  });
+
+  it('still serves past runs while it is off', async () => {
+    await probePg.exec(
+      `INSERT INTO image_scan_probe_run (moderator_id, image_id, status) VALUES (${MODERATOR}, 1, 'pending')`
+    );
+    delete process.env.SCAN_PROBE_ENABLED;
+    try {
+      expect(await readProbe('1', MODERATOR)).toEqual({ state: 'pending' });
+    } finally {
+      process.env.SCAN_PROBE_ENABLED = 'true';
+    }
+  });
 });
 
 describe('runProbe: what reaches the orchestrator', () => {

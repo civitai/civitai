@@ -1,4 +1,5 @@
 import { getWorkflow, submitWorkflow, type Workflow } from '@civitai/orchestration-client';
+import { env } from '$env/dynamic/private';
 import { getModeratorDb } from '../moderator-db';
 import { getOrchestratorClient, isGoneStatus } from '../orchestrator';
 import type { ProbeResult } from '$lib/scan-probe';
@@ -28,6 +29,9 @@ import {
 
 const ORCHESTRATOR_TIMEOUT_MS = 15_000;
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
+
+/** 🔴 Off unless set to exactly `true`: a hit acts on the real image, so turning it on is a decision. */
+export const scanningEnabled = () => env.SCAN_PROBE_ENABLED === 'true';
 
 export const probeDb = (): ScanProbeDb =>
   getModeratorDb().withTables<ScanProbeTables>() as unknown as ScanProbeDb;
@@ -89,7 +93,11 @@ export type RunProbeResult =
   | { ok: true; submitted: number; failed: number; stopped: boolean; refused: number[] }
   | {
       ok: false;
-      reason: 'nothing-eligible' | ReserveRefusal | typeof UNRESOLVED_OUTCOME.wrongAccount;
+      reason:
+        | 'disabled'
+        | 'nothing-eligible'
+        | ReserveRefusal
+        | typeof UNRESOLVED_OUTCOME.wrongAccount;
       refused: number[];
     };
 
@@ -98,6 +106,7 @@ export type RunProbeResult =
  * image, and only then submits. A failed record throws before anything reaches the orchestrator.
  */
 export async function runProbe(moderatorId: number, imageIds: number[]): Promise<RunProbeResult> {
+  if (!scanningEnabled()) return { ok: false, reason: 'disabled', refused: [] };
   const db = probeDb();
   await reconcile(db);
   // After reconcile, which can take a while: eligibility is read as close to the submit as it can be.

@@ -16,13 +16,19 @@ const runProbe = vi.hoisted(() =>
 );
 const readProbe = vi.hoisted(() => vi.fn(async () => ({ state: 'pending' as const })));
 const resetBreaker = vi.hoisted(() => vi.fn(async () => 1));
+const enabled = vi.hoisted(() => ({ value: true }));
 const abandonInFlight = vi.hoisted(() => vi.fn(async () => 1));
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/scan-probe/service', () => ({ runProbe, readProbe, probeDb: () => ({}) }));
+vi.mock('$lib/server/scan-probe/service', () => ({
+  runProbe,
+  readProbe,
+  probeDb: () => ({}),
+  scanningEnabled: () => enabled.value,
+}));
 vi.mock('$lib/server/scan-probe/runs', () => ({
   recentOwnRuns: async () => [],
   trippedRuns: async () => [{ id: '9', imageId: 777009 }],
@@ -62,6 +68,7 @@ beforeEach(() => {
   readProbe.mockClear();
   resetBreaker.mockClear();
   abandonInFlight.mockClear();
+  enabled.value = true;
 });
 
 describe('load', () => {
@@ -83,6 +90,15 @@ describe('load', () => {
 });
 
 describe('run action', () => {
+  it('refuses while scanning is turned off, before reaching the probe', async () => {
+    enabled.value = false;
+    expect(await actions.run(runEvent(GRANT))).toMatchObject({
+      status: 409,
+      data: { error: 'Scanning is turned off.' },
+    });
+    expect(runProbe).not.toHaveBeenCalled();
+  });
+
   it('refuses without the grant and never reaches the probe', async () => {
     expect(await actions.run(runEvent({}))).toMatchObject({ status: 403 });
     expect(runProbe).not.toHaveBeenCalled();

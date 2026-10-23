@@ -10,7 +10,12 @@ import {
   resetBreaker,
   trippedRuns,
 } from '$lib/server/scan-probe/runs';
-import { probeDb, runProbe, type RunProbeResult } from '$lib/server/scan-probe/service';
+import {
+  probeDb,
+  runProbe,
+  scanningEnabled,
+  type RunProbeResult,
+} from '$lib/server/scan-probe/service';
 import { NOT_AVAILABLE, SCAN_PROBE_LIMITS } from '$lib/scan-probe';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -31,6 +36,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     tripped: admin ? tripped : null,
     inFlight: admin ? inFlight : null,
     canReset: admin,
+    enabled: scanningEnabled(),
     limits: SCAN_PROBE_LIMITS,
   };
 };
@@ -50,7 +56,10 @@ const runIdsSchema = z.object({
     .refine((ids) => ids.length > 0, 'No runs named.'),
 });
 
+const DISABLED = 'Scanning is turned off.';
+
 const REFUSAL: Record<Exclude<RunProbeResult, { ok: true }>['reason'], string> = {
+  disabled: DISABLED,
   'nothing-eligible': NOT_AVAILABLE,
   breaker: 'The probe is stopped after a blocked or failed scan. An admin must reset it first.',
   'in-flight': 'An earlier probe batch has not finished. Try again once its results are in.',
@@ -62,6 +71,7 @@ const REFUSAL: Record<Exclude<RunProbeResult, { ok: true }>['reason'], string> =
 
 export const actions: Actions = {
   run: requiresGrant('image.scanProbe.run', async ({ request, locals }) => {
+    if (!scanningEnabled()) return fail(409, { error: DISABLED });
     const input = parseForm(runSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
     const ids = parseIdPaste(input.ids, SCAN_PROBE_LIMITS.perRun);
