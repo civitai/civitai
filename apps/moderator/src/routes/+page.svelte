@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { SSR_PENDING } from '$lib/ssr-pending';
-  import { navCount, navHref } from '$lib/nav-links';
+  import { navBadge, navCount, navHref, navPartial, sectionTotal } from '$lib/nav-links';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import {
@@ -236,9 +236,11 @@
     label: string;
     informational?: boolean;
     count: number | null;
+    /** It, or a tab it sums, could not be counted: its number is a floor. */
+    partial: boolean;
     countKey?: string;
   };
-  type Section = { label: string; items: Item[]; total: number };
+  type Section = { label: string; items: Item[]; total: number; partial: boolean };
 
   const loading = $derived(counts.value === null);
 
@@ -272,6 +274,7 @@
         : link.countKey
           ? (counts.value?.[link.countKey] ?? null)
           : null,
+      partial: navPartial(link, (key) => counts.unavailable.includes(key)),
       countKey: link.countKey,
     });
     const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);
@@ -281,16 +284,12 @@
     for (const link of data.nav) {
       if (link.children) {
         const items = link.children.filter((c) => c.path && !c.external).map(toItem).sort(byCount);
-        grouped.push({
-          label: link.label,
-          items,
-          total: items.reduce((sum, i) => sum + (i.informational ? 0 : (i.count ?? 0)), 0),
-        });
+        grouped.push({ label: link.label, items, ...sectionTotal(items) });
       } else if (link.path && link.path !== '/') {
         loose.push(toItem(link));
       }
     }
-    if (loose.length) grouped.push({ label: 'Pages', items: loose, total: 0 });
+    if (loose.length) grouped.push({ label: 'Pages', items: loose, total: 0, partial: false });
     return grouped;
   });
 
@@ -300,6 +299,7 @@
     expanded[section.label] ? section.items : section.items.filter((i) => i.count !== 0);
 
   const format = (n: number) => n.toLocaleString();
+  const PARTIAL_TITLE = 'Some counts are unavailable';
 </script>
 
 <header class="page-header">
@@ -537,12 +537,16 @@
     {#each sections as section (section.label)}
       {@const items = visibleItems(section)}
       {@const quiet = quietCount(section)}
+      {@const sectionBadge = navBadge(section.total || null, section.partial, format)}
       <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <header class="mb-1 flex items-baseline justify-between gap-2">
           <h2 class="text-sm font-semibold text-white">{section.label}</h2>
-          {#if section.total > 0}
-            <span class="text-sm font-semibold tabular-nums text-blue-4">
-              {format(section.total)}
+          {#if sectionBadge}
+            <span
+              class="text-sm font-semibold tabular-nums text-blue-4"
+              title={sectionBadge.partial ? PARTIAL_TITLE : undefined}
+            >
+              {sectionBadge.text}
             </span>
           {/if}
         </header>
@@ -552,13 +556,14 @@
         {:else}
           <ul>
             {#each items as item (item.path)}
+              {@const itemBadge = navBadge(item.count, item.partial, format)}
               <li>
                 <a
                   href={item.path}
                   class="-mx-1 flex items-center justify-between gap-3 rounded px-1 py-1 text-sm hover:bg-dark-5"
                 >
                   <span class={item.count ? 'text-dark-0' : 'text-dark-2'}>{item.label}</span>
-                  {#if item.count !== null}
+                  {#if itemBadge}
                     <!-- Retool's threshold colouring. The scales are per-queue and not comparable —
                          2 comment reports is amber where 200 tags is still green — so a queue with no
                          standard renders plainly rather than borrowing another's. -->
@@ -566,7 +571,7 @@
                       class="tabular-nums {severity(item) ??
                         (item.count ? 'text-white' : 'text-dark-2')}"
                     >
-                      {format(item.count)}
+                      {itemBadge.text}
                     </span>
                   {/if}
                 </a>

@@ -59,10 +59,22 @@ export function navPartial(link: NavLink, isUnavailable: (key: string) => boolea
  *  it has none it could). Null when there is nothing to show. */
 export function navBadge(
   count: number | null,
-  partial: boolean
+  partial: boolean,
+  format: (n: number) => string = String
 ): { text: string; partial: boolean } | null {
-  if (partial) return { text: `${count ?? '?'}+`, partial };
-  return count === null ? null : { text: String(count), partial };
+  if (partial) return { text: `${count === null ? '?' : format(count)}+`, partial };
+  return count === null ? null : { text: format(count), partial };
+}
+
+/** A section's total over its non-informational rows, partial when one of those rows is. */
+export function sectionTotal(
+  items: { count: number | null; partial: boolean; informational?: boolean }[]
+): { total: number; partial: boolean } {
+  const counted = items.filter((i) => !i.informational);
+  return {
+    total: counted.reduce((sum, i) => sum + (i.count ?? 0), 0),
+    partial: counted.some((i) => i.partial),
+  };
 }
 
 export type SwitcherEntry = { label: string; href: string; external: boolean };

@@ -5,6 +5,7 @@ import {
   navCount,
   navHref,
   navPartial,
+  sectionTotal,
   switcherEntries,
 } from '$lib/nav-links';
 import {
@@ -179,6 +180,23 @@ describe('the Models section', () => {
     expect(navBadge(null, true)).toEqual({ text: '?+', partial: true });
     expect(navBadge(423, false)).toEqual({ text: '423', partial: false });
     expect(navBadge(null, false)).toBeNull();
+    expect(navBadge(1746, true, (n) => n.toLocaleString('en-US'))).toEqual({
+      text: '1,746+',
+      partial: true,
+    });
+  });
+
+  it('marks a dashboard section partial when a row it sums is, not when an informational one is', () => {
+    const row = (count: number | null, partial = false, informational = false) => ({
+      count,
+      partial,
+      informational,
+    });
+    expect(sectionTotal([row(400), row(23), row(null, true)])).toEqual({
+      total: 423,
+      partial: true,
+    });
+    expect(sectionTotal([row(400), row(7, true, true)])).toEqual({ total: 400, partial: false });
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
