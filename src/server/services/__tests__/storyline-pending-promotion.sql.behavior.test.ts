@@ -225,6 +225,9 @@ describe("the readiness pass's selection", () => {
       `UPDATE "User" SET meta = '{"emailVerificationRequired": true}' WHERE id = ${OWNER}`
     );
     expect(await selected()).toEqual([]);
+    // The marker stays once they verify: every verified new signup carries it.
+    await db.pg.exec(`UPDATE "User" SET "emailVerified" = now() WHERE id = ${OWNER}`);
+    expect(await selected()).toEqual([ready]);
   });
 
   it('leaves a link whose post another user wrote', async () => {
