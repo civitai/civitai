@@ -691,7 +691,7 @@ export const cancelSubscriptionWithFallback = async ({
       );
     }
 
-    await stripe.subscriptions.del(subscription.id);
+    await deleteStripeSubscription(stripe, subscription.id);
 
     // Optimistically delete the DB record so the UI reflects the cancellation
     // immediately rather than waiting for the webhook. The webhook handler
@@ -1266,6 +1266,49 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   }
 };
 
+/**
+ * Stripe refuses to delete an `incomplete` subscription while its first-payment Checkout Session
+ * is open (a declined first charge leaves it open for a retry). Only after that refusal, expire the
+ * subscription's open sessions and delete once more. An open session means nothing was collected,
+ * so a paid subscription is never touched: its del does not fail this way, and its sessions are
+ * `complete`.
+ */
+const deleteStripeSubscription = async (
+  stripe: Stripe,
+  subscriptionId: string,
+  // Leave undefined rather than `{}`: stripe-node rejects an empty options object as an unknown
+  // argument ("Stripe: Unknown arguments") before sending anything.
+  options?: Stripe.RequestOptions
+) => {
+  try {
+    await stripe.subscriptions.del(subscriptionId, {}, options);
+    return;
+  } catch (error) {
+    // `rawType`, not `type`: `type` is the error's class name, which a minified bundle can mangle.
+    if ((error as { rawType?: string })?.rawType !== 'invalid_request_error') throw error;
+    // The SDK's list params have no `status` filter. A failed lookup surfaces the original error,
+    // which callers classify (the GDPR scrub reads `resource_missing` as already cancelled).
+    const sessions = await stripe.checkout.sessions
+      .list({ subscription: subscriptionId, limit: 10 }, options)
+      .catch(() => null);
+    const open =
+      sessions?.data.filter(
+        (session) => session.status === 'open' && session.subscription === subscriptionId
+      ) ?? [];
+    if (!open.length) throw error;
+    for (const session of open) await stripe.checkout.sessions.expire(session.id, {}, options);
+  }
+
+  try {
+    await stripe.subscriptions.del(subscriptionId, {}, options);
+  } catch (error) {
+    // Expiring the session may have ended the subscription already.
+    const live = await stripe.subscriptions.retrieve(subscriptionId, {}, options).catch(() => null);
+    if (live && ['canceled', 'incomplete_expired'].includes(live.status)) return;
+    throw error;
+  }
+};
+
 export const cancelSubscription = async ({
   userId,
   subscriptionId,
@@ -1313,10 +1356,10 @@ export const cancelSubscription = async ({
   // The shared client retries nothing (stripe-node's default is 0), so one transient error
   // would otherwise leave a deleted account billing. The timeout bounds the retries: at the
   // default 80s per attempt, three attempts outlast the gateway and a completed deletion 504s.
-  await stripe.subscriptions.del(
+  await deleteStripeSubscription(
+    stripe,
     subscriptionId,
-    {},
-    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : {}
+    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : undefined
   );
   if (!removeRecord) return;
 
