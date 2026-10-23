@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import type { Authenticator } from './interfaces';
 import { MintRefusedError } from './minter';
+import { RUNNER_FEATURES } from './protocol';
 import type { RunService } from './service';
 import { GRANT_HEADER, grantHeader, type TokenVerifier, type VerifiedGrant } from './tokens';
 import { refuseAll, refuseGrants } from './unconfigured';
@@ -90,6 +91,7 @@ const startBody = z.object({
       refs: z.array(z.string()).optional(),
     }),
     retry: z.boolean().optional(),
+    edit: z.boolean().optional(),
   }),
   model: z.string().min(1).max(200),
   settings: z.object({
@@ -215,14 +217,18 @@ export function buildApp(options: AppOptions): FastifyInstance {
         );
       const outcome = await service.start(request.userId, body.data, grant);
       if (!outcome.ok) return refuse(reply, outcome.error, outcome.message, outcome.runId);
-      return reply.code(201).send(outcome.response);
+      return reply.code(201).send({ ...outcome.response, features: [...RUNNER_FEATURES] });
     });
 
     app.get('/runs', { preHandler: authed }, async (request, reply) => {
       const conversationId = (request.query as Record<string, unknown>).conversationId;
       if (typeof conversationId !== 'string' || !conversationId)
         return refuse(reply, 'bad-request', 'conversationId is required.');
-      return { v: 1, run: await service.lookup(request.userId, conversationId) };
+      return {
+        v: 1,
+        run: await service.lookup(request.userId, conversationId),
+        features: [...RUNNER_FEATURES],
+      };
     });
 
     app.post('/runs/stop', { preHandler: authed }, async (request, reply) => {

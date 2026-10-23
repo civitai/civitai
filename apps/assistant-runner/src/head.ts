@@ -44,12 +44,13 @@ export function lastSeq(head: Head | null): number {
 }
 
 /**
- * Whether a start may reply to `seq`: the next turn, or with `retry` the latest turn again, or the
- * next one when the first start of it was refused before anything saved it.
+ * Whether a start may reply to `seq`: the next turn, or with `retry` (or `edit`, the user's latest
+ * message edited) the latest turn again, or the next one when the first start of it was refused
+ * before anything saved it.
  */
-export function acceptsTurn(head: Head | null, seq: number, retry: boolean): boolean {
+export function acceptsTurn(head: Head | null, seq: number, retry: boolean, edit = false): boolean {
   const last = lastSeq(head);
-  return retry ? seq === last || seq === last + 1 : seq === last + 1;
+  return retry || edit ? seq === last || seq === last + 1 : seq === last + 1;
 }
 
 export interface TurnStart {
@@ -62,6 +63,11 @@ export interface TurnStart {
   from?: ResumePoint;
   /** The run starting this reply: it owns the turn from now on, and an older run's writes to it stop. */
   runId?: string;
+  /**
+   * The user edited this message: `user` replaces the saved one (a chat still named after its first
+   * message is named after the edited one). Without it, a turn already saved keeps its message.
+   */
+  edit?: boolean;
 }
 
 /** The head with the user's turn saved as the reply starts (a new head when there is none). */
@@ -79,17 +85,21 @@ export function startTurn(head: Head | null, start: TurnStart): Head {
     ...(start.scope ? { scope: start.scope } : {}),
   };
   const existing = base.turns.find((turn) => turn.seq === start.seq);
+  const renamed =
+    start.edit && start.seq === 1 && head !== null && base.titleSource === 'first-message'
+      ? { title: firstMessageTitle(start.user.content) }
+      : {};
   const turn: HeadTurn = {
     seq: start.seq,
     createdAt: existing?.createdAt ?? now,
-    user: existing?.user ?? start.user,
+    user: start.edit ? start.user : existing?.user ?? start.user,
     ...(start.runId ? { runId: start.runId } : {}),
     ...(start.from
       ? { assistant: { messages: start.from.messages, status: 'running', savedAt: now } }
       : {}),
   };
   const turns = [...(base.turns as HeadTurn[]).filter((t) => t.seq < start.seq), turn];
-  return versioned({ ...base, updatedAt: now }, turns);
+  return versioned({ ...base, ...renamed, updatedAt: now }, turns);
 }
 
 /** The head with the reply saved `running` as far as `messages` go (a call with no result started and did not finish). */

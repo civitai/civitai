@@ -58,6 +58,7 @@ import type {
 } from './interfaces';
 import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
+import type { StartRequest } from './protocol';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
 import type { VerifiedGrant } from './tokens';
@@ -117,6 +118,8 @@ export interface ReplyInput {
   seq: number;
   user: TurnUser;
   retry: boolean;
+  /** The user edited this turn's message: `user` replaces the saved one, and nothing carries on from its old reply. */
+  edit?: boolean;
   model: string;
   settings: RunSettings;
   page?: StartRunRequest['page'];
@@ -371,11 +374,7 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  async start(
-    userId: string,
-    request: StartRunRequest,
-    grant: VerifiedGrant
-  ): Promise<StartOutcome> {
+  async start(userId: string, request: StartRequest, grant: VerifiedGrant): Promise<StartOutcome> {
     // Refused before anything is kept: not `unavailable`, which the page would ask again forever.
     if (this.#deps.startRefusal)
       return { ok: false, error: 'refused', message: this.#deps.startRefusal };
@@ -415,7 +414,8 @@ export class Runner implements RunService {
       await forget().catch(() => undefined);
       throw error;
     }
-    if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
+    const edit = request.turn.edit === true;
+    if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true, edit)) {
       return refused({
         ok: false,
         error: 'stale-turn',
@@ -429,7 +429,9 @@ export class Runner implements RunService {
       ...(request.scope ? { scope: request.scope } : {}),
       seq: request.turn.seq,
       user: request.turn.user,
-      retry: request.turn.retry === true,
+      // An edit starts the turn afresh: it is not a retry, whatever the request said.
+      retry: !edit && request.turn.retry === true,
+      ...(edit ? { edit: true } : {}),
       model: request.model,
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
@@ -700,6 +702,7 @@ export class Runner implements RunService {
         ...(from ? { from } : {}),
         // This run owns the turn now: an older run of it writes to it no more.
         runId: input.runId,
+        ...(input.edit ? { edit: true } : {}),
       })
     );
     const deadline = Math.min(

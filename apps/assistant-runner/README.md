@@ -29,6 +29,15 @@ See [Not built yet](#not-built-yet).
 
   Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched), always at the root.
 
+  Beyond 0.25.0's types (`src/protocol.ts`, until the runner is bumped to a chat package that types
+  them): every start's and lookup's answer lists `features: ['edit']`, and a start may carry
+  `turn.edit`: the user edited their latest message, so `turn.user` replaces the saved message of
+  turn `seq` (the head's latest, or the next when the head ends just before it), the reply that
+  followed it is dropped, and the turn is replied to afresh (nothing carries on from the old reply,
+  and a chat named after its first message is named after the edited one). An edit is a new reply,
+  charged as one. A page shows Edit only once a runner lists `edit`; it sends `edit` without
+  `retry`, so a runner without this answers `stale-turn` instead of replying to the old message.
+
 - **Where it is served.** The run API lives under `RUNNER_BASE_PATH`, e.g. `/api/assistant-runner`,
   so the page reaches it on its own origin (its `remoteRunner.url`);
   routing that path to the runner is the deployment's job. Empty serves it at the root.

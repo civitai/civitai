@@ -761,7 +761,11 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(edit.body).toMatchObject({ seq: 1, features: ['edit'] });
     const entries = await events(edit.body!.runId as string, user);
     const started = entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>;
-    expect(started).toMatchObject({ seq: 1, user: { content: 'Tell me about beavers.' }, parts: [] });
+    expect(started).toMatchObject({
+      seq: 1,
+      user: { content: 'Tell me about beavers.' },
+      parts: [],
+    });
     expect(ended(entries).status).toBe('done');
     expect(rebuild(entries)).toEqual([{ kind: 'text', text: 'Heard: Tell me about beavers.' }]);
     // Asked once, with one user message: the edited one, and nothing of the old exchange.
@@ -771,7 +775,11 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(JSON.stringify(echoed.at(-1))).not.toContain('otters');
 
     const head = await store.load(user, 'c-edit');
-    expect(head).toMatchObject({ v: 2, title: 'Tell me about beavers.', titleSource: 'first-message' });
+    expect(head).toMatchObject({
+      v: 2,
+      title: 'Tell me about beavers.',
+      titleSource: 'first-message',
+    });
     expect(head!.turns).toHaveLength(1);
     expect(head!.turns[0]).toMatchObject({
       seq: 1,
@@ -811,9 +819,9 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(ended(entries).status).toBe('done');
     expect(calls.record).toBe(recordsBefore + 2);
     const head = await store.load(user, 'c-edit-failed');
-    expect(head!.turns.map((turn) => [turn.seq, turn.user.content, turn.assistant?.status])).toEqual(
-      [[1, 'Record it twice.', 'done']]
-    );
+    expect(
+      head!.turns.map((turn) => [turn.seq, turn.user.content, turn.assistant?.status])
+    ).toEqual([[1, 'Record it twice.', 'done']]);
   });
 
   it('refuses an edit of a turn that is not the latest', async () => {
