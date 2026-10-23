@@ -3,6 +3,7 @@ import type { Priority, WorkflowStepTemplate } from '@civitai/orchestration-clie
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -10,14 +11,13 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 
 const LOG_NAME = 'video-audio-scan';
+// A transcript of a long video can be large; nothing reads it whole.
+const MAX_STORED_LYRICS = 20_000;
 const SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 export const AUDIO_SCAN_RESULT_VERSION = 1;
 
-/** The webhook for audio scans: the visual scan's callback with its path swapped, so host and token carry over. */
-export function audioScanCallbackUrl(imageScanCallbackUrl: string) {
-  const url = new URL(imageScanCallbackUrl);
-  url.pathname = '/api/webhooks/audio-scan-result';
-  return url.toString();
+export function audioScanCallbackUrl() {
+  return `${env.NEXTAUTH_URL}/api/webhooks/audio-scan-result?token=${env.WEBHOOK_TOKEN}`;
 }
 
 /**
@@ -27,12 +27,10 @@ export function audioScanCallbackUrl(imageScanCallbackUrl: string) {
 export async function submitVideoAudioScan({
   imageId,
   mediaUrl,
-  callbackUrl,
   priority,
 }: {
   imageId: number;
   mediaUrl: string;
-  callbackUrl: string;
   priority?: Priority;
 }) {
   try {
@@ -57,7 +55,7 @@ export async function submitVideoAudioScan({
           ],
           callbacks: [
             {
-              url: audioScanCallbackUrl(callbackUrl),
+              url: audioScanCallbackUrl(),
               type: [
                 'workflow:succeeded',
                 'workflow:failed',
@@ -106,8 +104,8 @@ const scannedAudio = z
     sexualizedMinors: z.boolean(),
     blocked: z.boolean(),
     score: z.number().finite(),
-    model: z.string().min(1),
-    policyHash: z.string().min(1),
+    model: z.string().min(1).max(500),
+    policyHash: z.string().min(1).max(500),
     hasAudio: z.literal(true).nullish(),
     skippedReason: z.null().optional(),
   })
@@ -122,7 +120,7 @@ const noAudio = z
     model: z.null().optional(),
     policyHash: z.null().optional(),
     hasAudio: z.literal(false),
-    skippedReason: z.string().min(1),
+    skippedReason: z.string().min(1).max(500),
   })
   .strict();
 
@@ -130,6 +128,8 @@ const noAudio = z
 const audioScanOutputV1 = z.union([scannedAudio, noAudio]);
 
 type RawStep = { $type?: string; output?: unknown };
+
+const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 export type AudioScanParse =
   | {
@@ -177,8 +177,11 @@ export async function processAudioScanCallback(workflowId: unknown) {
   if (!data) throw new Error(`could not find workflow: ${workflowId}`);
   if (data.metadata?.imageId !== row.imageId)
     return finish(workflowId, { ok: false, error: 'workflow metadata does not match the image' });
+  // The callback can land before the read-back settles; throwing has the orchestrator retry.
+  if (!data.status || !TERMINAL_STATUSES.has(data.status))
+    throw new Error(`workflow ${workflowId} not finished: ${data.status ?? 'unknown'}`);
   if (data.status !== 'succeeded')
-    return finish(workflowId, { ok: false, error: `workflow ${data.status ?? 'unknown'}` });
+    return finish(workflowId, { ok: false, error: `workflow ${data.status}` });
 
   return finish(workflowId, parseAudioScanSteps(data.steps ?? []));
 }
@@ -193,7 +196,7 @@ async function finish(workflowId: string, parsed: AudioScanParse) {
           status: 'Succeeded',
           flagged: parsed.flagged,
           hasAudio: parsed.hasAudio,
-          result: parsed.result,
+          result: { ...parsed.result, lyrics: parsed.result.lyrics.slice(0, MAX_STORED_LYRICS) },
           resultVersion: AUDIO_SCAN_RESULT_VERSION,
           completedAt,
         }

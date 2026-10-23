@@ -249,7 +249,7 @@ export async function createImageIngestionRequest({
 
   // Not awaited: the shadow audio scan must not slow or fail the visual submit.
   if (data && type === 'video' && callbackUrl)
-    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, callbackUrl, priority });
+    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, priority });
 
   if (!data) {
     logToAxiom({
