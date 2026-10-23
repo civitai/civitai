@@ -163,10 +163,9 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   //   });
   // }
   const result = await next();
-  if (await needsUpdate(ctx.req)) {
-    ctx.res?.setHeader('x-update-required', 'true');
-    ctx.cache.edgeTTL = 0;
-  }
+  // The header itself is set in the route's responseMeta: on a streamed batch the response head
+  // is already written by now, and setting it here throws.
+  if (await needsUpdate(ctx.req)) ctx.cache.edgeTTL = 0;
   return result;
 });
 

@@ -10,7 +10,7 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * The site alerts version reaches browsers as a response header set in
+ * The site alerts version and the forced-update flag reach browsers as response headers set in
  * the route's `responseMeta`, from the CLIENT hash read that `needsUpdate` already makes. Driven
  * over a real socket through the real route and adapter, as `trpc-response-write-format.test.ts`
  * is, because the streamed batch path writes its head before any procedure finishes.
@@ -65,6 +65,7 @@ afterAll(async () => {
 });
 
 const WEB = { 'x-client': 'web', 'x-client-version': '5.0.200' };
+const OUTDATED = { 'x-client': 'web', 'x-client-version': '5.0.1' };
 
 async function get(path: string, headers: Record<string, string>) {
   return (await getWithBody(path, headers)).headers;
@@ -105,5 +106,44 @@ describe('x-alerts-version', () => {
     // A web request first, so the CLIENT value is cached and only the client check can stop it.
     expect((await get('payload', WEB)).get(SITE_ALERTS_VERSION_HEADER)).toBe(VERSION);
     expect((await get('payload', {})).get(SITE_ALERTS_VERSION_HEADER)).toBeNull();
+  });
+});
+
+// Before this header moved to responseMeta, the middleware set it after `next()`; on a streamed
+// batch that throws "Cannot set headers after they are sent", which failed every procedure in the
+// batch with a 500 and never delivered the prompt. Moving it back into the middleware brings that
+// back, and this test is what says so.
+describe('x-update-required', () => {
+  it('reaches an outdated bundle on a streamed batch, with every result intact', async () => {
+    await get('payload', OUTDATED);
+    const { headers, text } = await getWithBody(
+      `payload,payload?batch=1&input=${encodeURIComponent('{}')}`,
+      { ...OUTDATED, 'trpc-accept': 'application/jsonl' }
+    );
+
+    expect(text).not.toContain('INTERNAL_SERVER_ERROR');
+    expect(text.match(/"ok":true/g)).toHaveLength(2);
+    expect(headers.get('x-update-required')).toBe('true');
+  });
+
+  // A response the edge keeps is served to every bundle, so the flag must never ride one. With
+  // sysRedis failing, needsUpdate fails open and leaves the response cacheable; the header must
+  // fail open with it rather than come from the last good read.
+  it('stays off a cacheable response while the CLIENT read is failing', async () => {
+    await get('payload', OUTDATED);
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 60_000 });
+    redisMock.sysRedis.hGetAll.mockRejectedValueOnce(new Error('sysRedis down'));
+    try {
+      const headers = await get('payload', { ...OUTDATED, 'x-test-cacheable': '1' });
+      expect(headers.get('cache-control')).toMatch(/s-maxage=60/);
+      expect(headers.get('x-update-required')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reaches an outdated bundle on an unbatched call, and never a current one', async () => {
+    expect((await get('payload', OUTDATED)).get('x-update-required')).toBe('true');
+    expect((await get('payload', WEB)).get('x-update-required')).toBeNull();
   });
 });

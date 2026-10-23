@@ -35,6 +35,16 @@ export function peekClientConfig(): Record<string, string> | undefined {
   return clientConfigCache?.value;
 }
 
+/**
+ * Only an unexpired read. For decisions that must fail open the way `needsUpdate` does when
+ * sysRedis is unreachable, rather than act on an old value.
+ */
+export function peekFreshClientConfig(): Record<string, string> | undefined {
+  return clientConfigCache && clientConfigCache.expiresAt > Date.now()
+    ? clientConfigCache.value
+    : undefined;
+}
+
 export function readSiteAlertsVersion(client: Record<string, string | Buffer | undefined>) {
   const version = Number(decodeRedisString(client[SITE_ALERTS_VERSION_FIELD]));
   return Number.isSafeInteger(version) && version > 0 ? version : 0;
