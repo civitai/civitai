@@ -70,6 +70,8 @@ const getFullscreenServerSnapshot = () => false;
 const IN_SAFARI =
   typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
 
+export const GLOBAL_VOLUME_KEY = 'global-volume';
+
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
     {
@@ -121,7 +123,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const isSelfFullscreen =
       isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
-      key: 'global-volume',
+      key: GLOBAL_VOLUME_KEY,
       defaultValue: muted ? 0 : 0.5,
     });
 
