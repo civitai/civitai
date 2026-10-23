@@ -87,6 +87,17 @@ describe('_app hands the shell boot’s values to the providers', () => {
       expect(bound.filter((b) => b.name === name)).toEqual([{ name, from: 'useShellBootstrap' }]);
   });
 
+  it('hands the page’s cookies to the boot as they came, without reading the jar itself', () => {
+    const pageCookies = collect(
+      myAppBody(),
+      (n): n is ts.BindingElement =>
+        ts.isBindingElement(n) && n.propertyName?.getText() === 'cookies'
+    );
+    expect(pageCookies.map((b) => [b.name.getText(), b.initializer?.getText() ?? null])).toEqual([
+      ['pageCookies', null],
+    ]);
+  });
+
   it('keys the boot on a value fixed at mount', () => {
     const calls = collect(
       myAppBody(),

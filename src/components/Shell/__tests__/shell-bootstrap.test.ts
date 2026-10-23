@@ -87,7 +87,7 @@ const { AdsProvider, useAdsContext } = await import('~/components/Ads/AdsProvide
 const { ShellBootstrapProvider, useShellBootstrap, useShellReady } = await import(
   '~/components/Shell/ShellBootstrapProvider'
 );
-const { shellNavigation } = await import('~/components/Shell/shell-page-data');
+const { shellFallbackUrl, shellNavigation } = await import('~/components/Shell/shell-page-data');
 const { parseCookies } = await import('~/shared/utils/cookies');
 const { clientTransformer } = await import('~/shared/utils/trpc-union-transformer');
 
@@ -115,6 +115,24 @@ const FLAGS = { shellImages: true, canViewNsfw: false, chat: true };
 const USER_FLAGS = { chat: false, fixtureToggle: true };
 const TEXAS = { countryCode: 'US', regionCode: 'TX', fullLocationCode: 'US:TX' };
 const CALIFORNIA = { countryCode: 'US', regionCode: 'CA', fullLocationCode: 'US:CA' };
+const TOS_META = { hash: 'tos-hash', baseline: 'tos-baseline', fieldKeys: { blue: 'tosBlue' } };
+const SITE_ALERTS = {
+  version: 3,
+  alerts: [
+    {
+      id: 9,
+      severity: 'warning',
+      title: 'Fixture incident',
+      message: null,
+      paths: ['/images'],
+      surfaces: ['everywhere'],
+      domains: ['blue'],
+      startsAt: '2026-10-22T00:00:00.000Z',
+      endsAt: '2026-10-23T00:00:00.000Z',
+      dismissible: true,
+    },
+  ],
+};
 const IMAGE = { id: 101, nsfwLevel: 4, userId: 7, createdAt: new Date('2025-05-06T07:08:09.000Z') };
 
 const imageKey = getQueryKey(trpc.image.get, { id: 101 }, 'query');
@@ -131,7 +149,8 @@ function payload(over: Record<string, unknown> = {}) {
   return {
     session: SESSION,
     settings: SETTINGS,
-    tosMeta: { hash: 'h', baseline: 'b', fieldKeys: {} },
+    tosMeta: TOS_META,
+    siteAlerts: SITE_ALERTS,
     following: FOLLOWING,
     liveNow: true,
     navBanners: NAV_BANNERS,
@@ -176,6 +195,8 @@ function fullRenderPageProps(data: ReturnType<typeof payload>) {
     following: data.following,
     chatSettings: data.chatSettings,
     navBanners: data.navBanners,
+    tosMeta: data.tosMeta,
+    siteAlerts: data.siteAlerts,
     liveNow: data.liveNow,
     region: data.region,
     verifiedBot: null,
@@ -194,6 +215,8 @@ type Observed = {
   region: unknown;
   verifiedBot: unknown;
   regionPending: unknown;
+  tosMeta: unknown;
+  siteAlerts: unknown;
   consent: { required: boolean; allowed: boolean; consent: unknown };
   consentCookie: unknown;
   disableHidden: boolean;
@@ -244,6 +267,8 @@ function Probe({
     region: app.region,
     verifiedBot: app.verifiedBot,
     regionPending: app.regionPending,
+    tosMeta: app.tosMeta,
+    siteAlerts: app.siteAlerts,
     consent: { required: consent.required, allowed: consent.allowed, consent: consent.consent },
     consentCookie,
     disableHidden: civitai.settings.disableHidden,
@@ -263,7 +288,7 @@ type PageProps = Record<string, any>; // eslint-disable-line @typescript-eslint/
 function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAds?: boolean }) {
   const {
     session,
-    cookies: pageCookies = parseCookies(getCookies()),
+    cookies: pageCookies,
     flags,
     userFeatureFlags,
     settings,
@@ -271,6 +296,8 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
     liveNow = false,
     chatSettings,
     navBanners,
+    tosMeta,
+    siteAlerts,
     region,
     verifiedBot = null,
     hasAuthCookie: pageHasAuthCookie,
@@ -305,6 +332,8 @@ function ShellApp({ pageProps, withAds = false }: { pageProps: PageProps; withAd
       liveNow,
       chatSettings,
       navBanners,
+      tosMeta,
+      siteAlerts,
       region,
       domain: 'blue',
       host: 'civitai.com',
@@ -494,6 +523,8 @@ describe('a shell boot adopts the page data into the state a full render would h
       flagsReady: true,
       region: TEXAS,
       verifiedBot: null,
+      tosMeta: TOS_META,
+      siteAlerts: SITE_ALERTS,
       consent: { required: false, allowed: true, consent: null },
       consentCookie: 'accepted',
       disableHidden: false,
@@ -527,6 +558,8 @@ describe('a shell boot adopts the page data into the state a full render would h
       region: undefined,
       verifiedBot: null,
       regionPending: true,
+      tosMeta: undefined,
+      siteAlerts: undefined,
       consent: { required: false, allowed: false, consent: null },
       consentCookie: null,
       disableHidden: true,
@@ -549,6 +582,21 @@ describe('a shell boot adopts the page data into the state a full render would h
     await render(shellPageProps());
     expect(requests).toEqual(['/api/page-data/images/101?collectionId=5']);
     expect(last().shellReady).toBe(true);
+  });
+
+  it('a shell render that left hasAuthCookie false still adopts the signed-in session', async () => {
+    window.__civShell = Promise.resolve(json(payload()));
+    await render(shellPageProps({ hasAuthCookie: false }));
+    expect(last()).toMatchObject({ session: SESSION, sessionStatus: 'authenticated' });
+    expect(commits.map((c) => c.sessionStatus)).not.toContain('unauthenticated');
+    expect(requests).toEqual([]);
+  });
+
+  it('a page-data answer without liveNow is still adopted (the client does not read it)', async () => {
+    window.__civShell = Promise.resolve(json(payload({ liveNow: undefined })));
+    await render(shellPageProps());
+    expect(last().shellReady).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('a signed-out answer renders anonymous and does not fetch the session', async () => {
@@ -583,6 +631,14 @@ describe('cookie-derived values on a shell boot', () => {
     await render(shellPageProps());
     // The first commit renders the server's (empty) cookies, as hydration must; the jar is read
     // in an effect after it.
+    expect(commits[0].consentCookie).toBeNull();
+    expect(last().consentCookie).toBe('rejected');
+  });
+
+  it('are not read during render when the shell render omitted them', async () => {
+    document.cookie = 'civitai-consent=rejected; Path=/';
+    deferredShell();
+    await render(shellPageProps({ cookies: undefined }));
     expect(commits[0].consentCookie).toBeNull();
     expect(last().consentCookie).toBe('rejected');
   });
@@ -718,6 +774,33 @@ describe('a page-data answer other than 200 leaves the shell exactly once', () =
     expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
   });
 
+  it('a 200 without a region falls back, so consent cannot open on a missing region', async () => {
+    window.__civShell = Promise.resolve(json(payload({ region: undefined })));
+    await render(shellPageProps());
+    expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
+    expect(commits.every((c) => !c.consent.allowed)).toBe(true);
+  });
+
+  it('a payload the cache cannot take falls back instead of staying pending', async () => {
+    window.__civShell = Promise.resolve(
+      json(payload({ trpcState: { json: { queries: 'not-a-list', mutations: [] } } }))
+    );
+    await render(shellPageProps());
+    expect(navigate.mock.calls).toEqual([['/images/101?civ-shell=0']]);
+    expect(last()).toMatchObject({ shellReady: false, adsGated: true });
+  });
+
+  it('never builds a fallback URL that leaves the origin', () => {
+    expect(shellFallbackUrl(500, 'http://localhost//evil.example/images/101')).toBe(
+      '/evil.example/images/101?civ-shell=0'
+    );
+    expect(shellFallbackUrl(404, 'http://localhost///evil.example/x?a=1')).toBe(
+      '/evil.example/x?a=1&civ-shell=0'
+    );
+    // Control: an ordinary path is kept as it is.
+    expect(shellFallbackUrl(500, 'http://localhost/images/101')).toBe('/images/101?civ-shell=0');
+  });
+
   it('does not reload a page that already carries the bypass: no loop', async () => {
     window.history.replaceState(null, '', '/images/101?civ-shell=0');
     pageDataAnswer = async () => json({}, 500);
@@ -754,6 +837,8 @@ describe('without pageProps.shell nothing of the shell runs', () => {
       region: TEXAS,
       verifiedBot: null,
       regionPending: undefined,
+      tosMeta: TOS_META,
+      siteAlerts: SITE_ALERTS,
       consent: { required: false, allowed: true, consent: null },
       consentCookie: null,
       disableHidden: false,

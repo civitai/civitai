@@ -112,6 +112,7 @@ beforeEach(() => {
       browsingSettingsAddons: undefined,
       liveNow: false,
       navBanners: undefined,
+      siteAlerts: undefined,
       session,
     };
   });
@@ -189,6 +190,7 @@ describe('page-data parity with getServerSideProps', () => {
         'region',
         'session',
         'settings',
+        'siteAlerts',
         'tosMeta',
         'trpcState',
         'userFeatureFlags',
