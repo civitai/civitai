@@ -562,7 +562,7 @@ export async function getDailyChallenges(
 export async function getInfiniteChallenges(
   input: GetInfiniteChallengesInput & {
     currentUserId?: number;
-    isGreen?: boolean;
+    isGreen: boolean;
     canAccessUserChallenges?: boolean;
   }
 ) {
@@ -629,7 +629,7 @@ export async function getInfiniteChallenges(
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
   // universal and show on both domains, mirroring the scan/POI gates.
-  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
     currentUserId
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
@@ -696,7 +696,7 @@ export async function getInfiniteChallenges(
   // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
   // above.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
-    isGreen: isGreen ?? false,
+    isGreen,
     isLoggedIn: currentUserId != null,
     requested: browsingLevel,
   });
@@ -868,7 +868,7 @@ export async function getInfiniteChallenges(
   }
 
   const challenges = await mapChallengeRowsToCards(items, {
-    isGreen: isGreen ?? false,
+    isGreen,
     viewerId: currentUserId,
   });
 
@@ -3414,6 +3414,20 @@ export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventL
     },
   });
 
+  // The feed's level gate: on green, a challenge shows only if its own rating fits the viewer's
+  // level there; its creator always sees it.
+  const siteLevel = getEffectiveBrowsingLevel({
+    isGreen: site.isGreen,
+    isLoggedIn: site.viewerId != null,
+  });
+  if (siteLevel > 0)
+    for (const event of events)
+      event.challenges = event.challenges.filter(
+        (c) =>
+          (site.viewerId != null && c.createdById === site.viewerId) ||
+          (c.nsfwLevel & siteLevel) !== 0
+      );
+
   const eventCoverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
     site
@@ -4045,7 +4059,7 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen?: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
 ) {
   const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
 
@@ -4070,7 +4084,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
   // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
-  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
     currentUserId
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
@@ -4085,7 +4099,7 @@ export async function getCompletedChallengesWithWinners(
   // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
   // their own.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
-    isGreen: isGreen ?? false,
+    isGreen,
     isLoggedIn: currentUserId != null,
     requested: browsingLevel,
   });
@@ -4263,8 +4277,7 @@ export async function getCompletedChallengesWithWinners(
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
-    const hideThumb =
-      (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
+    const hideThumb = isGreen && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
@@ -4297,7 +4310,7 @@ export async function getCompletedChallengesWithWinners(
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
     const coverImage = coverWithinSite(
       item.coverImageId ? coverImageMap.get(item.coverImageId) : null,
-      { isGreen: isGreen ?? false, viewerId: currentUserId }
+      { isGreen, viewerId: currentUserId }
     );
     const metadata = parseChallengeMetadata(item.metadata);
     const parsedCategories = challengeJudgingCategoriesSchema.safeParse(item.judgingCategories);

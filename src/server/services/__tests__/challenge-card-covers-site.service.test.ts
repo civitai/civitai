@@ -200,3 +200,48 @@ describe.each(Object.keys(paths))('%s', (path) => {
     expect((await cover(NsfwLevel.X, { isGreen: false, viewerId: VIEWER }))?.url).toBe(COVER_URL);
   });
 });
+
+describe('active events — which challenges are listed', () => {
+  const OTHER = 444;
+
+  async function listed(nsfwLevel: number, site: Site, createdById = OTHER) {
+    images(NsfwLevel.PG);
+    dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
+      {
+        ...event,
+        coverImageId: null,
+        challenges: [{ ...cardRow, nsfwLevel, createdById, judgeId: null }],
+      },
+    ] as never);
+    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    return (await getActiveEvents(site))[0].challenges.length === 1;
+  }
+
+  it.each([
+    ['signed out', undefined],
+    ['signed in', VIEWER],
+  ])('leaves out an R challenge on the green site (%s)', async (_, viewerId) => {
+    expect(await listed(NsfwLevel.R, { isGreen: true, viewerId })).toBe(false);
+  });
+
+  it('leaves out a PG-13 challenge on the green site for a signed-out viewer', async () => {
+    expect(await listed(NsfwLevel.PG13, { isGreen: true })).toBe(false);
+  });
+
+  it('lists a PG-13 challenge on the green site for a signed-in viewer', async () => {
+    expect(await listed(NsfwLevel.PG13, { isGreen: true, viewerId: VIEWER })).toBe(true);
+  });
+
+  it('lists a PG challenge on the green site', async () => {
+    expect(await listed(NsfwLevel.PG, { isGreen: true })).toBe(true);
+  });
+
+  it('lists its creator their own R challenge on the green site', async () => {
+    expect(await listed(NsfwLevel.R, { isGreen: true, viewerId: VIEWER }, VIEWER)).toBe(true);
+  });
+
+  it('lists an R challenge on the mature site', async () => {
+    expect(await listed(NsfwLevel.R, { isGreen: false, viewerId: VIEWER })).toBe(true);
+  });
+});
