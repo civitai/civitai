@@ -8,6 +8,7 @@ import {
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  setShopItemEventTagsInput,
   shopItemSectionInput,
   toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
@@ -22,6 +23,7 @@ import {
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getShopItemEventTags,
   getShopItemSections,
   getShopSections,
   getShopSectionsWithItems,
@@ -30,6 +32,7 @@ import {
   purchaseCosmeticShopItem,
   removeShopItemFromSection,
   reorderCosmeticShopSections,
+  setShopItemEventTags,
   toggleWishlistShopItem,
   upsertCosmetic,
   upsertCosmeticShopItem,
@@ -109,6 +112,13 @@ export const cosmeticShopRouter = router({
   removeShopItemFromSection: moderatorProcedure
     .input(shopItemSectionInput)
     .mutation(({ input }) => removeShopItemFromSection(input)),
+  // Event tags are moderator data: they decide what an official section sells.
+  getShopItemEventTags: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemEventTags(input)),
+  setShopItemEventTags: moderatorProcedure
+    .input(setShopItemEventTagsInput)
+    .mutation(({ input }) => setShopItemEventTags(input)),
   // #endregion
   // #region [Public facing routes]
   getShop: publicProcedure

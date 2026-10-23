@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StorylineService from '~/server/services/storyline.service';
+import type * as StorylineCaptionService from '~/server/services/storyline-caption.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A muted or banned account cannot write to a storyline: start one, edit it, add a chapter, pick
- * the canon branch, join two branches, or add or remove a collaborator.
+ * the canon branch, join two branches, add or remove a collaborator, or caption a chapter image.
  *
  * Every one of those changes what other people read or who can post into the story, so a muted
  * owner must not be able to steer a public story or hand posting rights around.
@@ -23,6 +24,7 @@ const writers = vi.hoisted(() => ({
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   removeStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   setStorylineTakedown: vi.fn(async () => ({ id: 1 })),
+  setStorylineImageCaption: vi.fn(async () => null),
 }));
 
 // Spread the real module and override only the writers: a hand-listed mock would couple this test
@@ -30,6 +32,10 @@ const writers = vi.hoisted(() => ({
 vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StorylineService>()),
   ...writers,
+}));
+vi.mock('~/server/services/storyline-caption.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineCaptionService>()),
+  setStorylineImageCaption: writers.setStorylineImageCaption,
 }));
 
 import { storylineRouter } from '~/server/routers/storyline.router';
@@ -62,6 +68,11 @@ const WRITE_CALLS = [
     name: 'removeCollaborator',
     writer: writers.removeStorylineCollaborator,
     input: { storylineId: 10, userId: 77 },
+  },
+  {
+    name: 'setImageCaption',
+    writer: writers.setStorylineImageCaption,
+    input: { imageId: 40, content: 'A note' },
   },
 ] as const;
 

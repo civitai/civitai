@@ -352,6 +352,9 @@ describe('takedownCosmeticShopItem', () => {
       moderatorId: 999,
     });
     expect(mocks.sectionItemDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
+    // Its event tags are placements too: left on, an item restored later would rejoin every
+    // section with that tag.
+    expect(update.data.eventTags).toEqual([]);
     // Resale listings survive their creator archiving an item; a takedown is the
     // case where they must not, so the rows go with it.
     expect(mocks.resaleDeleteMany).toHaveBeenCalledWith({ where: { shopItemId: 42 } });
