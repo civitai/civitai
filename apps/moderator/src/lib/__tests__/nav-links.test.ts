@@ -281,6 +281,7 @@ describe('/admin grantable pages', () => {
       '/models/flags/appeals',
       '/models/flags/auto',
       '/models/flags/needs-review',
+      '/models/rule-matches',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);
@@ -433,5 +434,21 @@ describe('switcherEntries', () => {
 
   it('skips a group with no reachable page', () => {
     expect(switcherEntries([{ label: 'Empty', children: [] }], civitai)).toEqual([]);
+  });
+});
+
+describe('Model rule matches', () => {
+  it('sits under Models with its own grant, apart from the model flag queues', () => {
+    applyGrants({ '/models/rule-matches': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(true);
+    expect(canAccess(reviewer, '/models/flags/needs-review')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Models')
+        ?.children?.map((c) => [c.path, c.label])
+    ).toEqual([['/models/rule-matches', 'Model rule matches']]);
+
+    applyGrants({ '/models/flags/needs-review': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(false);
   });
 });

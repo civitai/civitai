@@ -42,7 +42,7 @@ const givenPost = ({
     tags: [],
   } as never);
 
-const givenVersionOf = (model: { id: number; userId: number } | null) =>
+const givenVersionOf = (model: { id: number; userId: number; name?: string } | null) =>
   vi.mocked(dbMock.dbRead.modelVersion.findUnique).mockResolvedValue(model && ({ model } as never));
 
 /**
@@ -57,11 +57,12 @@ describe('getPostEditDetail model', () => {
     ['draft', null],
   ])('names the model of a %s post on someone else’s model', async (_, publishedAt) => {
     givenPost({ publishedAt, modelVersionId: 5 });
-    givenVersionOf({ id: 3, userId: MODEL_OWNER });
+    givenVersionOf({ id: 3, userId: MODEL_OWNER, name: 'My Model' });
 
     const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
 
     expect(post.parentModelId).toBe(3);
+    expect(post.parentModelName).toBe('My Model');
     expect(post.modelVersionId).toBe(5);
     expect(post.ownModelId).toBeNull();
   });
@@ -92,6 +93,7 @@ describe('getPostEditDetail model', () => {
     const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
 
     expect(post.parentModelId).toBeNull();
+    expect(post.parentModelName).toBeNull();
     expect(post.ownModelId).toBeNull();
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
   });
