@@ -26,14 +26,22 @@ vi.mock('../cache', () => ({
   }),
 }));
 
-const { getAutoFlaggedMinorMatch, getMinorQueueCounts, getNeedsReviewCount, getNeedsReviewModels } =
-  await import('../minor-hash.service');
+const {
+  getAutoFlaggedMinorMatch,
+  getMinorQueueCounts,
+  getModelFlagState,
+  getNeedsReviewCount,
+  getNeedsReviewModels,
+} = await import('../minor-hash.service');
 
 const MATCHES = { detections: false, matches: true };
 const BOTH = { detections: true, matches: true };
 /** The File matches half of Needs review, as a viewer holding only that permission sees it. */
-const matches = (query: { limit: number; offset?: number; search?: { text: string } }) =>
-  getNeedsReviewModels({ ...query, sources: MATCHES });
+const matches = (query: {
+  limit: number;
+  offset?: number;
+  search?: { text: string } | { modelOrUserId: number };
+}) => getNeedsReviewModels({ ...query, sources: MATCHES });
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT);
@@ -216,6 +224,19 @@ describe('getAutoFlaggedMinorMatch', () => {
       fileSizeKB: 1024,
     });
   });
+
+  it("finds a real-person seed under the poi label, and a minor seed's file never", async () => {
+    await seedModel(10, 1, 'aa', { minor: true });
+    await seedModel(11, 1, 'aa');
+    await pg.query(`UPDATE "Model" SET poi = TRUE, "lockedProperties" = '{poi}' WHERE id = 11`);
+    await seedModel(12, 1, 'aa');
+    expect(await getAutoFlaggedMinorMatch({ modelId: 12, label: 'poi' })).toMatchObject({
+      minorModelId: 11,
+      hash: 'aa',
+    });
+    await pg.query(`UPDATE "Model" SET poi = FALSE WHERE id = 11`);
+    expect(await getAutoFlaggedMinorMatch({ modelId: 12, label: 'poi' })).toBeNull();
+  });
 });
 
 describe('Needs review: held detections and file matches in one list', () => {
@@ -271,7 +292,7 @@ describe('Needs review: held detections and file matches in one list', () => {
     expect(await rows({ detections: false, matches: false })).toEqual([]);
   });
 
-  it('narrows by source chip, and drops file matches under a real-person filter', async () => {
+  it('narrows by source chip, and drops minor file matches under a real-person filter', async () => {
     const hash = { filters: { source: 'hash', flag: 'all', sort: 'oldest' } };
     expect((await rows(BOTH, hash)).map((r) => r[0])).toEqual([15, 11]);
     const textScan = { filters: { source: 'text-scan', flag: 'all', sort: 'oldest' } };
@@ -289,5 +310,105 @@ describe('Needs review: held detections and file matches in one list', () => {
     expect(await getNeedsReviewCount({ sources: BOTH })).toBe(3);
     expect(await getNeedsReviewCount({ sources: MATCHES })).toBe(2);
     expect(await getMinorQueueCounts()).toEqual({ pending: 2, pendingWithDetection: 1 });
+  });
+});
+
+describe('Needs review: real-person file matches', () => {
+  const matched = (hash: string) => ({ poiHashMatch: { at: '2026-10-10T00:00:00Z', hash } });
+  /** A real-person seed as a moderator leaves one: flagged and locked, no automated snapshot. */
+  const poiSeed = (id: number) =>
+    pg.query(`UPDATE "Model" SET poi = TRUE, "lockedProperties" = '{poi}' WHERE id = $1`, [id]);
+
+  beforeEach(async () => {
+    await seedModel(50, 1, 'PP');
+    await poiSeed(50);
+    await seedModel(51, 2, 'PP', { meta: matched('PP') });
+    // Out of the queue: flagged since, and deleted.
+    await seedModel(52, 2, 'PP', { meta: matched('PP') });
+    await pg.query(`UPDATE "Model" SET poi = TRUE WHERE id = 52`);
+    await seedModel(53, 2, 'PP', { meta: matched('PP') });
+    await pg.query(`UPDATE "Model" SET status = 'Deleted' WHERE id = 53`);
+  });
+
+  it('lists the model the main app queued, with its file and the seed sharing it', async () => {
+    const { items } = await matches({ limit: 10 });
+    expect(items.map((r) => r.modelId)).toEqual([51]);
+    const [row] = items;
+    expect(row.match).toBeNull();
+    expect(row.poiMatch).toMatchObject({
+      hash: 'PP',
+      fileName: 'file-51.safetensors',
+      fileSizeKB: 1024,
+      seedModelId: 50,
+      seedModelName: 'model 50',
+      seedUserId: 1,
+    });
+    expect(row.poiMatch?.modelVersionId).toEqual(expect.any(Number));
+    expect(row.poiMatch?.seedModelVersionId).toEqual(expect.any(Number));
+    expect(new Date(row.poiMatch!.matchedAt).toISOString()).toBe('2026-10-10T00:00:00.000Z');
+  });
+
+  it('resolves no seed once the matched model no longer seeds', async () => {
+    await pg.query(`UPDATE "Model" SET poi = FALSE WHERE id = 50`);
+    const [row] = (await matches({ limit: 10 })).items;
+    expect(row.modelId).toBe(51);
+    expect(row.poiMatch).toMatchObject({ seedModelId: null, fileName: 'file-51.safetensors' });
+  });
+
+  it('does not take an unconfirmed hash flag as the seed', async () => {
+    await pg.query(`UPDATE "Model" SET meta = $1::jsonb WHERE id = 50`, [
+      JSON.stringify({ poiFlagSnapshot: { source: 'auto', at: '2026-10-01T00:00:00Z' } }),
+    ]);
+    const [row] = (await matches({ limit: 10 })).items;
+    expect(row.poiMatch?.seedModelId).toBeNull();
+  });
+
+  it('follows the label filter', async () => {
+    const f = (flag: 'minor' | 'poi') =>
+      matches({ limit: 10, filters: { source: 'all', flag, sort: 'oldest' } } as never);
+    expect((await f('poi')).items.map((r) => r.modelId)).toEqual([51]);
+    expect((await f('minor')).items).toEqual([]);
+  });
+
+  it("finds the copies of a seed by the seed's model id", async () => {
+    expect(
+      (await matches({ limit: 10, search: { modelOrUserId: 50 } })).items.map((r) => r.modelId)
+    ).toEqual([51]);
+    expect((await matches({ limit: 10, search: { modelOrUserId: 999 } })).items).toEqual([]);
+    // The seed's uploader too; a flagged copy that does not seed is no seed.
+    expect(
+      (await matches({ limit: 10, search: { modelOrUserId: 1 } })).items.map((r) => r.modelId)
+    ).toEqual([51]);
+    expect((await matches({ limit: 10, search: { modelOrUserId: 52 } })).items).toEqual([]);
+  });
+
+  it('reads whether a real-person match still waits on a model', async () => {
+    expect(await getModelFlagState(51)).toEqual({ minor: false, poi: false, poiMatchQueued: true });
+    expect(await getModelFlagState(50)).toEqual({ minor: false, poi: true, poiMatchQueued: false });
+    expect(await getModelFlagState(53)).toMatchObject({ poiMatchQueued: false }); // deleted
+  });
+
+  it('searches by username', async () => {
+    expect(
+      (await matches({ limit: 10, search: { text: 'copier' } })).items.map((r) => r.modelId)
+    ).toEqual([51]);
+    expect((await matches({ limit: 10, search: { text: 'seeder' } })).items).toEqual([]);
+  });
+
+  it('carries a minor and a real-person match on one row, counted once', async () => {
+    await seedModel(60, 1, 'mm', { minor: true });
+    await seedModel(61, 3, 'mm', { meta: matched('PP') });
+    const { items } = await matches({ limit: 10 });
+    expect(items.map((r) => [r.modelId, !!r.match, !!r.poiMatch])).toEqual([
+      [51, false, true],
+      [61, true, true],
+    ]);
+    expect(await getNeedsReviewCount({ sources: MATCHES })).toBe(2);
+    expect(await getMinorQueueCounts()).toEqual({ pending: 2, pendingWithDetection: 0 });
+  });
+
+  it('counts the queue the list shows', async () => {
+    expect(await getNeedsReviewCount({ sources: MATCHES })).toBe(1);
+    expect(await getMinorQueueCounts()).toEqual({ pending: 1, pendingWithDetection: 0 });
   });
 });
