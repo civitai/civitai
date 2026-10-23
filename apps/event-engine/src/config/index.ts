@@ -149,6 +149,8 @@ export const config = {
     embedToken: process.env.VECTOR_EMBED_TOKEN ?? '',
     embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '4', 10)),
     embedMaxRetries: parseInt(process.env.VECTOR_EMBED_MAX_RETRIES ?? '8', 10),
+    // Inputs per workflow, 1 to 128.
+    embedBatchSize: Math.min(128, Math.max(1, parseInt(process.env.VECTOR_EMBED_BATCH_SIZE ?? '128', 10) || 128)),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
   },
 };

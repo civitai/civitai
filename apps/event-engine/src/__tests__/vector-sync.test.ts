@@ -316,6 +316,8 @@ describe('embed inputs', () => {
     expect(chunkInputs(images).map((b) => b.length)).toEqual([128, 128, 44]);
     const videos = Array.from({ length: 20 }, (_, i) => ({ id: String(i), videoUrl: 'x' }));
     expect(chunkInputs(videos).map((b) => b.length)).toEqual([8, 8, 4]);
+    // VECTOR_EMBED_BATCH_SIZE=1 must be env-only if the orchestrator moves to one input per job.
+    expect(chunkInputs(images.slice(0, 3), 1).map((b) => b.length)).toEqual([1, 1, 1]);
   });
 });
 
@@ -598,6 +600,31 @@ describe('review round 5', () => {
     );
     expect(pointsWhileBlocked).toEqual([0, 0, 0]);
     expect(store.points.size).toBe(10);
+  });
+});
+
+describe('collection layout', () => {
+  // Decision: every payload index lives on disk. The Qdrant node's RAM is budgeted for the int8
+  // vectors; indexes in RAM would add tens of GB at full size. Do not drop on_disk to speed up a
+  // filter without re-doing that budget.
+  test('bootstrap creates every payload index on disk', async () => {
+    const created: Array<{ field_name: string; field_schema: { on_disk?: boolean } }> = [];
+    const client = {
+      collectionExists: async () => ({ exists: true }),
+      getCollection: async () => ({ payload_schema: {}, config: {} }),
+      createPayloadIndex: async (_c: string, args: (typeof created)[number]) =>
+        void created.push(args),
+      getAliases: async () => ({
+        aliases: [{ alias_name: 'images_semantic', collection_name: 'c' }],
+      }),
+    };
+    await new VectorStore(client as unknown as QdrantClient, 'c').bootstrap({
+      alias: 'images_semantic',
+    });
+    expect(created.map((c) => c.field_name).sort()).toEqual(
+      ['baseModels', 'nsfwLevel', 'postId', 'sortAt', 'tagIds', 'type', 'userId'].sort()
+    );
+    expect(created.every((c) => c.field_schema.on_disk === true)).toBe(true);
   });
 });
 

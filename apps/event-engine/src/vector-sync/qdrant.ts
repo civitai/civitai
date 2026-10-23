@@ -1,4 +1,4 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
+import { QdrantClient, type Schemas } from '@qdrant/js-client-rest';
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
 import type { ImagePayload } from './source';
@@ -6,14 +6,16 @@ import type { ImagePayload } from './source';
 export const VECTOR_DIMENSIONS = 256;
 export const EMBED_MODEL = 'wemm-2b';
 
-const PAYLOAD_INDEXES: Array<[keyof ImagePayload, 'integer' | 'keyword' | 'datetime']> = [
-  ['nsfwLevel', 'integer'],
-  ['tagIds', 'integer'],
-  ['baseModels', 'keyword'],
-  ['type', 'keyword'],
-  ['userId', 'integer'],
-  ['postId', 'integer'],
-  ['sortAt', 'datetime'],
+// On disk, all of them: RAM is budgeted for the quantized vectors. Ids and tags are only ever
+// matched, so they skip the range index; nsfwLevel is filtered by range and match.
+const PAYLOAD_INDEXES: Array<[keyof ImagePayload, Schemas['PayloadSchemaParams']]> = [
+  ['nsfwLevel', { type: 'integer', lookup: true, range: true, on_disk: true }],
+  ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
+  ['baseModels', { type: 'keyword', on_disk: true }],
+  ['type', { type: 'keyword', on_disk: true }],
+  ['userId', { type: 'integer', lookup: true, range: false, on_disk: true }],
+  ['postId', { type: 'integer', lookup: true, range: false, on_disk: true }],
+  ['sortAt', { type: 'datetime', on_disk: true }],
 ];
 
 /** What produced the vectors in a collection. A mismatch means a new collection, never a mixed one. */

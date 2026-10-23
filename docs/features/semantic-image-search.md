@@ -14,7 +14,8 @@ with Postgres. This doc covers the index and how it is filled and kept in sync. 
 | Point id            | `Image.id`                                                                                  |
 | Collection metadata | `model`, `dimensions`, and after the first embed `modelRevision`, `profile`, `videoProfile` |
 
-Payload, every field indexed, stored on disk:
+Payload, stored on disk, every field indexed with the index on disk too (RAM is kept for the
+quantized vectors). `tagIds`, `userId` and `postId` are indexed for matching only, not ranges:
 
 | Field        | Type      | Source                                                     |
 | ------------ | --------- | ---------------------------------------------------------- |
@@ -60,7 +61,8 @@ Inputs are built per media type (`buildEmbedInput`):
 `Embedder` submits orchestrator workflows with one `multimodalEmbedding` step, up to 128 inputs
 each, tier `paid`. The step type is typed locally until the orchestration client ships it.
 
-- At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process.
+- At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process, each with up to
+  `VECTOR_EMBED_BATCH_SIZE` inputs (1 to 128, default 128).
 - A 429 or 5xx backs off exponentially with jitter, never sooner than `Retry-After`. It gives up
   after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a batch has one `externalId`, reused across
   its retries, so a submit that succeeded server-side is not paid for twice. It is random rather

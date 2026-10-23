@@ -78,17 +78,17 @@ export function buildEmbedInput(
   return build ? build(row, opts) : { skip: 'unsupported-type' };
 }
 
-/** Splits inputs into workflow-sized batches: at most 128 inputs and 8 videos each. */
-export function chunkInputs(inputs: EmbedInput[]): EmbedInput[][] {
+/** Splits inputs into workflow-sized batches: at most `batchSize` (≤128) inputs and 8 videos each. */
+export function chunkInputs(
+  inputs: EmbedInput[],
+  batchSize = MAX_INPUTS_PER_WORKFLOW
+): EmbedInput[][] {
   const batches: EmbedInput[][] = [];
   let current: EmbedInput[] = [];
   let videos = 0;
   for (const input of inputs) {
     const isVideo = !!input.videoUrl;
-    if (
-      current.length === MAX_INPUTS_PER_WORKFLOW ||
-      (isVideo && videos === MAX_VIDEOS_PER_WORKFLOW)
-    ) {
+    if (current.length === batchSize || (isVideo && videos === MAX_VIDEOS_PER_WORKFLOW)) {
       batches.push(current);
       current = [];
       videos = 0;
@@ -140,6 +140,7 @@ export type EmbedderOptions = {
   maxInFlight: number;
   maxRetries: number;
   priority: 'low' | 'normal';
+  batchSize?: number;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   /** Wait passed to the orchestrator on submit and poll, seconds. */
@@ -182,6 +183,7 @@ export class Embedder {
       token: embedToken,
       maxInFlight: embedMaxInFlight,
       maxRetries: embedMaxRetries,
+      batchSize: config.vectorSync.embedBatchSize,
       priority,
     });
   }
@@ -203,7 +205,7 @@ export class Embedder {
         call.result.error ??= err;
       }
     };
-    const [first, ...rest] = chunkInputs(inputs);
+    const [first, ...rest] = chunkInputs(inputs, this.opts.batchSize);
     // Until a stamp has been accepted, the first batch runs alone, so its model is recorded
     // before any other batch is compared against an empty stamp.
     const queued = this.stampSeen ? [first, ...rest] : rest;
