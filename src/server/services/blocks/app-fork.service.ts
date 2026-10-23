@@ -444,8 +444,8 @@ export async function applyForkProvenanceOnApprove(
 ): Promise<ForkApproveOutcome> {
   let request: { forkOfAppBlockId: string | null; forkOfCommitSha: string | null } | undefined;
   try {
-    const rows = (await db.$queryRaw`SELECT COALESCE("fork_of_app_block_id", "manifest"->>'forkOfAppBlockId') AS "forkOfAppBlockId",
-          COALESCE("fork_of_commit_sha", "manifest"->>'forkOfCommitSha') AS "forkOfCommitSha"
+    const rows = (await db.$queryRaw`SELECT "fork_of_app_block_id" AS "forkOfAppBlockId",
+          "fork_of_commit_sha" AS "forkOfCommitSha"
         FROM "app_block_publish_requests"
         WHERE "id" = ${args.publishRequestId}
         LIMIT 1`) as Array<{ forkOfAppBlockId: string | null; forkOfCommitSha: string | null }>;
