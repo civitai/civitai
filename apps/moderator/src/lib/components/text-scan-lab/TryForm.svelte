@@ -15,21 +15,16 @@
     type LabEntityType,
     type PromptKey,
   } from '$lib/text-scan-lab/types';
-  import { WORKSPACE_ONLY, type Workspace } from '$lib/text-scan-tests/types';
 
   let {
     prompts,
-    rules,
     editedKeys,
-    workspace,
     draftsError,
     onstart,
     onresult,
   }: {
     prompts: string;
-    rules: string;
     editedKeys: readonly PromptKey[];
-    workspace: Workspace;
     draftsError: string | null;
     onstart: () => void;
     onresult: (result: Record<string, unknown>) => void;
@@ -45,8 +40,7 @@
     parsed.kind !== 'empty' && parsed.kind !== 'too-many-ids' && parsed.kind !== 'refused'
   );
   const source = $derived(sourceTypeOf(parsed, { lookupAs, profileAs }));
-  const only = $derived(WORKSPACE_ONLY[workspace]);
-  const candidates = $derived(only ? [only] : judgeCandidates(source, editedKeys));
+  const candidates = $derived(judgeCandidates(source, editedKeys));
   const judged = $derived(candidates.includes(judgeAs) ? judgeAs : candidates[0]);
 
   const detected = (p: CheckInput): string | null => {
@@ -105,7 +99,6 @@
   <input type="hidden" name="judgeAs" value={judged} />
   <input type="hidden" name="profileAs" value={profileAs} />
   <input type="hidden" name="prompts" value={prompts} />
-  <input type="hidden" name="rules" value={rules} />
 
   <Textarea
     name="input"
@@ -119,7 +112,7 @@
     {#if detectedText}
       <p class="text-xs text-dark-2">{detectedText}</p>
     {/if}
-    {#if !only && parsed.kind === 'ids'}
+    {#if parsed.kind === 'ids'}
       {@render typeSelect(
         'lookup-as',
         'Look up as',
@@ -127,7 +120,7 @@
         (v) => (lookupAs = v as LabEntityType),
         LAB_ENTITY_TYPES
       )}
-    {:else if !only && parsed.kind === 'user'}
+    {:else if parsed.kind === 'user'}
       {@render typeSelect(
         'profile-as',
         'Look up as',

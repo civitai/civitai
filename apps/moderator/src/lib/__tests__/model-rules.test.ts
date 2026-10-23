@@ -1,13 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { MODEL_RULES_RESULT_PG_PATHS } from '@civitai/moderation/model-rules';
 import { describe, expect, it } from 'vitest';
 import {
-  isHeldAtPublish,
+  aliasBreadth,
+  appendAliases,
   modelRuleFormSchema,
   parseAliases,
-  parseMatchCursor,
-  parseRuleMatches,
-  ruleChoicesOf,
   ruleMatchesText,
 } from '$lib/model-rules';
 
@@ -44,127 +40,33 @@ describe('ruleMatchesText', () => {
   });
 });
 
-describe('parseRuleMatches', () => {
-  it('joins matched rules to snapshot subjects', () => {
-    const result = {
-      labels: { modelRules: { matched: [{ ruleId: 5, reason: ' because ' }, { ruleId: 9 }] } },
-      modelRules: { snapshot: [{ id: 5, subject: 'Subject Five' }] },
-    };
-    expect(parseRuleMatches(result)).toEqual([
-      { ruleId: 5, subject: 'Subject Five', reason: 'because', llm: true, literal: false },
-      { ruleId: 9, subject: null, reason: null, llm: true, literal: false },
-    ]);
+describe('aliasBreadth', () => {
+  it.each([
+    ['Doe', 'single-word'],
+    ['Jane', 'single-word'],
+    ['Foo_Bar', null],
+    ['Jane Doe', null],
+    ['J D', 'short'],
+    ['Al B', 'short'],
+    ['Al Bo', null],
+    ['Zoë', 'single-word'],
+    ['  ', null],
+  ])('%j -> %s', (alias, expected) => {
+    expect(aliasBreadth(alias)).toBe(expected);
   });
 
-  it('flags the rules the text names literally, and lists a literal-only hit the model missed', () => {
-    const result = {
-      labels: { modelRules: { matched: [{ ruleId: 5, reason: 'because' }] } },
-      modelRules: {
-        snapshot: [
-          { id: 5, subject: 'Subject Five' },
-          { id: 7, subject: 'Subject Seven' },
-        ],
-        literalRuleIds: [7, 5, 7, 'x'],
-      },
-    };
-    expect(parseRuleMatches(result)).toEqual([
-      { ruleId: 5, subject: 'Subject Five', reason: 'because', llm: true, literal: true },
-      { ruleId: 7, subject: 'Subject Seven', reason: null, llm: false, literal: true },
-    ]);
-  });
-
-  it('reads a literal-only result with no model verdict at all', () => {
-    expect(parseRuleMatches({ modelRules: { snapshot: [], literalRuleIds: [3] } })).toEqual([
-      { ruleId: 3, subject: null, reason: null, llm: false, literal: true },
-    ]);
-  });
-
-  it('keeps the first match per rule so the matches tab can key rows by rule id', () => {
-    const result = {
-      labels: {
-        modelRules: {
-          matched: [
-            { ruleId: 5, reason: 'first' },
-            { ruleId: 9, reason: 'other' },
-            { ruleId: 5, reason: 'second' },
-          ],
-        },
-      },
-    };
-    expect(parseRuleMatches(result)).toEqual([
-      { ruleId: 5, subject: null, reason: 'first', llm: true, literal: false },
-      { ruleId: 9, subject: null, reason: 'other', llm: true, literal: false },
-    ]);
-  });
-
-  it('tolerates a missing or malformed result', () => {
-    expect(parseRuleMatches(null)).toEqual([]);
-    expect(parseRuleMatches({ labels: {} })).toEqual([]);
-    expect(parseRuleMatches({ labels: { modelRules: { matched: 'x' } } })).toEqual([]);
+  it('judges the form the matcher compares: punctuation separates words', () => {
+    expect(aliasBreadth('Doe.')).toBe('single-word');
+    expect(aliasBreadth('Jane-Doe')).toBeNull();
   });
 });
 
-describe('parseMatchCursor', () => {
-  it('parses a timestamp with and without fractional seconds', () => {
-    expect(parseMatchCursor('2026-05-02 10:11:12|42')).toEqual({
-      updatedAt: '2026-05-02 10:11:12',
-      id: 42,
-    });
-    expect(parseMatchCursor('2026-05-02 10:11:12.123456|7')).toEqual({
-      updatedAt: '2026-05-02 10:11:12.123456',
-      id: 7,
-    });
+describe('appendAliases', () => {
+  it('appends new aliases one per line, skipping ones already there in any case', () => {
+    expect(appendAliases('One\ntwo', ['Two', 'Three', 'three'])).toBe('One\ntwo\nThree');
   });
 
-  it('rejects anything else', () => {
-    expect(parseMatchCursor('garbage')).toBeUndefined();
-    expect(parseMatchCursor('2026-05-02T10:11:12Z|42')).toBeUndefined();
-    expect(parseMatchCursor(undefined)).toBeUndefined();
-  });
-});
-
-describe('Matches list and its partial index', () => {
-  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
-  const service = read('../server/model-rules.service.ts');
-  const migration = read(
-    '../../../../../packages/civitai-db-schema/prisma/migrations/20261015120000_entity_moderation_model_rules_matches_idx/migration.sql'
-  );
-
-  // The planner only uses the partial index when the query repeats its predicate.
-  it('finds literal-only hits, and repeats the index predicate in the query', () => {
-    for (const label of ['modelRules', 'modelRulesLiteral']) {
-      expect(migration).toContain(`'${label}' = ANY("triggeredLabels")`);
-      expect(service).toContain(`'${label}' = ANY(em."triggeredLabels")`);
-    }
-  });
-
-  it('names the stored result paths the scan writes', () => {
-    expect(MODEL_RULES_RESULT_PG_PATHS.literalRuleIds).toBe('{modelRules,literalRuleIds}');
-    expect(MODEL_RULES_RESULT_PG_PATHS.matched).toBe('{labels,modelRules,matched}');
-  });
-});
-
-describe('isHeldAtPublish', () => {
-  it('is true only for a row the publish-time literal hold wrote', () => {
-    expect(isHeldAtPublish({ meta: { heldAtPublish: true } })).toBe(true);
-    expect(isHeldAtPublish({ meta: {} })).toBe(false);
-    expect(isHeldAtPublish(null)).toBe(false);
-  });
-});
-
-describe('ruleChoicesOf', () => {
-  it('lists each saved rule once, naming an unnamed one by its id and skipping ad hoc rules', () => {
-    expect(
-      ruleChoicesOf([
-        { ruleId: 4, subject: 'Alice' },
-        { ruleId: 4, subject: 'Alice again' },
-        { ruleId: 7, subject: null },
-        { ruleId: 0, subject: 'Ad hoc' },
-        { ruleId: -1, subject: 'Draft' },
-      ])
-    ).toEqual([
-      { id: 4, subject: 'Alice' },
-      { id: 7, subject: 'Rule 7' },
-    ]);
+  it('works on an empty field', () => {
+    expect(appendAliases('', ['A B'])).toBe('A B');
   });
 });

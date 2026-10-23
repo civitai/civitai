@@ -53,15 +53,6 @@ registerTextScanProfile({
     ),
 });
 
-registerTextScanProfile({
-  entityType: 'ModelRules',
-  labels: ['modelRules'],
-  load: async (ids) =>
-    new Map(
-      ids.map((id) => [id, { fields: [{ heading: 'Name', text: 'Some model' }], declared: {} }])
-    ),
-});
-
 const run = async (input: Record<string, unknown>) =>
   ((await runTextScanHarnessAction(textScanHarnessSchema.parse(input), { moderatorId: 1 })) as any)
     .body as Record<string, any>;
@@ -148,52 +139,6 @@ describe('text-scan harness with segmented text', () => {
     ] as never);
     const res = await run({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw' });
     expect(res.items.map((i: any) => i.textChangedSinceScan)).toEqual([false]);
-  });
-
-  describe('a ModelRules shadow row', () => {
-    const PROMPT_IDS = { base: 1, modelRules: 5 };
-    const row = (storedFingerprint: string, hashedFingerprint: string) => {
-      const subject = getTextScanProfile('ModelRules')!.load([1]) as Promise<Map<number, any>>;
-      return subject.then((subjects) => ({
-        entityId: 1,
-        workflowId: 'wf-1',
-        triggeredLabels: [],
-        nsfwLevel: null,
-        result: {
-          version: 1,
-          labels: { modelRules: { matched: [] } },
-          promptIds: PROMPT_IDS,
-          model: 'air:test',
-          modelRules: { fingerprint: storedFingerprint, snapshot: [], literalRuleIds: [] },
-        },
-        contentHash: textScanContentHash({
-          user: composeUserText(subjects.get(1)),
-          promptIds: PROMPT_IDS,
-          model: 'air:test',
-          thinking: false,
-          rulesFingerprint: hashedFingerprint,
-          segmentBudget: CONFIG,
-        }),
-        updatedAt: new Date('2026-10-01T00:00:00Z'),
-      }));
-    };
-    const changed = async (stored: string, hashed: string) => {
-      vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([await row(stored, hashed)] as never);
-      const res = await run({
-        action: 'sampleShadow',
-        entityType: 'ModelRules',
-        label: 'modelRules',
-      });
-      return res.items.map((i: any) => i.textChangedSinceScan);
-    };
-
-    it('is not stale when the stored fingerprint is the one the row was hashed with', async () => {
-      expect(await changed('fp-a', 'fp-a')).toEqual([false]);
-    });
-
-    it('is stale when the rule set the row was hashed with differs from the stored one', async () => {
-      expect(await changed('fp-b', 'fp-a')).toEqual([true]);
-    });
   });
 });
 
@@ -367,5 +312,18 @@ describe('putLabelModes', () => {
       textScanHarnessSchema.safeParse({ action: 'putLabelModes', label: 'minor', mode: 'hold' })
         .success
     ).toBe(false);
+  });
+});
+
+describe('text-scan harness with the retired ModelRules type', () => {
+  it.each([
+    { action: 'sampleShadow', label: 'nsfw' },
+    { action: 'quoteEntities', entityIds: [1] },
+  ])('refuses $action for ModelRules instead of reading its leftover rows', async (rest) => {
+    await expect(run({ ...rest, entityType: 'ModelRules' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('no profile registered'),
+    });
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });
