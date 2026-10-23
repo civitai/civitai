@@ -221,6 +221,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 
+  // Submits a separate shadow audio-scan workflow for each ingested video. DEFAULT-OFF: leave it off
+  // until the ImageAudioScan migration is applied and the orchestrator owners OK the worker load.
+  // Evaluated with the imageId, so ramp by percentage or boolean. Never changes the visual verdict.
+  VIDEO_AUDIO_SCAN = 'video-audio-scan',
+
   // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',

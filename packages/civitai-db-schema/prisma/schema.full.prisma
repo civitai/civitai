@@ -7595,6 +7595,25 @@ model ScanLabelFlag {
   @@index([itemId])
 }
 
+/// Shadow audio scan of a video, from a workflow separate from the visual ingestion scan.
+/// Nothing reads it to filter, rate or hide media.
+model ImageAudioScan {
+  imageId       Int       @id
+  workflowId    String    @unique
+  /// Pending | Succeeded | Failed
+  status        String    @default("Pending")
+  /// null when the video has no audio or the scan failed: unknown, never "clean"
+  flagged       Boolean?
+  hasAudio      Boolean?
+  result        Json?
+  resultVersion Int?
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([flagged, createdAt])
+}
+
 model ScanLabelVote {
   itemId    Int
   userId    Int

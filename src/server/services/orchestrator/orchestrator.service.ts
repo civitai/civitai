@@ -17,6 +17,7 @@ import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
+import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -245,6 +246,10 @@ export async function createImageIngestionRequest({
   const error = 'error' in result ? result.error : undefined;
 
   const serverTiming = response?.headers.get('Server-Timing') ?? null;
+
+  // Not awaited: the shadow audio scan must not slow or fail the visual submit.
+  if (data && type === 'video' && callbackUrl)
+    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, callbackUrl, priority });
 
   if (!data) {
     logToAxiom({
