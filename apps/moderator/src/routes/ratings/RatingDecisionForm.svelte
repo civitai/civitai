@@ -79,7 +79,8 @@
 </script>
 
 {#snippet levelButtons()}
-  <span class="text-sm text-dark-2">Apply rating</span>
+  <!-- A full row of its own in the sidebar's two-column grid. -->
+  <span class="col-span-2 text-sm text-dark-2">Apply rating</span>
   {#each row.levelOptions as level, i (level)}
     <TriageKeyButton
       type="submit"
@@ -149,6 +150,7 @@
   <input type="hidden" name="reviewId" value={row.id} />
   {#if chosen !== null}<input type="hidden" name="appliedLevel" value={chosen} />{/if}
   <TriageDecisionBar
+    compact
     buttons={levelButtons}
     fields={chosen !== null ? confirmFields : undefined}
     hint="Applying the owner's rating approves the dispute; any other rating rejects it. The owner sees the note."

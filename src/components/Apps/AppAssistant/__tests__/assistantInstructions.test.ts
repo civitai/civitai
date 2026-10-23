@@ -75,16 +75,30 @@ describe('buildAssistantInstructions', () => {
     );
   });
 
-  it('starts the dev server from the project directory, since the tool starts in /workspace', () => {
+  it('always starts the dev server with the tunnel flag, which the preview needs to load at all', () => {
+    // The whole paragraph: since civitai/cli#859 a Vite scaffold sends the headers the preview needs
+    // only with CIVITAI_DEV_TUNNEL_HMR=1, so a reworded dev-server step must be re-read here.
+    const DEV_SERVER =
+      "Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port 5173 in any command you give it.";
+    for (const runner of ['browser', 'remote'] as const)
+      for (const canPreview of [true, false]) {
+        const paragraphs = buildAssistantInstructions({
+          sandbox: running,
+          apps: ['my-app'],
+          canPreview,
+          previewHost: null,
+          runner,
+        }).split('\n\n');
+        expect(paragraphs.filter((p) => p.startsWith('Dev server:'))).toEqual([DEV_SERVER]);
+      }
+    // Nowhere is the flag described as being for live reload alone.
     const text = buildAssistantInstructions({
       sandbox: running,
       apps: ['my-app'],
       canPreview: true,
       previewHost: null,
     });
-    expect(text).toContain(
-      'sandbox__dev_server_start also starts in /workspace, not in the project directory, so give it the command cd <blockId> && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173. CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload work over the tunnel; any other command must keep it and --host 0.0.0.0 --port 5173.'
-    );
+    expect(text).not.toMatch(/CIVITAI_DEV_TUNNEL_HMR=1 is what makes live reload/);
   });
 
   it('names the running preview host', () => {

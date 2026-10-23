@@ -324,6 +324,10 @@
     account holding only that role, or call
     <code>/api/whoami?userId=…</code>, which reports the verdict for each page and action.
   </p>
+  <p class="mt-2 text-dark-2">
+    What each role and moderator may spend on the mod assistant per day is set on
+    <a href="/admin/spend-caps" class="underline">Assistant spend caps</a>.
+  </p>
 </header>
 
 <!-- The outcome sits beside the button that caused it: the tree is taller than the viewport, so at the

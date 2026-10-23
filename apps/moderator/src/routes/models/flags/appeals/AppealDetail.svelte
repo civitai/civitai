@@ -44,30 +44,26 @@
 </script>
 
 <script lang="ts">
-  import { browser } from '$app/environment';
   import { enhance } from '$app/forms';
-  import { page } from '$app/state';
+  import { heldModelFlagTabs } from '../model-flag-tabs';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
   import { crossTabChips } from '$lib/minor-flags/cross-tab';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import ModelFactsCard from '$lib/components/minor-flags/ModelFactsCard.svelte';
-  import UploaderCard from '$lib/components/minor-flags/UploaderCard.svelte';
-  import TriageDetailFrame from '$lib/components/triage/TriageDetailFrame.svelte';
+  import ModelFlagDetailFrame from '$lib/components/minor-flags/ModelFlagDetailFrame.svelte';
   import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
-  import ModelDetailHeader from '$lib/components/minor-flags/ModelDetailHeader.svelte';
   import PriorRulingsCard from '$lib/components/minor-flags/PriorRulingsCard.svelte';
   import SharedFileCard from '$lib/components/minor-flags/SharedFileCard.svelte';
   import { effectiveSource } from '$lib/minor-flags/appeal-filters';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
-  import { appealDecisionHint, modelUrl, waiting } from '$lib/minor-flags/appeal-row';
-  import { fetchModelFlagDetail, flagPromptId } from '$lib/minor-flags/model-detail';
+  import { appealDecisionHint, waiting } from '$lib/minor-flags/appeal-row';
+  import { flagPromptId } from '$lib/minor-flags/model-detail';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import { flagInForce, openVerdicts, poiInForce } from '$lib/minor-flags/text-scan-verdicts';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { modelFlagDetail, promptKeyOf } from '$lib/minor-flags/model-detail-request';
   import {
     closeReasonPickerBeyond,
     noteReasonChosen,
@@ -76,7 +72,6 @@
     submitAwaitingNote,
   } from '$lib/triage/reason-picker.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
-  import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import { reasonRequiresNote, resolutionReasonsFor } from '@civitai/shared/resolution-reasons';
@@ -90,6 +85,7 @@
   let {
     row,
     civitaiUrl,
+    canViewTrainingData,
     verdict,
     error,
     submit,
@@ -98,6 +94,7 @@
   }: {
     row: MinorFlagAppealRow;
     civitaiUrl: string;
+    canViewTrainingData: boolean;
     /** The outcome already chosen for this appeal, shown in place of the actions. */
     verdict: string | undefined;
     error: string | undefined;
@@ -106,28 +103,12 @@
     draft: RulingDraft<AppealRuling>;
   } = $props();
 
-  const modelHref = $derived(modelUrl(civitaiUrl, row.modelId));
   // A moderator confirming a hash flag keeps `confirmedFrom`, so those appeals show the match too.
   const matchedByHash = $derived(effectiveSource(row.flagSource, row.flagConfirmedFrom) === 'hash');
 
-  // Derived, never an effect: the shell keys the detail per row, so a late response cannot land on
-  // another one. Primitives first, so a reload that hands back an equal row keeps the request.
   const modelId = $derived(row.modelId);
-  const promptKey = $derived(
-    openVerdicts(row.textScanFlags)
-      .map(({ label, flag }) => flagPromptId(flag.promptIds, label))
-      .filter((id): id is number => id !== null)
-      .join(',')
-  );
-  const detail = $derived(
-    browser
-      ? fetchModelFlagDetail(
-          MODEL_FLAGS_APPEALS_PATH,
-          modelId,
-          promptKey ? promptKey.split(',').map(Number) : []
-        )
-      : SSR_PENDING
-  );
+  const promptKey = $derived(promptKeyOf(openVerdicts(row.textScanFlags).map(({ label, flag }) => flagPromptId(flag.promptIds, label))));
+  const detail = $derived(modelFlagDetail(MODEL_FLAGS_APPEALS_PATH, modelId, promptKey));
 
   // The decision keys, in key order; the labels say what the ruling does to the flag.
   const DECISION_LABEL = {
@@ -259,6 +240,7 @@
 
 {#snippet fields()}
   <InlineReasonFields
+    compact
     options={reasonOptions}
     bind:reason={
       () => reason,
@@ -281,45 +263,39 @@
   />
 {/snippet}
 
-<TriageDetailFrame {verdict} {error}>
-  {#snippet children()}
-    <ModelDetailHeader
-      modelId={row.modelId}
-      modelName={row.modelName}
-      userId={row.userId}
-      {civitaiUrl}
-      {detail}
-    >
-      {#snippet chips()}
-        <MetaChip tone="amber" solid>appeal</MetaChip>
-        <AppealTags {row} />
-        <MetaChip tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
-        <CrossTabChips
-          chips={crossTabChips(
-            { auto: row.alsoInAutoFlagged, needsReview: row.alsoInNeedsReview },
-            row.modelId,
-            (page.data.modelFlagTabs ?? []).map((tab: { href: string }) => tab.href)
-          )}
-          linked
-          tone="amber"
-        />
-      {/snippet}
-    </ModelDetailHeader>
+<ModelFlagDetailFrame
+  {row}
+  {detail}
+  {civitaiUrl}
+  {canViewTrainingData}
+  {verdict}
+  {error}
+>
+  {#snippet chips()}
+    <MetaChip tone="amber" solid>appeal</MetaChip>
+    <AppealTags {row} />
+    <MetaChip tone="amber">waiting {waiting(row.appealCreatedAt)}</MetaChip>
+    <CrossTabChips
+      chips={crossTabChips(
+        { auto: row.alsoInAutoFlagged, needsReview: row.alsoInNeedsReview },
+        row.modelId,
+        heldModelFlagTabs()
+      )}
+      linked
+      tone="amber"
+    />
+  {/snippet}
 
-    <PreviewImagesCard images={row.coverImages} allHref={modelHref} {detail} />
-
-    <div class="grid gap-4 lg:grid-cols-[380px_1fr]">
-      <OwnerSaysCard
-        message={row.appealMessage}
-        appealedAt={row.appealCreatedAt}
-        nthThisYear={row.appealNthThisYear}
-      />
-      <WhyFlaggedCard {row} {canUphold} {detail} />
-    </div>
-
+  {#snippet info()}
+    <OwnerSaysCard
+      message={row.appealMessage}
+      appealedAt={row.appealCreatedAt}
+      nthThisYear={row.appealNthThisYear}
+    />
     {#if matchedByHash}
       <SharedFileCard {row} {civitaiUrl} status={{ label: 'under appeal', tone: 'blue' }} />
     {/if}
+    <WhyFlaggedCard {row} {canUphold} {detail} />
 
     <PriorRulingsCard
       title="Prior rulings"
@@ -332,16 +308,14 @@
       sameFileAppeals={row.sameFileAppeals}
     />
 
-    <div class="grid gap-4 md:grid-cols-2">
-      <ModelFactsCard {row} {detail} />
-      <UploaderCard {row} {detail} />
-    </div>
   {/snippet}
-  {#snippet actions()}
+
+  {#snippet decision()}
     <!-- One form, one button per ruling: each button posts its own action. -->
     <form method="POST" action={actionHref('upholdAppeal')} use:enhance={decide} class="w-full">
       <input type="hidden" name="modelId" value={row.modelId} />
       <TriageDecisionBar
+        compact
         {buttons}
         picker={reasonPicker.open !== null ? picker : undefined}
         {fields}
@@ -350,4 +324,4 @@
       />
     </form>
   {/snippet}
-</TriageDetailFrame>
+</ModelFlagDetailFrame>

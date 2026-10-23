@@ -86,35 +86,37 @@
 </script>
 
 {#if item}
-  <!-- The post IS the header: what it is, whose it is, and where else to open it. -->
-  <header class="flex flex-col gap-1">
-    <h2 class="m-0 flex flex-wrap items-center gap-2 text-lg font-semibold">
-      {lookup?.post.title || `Post #${item.postId}`}
-      {#if lookup?.post.tosViolation}<Badge variant="destructive">post ToS'd</Badge>{/if}
-    </h2>
-    {#if lookup}
-      {@const blocked = lookup.images.filter((i) => i.ingestion === 'Blocked').length}
-      <p class="m-0 text-sm text-muted-foreground">
-        by
-        <a href={userLookupUrl(lookup.post.username ?? lookup.post.userId)} class={LINK_CLASS}>
-          {lookup.post.username ?? `#${lookup.post.userId}`}
-        </a>
-        {#if lookup.post.userBannedAt}<Badge variant="destructive">banned</Badge>{/if}
-        · {dateTime(lookup.post.createdAt)} · {num(lookup.total)} images{blocked
-          ? `, ${num(blocked)} already blocked`
-          : ''} ·
-        <a href="{data.civitaiUrl}/posts/{item.postId}" target="_blank" rel="noreferrer" class={LINK_CLASS}>
-          on the site
-        </a>
-        ·
-        <!-- Past the cap this panel loads, Bulk Image Manager is the post page with paging on it. -->
-        <a href={bulkImageManagerUrl('post', item.postId)} class={LINK_CLASS}>in Bulk Image Manager</a>
-      </p>
-    {/if}
-  </header>
-  <ReadOnlyNotice {can} owner={item?.ownerId != null} />
+  {#snippet itemHeader()}
+    <!-- The post IS the header: what it is, whose it is, and where else to open it. -->
+    <header class="flex flex-col gap-1">
+      <h2 class="m-0 flex flex-wrap items-center gap-2 text-lg font-semibold">
+        {lookup?.post.title || `Post #${item.postId}`}
+        {#if lookup?.post.tosViolation}<Badge variant="destructive">post ToS'd</Badge>{/if}
+      </h2>
+      {#if lookup}
+        {@const blocked = lookup.images.filter((i) => i.ingestion === 'Blocked').length}
+        <p class="m-0 text-sm text-muted-foreground">
+          by
+          <a href={userLookupUrl(lookup.post.username ?? lookup.post.userId)} class={LINK_CLASS}>
+            {lookup.post.username ?? `#${lookup.post.userId}`}
+          </a>
+          {#if lookup.post.userBannedAt}<Badge variant="destructive">banned</Badge>{/if}
+          · {dateTime(lookup.post.createdAt)} · {num(lookup.total)} images{blocked
+            ? `, ${num(blocked)} already blocked`
+            : ''} ·
+          <a href="{data.civitaiUrl}/posts/{item.postId}" target="_blank" rel="noreferrer" class={LINK_CLASS}>
+            on the site
+          </a>
+          ·
+          <!-- Past the cap this panel loads, Bulk Image Manager is the post page with paging on it. -->
+          <a href={bulkImageManagerUrl('post', item.postId)} class={LINK_CLASS}>in Bulk Image Manager</a>
+        </p>
+      {/if}
+    </header>
+    <ReadOnlyNotice {can} owner={item?.ownerId != null} />
+  {/snippet}
 
-  <ReportDetailColumns>
+  <ReportDetailColumns header={itemHeader}>
     {#snippet evidence()}
       {#if lookup}
         <Tabs

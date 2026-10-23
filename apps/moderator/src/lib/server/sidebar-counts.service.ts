@@ -23,12 +23,37 @@ import {
   getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorQueueCounts,
+  type MinorQueueCounts,
 } from './minor-hash.service';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
 
 export type SidebarCounts = Record<string, number>;
 
 const counts = createCache({ name: 'sidebar-counts:v1', fetch: fetchCounts, ttlSeconds: 60 });
+
+/**
+ * The file-match counts for Needs review's badge, waited on for a second at most. Every verdict busts
+ * their cache and a fill takes ~10s, so a wait alone blanked the badge after each ruling. Until a fill
+ * lands, the badge shows the last counts this process saw: stale by the verdicts since, not missing.
+ * A failed fill drops it, since a failure can last.
+ */
+let lastMinorQueue: MinorQueueCounts | null = null;
+async function minorQueueCounts(): Promise<MinorQueueCounts | null> {
+  const fill = getMinorQueueCounts();
+  // A fill that outlives the wait still lands here (or clears it), so the next refresh has it.
+  fill.then(
+    (c) => (lastMinorQueue = c),
+    () => (lastMinorQueue = null)
+  );
+  let failed = false;
+  const fresh = await bounded(
+    () => fill,
+    1_000,
+    () => (failed = true)
+  );
+  if (failed) return (lastMinorQueue = null);
+  return fresh ?? lastMinorQueue;
+}
 
 export function getSidebarCounts(): Promise<SidebarCounts> {
   return counts.get({});
@@ -89,10 +114,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
     countRemovedAppeals(),
     countPendingRemovalConfirmations(),
-    // Bounded tighter than the default: every verdict busts this cache, so a cold ~10s fill (see
-    // `getMinorQueueCounts`) is routine. The race does not cancel it, so the fill still lands in its
-    // own cache and the badge returns on a later refresh.
-    bounded(getMinorQueueCounts, 1_000),
+    minorQueueCounts(),
     // The page's own facet query, so the badge always equals the queue's "All" total.
     getMinorFlagAppealGroups({}),
     // Auto-flagged's own total, in models: the badge equals the queue's "of N". The hash branch scans
