@@ -5976,6 +5976,14 @@ export const privateModelFromTraining = async ({
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
+  // A version a moderator took down stays down: this flow neither republishes it, posts to it, nor
+  // resets it to a Draft its owner could publish when the flow fails.
+  const keepDowned = user.isModerator
+    ? {}
+    : { status: { notIn: constants.modPublishOnlyStatuses } };
+  const isPublishable = (v: { status: ModelStatus }) =>
+    user.isModerator || !constants.modPublishOnlyStatuses.includes(v.status);
+
   try {
     const result = await dbWrite.model.update({
       select: {
@@ -6000,6 +6008,7 @@ export const privateModelFromTraining = async ({
             : undefined,
           select: {
             id: true,
+            status: true,
           },
         },
       },
@@ -6031,11 +6040,7 @@ export const privateModelFromTraining = async ({
 
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: {
-          modelId: id,
-          // A version a moderator took down stays down; this is not a republish path for it.
-          ...(user.isModerator ? {} : { status: { notIn: constants.modPublishOnlyStatuses } }),
-        },
+        where: { modelId: id, ...keepDowned },
         data: {
           // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
@@ -6045,7 +6050,7 @@ export const privateModelFromTraining = async ({
 
       // Do this after the fact to avoid some triggers.
       await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
+        where: { modelId: id, ...keepDowned },
         data: {
           availability: Availability.Private,
         },
@@ -6053,7 +6058,7 @@ export const privateModelFromTraining = async ({
 
       // Create posts:
       await Promise.all(
-        result.modelVersions.map(async (modelVersion) => {
+        result.modelVersions.filter(isPublishable).map(async (modelVersion) => {
           await createModelVersionPostFromTraining({
             modelVersionId: modelVersion.id,
             user,
@@ -6078,7 +6083,7 @@ export const privateModelFromTraining = async ({
     });
 
     await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
+      where: { modelId: id, ...keepDowned },
       data: {
         status: ModelStatus.Draft,
         publishedAt: null,

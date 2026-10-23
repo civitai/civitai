@@ -876,9 +876,6 @@ export const createPost = async ({
 
   let availability: Availability = Availability.Public;
 
-  if (data.modelVersionId && data.publishedAt && !isModerator)
-    await assertPublishableVersion(data.modelVersionId);
-
   if (data.modelVersionId) {
     const modelVersion = await dbWrite.modelVersion.findUnique({
       where: { id: data.modelVersionId },
@@ -886,6 +883,8 @@ export const createPost = async ({
     });
     if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
       throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+    // After the visibility check, so a version the caller cannot see stays not-found.
+    if (data.publishedAt && !isModerator) await assertPublishableVersion(data.modelVersionId);
 
     availability = modelVersion.model.availability;
   }

@@ -6,6 +6,7 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as Caches from '~/server/redis/caches';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as Submit from '~/server/services/text-scan/submit';
+import type * as Visibility from '~/server/services/model-version-visibility.service';
 
 /**
  * A moderator's take-down unpublishes the version's posts. Publishing one afterwards went straight
@@ -37,6 +38,12 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof Submit>()),
   scanEntityInBackground: () => undefined,
+}));
+
+const { canView } = vi.hoisted(() => ({ canView: { value: true } }));
+vi.mock('~/server/services/model-version-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Visibility>()),
+  canViewModelVersion: async () => canView.value,
 }));
 
 const OWNER = 5;
@@ -140,16 +147,25 @@ describe('an already-public post on a taken-down version', () => {
 });
 
 describe('creating a post already published', () => {
-  // Past the guard, createPost reads the version for visibility; stopping there shows the guard let it by.
+  // Past the guard createPost writes the post; stopping there shows the guard let it by.
   const PASSED_GUARD = 'passed the publish guard';
   beforeEach(() => {
-    dbMock.dbWrite.modelVersion.findUnique.mockRejectedValue(new Error(PASSED_GUARD) as never);
+    canView.value = true;
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      model: { availability: 'Public' },
+    } as never);
+    dbMock.dbWrite.post.create.mockRejectedValue(new Error(PASSED_GUARD) as never);
   });
   const create = (modelVersionId: number, publishedAt?: Date, isModerator = false) =>
     createPost({ userId: OWNER, isModerator, modelVersionId, publishedAt } as never);
 
   it('refuses the owner on a taken-down version', async () => {
     await expect(create(DOWNED, new Date())).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('says not found, not taken down, for a version the caller cannot see', async () => {
+    canView.value = false;
+    await expect(create(DOWNED, new Date())).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it.each([

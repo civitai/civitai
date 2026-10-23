@@ -12,9 +12,14 @@ vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Subscriptions>()),
   getHighestTierSubscription: async () => ({ tier: 'founder' }),
 }));
+// Stands in for the real post path: publishing onto a taken-down version is refused there.
+const { postedTo } = vi.hoisted(() => ({ postedTo: [] as number[] }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
-  createModelVersionPostFromTraining: async () => undefined,
+  createModelVersionPostFromTraining: async ({ modelVersionId }: { modelVersionId: number }) => {
+    postedTo.push(modelVersionId);
+    if (modelVersionId !== 10) throw new Error('refused: taken down');
+  },
   bustMvCache: async () => undefined,
 }));
 
@@ -25,6 +30,7 @@ type Version = { id: number; modelId: number; status: string };
 let versions: Version[];
 
 beforeEach(() => {
+  postedTo.length = 0;
   versions = [
     { id: 10, modelId: MODEL, status: 'Published' },
     { id: 11, modelId: MODEL, status: 'UnpublishedViolation' },
@@ -40,7 +46,7 @@ beforeEach(() => {
   dbMock.dbRead.model.count.mockResolvedValue(0 as never);
   dbMock.dbWrite.model.update.mockResolvedValue({
     id: MODEL,
-    modelVersions: versions.map(({ id }) => ({ id })),
+    modelVersions: versions.map(({ id, status }) => ({ id, status })),
   } as never);
   // Applies the filter it is given, so a publish that forgets the status condition reaches row 11.
   dbMock.dbWrite.modelVersion.updateMany.mockImplementation((async ({
@@ -70,14 +76,32 @@ describe('making a model with a taken-down version private', () => {
   it('leaves the taken-down and deleted versions down for the owner', async () => {
     await makePrivate();
 
+    // Posting to them would fail, and the failure path used to reset every version to a Draft.
+    expect(postedTo).toEqual([10]);
     expect(statusOf(10)).toBe('Published');
     expect(statusOf(11)).toBe('UnpublishedViolation');
     expect(statusOf(12)).toBe('Deleted');
   });
 
-  it('lets a moderator publish them', async () => {
-    await makePrivate(true);
+  it('does not reset them to Draft when the flow fails', async () => {
+    dbMock.dbWrite.model.update.mockResolvedValueOnce({
+      id: MODEL,
+      modelVersions: [
+        { id: 10, status: 'Published' },
+        { id: 99, status: 'Published' },
+      ],
+    } as never);
+    await makePrivate();
 
-    expect(statusOf(11)).toBe('Published');
+    expect(statusOf(10)).toBe('Draft');
+    expect(statusOf(11)).toBe('UnpublishedViolation');
+    expect(statusOf(12)).toBe('Deleted');
+  });
+
+  it('lets a moderator publish them', async () => {
+    postedTo.length = 0;
+    await makePrivate(true).catch(() => undefined);
+
+    expect(postedTo).toEqual([10, 11, 12]);
   });
 });
