@@ -127,7 +127,16 @@ export function resolveLookupHit<V extends LookupVersion>(
       })
     )
       return 'generate';
-    if (filters.loadedOnly && !v.generatorLoaded) return 'loaded';
+    if (
+      filters.loadedOnly &&
+      !selectableVersions([v], {
+        loadedOnly: true,
+        skipBaseModel: true,
+        modelBaseModels: [],
+        excludedIds: [],
+      }).length
+    )
+      return 'loaded';
     if (filters.turboOnly && !v.turbo) return 'turbo';
     if (ctx.excludeTurbo && v.turbo) return 'excludeTurbo';
     return null;
