@@ -317,26 +317,29 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
   });
 
   it('hands the client exactly the reviewed pageProps', () => {
-    expect(Object.keys(base.nextData.props.pageProps).sort()).toEqual(
-      [
-        'adsGated',
-        'availableOAuthProviders',
-        'browsingSettingsAddons',
-        'canIndex',
-        'colorScheme',
-        'cookies',
-        'domain',
-        'flags',
-        'hasAuthCookie',
-        'host',
-        'liveNow',
-        'seed',
-        'serverDomains',
-        'shell',
-        'tosMeta',
-        'verifiedBot',
-      ].sort()
-    );
+    const allowlist = [
+      'adsGated',
+      'availableOAuthProviders',
+      'browsingSettingsAddons',
+      'canIndex',
+      'colorScheme',
+      'cookies',
+      'domain',
+      'flags',
+      'hasAuthCookie',
+      'host',
+      'liveNow',
+      'seed',
+      'serverDomains',
+      'shell',
+      'tosMeta',
+      'verifiedBot',
+    ];
+    const keys = Object.keys(base.nextData.props.pageProps);
+    expect(keys.filter((key) => !allowlist.includes(key))).toEqual([]);
+    // `domain` is `undefined` (so absent from the JSON) only because this suite configures no
+    // server domains; every other key is always present.
+    expect(allowlist.filter((key) => !keys.includes(key))).toEqual(['domain']);
     expect(base.nextData.props.pageProps).toMatchObject({
       shell: true,
       adsGated: true,
