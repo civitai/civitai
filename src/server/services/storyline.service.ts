@@ -491,7 +491,8 @@ export async function linkPendingChapter(
       where: { id: parentChapterId },
       select: { storylineId: true, postId: true },
     });
-    if (!parent || parent.postId == null) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+    if (!parent || parent.postId == null)
+      throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
     if (storylineId && storylineId !== parent.storylineId)
       throw throwBadRequestError('That chapter is not in this storyline');
     await assertCanContinueStoryline({ parentPostId: parent.postId, placerId: userId }, db);
@@ -500,7 +501,11 @@ export async function linkPendingChapter(
     if (!storylineId) throw throwBadRequestError('Name the storyline this post starts');
     const storyline = await db.storyline.findUnique({
       where: { id: storylineId },
-      select: { userId: true, tosViolation: true, chapters: { where: { depth: 0 }, select: { id: true } } },
+      select: {
+        userId: true,
+        tosViolation: true,
+        chapters: { where: { depth: 0 }, select: { id: true } },
+      },
     });
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.userId !== userId)

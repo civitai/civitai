@@ -460,7 +460,13 @@ describe('createStoryline', () => {
 
   it('refuses a cover pick on a storyline with no chapters to pick from', async () => {
     w.image.findMany.mockResolvedValue([
-      { id: 77, nsfwLevel: NsfwLevel.PG, minor: false, poi: false, post: { storylineChapter: null } },
+      {
+        id: 77,
+        nsfwLevel: NsfwLevel.PG,
+        minor: false,
+        poi: false,
+        post: { storylineChapter: null },
+      },
     ] as never);
     await expect(
       createStoryline({ title: 't', maxNsfwLevel: NsfwLevel.R, coverImageId: 77, userId: OWNER })
@@ -812,8 +818,8 @@ describe('getStoryline', () => {
       { ...row(), chapters: [{ id: 20, postId: null, post: null }] },
       [],
     ],
-    // Started before its first post, which is not written yet.
-    ['with no chapter 1 yet', { ...row(), chapters: [] }, []],
+    // Started before its first post. PG ceiling, so the level check alone would not hide it.
+    ['with no chapter 1 yet', { ...row({ maxNsfwLevel: PG }), chapters: [] }, []],
   ])(
     'is not found for a stranger when %s, but the owner and moderators still see it',
     async (_n, value, blocked) => {
@@ -1025,7 +1031,11 @@ describe('reading', () => {
       ],
       [
         'with no chapter 1 yet',
-        () => r.storyline.findUnique.mockResolvedValue(storylineRow({ chapters: [] }) as never),
+        () =>
+          // PG ceiling, so the level check alone would not hide it.
+          r.storyline.findUnique.mockResolvedValue(
+            storylineRow({ chapters: [], maxNsfwLevel: NsfwLevel.PG }) as never
+          ),
       ],
     ])('when %s, has no path, children or map for them', async (_name, arrange) => {
       arrange();
