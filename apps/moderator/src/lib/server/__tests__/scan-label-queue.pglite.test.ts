@@ -146,15 +146,17 @@ describe('claimNext order', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('releases a held lease that the new filter excludes', async () => {
+  it('keeps a held card across a filter change, then applies the filter', async () => {
     const d12 = await seedItem(1, { flaggedAt: '2026-10-12T10:00:00Z' });
     const d13 = await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
     expect((await claimNext(1, {}, NOW))!.itemId).toBe(d13);
-    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d12);
+    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d13);
     const { rows } = await pg.query<{ itemId: number }>(
       `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = 1`
     );
-    expect(rows).toEqual([{ itemId: d12 }]);
+    expect(rows).toEqual([{ itemId: d13 }]);
+    await castVote({ itemId: d13, userId: 1, choice: KEEP, msOnItem: 1 }, later(2000));
+    expect((await claimNext(1, { day: '2026-10-12' }, later(3000)))!.itemId).toBe(d12);
   });
 
   it('never serves an item the moderator already voted on', async () => {
@@ -201,6 +203,32 @@ describe('claimNext order', () => {
       // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
       expect(await isControlFlaggerVersion('scan@2')).toBe(false);
       expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+    });
+
+    it('keeps a held card across a version filter, whatever its lane', async () => {
+      const other = await seedItem(3, { version: 'scan@2' });
+      const toUpload = () => 0.1;
+      const toControl = () => 0.95;
+      for (const [userId, rng] of [
+        [1, toUpload],
+        [2, toControl],
+      ] as const) {
+        const held = (await claimNext(userId, {}, NOW, rng))!.itemId;
+        expect(held).not.toBe(other);
+        expect((await claimNext(userId, { flaggerVersion: 'scan@2' }, later(1000)))!.itemId).toBe(
+          held
+        );
+        const { rows } = await pg.query<{ itemId: number }>(
+          `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = $1`,
+          [userId]
+        );
+        expect(rows).toEqual([{ itemId: held }]);
+      }
+      const lanes = await pg.query<{ lane: string }>(
+        `SELECT i.lane FROM "ScanLabelClaim" c JOIN "ScanLabelItem" i ON i.id = c."itemId"
+         ORDER BY c."userId"`
+      );
+      expect(lanes.rows.map((r) => r.lane)).toEqual(['flagged', 'control']);
     });
 
     it('recognises the control version, and only it', async () => {

@@ -122,10 +122,10 @@ export function sourceOrder(rng: () => number): QueueSource[] {
 }
 
 /**
- * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
- * A filtered claim skips the mix: a filter can empty a source, and each empty source would walk the
- * whole queue.
+ * A live lease on an open item is returned as-is, so a reload cannot pile up leases. A held card is
+ * kept across a filter change; the filter applies from the next claim. A new claim draws its source
+ * by `QUEUE_MIX`. A filtered claim skips the mix: a filter can empty a source, and each empty source
+ * would walk the whole queue.
  */
 export async function claimNext(
   userId: number,
@@ -142,22 +142,12 @@ export async function claimNext(
       .orderBy('c.expiresAt', 'desc')
       .execute();
     for (const lease of held) {
-      const inView = await openItems(trx, filters)
+      const open = await openItems(trx, {})
         .select('i.id')
         .where('i.id', '=', lease.itemId)
         .executeTakeFirst();
-      if (inView) return toCard(trx, lease.itemId, lease.expiresAt);
+      if (open) return toCard(trx, lease.itemId, lease.expiresAt);
     }
-    if (held.length)
-      await trx
-        .deleteFrom('ScanLabelClaim')
-        .where('userId', '=', userId)
-        .where(
-          'itemId',
-          'in',
-          held.map((l) => l.itemId)
-        )
-        .execute();
 
     const tried: number[] = [];
     let attempts = 0;
