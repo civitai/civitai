@@ -219,6 +219,16 @@ describe('updateListing — the fork opt-in', () => {
   });
 
   it('with a MATERIAL change in the same patch it still goes to the LIVE listing, never the shadow', async () => {
+    // Faithful shadow lifecycle: none exists until `create` mints one, then the re-read finds it.
+    let minted: { id: string } | null = null;
+    mockWrite.appListing.create.mockImplementation(async (a: { data: { id: string } }) => {
+      minted = { id: a.data.id };
+      return a.data;
+    });
+    mockWrite.appListing.findFirst.mockImplementation(
+      async (a: { where?: { revisionOfId?: string } }) =>
+        a.where?.revisionOfId === LISTING ? minted : null
+    );
     const res = await updateListing({
       listingId: LISTING,
       patch: { name: 'Renamed App', forkable: true },
