@@ -23,6 +23,10 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
+import type { ShellRouteName } from '~/server/shell/shell-mode';
+import { shellRouteByName } from '~/server/shell/shell-mode';
+import { applyShellResponseHeaders, syncShellRouteCookie } from '~/server/shell/shell-response';
+import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const getServerProxySSGHelpers = async (
   // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
@@ -107,10 +111,18 @@ export function createServerSideProps<P>({
   useSession = false,
   prefetch = 'once',
   requireModerator = false,
+  shell,
 }: CreateServerSidePropsProps<P>) {
   return async function (
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
+    // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
+    // or returned — no session, no flags, no prefetch. Ads stay gated until the page data's verdict.
+    if (shell && (context.req as { [SHELL_REQ_KEY]?: string })[SHELL_REQ_KEY] === shell) {
+      applyShellResponseHeaders(context.res, shell);
+      return { props: { adsGated: true } as unknown as NonNullable<P> };
+    }
+
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     // `_app` seeds `req.session` from its own request, which carries this request's headers but not
     // its URL. With an Authorization header the seed holds that token's user but not its
@@ -143,6 +155,12 @@ export function createServerSideProps<P>({
     }
 
     const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    // This response is private, so it is where the viewer's shell rollout is read: the route cookie
+    // follows the flag, and only a request carrying it is ever considered for the shell.
+    if (shell) {
+      const enabled = !!session?.user && !!features[shellRouteByName(shell).flag];
+      syncShellRouteCookie(context.req, context.res, shell, enabled);
+    }
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
@@ -203,6 +221,10 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
    *  Authorization header. Redirects everyone else before the resolver runs. */
   requireModerator?: boolean;
+  /** The page has a static shell (`~/server/shell/shell-mode`): answer a request `_app` marked for
+   *  it with the shell's props and headers, and keep the route's cookie in step with its flag on
+   *  every other response. */
+  shell?: ShellRouteName;
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {
         gating?: AdGatingDeclaration;

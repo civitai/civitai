@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
 import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
+import { shellPageDataPrefetchScript } from '~/components/Shell/shell-page-data';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
@@ -45,6 +46,10 @@ export default class _Document extends Document {
             }}
           />
           <ColorSchemeScript />
+          {/* A static shell page starts its page-data request here, before the bundles load. */}
+          {pageProps.shell && (
+            <script dangerouslySetInnerHTML={{ __html: shellPageDataPrefetchScript() }} />
+          )}
         </Head>
         <body
           className={clsx(pageProps.colorScheme, {
