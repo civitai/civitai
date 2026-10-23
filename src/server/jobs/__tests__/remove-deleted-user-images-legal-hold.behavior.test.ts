@@ -179,6 +179,24 @@ describe('remove-deleted-user-images under a legal hold', () => {
     expect(await imagesOf(UNHELD)).toBe(0);
   });
 
+  it('keeps every image of an account when one is flagged for CSAM review after they were read', async () => {
+    let flagged = false;
+    hooks.beforeDelete = async (ids) => {
+      // On the first batch, flag an image of a later one: no report exists yet, so no hold.
+      if (!flagged && ids.every((id) => id <= MANY)) {
+        await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${MANY}`);
+        flagged = true;
+      }
+    };
+
+    await run();
+
+    expect(flagged).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
+  });
+
   it('keeps the posts when the hold lands after the images are gone', async () => {
     const deleteRows = mockDeleteImages.getMockImplementation()!;
     let held = false;

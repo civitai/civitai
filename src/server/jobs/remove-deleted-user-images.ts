@@ -133,9 +133,13 @@ async function drainUser(
       if (!(await isStillMarkedForDeletion(userId)))
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
-      // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
+      // Re-checked on the delete itself, so a hold or a CSAM flag placed mid-drain still stops it.
       const deleted = await deleteImages(batch, undefined, {
-        onlyWhere: Prisma.sql`NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}`,
+        onlyWhere: Prisma.sql`NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" f
+            WHERE f."userId" = "Image"."userId" AND f."needsReview" = 'csam'
+          )`,
       });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
