@@ -144,8 +144,6 @@ beforeEach(async () => {
   );
 
   await holder.db.exec(`
-    DROP VIEW IF EXISTS "EvidenceHeldUser";
-    DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "User", "Post", "Image", "CsamReport";
     INSERT INTO "User" (id, "deletedAt", meta) VALUES
       (${HELD}, now() - interval '1 day', '{}'),
@@ -271,11 +269,6 @@ describe('remove-deleted-user-images under any account hold', () => {
     'an image listed on a holding report that names someone else': `
       INSERT INTO "CsamReport" ("userId", images) VALUES (${REPORT_SUBJECT}, '[{"id": ${MANY}}]');
     `,
-    'a hold marker': `
-      CREATE TABLE "EvidenceHold" ("userId" int);
-      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-      INSERT INTO "EvidenceHold" VALUES (${HELD});
-    `,
   };
 
   it.each(Object.entries(holdsByImage))(
@@ -337,25 +330,39 @@ describe('remove-deleted-user-images under any account hold', () => {
     expect(await postsOf(HELD)).toBe(1);
   });
 
-  it('holds every account while the marker table has no view', async () => {
-    await holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int);`);
+  // The marker objects come from the migration; these cases move them aside and always put them back.
+  const hideView = `ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUser_hidden";`;
+  const restoreView = `ALTER VIEW IF EXISTS "EvidenceHeldUser_hidden" RENAME TO "EvidenceHeldUser";`;
+  const hideTable = `ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_hidden";`;
+  const restoreTable = `ALTER TABLE IF EXISTS "EvidenceHold_hidden" RENAME TO "EvidenceHold";`;
+  const restoreMarker = () => holder.db.exec(restoreView + restoreTable);
 
-    await run();
+  it('holds every account while the marker table has no view', async () => {
+    await holder.db.exec(hideView);
+    try {
+      await run();
+    } finally {
+      await restoreMarker();
+    }
 
     expect(await imagesOf(HELD)).toBe(MANY);
     expect(await imagesOf(UNHELD)).toBe(5);
   });
 
-  it('holds an account once the marker view appears mid-run', async () => {
+  it('holds an account once the marker objects appear mid-run', async () => {
+    await holder.db.exec(hideView + hideTable);
     let appeared = false;
     hooks.beforeDelete = async (ids) => {
       if (!appeared && ids.every((id) => id <= MANY)) {
-        await holder.db.exec(holdsByImage['a hold marker']);
+        await restoreMarker();
         appeared = true;
       }
     };
-
-    await run();
+    try {
+      await run();
+    } finally {
+      await restoreMarker();
+    }
 
     expect(appeared).toBe(true);
     expect(await imagesOf(HELD)).toBe(MANY);
