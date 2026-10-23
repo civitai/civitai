@@ -390,11 +390,15 @@ export async function isControlFlaggerVersion(
   version: string,
   db: Kysely<DB> = dbRead
 ): Promise<boolean> {
+  // From the control lane's partial index: a real version has no control flags, so looking it up
+  // by version alone reads every flag of that version to prove it.
   const row = await db
-    .selectFrom('ScanLabelFlag')
+    .selectFrom('ScanLabelItem as i')
+    .innerJoin('ScanLabelFlag as f', 'f.itemId', 'i.id')
     .select(sql`1`.as('one'))
-    .where('flaggerVersion', '=', version)
-    .where('source', '=', CONTROL_SOURCE)
+    .where(sql<boolean>`i.lane = 'control'`)
+    .where('f.flaggerVersion', '=', version)
+    .where('f.source', '=', CONTROL_SOURCE)
     .limit(1)
     .executeTakeFirst();
   return !!row;
