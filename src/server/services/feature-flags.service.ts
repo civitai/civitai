@@ -138,6 +138,9 @@ const featureFlags = createFeatureFlags({
   // the server render and the hydrating render read the same serialised flags. gSSP does not read
   // the flag: its prefetches are the same in both states.
   modelPageDeferBelowFold: { availability: [], fliptKey: 'model-page-defer-below-fold' },
+  // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
+  // moderator cohort is a Flipt rollout, never this static list.
+  shellImages: { availability: [], fliptKey: 'shell-images' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
