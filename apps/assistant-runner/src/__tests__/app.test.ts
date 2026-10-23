@@ -321,7 +321,11 @@ describe('the run API', () => {
       body: JSON.stringify(edit),
     });
     expect(response.status).toBe(201);
-    expect(seen[0]).toMatchObject({ method: 'start', userId: 'u1', args: [edit] });
+    expect(seen[0]).toMatchObject({
+      method: 'start',
+      userId: 'u1',
+      args: [edit, expect.anything()],
+    });
     expect(
       await fetch(`${base}/runs?conversationId=c1`, { headers: user1 }).then((r) => r.json())
     ).toEqual({ v: 1, run: null, features: ['edit'] });
