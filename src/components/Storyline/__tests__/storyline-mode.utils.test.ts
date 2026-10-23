@@ -191,6 +191,27 @@ describe('withStorylineNavigation', () => {
     withStorylineNavigation(first, 3, vi.fn()).previous();
     expect(first.previous).not.toHaveBeenCalled();
   });
+
+  it('closes the open end-of-chapter view on previous and stays on the last image', () => {
+    const last = nav(2);
+    const onCloseEnd = vi.fn();
+    withStorylineNavigation(last, 3, vi.fn(), onCloseEnd).previous();
+    expect(onCloseEnd).toHaveBeenCalledTimes(1);
+    expect(last.previous).not.toHaveBeenCalled();
+  });
+
+  it('closes the end-of-chapter view of a one-image chapter, where previous would stay put', () => {
+    const only = nav(0);
+    const onCloseEnd = vi.fn();
+    withStorylineNavigation(only, 1, vi.fn(), onCloseEnd).previous();
+    expect(onCloseEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps back normally once the end-of-chapter view is closed', () => {
+    const last = nav(2);
+    withStorylineNavigation(last, 3, vi.fn(), undefined).previous();
+    expect(last.previous).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('uniquePostIds', () => {
