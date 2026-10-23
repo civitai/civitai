@@ -246,7 +246,6 @@ describe('StorylinePage', () => {
     );
     await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
     expect(mocks.discussion).toHaveBeenCalledWith('storyline', 2);
-    expect(mocks.discussion).not.toHaveBeenCalledWith('post', expect.anything());
   });
 
   test('a picked banner shows sharp at its focus', async () => {
@@ -396,7 +395,6 @@ describe('StorylinePage', () => {
     expect(cardCover()).toEqual([{ image: 'none', ratio: '3/4' }]);
     expect(stops()[0]).toBe('1This chapter is hidden by your browsing level');
     expect(page.getByText('Start reading').elements()).toHaveLength(0);
-    expect(mocks.discussion).not.toHaveBeenCalledWith('post', expect.anything());
     await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
   });
 

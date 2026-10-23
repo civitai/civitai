@@ -693,21 +693,32 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
   return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
 }
 
-export async function getCommentThreadStorylineId(threadId: number): Promise<number | null> {
-  const thread = await dbRead.thread.findUnique({
-    where: { id: threadId },
-    select: { storylineId: true, rootThread: { select: { storylineId: true } } },
-  });
-  return thread?.storylineId ?? thread?.rootThread?.storylineId ?? null;
-}
+/**
+ * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
+ * or on `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted comment breaks the
+ * chain, so either alone can miss a storyline and let a reply skip its gate.
+ */
+export const storylineOfThreadSql = (seed: string) => Prisma.sql`
+  ${Prisma.raw(muteableThreadsCte(seed))}
+  SELECT th."storylineId"
+  FROM (
+    SELECT mt."id" FROM muteable_threads mt
+    UNION ALL
+    SELECT t."rootThreadId" FROM "Thread" t WHERE t.id = ${Prisma.raw(seed)}
+  ) chain
+  JOIN "Thread" th ON th.id = chain."id"
+  WHERE th."storylineId" IS NOT NULL
+  LIMIT 1`;
 
-export async function getCommentStorylineId(commentId: number): Promise<number | null> {
-  const comment = await dbRead.commentV2.findUnique({
-    where: { id: commentId },
-    select: { threadId: true },
-  });
-  return comment ? getCommentThreadStorylineId(comment.threadId) : null;
-}
+const firstStorylineId = async (seed: string) =>
+  (await dbRead.$queryRaw<{ storylineId: number }[]>(storylineOfThreadSql(seed)))[0]?.storylineId ??
+  null;
+
+export const getCommentThreadStorylineId = (threadId: number) =>
+  firstStorylineId(String(Number(threadId)));
+
+export const getCommentStorylineId = (commentId: number) =>
+  firstStorylineId(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
 
 export const deleteComment = async ({ id }: { id: number }) => {
   const deleted = await dbWrite.commentV2.delete({ where: { id } });

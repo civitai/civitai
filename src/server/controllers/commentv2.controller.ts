@@ -264,6 +264,7 @@ export const toggleSectionMuteHandler = async ({
   input: SectionMuteInput;
 }) => {
   try {
+    if (input.entityType === 'storyline') await assertCommentEntityVisible(input, ctx);
     return await toggleSectionMute({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -279,6 +280,7 @@ export const getSectionMutedHandler = async ({
   input: SectionMuteInput;
 }) => {
   try {
+    if (input.entityType === 'storyline') await assertCommentEntityVisible(input, ctx);
     return await getSectionMuted({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);

@@ -4,6 +4,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
 
 // The real storyline gate runs; only its inputs (the row, the viewer's blocks) are faked.
 
@@ -13,6 +14,7 @@ const getCommentCount = vi.fn(async () => 0);
 const upsertComment = vi.fn(async () => ({ id: 1 }));
 const getComment = vi.fn(async () => ({ id: 5, threadId: 70, user: { id: 9 } }));
 const getCommentThreadStorylineId = vi.fn<() => Promise<number | null>>(async () => null);
+const sectionMute = vi.fn(async () => ({ muted: false }));
 const getCommentStorylineId = vi.fn<() => Promise<number | null>>(async () => null);
 
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
@@ -27,6 +29,8 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   getCommentThreadStorylineId: (...args: unknown[]) => getCommentThreadStorylineId(...(args as [])),
   getCommentStorylineId: (...args: unknown[]) => getCommentStorylineId(...(args as [])),
   isViewerContentOwner: vi.fn(async () => false),
+  toggleSectionMute: (...args: unknown[]) => sectionMute(...(args as [])),
+  getSectionMuted: (...args: unknown[]) => sectionMute(...(args as [])),
 }));
 
 const blockedPair = { ids: [] as number[] };
@@ -45,10 +49,16 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlags: () => ({ storylines: flags.storylines }),
 }));
 
-const reader = { level: NsfwLevel.PG };
-vi.mock('~/server/utils/storyline-reader-level', () => ({
-  storylineReaderLevel: () => reader.level,
-}));
+// `level: undefined` runs the real level, for the tests of which level a reader is held to.
+const reader = { level: NsfwLevel.PG as number | undefined };
+vi.mock('~/server/utils/storyline-reader-level', async (importOriginal) => {
+  const actual = await importOriginal<typeof StorylineReaderLevel>();
+  return {
+    ...actual,
+    storylineReaderLevel: (...args: Parameters<typeof actual.storylineReaderLevel>) =>
+      reader.level ?? actual.storylineReaderLevel(...args),
+  };
+});
 
 vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 
@@ -58,6 +68,8 @@ const {
   getCommentCountV2Handler,
   upsertCommentV2Handler,
   getCommentHandler,
+  toggleSectionMuteHandler,
+  getSectionMutedHandler,
 } = await import('../commentv2.controller');
 
 const OWNER = 4;
@@ -169,7 +181,7 @@ describe.each(HANDLERS)('storyline thread visibility: %s', (_name, handler, serv
 
 describe.each(HANDLERS.slice(0, 3))(
   'storyline thread reads by owner and moderator: %s',
-  (_n, handler) => {
+  (_n, handler, service) => {
     beforeEach(reset);
 
     it.each([
@@ -177,8 +189,9 @@ describe.each(HANDLERS.slice(0, 3))(
       ['empty', EMPTY],
     ])('the owner and a moderator still read a storyline that is %s', async (_l, over) => {
       dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow(over));
-      await expect(handler({ ctx: as(OWNER), input })).resolves.not.toThrow();
-      await expect(handler({ ctx: as(MODERATOR, true), input })).resolves.not.toThrow();
+      await handler({ ctx: as(OWNER), input });
+      await handler({ ctx: as(MODERATOR, true), input });
+      expect(service.mock.calls.length).toBe(2);
     });
   }
 );
@@ -231,9 +244,61 @@ describe('getCommentHandler on a storyline comment', () => {
     await expect(read(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('lets a moderator read it without resolving the storyline', async () => {
+  it('lets a moderator read it in a taken-down storyline', async () => {
     dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }));
     await expect(read(as(MODERATOR, true))).resolves.toBeTruthy();
-    expect(getCommentThreadStorylineId).not.toHaveBeenCalled();
+  });
+});
+
+describe('the browsing level a storyline thread is held to', () => {
+  beforeEach(() => {
+    reset();
+    reader.level = undefined;
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue(
+      storylineRow({ chapters: [{ id: 1, postId: 100, post: { nsfwLevel: NsfwLevel.X } }] })
+    );
+  });
+  const ctx = (user?: { id: number; browsingLevel: number }) =>
+    ({
+      user: user && { ...user, showNsfw: true },
+      features: { canViewNsfw: true, isGreen: false },
+      req: { headers: {} },
+    } as never);
+
+  it('is a signed-in reader’s own saved level', async () => {
+    await expect(
+      getCommentsInfiniteHandler({ ctx: ctx({ id: STRANGER, browsingLevel: NsfwLevel.PG }), input })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await getCommentsInfiniteHandler({
+      ctx: ctx({ id: STRANGER, browsingLevel: NsfwLevel.PG | NsfwLevel.X }),
+      input,
+    });
+    expect(getCommentsInfinite).toHaveBeenCalledTimes(1);
+  });
+
+  it('is the public level for a signed-out reader', async () => {
+    await expect(getCommentsInfiniteHandler({ ctx: ctx(), input })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+});
+
+describe.each([
+  ['toggleSectionMute', toggleSectionMuteHandler],
+  ['getSectionMuted', getSectionMutedHandler],
+] as const)('storyline section mute: %s', (_n, handler) => {
+  beforeEach(reset);
+  const call = (ctx: never) =>
+    handler({ ctx, input: { entityType: 'storyline', entityId: STORYLINE } as never });
+
+  it('works on a storyline the reader can open', async () => {
+    await call(as(STRANGER));
+    expect(sectionMute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(HIDDEN_FROM_READERS)('refuses a reader when the storyline is %s', async (_l, arrange) => {
+    arrange();
+    await expect(call(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(sectionMute).not.toHaveBeenCalled();
   });
 });

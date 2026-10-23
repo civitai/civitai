@@ -103,14 +103,24 @@ describe('storyline thread migration', () => {
   });
 
   it('deleting a storyline takes its thread, comments and topic with it', async () => {
-    await db.pg.exec(`DELETE FROM "Storyline" WHERE id = 2`);
-    expect(await count(`FROM "Thread" WHERE id IN (520, 521)`)).toBe(0);
-    expect(await count(`FROM "CommentV2" WHERE id IN (5200, 5201)`)).toBe(0);
+    await db.pg.exec(
+      `INSERT INTO "Storyline"(id) VALUES (3); INSERT INTO "Thread"(id, "storylineId") VALUES (530, 3);
+       INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES (5300, 'root', 1, 530);
+       INSERT INTO "Thread"(id, "commentId", "parentThreadId", "rootThreadId") VALUES (531, 5300, 530, 530);
+       INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES (5301, 'reply', 2, 531);`
+    );
     expect(
-      await count(`FROM "CommentTopic" WHERE "entityType" = 'storyline' AND "entityId" = 2`)
+      await count(`FROM "CommentV3" WHERE "entityType" = 'storyline' AND "entityId" = 3`)
+    ).toBe(2);
+
+    await db.pg.exec(`DELETE FROM "Storyline" WHERE id = 3`);
+    expect(await count(`FROM "Thread" WHERE id IN (530, 531)`)).toBe(0);
+    expect(await count(`FROM "CommentV2" WHERE id IN (5300, 5301)`)).toBe(0);
+    expect(
+      await count(`FROM "CommentTopic" WHERE "entityType" = 'storyline' AND "entityId" = 3`)
     ).toBe(0);
     expect(
-      await count(`FROM "CommentV3" WHERE "entityType" = 'storyline' AND "entityId" = 2`)
+      await count(`FROM "CommentV3" WHERE "entityType" = 'storyline' AND "entityId" = 3`)
     ).toBe(0);
   });
 });
