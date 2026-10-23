@@ -147,16 +147,22 @@ describe('the store page — Fork in the "Use this app" card', () => {
     expect(vi.mocked(Router.push)).toHaveBeenCalledWith(`/apps/assistant?fork=${FORK_SLUG}`);
   });
 
+  const noFork = (): void => {
+    m.features = { ...ACCESS, appBlocksFork: false };
+  };
+  const noAssistant = (): void => {
+    m.features = { ...ACCESS, appAssistant: false };
+  };
+  const signedOut = (): void => {
+    m.user = null;
+  };
+  const nothing = (): void => undefined;
   test.each([
-    ['the fork flag is off', () => (m.features = { ...ACCESS, appBlocksFork: false }), {}],
-    [
-      'the viewer has no App Assistant',
-      () => (m.features = { ...ACCESS, appAssistant: false }),
-      {},
-    ],
-    ['the viewer is signed out', () => (m.user = null), {}],
-    ['the author has not opted in', () => undefined, { forkable: false }],
-    ['the listing is restricted to a cohort', () => undefined, { restrictedAudience: 'testers' }],
+    ['the fork flag is off', noFork, {}],
+    ['the viewer has no App Assistant', noAssistant, {}],
+    ['the viewer is signed out', signedOut, {}],
+    ['the author has not opted in', nothing, { forkable: false }],
+    ['the listing is restricted to a cohort', nothing, { restrictedAudience: 'testers' }],
   ] as const)('hidden when %s', async (_why, arrange, over) => {
     arrange();
     await renderStorePage(detail(over as Partial<ListingDetail>));
