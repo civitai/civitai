@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { isEqual } from 'lodash-es';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -34,7 +35,11 @@ import {
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 type ResolvedMember = PackMemberPricing & {
@@ -314,7 +319,8 @@ export const updateCreatorShopPack = async ({
   isModerator?: boolean;
   stickersEnabled?: boolean;
 }) => {
-  const existing = await dbRead.cosmeticShopItem.findUnique({
+  // Primary, not the replica: the edit is refused below if the row moved since this read.
+  const existing = await dbWrite.cosmeticShopItem.findUnique({
     where: { id },
     select: {
       id: true,
@@ -434,15 +440,26 @@ export const updateCreatorShopPack = async ({
     );
 
   return dbWrite.$transaction(async (tx) => {
-    // The checks above read a possibly lagging replica: a verdict since then decides here.
     const current = await lockShopItem(tx, id);
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     if (current.status === CosmeticShopItemStatus.Archived)
       throw throwBadRequestError('Archived items cannot be edited');
-    const currentMeta = (current.meta ?? {}) as CosmeticShopItemMeta;
+    // `changes` were measured against `existing`; recorded against a row that has moved since, an
+    // edit could change what a moderator reviewed without moving its version. A sale's `purchases`
+    // bump is carried, not compared, as on an item edit.
+    const { purchases: _purchases, ...currentMeta } = (current.meta ?? {}) as CosmeticShopItemMeta;
+    const { purchases: _readPurchases, ...readMeta } = meta;
+    if (
+      current.status !== existing.status ||
+      current.unitAmount !== existing.unitAmount ||
+      !isEqual(currentMeta, readMeta)
+    )
+      throw throwConflictError(
+        'This pack changed while you were editing it. Reload and try again.'
+      );
     const nextMeta: CosmeticShopItemMeta = {
-      ...currentMeta,
+      ...((current.meta ?? {}) as CosmeticShopItemMeta),
       // `null` clears, `undefined` leaves alone — without the distinction
       // the clear button emptied the form and saved nothing.
       ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),

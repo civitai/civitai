@@ -315,6 +315,28 @@ describe('a bundle pack edited while it is being reviewed', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  // Its changes were measured against the earlier read; recorded against a moved row, an edit could
+  // change what a moderator reviewed without moving the version.
+  it('is refused when the pack moved since it was read, and writes nothing', async () => {
+    rows(
+      pack('PendingReview', { history: [submitted] }),
+      pack('PendingReview', { history: [submitted, refundRun] })
+    );
+    await expect(updateCreatorShopPack({ id: 42, userId: 11, name: 'Bait title' })).rejects.toThrow(
+      /changed while you were editing/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('carries a sale counted since it was read', async () => {
+    rows(
+      pack('PendingReview', { purchases: 3, history: [submitted] }),
+      pack('PendingReview', { purchases: 4, history: [submitted] })
+    );
+    await updateCreatorShopPack({ id: 42, userId: 11, name: 'New title' });
+    expect(writtenMeta()).toMatchObject({ purchases: 4 });
+  });
+
   // Writing the replica's copy back would erase the rejection and return the pack to the queue.
   it('is refused when a rejection landed since the replica read, and writes nothing', async () => {
     rows(
