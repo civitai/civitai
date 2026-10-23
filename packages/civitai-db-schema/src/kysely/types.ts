@@ -2677,6 +2677,7 @@ export type CosmeticShopItem = {
   rejectionReason: string | null;
   listed: Generated<boolean>;
   itemDefinitionId: number | null;
+  eventTags: Generated<string[]>;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;
@@ -3314,6 +3315,24 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+};
+export type ImageCaption = {
+  imageId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+   */
+  userId: number;
+  content: string;
+  /**
+   * The text scan refused it: never shown to readers. Set and cleared only by the scan.
+   */
+  refused: Generated<boolean>;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+   */
+  nsfwLevel: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ImageCdnAccess = {
   url: string;
@@ -6203,6 +6222,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;

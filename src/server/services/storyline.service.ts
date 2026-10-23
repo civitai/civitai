@@ -22,6 +22,7 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
 import {
   DIRECT_LIFT_APPEAL_NOTE,
@@ -2062,12 +2063,28 @@ export async function getStorylinePath({
     };
   });
 
+  const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
+  const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
+  const [routeChapters, captions] = await Promise.all([
+    withFirstImages(gate, onRoute(rows, chapters)),
+    (async () => {
+      if (!captionPostIds.length) return new Map<number, string>();
+      const { hiddenImageIds, hiddenTagIds } = await gate();
+      return getStorylineImageCaptions({
+        postIds: captionPostIds,
+        browsingLevel,
+        maxNsfwLevel: storyline.maxNsfwLevel,
+        viewerId: viewer?.id,
+        hiddenImageIds,
+        hiddenTagIds,
+      });
+    })(),
+  ]);
   return {
     storyline,
-    chapters: await withFirstImages(
-      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      onRoute(rows, chapters)
-    ),
+    chapters: routeChapters,
+    /** Caption text by image id. */
+    captions: Object.fromEntries(captions) as Record<number, string>,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
 }

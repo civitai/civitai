@@ -161,6 +161,11 @@
   }
 }
 
+/* Behind a cosmetic nameplate the pill goes near-opaque: its colours are unreadable on a 0.31 black. */
+.creatorPillPlate {
+  background-color: rgba(0, 0, 0, 0.9);
+}
+
 .creatorAvatar {
   z-index: 1;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.5));

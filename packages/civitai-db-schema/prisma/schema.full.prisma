@@ -2193,6 +2193,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  caption                ImageCaption?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -5610,6 +5611,9 @@ model CosmeticShopItem {
   // `cosmeticId` as a pack. A CHECK keeps it unlisted.
   itemDefinitionId  Int?
   itemDefinition    ItemDefinition? @relation(fields: [itemDefinitionId], references: [id], onDelete: Restrict)
+  // Lowercase labels a moderator sets so a shop section with the same `meta.eventTag` picks the
+  // item up without being placed by hand.
+  eventTags         String[]  @default([])
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
@@ -5619,6 +5623,7 @@ model CosmeticShopItem {
 
   @@index([cosmeticId])
   @@index([itemDefinitionId])
+  @@index([eventTags], type: Gin)
 }
 
 // Cross-creator resale: another creator listing this item in their own shop.
@@ -10167,6 +10172,22 @@ model StorylineChapterEdge {
   @@id([chapterId, parentChapterId])
   /// Children of a chapter, oldest first, without a sort.
   @@index([parentChapterId, createdAt])
+}
+
+/// The post author's note on one image of a storyline chapter, shown to readers under the
+/// image. No row means no caption: an empty caption deletes it.
+model ImageCaption {
+  imageId   Int      @id
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+  userId    Int
+  content   String   @db.VarChar(500)
+  /// The text scan refused it: never shown to readers. Set and cleared only by the scan.
+  refused   Boolean  @default(false)
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+  nsfwLevel Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and

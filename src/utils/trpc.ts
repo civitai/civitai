@@ -206,7 +206,8 @@ export function isAuthedBrowser() {
  *
  * NB: `createContext` seeds `edgeTTL: 0` for logged-in users, but `edgeCacheIt` OVERWRITES
  * it with a positive TTL (it only honors the `?batch` bail, `ctx.cache.skip` and
- * `ctx.cache.canCache`), so these responses ARE cacheable for authed users today.
+ * `ctx.cache.canCache`), so the origin marks these responses cacheable for authed users too;
+ * whether the CDN stores them is its own configuration.
  *
  * 🔴 One exception to that last sentence, and it is subtle: `edgeCacheIt` MUTATES
  * `ctx.cache`, while `responseMeta` reads the ROOT context and tRPC's `next({ ctx })`
@@ -506,7 +507,7 @@ export const queryClient: QueryClient = new Proxy({} as QueryClient, {
   },
 });
 
-const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
+export const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
     const isAuthed = typeof window !== 'undefined' ? window.isAuthed : false;
     const authed = removeEmpty({ authed: isAuthed || undefined });
