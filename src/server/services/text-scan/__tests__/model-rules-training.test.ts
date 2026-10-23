@@ -97,10 +97,43 @@ describe('trainingMatchesModelRules, a run with a draft model', () => {
     expect(logs).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   });
 
-  it('fails open, with a warning, when the hold cannot be written, even in active mode', async () => {
+  it('still refuses in active mode when the hold cannot be written, and warns', async () => {
+    syncModelRulesHold.mockRejectedValue(new Error('db down'));
+    await expect(trainingMatchesModelRules(trainer)).resolves.toBe(true);
+    expect(logs).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
+  });
+
+  it('still refuses in active mode when a moderator is mid-decision on the pending hold', async () => {
+    const busy = new Error('busy');
+    busy.name = 'ModelRulesHoldBusyError';
+    syncModelRulesHold.mockRejectedValue(busy);
+    await expect(trainingMatchesModelRules(trainer)).resolves.toBe(true);
+  });
+
+  it('lets a shadow-mode run through when the hold cannot be written', async () => {
+    getTextScanMode.mockResolvedValue('shadow');
     syncModelRulesHold.mockRejectedValue(new Error('db down'));
     await expect(trainingMatchesModelRules(trainer)).resolves.toBe(false);
-    expect(logs).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
+  });
+
+  it('catches a trigger word that is not in the stored text yet', async () => {
+    loadModelScanSubjects.mockResolvedValue(new Map([[7, subject('Plain LoRA')]]));
+    await expect(trainingMatchesModelRules({ ...trainer, triggerWord: 'Hero One' })).resolves.toBe(
+      true
+    );
+  });
+
+  it('checks the trigger word when the draft has no text to load, logging only in shadow mode', async () => {
+    loadModelScanSubjects.mockResolvedValue(new Map());
+    await expect(trainingMatchesModelRules({ ...trainer, triggerWord: 'Hero One' })).resolves.toBe(
+      true
+    );
+
+    getTextScanMode.mockResolvedValue('shadow');
+    await expect(trainingMatchesModelRules({ ...trainer, triggerWord: 'Hero One' })).resolves.toBe(
+      false
+    );
+    expect(syncModelRulesHold).not.toHaveBeenCalled();
   });
 });
 

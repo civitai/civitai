@@ -358,6 +358,23 @@ describe('dismissing a hold', () => {
       });
     });
 
+    it.each([
+      ['a draft', 'Draft'],
+      ['an owner-unpublished model', 'Unpublished'],
+    ])(
+      'clears the rules of a publish or edit hold on %s without republishing',
+      async (_n, status) => {
+        await seed({ mode: 'active', status, modelMeta: {} });
+        await decide('dismiss_allowed');
+
+        expect(mocks.publishModelHandler).not.toHaveBeenCalled();
+        expect((await modelRow()).meta).toEqual({
+          modelRulesCleared: { textHash: HASH, ruleIds: [3, 4] },
+        });
+        expect((await hold()).status).toBe('Dismissed');
+      }
+    );
+
     it('clears nothing on a confirm', async () => {
       await draft();
       await decide('confirm');

@@ -22,19 +22,25 @@ type TrainingRun = {
  */
 export async function trainingMatchesModelRules(run: TrainingRun): Promise<boolean> {
   try {
-    return run.model ? await checkDraftModel(run, run.model) : await checkTriggerWord(run);
+    return run.model
+      ? await checkDraftModel(run, run.model)
+      : await checkTriggerWord(run, run.userId);
   } catch (error) {
-    logToAxiom({
-      name: 'training-model-rules-error',
-      type: 'warning',
-      userId: run.userId,
-      source: run.source,
-      // Name and code only: a Prisma message can echo the held text.
-      errorName: error instanceof Error ? error.name : typeof error,
-      errorCode: (error as { code?: unknown } | null | undefined)?.code,
-    }).catch(() => undefined);
+    warn('training-model-rules-error', run, error);
     return false;
   }
+}
+
+// Name and code only: a Prisma message can echo the held text.
+function warn(name: string, run: TrainingRun, error: unknown) {
+  logToAxiom({
+    name,
+    type: 'warning',
+    userId: run.userId,
+    source: run.source,
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorCode: (error as { code?: unknown } | null | undefined)?.code,
+  }).catch(() => undefined);
 }
 
 async function checkDraftModel(run: TrainingRun, model: NonNullable<TrainingRun['model']>) {
@@ -43,18 +49,24 @@ async function checkDraftModel(run: TrainingRun, model: NonNullable<TrainingRun[
     versionIds: [model.versionId],
     meta: model.meta,
   });
-  if (found.kind === 'skip') return false;
-  if (found.kind === 'clean') {
-    await syncModelRulesHold(model.id, null, { onlySource: 'training' });
-    return false;
+  // The request's trigger word may not be in the stored text yet, and a model with no loadable text has none to check.
+  const wordMatches = found.kind === 'hit' ? false : await checkTriggerWord(run, model.id);
+  // The verdict is settled before the write: a hold that cannot be recorded must not let a refused run through.
+  const refused = found.kind === 'hit' ? found.detection.mode === 'active' : wordMatches;
+  try {
+    if (found.kind === 'clean')
+      await syncModelRulesHold(model.id, null, { onlySource: 'training' });
+    else if (found.kind === 'hit')
+      await syncModelRulesHold(model.id, { ...found.detection, source: 'training' });
+  } catch (error) {
+    warn('training-model-rules-hold-error', run, error);
   }
-  await syncModelRulesHold(model.id, { ...found.detection, source: 'training' });
-  return found.detection.mode === 'active';
+  return refused;
 }
 
-async function checkTriggerWord({ triggerWord, userId, source }: TrainingRun) {
-  // There is no model to bucket by, so the account stands in for one.
-  const mode = await getTextScanMode('ModelRules', userId);
+/** `bucketId` picks the rollout bucket: the model when there is one, else the account. */
+async function checkTriggerWord({ triggerWord, userId, source }: TrainingRun, bucketId: number) {
+  const mode = await getTextScanMode('ModelRules', bucketId);
   if (mode === 'off') return false;
   const rules = await getEnabledModelRules();
   const ruleIds = [
