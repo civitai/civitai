@@ -30,8 +30,15 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions, getVotedItemOwner, sourceOrder } =
-  await import('../scan-label.service');
+const {
+  claimNext,
+  castVote,
+  getCounters,
+  getOpenFlaggerVersions,
+  getVotedItemOwner,
+  isControlFlaggerVersion,
+  sourceOrder,
+} = await import('../scan-label.service');
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
 const KEEP = { block: false } as const;
@@ -164,6 +171,27 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+
+  describe('control samples stay blind', () => {
+    const CONTROL_VERSION = 'control-sample@2026-10-17';
+    beforeEach(async () => {
+      await seedItem(1, { version: 'scan@1' });
+      await seedItem(2, { version: CONTROL_VERSION, sources: ['control-sample'] });
+    });
+
+    it('never lists the control version as a filter', async () => {
+      expect(await getOpenFlaggerVersions()).toEqual(['scan@1']);
+    });
+
+    it('serves no control item when the control version is the filter', async () => {
+      expect(await claimNext(1, { flaggerVersion: CONTROL_VERSION }, NOW)).toBeNull();
+    });
+
+    it('recognises the control version, and only it', async () => {
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+      expect(await isControlFlaggerVersion('scan@1')).toBe(false);
+    });
   });
 });
 

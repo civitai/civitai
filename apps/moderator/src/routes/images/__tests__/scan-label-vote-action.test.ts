@@ -2,27 +2,41 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** A vote runs the majority-block sweep with the real block path, and a refused vote does not. */
 
-const { castVote, applyMajorityBlocks, blockImage, isModerationBlocked, getVotedItemOwner } =
-  vi.hoisted(() => ({
-    getVotedItemOwner: vi.fn(),
-    castVote: vi.fn(),
-    applyMajorityBlocks: vi.fn(),
-    blockImage: vi.fn(),
-    isModerationBlocked: vi.fn(),
-  }));
+const {
+  castVote,
+  applyMajorityBlocks,
+  blockImage,
+  isModerationBlocked,
+  getVotedItemOwner,
+  claimNext,
+  getCounters,
+  getOpenFlaggerVersions,
+  isControlFlaggerVersion,
+} = vi.hoisted(() => ({
+  getVotedItemOwner: vi.fn(),
+  claimNext: vi.fn(),
+  getCounters: vi.fn(),
+  getOpenFlaggerVersions: vi.fn(),
+  isControlFlaggerVersion: vi.fn(),
+  castVote: vi.fn(),
+  applyMajorityBlocks: vi.fn(),
+  blockImage: vi.fn(),
+  isModerationBlocked: vi.fn(),
+}));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/image-moderation.service', () => ({ blockImage, isModerationBlocked }));
 vi.mock('$lib/server/scan-label.service', () => ({
   castVote,
   applyMajorityBlocks,
-  claimNext: vi.fn(),
-  getCounters: vi.fn(),
-  getOpenFlaggerVersions: vi.fn(),
+  claimNext,
+  getCounters,
+  getOpenFlaggerVersions,
   getVotedItemOwner,
+  isControlFlaggerVersion,
 }));
 
-const { actions } = await import('../scan-labels/+page.server');
+const { actions, load } = await import('../scan-labels/+page.server');
 
 const event = (fields: Record<string, string>) =>
   ({
@@ -153,5 +167,39 @@ describe('vote action', () => {
     expect(result.status).toBe(409);
     expect(applyMajorityBlocks).not.toHaveBeenCalled();
     expect(getVotedItemOwner).not.toHaveBeenCalled();
+  });
+});
+
+describe('load', () => {
+  const open = (search: string) =>
+    load({
+      url: new URL(`https://moderator.test/images/scan-labels${search}`),
+      locals: { user: { id: 7 } },
+    } as never) as Promise<{ version: string }>;
+
+  beforeEach(() => {
+    claimNext.mockResolvedValue(null);
+    getCounters.mockResolvedValue({});
+    getOpenFlaggerVersions.mockResolvedValue(['scan@1']);
+  });
+
+  it('treats the control version in the URL as no version filter', async () => {
+    isControlFlaggerVersion.mockResolvedValue(true);
+
+    const data = await open('?version=control-sample%402026-10-17');
+
+    expect(isControlFlaggerVersion).toHaveBeenCalledWith('control-sample@2026-10-17');
+    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: undefined });
+    expect(getCounters).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: undefined });
+    expect(data.version).toBe('');
+  });
+
+  it('keeps any other version as the filter', async () => {
+    isControlFlaggerVersion.mockResolvedValue(false);
+
+    const data = await open('?version=scan%401');
+
+    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: 'scan@1' });
+    expect(data.version).toBe('scan@1');
   });
 });

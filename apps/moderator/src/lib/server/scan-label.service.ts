@@ -38,6 +38,9 @@ export type VoteResult =
 
 type Db = Kysely<DB> | Transaction<DB>;
 
+/** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
+const CONTROL_SOURCE = 'control-sample';
+
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
@@ -52,6 +55,7 @@ function openItems(db: Db, filters: ScanLabelFilters) {
           .select(sql`1`.as('one'))
           .whereRef('f.itemId', '=', 'i.id')
           .where('f.flaggerVersion', '=', version)
+          .where('f.source', '<>', CONTROL_SOURCE)
       )
     );
   }
@@ -382,6 +386,21 @@ export async function getCounters(
 }
 
 /** Flagger versions that have at least one open item, newest flag first, for the filter. */
+/** A version from the URL that control flags carry. The page treats it as no version filter. */
+export async function isControlFlaggerVersion(
+  version: string,
+  db: Kysely<DB> = dbRead
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('ScanLabelFlag')
+    .select(sql`1`.as('one'))
+    .where('flaggerVersion', '=', version)
+    .where('source', '=', CONTROL_SOURCE)
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
+
 export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<string[]> {
   const rows = await db
     .selectFrom('ScanLabelFlag as f')
@@ -389,6 +408,7 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .select('f.flaggerVersion')
     .select((eb) => eb.fn.max('f.flaggedAt').as('latest'))
     .where('i.status', '=', 'open')
+    .where('f.source', '<>', CONTROL_SOURCE)
     .groupBy('f.flaggerVersion')
     .orderBy('latest', 'desc')
     .execute();
