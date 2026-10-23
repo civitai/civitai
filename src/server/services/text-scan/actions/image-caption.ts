@@ -4,10 +4,6 @@ import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/type
 import { imageCaptionTextScanSubject } from '~/server/services/text-scan/profiles/image-caption.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 
-/**
- * Applies a caption-scan verdict by the storyline title's rule: a real person, or a minor in text
- * rated R or above, refuses the caption; a clean verdict on the current text lets it back.
- */
 export async function applyImageCaptionTextScan({
   entityId,
   outcome,

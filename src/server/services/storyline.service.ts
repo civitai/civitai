@@ -1936,21 +1936,27 @@ export async function getStorylinePath({
     };
   });
 
+  const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
+  const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
   const [routeChapters, captions] = await Promise.all([
-    withFirstImages(
-      getStorylineImageGate(viewer, browsingLevel, blockedUserIds),
-      onRoute(rows, chapters)
-    ),
-    getStorylineImageCaptions({
-      postIds: chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : [])),
-      browsingLevel,
-      maxNsfwLevel: storyline.maxNsfwLevel,
-    }),
+    withFirstImages(gate, onRoute(rows, chapters)),
+    (async () => {
+      if (!captionPostIds.length) return new Map<number, string>();
+      const { hiddenImageIds, hiddenTagIds } = await gate();
+      return getStorylineImageCaptions({
+        postIds: captionPostIds,
+        browsingLevel,
+        maxNsfwLevel: storyline.maxNsfwLevel,
+        viewerId: viewer?.id,
+        hiddenImageIds,
+        hiddenTagIds,
+      });
+    })(),
   ]);
   return {
     storyline,
     chapters: routeChapters,
-    /** The author's caption on an image of a chapter shown here, by image id. */
+    /** Caption text by image id. */
     captions: Object.fromEntries(captions) as Record<number, string>,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };

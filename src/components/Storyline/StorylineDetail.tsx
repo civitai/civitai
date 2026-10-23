@@ -51,7 +51,7 @@ export function StorylineToolbarChip({
 
 /**
  * Rendered over the carousel: the image's caption, the way on past the last image, and the fork
- * point. Next sits above the caption so neither ever covers the other.
+ * point.
  */
 export function StorylineStageOverlay({
   isLastImage,

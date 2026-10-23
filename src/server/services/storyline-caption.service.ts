@@ -6,8 +6,7 @@ import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.con
 
 /**
  * Sets the caption the post's author wrote on one image of a storyline chapter. Empty text
- * deletes it. New or changed text is checked against the blocklists, then scanned like a
- * storyline title; until the scan refuses it, readers are shown it.
+ * deletes it. An edit keeps the old text's refusal and rating until its own scan settles them.
  */
 export async function setStorylineImageCaption({
   imageId,
@@ -27,8 +26,6 @@ export async function setStorylineImageCaption({
   if (!image?.postId || !image.post) throw throwNotFoundError('Image not found');
   if (image.post.userId !== userId)
     throw throwAuthorizationError('Only the post author can caption its images');
-  // @ai: a post waiting to be added (StorylinePendingChapter, from the pending-chapter PR) should
-  // pass this gate too, so its author can caption before it is placed. Widen it once that lands.
   const chapter = await dbWrite.storylineChapter.findFirst({
     where: { postId: image.postId, removedAt: null },
     select: { id: true },
@@ -57,10 +54,7 @@ export async function setStorylineImageCaption({
   return { imageId, content: text };
 }
 
-/**
- * Whether a reader is shown a caption: never once refused, and its own rating (0 until scanned)
- * must fit both the reader's browsing level and the storyline's ceiling.
- */
+/** An unscanned caption (nsfwLevel 0) is shown to every reader. */
 export function isImageCaptionShown(
   caption: { refused: boolean; nsfwLevel: number },
   { browsingLevel, maxNsfwLevel }: { browsingLevel: number; maxNsfwLevel: number }
@@ -73,23 +67,46 @@ export function isImageCaptionShown(
   );
 }
 
-/** The captions a reader is shown on the images of these chapter posts, by image id. */
+/**
+ * The captions a reader is shown on the images of these chapter posts, by image id. An image
+ * filter here must match `storylineImageVisible` (storyline.service.ts): a caption of an image the
+ * reader is not shown must not reach them either.
+ */
 export async function getStorylineImageCaptions({
   postIds,
   browsingLevel,
   maxNsfwLevel,
+  viewerId,
+  hiddenImageIds,
+  hiddenTagIds,
 }: {
   postIds: number[];
   browsingLevel: number;
   maxNsfwLevel: number;
+  viewerId: number | undefined;
+  hiddenImageIds: number[];
+  hiddenTagIds: number[];
 }) {
   const captions = new Map<number, string>();
   if (!postIds.length) return captions;
-  // The image's own gate is the reader's images read; this only keeps a hidden image's text out.
   const rows = await dbRead.imageCaption.findMany({
     where: {
       refused: false,
-      image: { postId: { in: postIds }, tosViolation: false, needsReview: null },
+      image: {
+        postId: { in: postIds },
+        id: { notIn: hiddenImageIds },
+        ingestion: 'Scanned',
+        tosViolation: false,
+        needsReview: null,
+        acceptableMinor: false,
+        minor: false,
+        poi: false,
+        nsfwLevel: { not: 0 },
+        OR: [
+          { tags: { none: { tagId: { in: hiddenTagIds }, disabled: false } } },
+          ...(viewerId != null ? [{ userId: viewerId }] : []),
+        ],
+      },
     },
     select: {
       imageId: true,
@@ -102,6 +119,7 @@ export async function getStorylineImageCaptions({
   for (const row of rows)
     if (
       (row.image.nsfwLevel & browsingLevel) !== 0 &&
+      getHighestBrowsingLevelBit(row.image.nsfwLevel) <= maxNsfwLevel &&
       isImageCaptionShown(row, { browsingLevel, maxNsfwLevel })
     )
       captions.set(row.imageId, row.content);

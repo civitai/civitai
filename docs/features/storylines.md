@@ -46,6 +46,10 @@ section).
   take it down. A storyline flagged for a minor stays up but can only hold safe-for-work chapters,
   forks included: anything above is a placeholder, and new chapters above it are refused. Editing the
   title has it checked again.
+- **Captions.** Each image of a chapter can carry its author's caption, shown as a note at
+  the bottom of the image; tapping it opens the rest. Once its text check is rolled out, a caption is
+  checked like a title: one the check refuses is not shown, and one rated above the storyline's
+  maximum or the reader's browsing level is hidden for that reader.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
   moderators. A chapter is reported as its post or image.
 
@@ -85,7 +89,8 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, and deleting a storyline: its creator
+An in-app tool for making the next section, a way for authors to write image captions (the server
+side is built), and deleting a storyline: its creator
 marks it complete instead, and moderators take down one that breaks the rules.
 
 ## Trying it locally

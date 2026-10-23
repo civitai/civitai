@@ -66,12 +66,16 @@ describe('applyImageCaptionTextScan', () => {
   });
 
   it('leaves a minor in PG13 text shown', async () => {
-    await applyImageCaptionTextScan(args({ nsfw: NsfwLevel.PG13, poi: false, minor: true }) as never);
+    await applyImageCaptionTextScan(
+      args({ nsfw: NsfwLevel.PG13, poi: false, minor: true }) as never
+    );
     expect(refusal()?.data).not.toEqual({ refused: true });
   });
 
   it('lets a refused caption back on a clean verdict of its current text only', async () => {
-    await applyImageCaptionTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
+    await applyImageCaptionTextScan(
+      args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never
+    );
     expect(refusal()).toEqual({
       where: { imageId: ID, content: CAPTION.content, refused: true },
       data: { refused: false },
@@ -81,6 +85,14 @@ describe('applyImageCaptionTextScan', () => {
     await applyImageCaptionTextScan(
       args({ nsfw: NsfwLevel.PG, poi: false, minor: false }, 'old-hash') as never
     );
+    expect(refusal()).toBeUndefined();
+  });
+
+  it.each([
+    ['the minor label', { nsfw: NsfwLevel.PG, poi: false }],
+    ['the person label', { nsfw: NsfwLevel.PG, minor: false }],
+  ])('keeps a caption refused when %s went unanswered', async (_, verdict) => {
+    await applyImageCaptionTextScan(args(verdict) as never);
     expect(refusal()).toBeUndefined();
   });
 

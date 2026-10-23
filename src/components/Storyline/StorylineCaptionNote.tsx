@@ -1,17 +1,13 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 
-/**
- * The author's caption on the image being read: a floating card at the bottom of the stage,
- * clamped to 2 lines (3 on a wide stage). Tapping it opens it upward over the picture, to about
- * half the stage, scrolling inside past that. Mount it keyed on the image so it folds on a swipe.
- */
+/** The author's caption on the image being read. Mount it keyed on the image so it folds on a swipe. */
 export function StorylineCaptionNote({ caption }: { caption: string }) {
   const [open, setOpen] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
 
-  // A card that opens to the same text would be a broken promise, so a caption that fits is inert.
+  // Only an overflowing caption opens: one that fits would open to the same text.
   useEffect(() => {
     const el = textRef.current;
     if (!el || open) return;
@@ -64,7 +60,7 @@ export function StorylineCaptionNote({ caption }: { caption: string }) {
       {interactive && (
         <span
           className={clsx(
-            'absolute bottom-2.5 right-3.5 pl-11 text-sm font-bold text-violet-7 dark:text-violet-4',
+            'text-[var(--mantine-color-violet-7)] dark:text-[var(--mantine-color-violet-4)] absolute bottom-2.5 right-3.5 pl-11 text-sm font-bold',
             'bg-gradient-to-r from-transparent to-white to-50% dark:to-dark-6'
           )}
           aria-hidden
