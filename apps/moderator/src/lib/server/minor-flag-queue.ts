@@ -333,18 +333,19 @@ const flaggedAction =
       fail(400, { error, modelId, subject: modelSubject(modelId) });
 
     if (source.data === 'hash') {
-      // An older form posts no label: it could only mean the minor flag.
-      const hashLabel = posted === null ? 'minor' : label.success ? label.data : null;
-      if (!hashLabel) return fail(400, { error: 'Missing model id, label or source.' });
+      // Minor only, as before real-person hash flags existed: this action skips the open-appeal
+      // routing `decideFlags` applies, so a real-person hash flag is ruled only through that.
+      if (posted !== null && !(label.success && label.data === 'minor'))
+        return refusal('A hash flag can only be ruled as minor here.');
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
       const result = await ruleFlag(
         modelId,
-        { label: hashLabel, source: 'hash', textHash: null },
+        { label: 'minor', source: 'hash', textHash: null },
         keep,
         null
       );
       if (!result.ok) return refusal(result.error);
-      return { success: true, modelId, label: hashLabel, resolved: result.resolved };
+      return { success: true, modelId, label: 'minor', resolved: result.resolved };
     }
 
     if (!label.success) return fail(400, { error: 'Missing model id, label or source.' });

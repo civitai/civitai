@@ -108,28 +108,19 @@ describe('hash flag actions', () => {
     expect(resolveRedetection).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['keepFlag', 'kept', confirmPoiFlag],
-    ['liftFlag', 'dismissed', revertPoiFlag],
-  ] as const)(
-    '%s rules a real-person hash flag through its own endpoint, never the minor one',
-    async (action, resolved, endpoint) => {
+  it.each(['keepFlag', 'liftFlag'])(
+    '%s refuses a real-person hash flag: only decideFlags routes it past an open appeal',
+    async (action) => {
       expect(await run(action, { ...hash, label: 'poi' })).toMatchObject({
-        success: true,
-        label: 'poi',
-        resolved,
+        status: 400,
+        data: { error: 'A hash flag can only be ruled as minor here.', modelId: 42 },
       });
-      expect(endpoint).toHaveBeenCalledWith(42);
+      expect(confirmPoiFlag).not.toHaveBeenCalled();
+      expect(revertPoiFlag).not.toHaveBeenCalled();
       expect(confirmMinorFlag).not.toHaveBeenCalled();
       expect(revertMinorFlag).not.toHaveBeenCalled();
     }
   );
-
-  it('refuses an unknown label on a hash flag', async () => {
-    expect(await run('keepFlag', { ...hash, label: 'other' })).toMatchObject({ status: 400 });
-    expect(confirmMinorFlag).not.toHaveBeenCalled();
-    expect(confirmPoiFlag).not.toHaveBeenCalled();
-  });
 
   it('rules a hash flag as minor even when no label is posted', async () => {
     expect(await run('keepFlag', { modelId: '42', source: 'hash', ...kept })).toMatchObject({
