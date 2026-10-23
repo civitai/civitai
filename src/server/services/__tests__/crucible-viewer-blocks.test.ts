@@ -59,7 +59,7 @@ const signedIn = (id: number, isModerator = false) => ({
   emailVerified: new Date('2026-01-01'),
 });
 
-const caller = (user = signedIn(VIEWER_ID)) =>
+const caller = (user = signedIn(VIEWER_ID), features: Record<string, boolean> = {}) =>
   crucibleRouter.createCaller({
     acceptableOrigin: true,
     user,
@@ -68,7 +68,7 @@ const caller = (user = signedIn(VIEWER_ID)) =>
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
     cache: { edgeTTL: 0 },
-    features: { crucible: true } as never,
+    features: { crucible: true, ...features } as never,
     track: undefined,
   } as never);
 
@@ -100,8 +100,10 @@ const activeEntry = {
     entryFee: 0,
     seededPrizePool: 0,
     endAt: null,
+    nsfwLevel: 1,
+    textNsfw: false,
     ingestion: 'Scanned',
-    image: { url: null, ingestion: 'Scanned' },
+    image: { url: null, nsfwLevel: 1, ingestion: 'Scanned' },
   },
 };
 
@@ -312,6 +314,60 @@ describe('active crucibles while a mid-run edit is under review', () => {
 
     await expect(caller(signedIn(HOST_ID)).getUserActiveCrucibles({})).resolves.toMatchObject([
       { id: CRUCIBLE_ID, name: 'Renamed' },
+    ]);
+  });
+});
+
+describe('active crucibles on the green site', () => {
+  const R = 4;
+  const green = { isGreen: true };
+  const entryWith = (crucible: Record<string, unknown>) => ({
+    ...activeEntry,
+    crucible: { ...activeEntry.crucible, ...crucible },
+  });
+  const matureCrucible = entryWith({
+    nsfwLevel: R,
+    image: { url: 'cover', nsfwLevel: R, ingestion: 'Scanned' },
+  });
+  const matureCover = entryWith({ image: { url: 'cover', nsfwLevel: R, ingestion: 'Scanned' } });
+
+  it('leaves out a crucible the green site does not list', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCrucible]);
+
+    await expect(caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})).resolves.toEqual(
+      []
+    );
+  });
+
+  it('lists a green crucible but withholds a cover above the green ceiling', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCover]);
+
+    await expect(
+      caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})
+    ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('still lists the host their own crucible on green, without a cover above the ceiling', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCrucible]);
+
+    await expect(
+      caller(signedIn(HOST_ID), green).getUserActiveCrucibles({})
+    ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('lists it to a moderator on green, still without a cover above the ceiling', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCrucible]);
+
+    await expect(
+      caller(signedIn(1, true), green).getUserActiveCrucibles({})
+    ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('shows both on the mature site', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCrucible]);
+
+    await expect(caller().getUserActiveCrucibles({})).resolves.toMatchObject([
+      { id: CRUCIBLE_ID, imageUrl: 'cover' },
     ]);
   });
 });

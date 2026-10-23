@@ -4905,9 +4905,12 @@ function formatTimeRemaining(endAt: Date): string {
 export const getUserActiveCrucibles = async ({
   userId,
   blockedCreatorIds,
+  site,
 }: {
   userId: number;
   blockedCreatorIds?: number[];
+  /** Required so no caller can serve green without its ceiling. */
+  site: { isGreen: boolean; isModerator: boolean };
 }): Promise<
   Array<{
     id: number;
@@ -4939,10 +4942,13 @@ export const getUserActiveCrucibles = async ({
           entryFee: true,
           seededPrizePool: true,
           endAt: true,
+          nsfwLevel: true,
+          textNsfw: true,
           ingestion: true,
           image: {
             select: {
               url: true,
+              nsfwLevel: true,
               ingestion: true,
             },
           },
@@ -4986,7 +4992,8 @@ export const getUserActiveCrucibles = async ({
   for (const entry of entries) {
     if (
       isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds }) ||
-      isCrucibleHiddenByScan(entry.crucible, { viewerId: userId })
+      isCrucibleHiddenByScan(entry.crucible, { viewerId: userId }) ||
+      isCrucibleOffSite(entry.crucible, { viewerId: userId, ...site })
     )
       continue;
     const crucibleId = entry.crucibleId;
@@ -5020,7 +5027,11 @@ export const getUserActiveCrucibles = async ({
         timeRemaining,
         endAt: entry.crucible.endAt,
         position: newBestPosition,
-        imageUrl: entry.crucible.image?.url ?? null,
+        // On green the ceiling holds for the host too, as on the crucible's own cards.
+        imageUrl:
+          site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image?.nsfwLevel, userId)
+            ? null
+            : entry.crucible.image?.url ?? null,
       });
     }
   }
