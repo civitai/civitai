@@ -40,6 +40,7 @@ import {
   INTERRUPTED,
   interruptedResume,
   resumeOf,
+  sameMessage,
   savedTurn,
   shownMessages,
   startTurn,
@@ -728,8 +729,13 @@ export class Runner implements RunService {
       status: 'SUCCESS',
       sortDesc: true,
       limit: 1,
+      loadInput: true,
       loadOutput: true,
     });
+    // Only a run that answered the message the turn holds now: an edit reuses the turn's seq for
+    // another message, and a run of the edit that ended without SUCCESS is not the one found here.
+    const asked = (previous?.input as [ReplyInput] | undefined)?.[0]?.user;
+    if (!asked || !sameMessage(asked, turn.user)) return undefined;
     const output = previous?.output as ReplyOutput | undefined;
     return output?.status === 'error' ? output.resume : undefined;
   }

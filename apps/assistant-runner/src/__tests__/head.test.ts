@@ -6,6 +6,7 @@ import {
   acceptsTurn,
   firstMessageTitle,
   resumeOf,
+  sameMessage,
   startTurn,
   withEnd,
   withPatch,
@@ -206,6 +207,20 @@ describe('acceptsTurn', () => {
     expect(acceptsTurn(head, 3, false, true)).toBe(false);
     expect(acceptsTurn(null, 1, false, true)).toBe(true);
     expect(acceptsTurn(null, 2, false, true)).toBe(false);
+  });
+});
+
+describe('sameMessage', () => {
+  const image = { id: 'u1-1', kind: 'image', source: { type: 'upload', blobId: 'b1' } } as const;
+  it('is the same words, files and references, and nothing less', () => {
+    const asked = { content: 'Draw a fox', attachments: [image], refs: ['g1-1'] };
+    expect(sameMessage(asked, { ...asked })).toBe(true);
+    expect(sameMessage(asked, { ...asked, content: 'Draw a wolf' })).toBe(false);
+    expect(sameMessage(asked, { ...asked, attachments: [] })).toBe(false);
+    expect(sameMessage(asked, { ...asked, refs: ['g2-1'] })).toBe(false);
+    expect(
+      sameMessage({ content: 'Hi', attachments: [] }, { content: 'Hi', attachments: [], refs: [] })
+    ).toBe(true);
   });
 });
 

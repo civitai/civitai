@@ -811,7 +811,11 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       model: 'flaky',
       content: 'Record it twice.',
     });
-    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    // `retry` beside `edit` changes nothing: an edit is never a retry.
+    const edit = await post('/runs', as(user), {
+      ...body,
+      turn: { ...body.turn, edit: true, retry: true },
+    });
     expect(edit.status).toBe(201);
     const entries = await events(edit.body!.runId as string, user);
     // A retry would show the saved step and not run it again; an edit shows none and runs it anew.
@@ -822,6 +826,55 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     expect(
       head!.turns.map((turn) => [turn.seq, turn.user.content, turn.assistant?.status])
     ).toEqual([[1, 'Record it twice.', 'done']]);
+  });
+
+  it('a retry after an edit whose run was cancelled never carries on from the old message’s reply', async () => {
+    const user = 'u-edit-cancelled';
+    flaky.failNext = true;
+    const recordsBefore = calls.record;
+    const first = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-edit-cancelled', model: 'flaky', content: 'Record it.' })
+    );
+    // The old message's reply failed with a step it could carry on from.
+    expect(ended(await events(first.body!.runId as string, user))).toMatchObject({
+      status: 'error',
+      resumable: true,
+    });
+
+    const body = startBody({
+      conversationId: 'c-edit-cancelled',
+      model: 'hang',
+      content: 'Wait instead.',
+    });
+    const edit = await post('/runs', as(user), { ...body, turn: { ...body.turn, edit: true } });
+    const editRun = edit.body!.runId as string;
+    await events(editRun, user, { stopWhen: ({ event }) => event.type === 'tool-call' });
+    // The edit's run ends without SUCCESS, so the newest SUCCESS run of this seq is the old message's.
+    await DBOS.cancelWorkflow(editRun);
+    await events(editRun, user);
+
+    const retry = await post(
+      '/runs',
+      as(user),
+      startBody({
+        conversationId: 'c-edit-cancelled',
+        model: 'flaky',
+        content: 'Wait instead.',
+        retry: true,
+      })
+    );
+    expect(retry.status).toBe(201);
+    const entries = await events(retry.body!.runId as string, user);
+    expect((entries[0]!.event as Extract<RunEvent, { type: 'run-started' }>).parts).toEqual([]);
+    expect(ended(entries).status).toBe('done');
+    // The old reply's step is not carried on: its tool runs again for the edited message.
+    expect(calls.record).toBe(recordsBefore + 2);
+    const head = await store.load(user, 'c-edit-cancelled');
+    expect(head!.turns.map((turn) => [turn.user.content, turn.assistant?.status])).toEqual([
+      ['Wait instead.', 'done'],
+    ]);
   });
 
   it('refuses an edit of a turn that is not the latest', async () => {

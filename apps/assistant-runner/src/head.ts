@@ -225,6 +225,16 @@ function versioned(head: Head, turns: HeadTurn[]): Head {
       } satisfies ConversationMetadata);
 }
 
+/** Whether two user messages are the same one: the same words, files and references, in order. */
+export function sameMessage(a: TurnUser, b: TurnUser): boolean {
+  const ids = (user: TurnUser) => (user.attachments ?? []).map((attachment) => attachment.id);
+  return (
+    a.content === b.content &&
+    JSON.stringify(ids(a)) === JSON.stringify(ids(b)) &&
+    JSON.stringify(a.refs ?? []) === JSON.stringify(b.refs ?? [])
+  );
+}
+
 /** The chat's own first-message title (`firstMessageTitle` in its thread store, not in the package's exports). */
 export function firstMessageTitle(content: string): string {
   const flat = content.replace(/\s+/g, ' ').trim();
