@@ -20,6 +20,7 @@ const h = vi.hoisted(() => {
     rateLimitCalls: [] as [string, string | null | undefined][],
     events: [] as Record<string, unknown>[],
     jwks: { keys: [] as Record<string, unknown>[] },
+    jwksDown: false,
   };
 });
 
@@ -57,7 +58,13 @@ vi.mock('jose', async (importOriginal) => {
   const actual = await importOriginal<typeof Jose>();
   return {
     ...actual,
-    createRemoteJWKSet: () => actual.createLocalJWKSet(h.jwks as Jose.JSONWebKeySet),
+    createRemoteJWKSet: () => {
+      const local = actual.createLocalJWKSet(h.jwks as Jose.JSONWebKeySet);
+      return (...args: Parameters<typeof local>) => {
+        if (h.jwksDown) throw new Error('fetch failed');
+        return local(...args);
+      };
+    },
   };
 });
 
@@ -145,17 +152,17 @@ async function revoke(token: string, clientId: string) {
 
 function saladJwt(
   claims: Record<string, unknown> = {},
-  key: CryptoKey = saladKey
+  key: CryptoKey = saladKey,
+  { expires = true }: { expires?: boolean } = {}
 ): Promise<string> {
-  return new SignJWT({
+  const jwt = new SignJWT({
     salad_machine_id: 'salad-machine-7',
     salad_container_group_id: SALAD_GROUP,
     ...claims,
   })
     .setProtectedHeader({ alg: 'ES256', kid: 'salad-1' })
-    .setIssuedAt()
-    .setExpirationTime('5m')
-    .sign(key);
+    .setIssuedAt();
+  return (expires ? jwt.setExpirationTime('5m') : jwt).sign(key);
 }
 
 const rows = (table: string) => h.tables[table] ?? [];
@@ -187,6 +194,7 @@ beforeEach(() => {
   h.rateLimitDeny.clear();
   h.rateLimitCalls.length = 0;
   h.events.length = 0;
+  h.jwksDown = false;
   process.env.OAUTH_WORKER_INTROSPECTION_CLIENT_IDS = ORCHESTRATOR;
   process.env.OAUTH_INTROSPECTION_CLIENT_IDS = LINK;
   process.env.WORKER_SALAD_JWT_ENABLED = '';
@@ -209,7 +217,7 @@ describe('worker token exchange', () => {
       issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
       token_type: 'Bearer',
       expires_in: 900,
-      scope: [String(WORKER)],
+      scope: String(WORKER),
     });
     const [device] = rows('WorkerDevice');
     expect(device).toMatchObject({
@@ -295,6 +303,26 @@ describe('worker token exchange', () => {
     expect(workerKeys()).toHaveLength(0);
   });
 
+  it('refuses a workload client that is not confidential, whatever secret it sends', async () => {
+    h.tables.OauthClient.find((c) => c.id === POOL)!.isConfidential = false;
+    const res = await exchange({ client_secret: 'anything' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it("clears the device's expired tokens on its next exchange, and no one else's", async () => {
+    await exchange();
+    await exchange({ subject_token: 'machine-other' });
+    vi.setSystemTime(new Date('2026-10-23T12:16:00.000Z'));
+    const res = await exchange();
+
+    expect(workerKeys()).toEqual([
+      expect.objectContaining({ workerDeviceId: rows('WorkerDevice')[1].id }),
+      expect.objectContaining({ key: generateSecretHash(res.body.access_token as string) }),
+    ]);
+  });
+
   it('refuses a workload client whose ceiling lacks WorkerRegister', async () => {
     h.tables.OauthClient.find((c) => c.id === POOL)!.allowedScopes = TokenScope.UserRead;
     const res = await exchange();
@@ -350,6 +378,22 @@ describe('worker token exchange — Salad IMDS JWT', () => {
     const res = await exchange({ subject_token: forged, subject_token_type: JWT_TYPE });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a token without an expiry', async () => {
+    const forever = await saladJwt({}, saladKey, { expires: false });
+    const res = await exchange({ subject_token: forever, subject_token_type: JWT_TYPE });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('answers a server error, not invalid_grant, when the JWKS cannot be fetched', async () => {
+    h.jwksDown = true;
+    const res = await exchange({ subject_token: await saladJwt(), subject_token_type: JWT_TYPE });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('server_error');
     expect(workerKeys()).toHaveLength(0);
   });
 

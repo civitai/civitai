@@ -9,7 +9,13 @@ type Clause = (get: Get) => boolean;
 const compare = (column: string, op: string, value: unknown): Clause => {
   return (get) => {
     const actual = get(column);
-    if (op === '=' || op === 'is') return actual === value;
+    // SQL `=` is never true against NULL; only `is` matches it.
+    if (op === '=') return value != null && actual === value;
+    if (op === 'is') return actual === value;
+    if (op === '<' && actual instanceof Date && value instanceof Date) {
+      return actual.getTime() < value.getTime();
+    }
+    if (op === '<') return false;
     if (op === 'in') return (value as unknown[]).includes(actual);
     if (op === '>=' && actual instanceof Date && value instanceof Date) {
       return actual.getTime() >= value.getTime();
@@ -84,7 +90,8 @@ export function createKyselyFake(tables: Record<string, Row[]>, defaults: TableD
             const [lt, lc] = left.split('.');
             const [rt, rc] = right.split('.');
             const [ownCol, otherTable, otherCol] = lt === table ? [lc, rt, rc] : [rc, lt, lc];
-            const match = rows(table).find((r) => r[ownCol] === scope[otherTable]?.[otherCol]);
+            const key = scope[otherTable]?.[otherCol];
+            const match = key == null ? undefined : rows(table).find((r) => r[ownCol] === key);
             if (match) scope[table] = match;
             return !!match;
           });

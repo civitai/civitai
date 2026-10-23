@@ -199,8 +199,8 @@ describe('getSessionFromBearerToken credential type', () => {
     expect(await getSessionFromBearerToken('unlisted-type')).toBeNull();
   });
 
-  // Worker tokens are for the orchestrator, which checks them at the hub's introspection endpoint.
-  // Do not add `Worker` to the bearer allowlist.
+  // Worker keys are worker-registration credentials, not civitai.com API keys: keep `Worker` off the
+  // bearer allowlist.
   it('does not accept a Worker token', async () => {
     expect(await getSessionFromBearerToken('worker-token')).toBeNull();
     expect(dbMock.dbWrite.apiKey.update).not.toHaveBeenCalled();

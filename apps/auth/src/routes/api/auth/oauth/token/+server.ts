@@ -123,7 +123,7 @@ export const POST: RequestHandler = async ({ request }) => {
           issued_token_type: ACCESS_TOKEN_TYPE,
           token_type: 'Bearer',
           expires_in: WORKER_TOKEN_TTL,
-          scope: token.scope,
+          scope: String(TokenScope.WorkerRegister),
         },
         { headers: respHeaders }
       );

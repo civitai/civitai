@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, errors, jwtVerify } from 'jose';
 import { env } from '$env/dynamic/private';
 
 // Salad IMDS JWT verification for the worker token-exchange grant. Off unless WORKER_SALAD_JWT_ENABLED is
@@ -7,6 +7,19 @@ import { env } from '$env/dynamic/private';
 export type SaladIdentity = { machineId: string; containerGroupId: string };
 
 export class SaladTokenError extends Error {}
+
+// A token problem is the caller's; anything else (the JWKS fetch failing, say) is ours.
+const TOKEN_ERRORS = [
+  errors.JWSInvalid,
+  errors.JWSSignatureVerificationFailed,
+  errors.JWTInvalid,
+  errors.JWTClaimValidationFailed,
+  errors.JWTExpired,
+  errors.JWKSNoMatchingKey,
+  errors.JWKSMultipleMatchingKeys,
+  errors.JOSEAlgNotAllowed,
+  errors.JOSENotSupported,
+];
 
 export function saladJwtEnabled(): boolean {
   return env.WORKER_SALAD_JWT_ENABLED === 'true' && !!env.WORKER_SALAD_JWKS_URL;
@@ -32,9 +45,13 @@ export async function verifySaladJwt(token: string): Promise<SaladIdentity> {
     ({ payload } = await jwtVerify(token, jwksFor(url), {
       issuer: env.WORKER_SALAD_JWT_ISSUER || undefined,
       audience: env.WORKER_SALAD_JWT_AUDIENCE || undefined,
+      requiredClaims: ['exp'],
     }));
   } catch (err) {
-    throw new SaladTokenError(err instanceof Error ? err.message : 'invalid token');
+    if (TOKEN_ERRORS.some((E) => err instanceof E)) {
+      throw new SaladTokenError((err as Error).message);
+    }
+    throw err;
   }
   const machineId = payload.salad_machine_id;
   const containerGroupId = payload.salad_container_group_id;

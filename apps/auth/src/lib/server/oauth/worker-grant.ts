@@ -67,10 +67,11 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
         'WorkerClient.saladContainerGroupIds',
         'OauthClient.userId',
         'OauthClient.allowedScopes',
+        'OauthClient.isConfidential',
       ])
       .where('WorkerClient.clientId', '=', client.id)
       .executeTakeFirst();
-    if (!workload || (workload.allowedScopes & TokenScope.WorkerRegister) === 0) {
+    if (!workload?.isConfidential || (workload.allowedScopes & TokenScope.WorkerRegister) === 0) {
       throw new UnauthorizedClientError('Unauthorized client: not a workload client');
     }
 
@@ -104,6 +105,14 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
     if (deviceRow.status !== 'active') {
       throw new InvalidGrantError('Invalid grant: device is blocked');
     }
+
+    // Each exchange adds a row, so clear this device's expired ones as it goes.
+    await db
+      .deleteFrom('ApiKey')
+      .where('workerDeviceId', '=', deviceRow.id)
+      .where('type', '=', 'Worker')
+      .where('expiresAt', '<', now)
+      .execute();
 
     const accessToken = OAUTH_TOKEN_PREFIX + generateKey(36);
     const expiresAt = new Date(now.getTime() + WORKER_TOKEN_TTL * 1000);

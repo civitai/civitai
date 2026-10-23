@@ -1,19 +1,18 @@
+-- MANUAL APPLY ONLY, in each environment. Run it with psql in autocommit mode, one statement at a time,
+-- NOT inside a transaction: `ADD VALUE` and `CREATE INDEX CONCURRENTLY` refuse to run in a transaction
+-- block. Every statement is idempotent, so re-running the file is safe.
+--
 -- Worker identity at the auth hub: workload OAuth clients whose workers trade a device credential for a
 -- 15-minute `Worker` token through the token-exchange grant (RFC 8693).
 --
 -- What this adds:
---   * ApiKeyType value `Worker`. The main app's bearer path allowlists System/User/Access, so it does not
---     accept these tokens; only the hub's introspection answers for them.
+--   * ApiKeyType value `Worker`, for the tokens that grant issues.
 --   * `WorkerClient`: per-pool config for a workload OauthClient (orchestrator provider, accepted Salad
 --     container groups). Deleted with its OauthClient.
 --   * `WorkerDevice`: the device registry, unique on (clientId, issuer, subject). Deleted with its client.
 --   * `ApiKey.workerDeviceId`: the device a Worker token was issued to. Deleted with its device.
 --   * Role `system:workload` and a `system_workers` user holding it, to own the workload clients. The hub
 --     produces no session for a holder of that role.
---
--- MANUAL APPLY ONLY (prod CNPG nvme0, and the dev clone). Run it with psql in autocommit mode, one
--- statement at a time, NOT inside a transaction: `ADD VALUE` and `CREATE INDEX CONCURRENTLY` refuse to run
--- in a transaction block. Every statement is idempotent, so re-running the file is safe.
 --
 -- ORDER: deploy the main app and the hub with the regenerated Prisma client (which knows `Worker`) BEFORE
 -- applying this. Nothing writes a `Worker` row until a WorkerClient exists, and none exists until an

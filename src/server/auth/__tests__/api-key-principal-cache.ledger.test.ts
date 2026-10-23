@@ -117,7 +117,7 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'apps/auth/src/lib/server/oauth/model.ts': { count: 1, why: NOT_CACHED },
   'apps/auth/src/lib/server/oauth/token-helpers.ts': { count: 1, why: 'insert: OAuth rows' },
   'apps/auth/src/routes/api/auth/oauth/revoke/+server.ts': { count: 2, why: NOT_CACHED },
-  'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 1, why: WORKER_ONLY },
+  'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
   'apps/training-studio/src/lib/server/orchestrator-token.ts': {
     count: 2,
