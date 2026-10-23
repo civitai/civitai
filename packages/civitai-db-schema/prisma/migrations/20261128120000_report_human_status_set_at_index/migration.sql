@@ -1,5 +1,4 @@
--- When a moderator last actioned each report type (the moderator app's Reports sub-nav
--- "last actioned" badges).
+-- When a moderator last actioned each report type (moderator app: sidebar badges, Needs attention).
 --
 -- The lookup reads the last week of report reviews (Actioned or Unactioned) by anyone but the system
 -- user (-1), whose expiry run closes most reports. No index on "Report" covers "statusSetAt", so it

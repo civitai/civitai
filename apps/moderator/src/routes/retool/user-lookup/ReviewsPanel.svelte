@@ -94,7 +94,6 @@
   });
   const modelUrl = (modelId: number | null) => (modelId ? `${civitaiUrl}/models/${modelId}` : null);
 
-  // Its own fetch, so the list renders without waiting on it — see `/api/user-review-image-counts`.
   const imageCounts = $derived(browser ? fetchReviewImageCounts(userId) : SSR_PENDING);
 </script>
 

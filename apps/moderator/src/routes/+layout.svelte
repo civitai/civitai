@@ -45,14 +45,20 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive, navCount, navHref, navWorstRank } from '$lib/nav-links';
   import {
     sidebarCounts,
     sidebarLastActioned,
     refreshSidebarCounts,
   } from '$lib/sidebar-counts.svelte';
-  import { LAST_ACTIONED_WINDOW_DAYS, lastActionedBadge } from '$lib/queue-thresholds';
+  import {
+    LAST_ACTIONED_WINDOW_DAYS,
+    URGENT_SEVERITY_RANK,
+    lastActionedBadge,
+    severityClassForRank,
+  } from '$lib/queue-thresholds';
   import ShortAge from '$lib/components/ShortAge.svelte';
+  import { minuteClock } from '$lib/minute-clock.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
 
@@ -85,26 +91,30 @@
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
   const lastActioned = sidebarLastActioned();
-  // The badge states an age, so it has to keep ageing on a page left open; nothing else re-renders it.
-  let now = $state(Date.now());
-  $effect(() => {
-    const timer = setInterval(() => (now = Date.now()), 60_000);
-    return () => clearInterval(timer);
-  });
+  const clock = minuteClock();
+  const now = $derived(clock.now);
   // Nothing until the lookup lands: a missing timestamp reads as "no action in a week", and painting
   // that before the answer arrives would flash every waiting queue red.
   const actionedFor = (link: NavLink, count: number | null) =>
     link.countKey && lastActioned.value
-      ? lastActionedBadge(lastActioned.value[link.countKey], count, now)
+      ? lastActionedBadge(link.countKey, lastActioned.value[link.countKey]?.at, count, now)
       : null;
 
-  // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
+  // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
+  // still says when something inside it is behind.
+  const severityFor = (link: NavLink) => severityClassForRank(navWorstRank(link, countFor));
+  const overThreshold = (link: NavLink) =>
+    (navWorstRank(link, countFor) ?? Infinity) <= URGENT_SEVERITY_RANK;
+
+  // Collapsed unless you're working inside the section or something in it is over threshold; an
+  // explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
   const holdsCurrentPage = (item: NavLink) =>
     !!item.children?.some(
       (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
     );
-  const isOpen = (item: NavLink) => openGroups[item.label] ?? holdsCurrentPage(item);
+  const isOpen = (item: NavLink) =>
+    openGroups[item.label] ?? (holdsCurrentPage(item) || overThreshold(item));
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
 </script>
@@ -159,7 +169,9 @@
                             <span>{item.label}</span>
                             {#if rollup !== null}
                               <span
-                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                  item
+                                ) ?? 'text-sidebar-foreground/70'}"
                               >
                                 {rollup}
                               </span>
@@ -199,28 +211,25 @@
                                     {...props}
                                   >
                                     <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>
-                                    {#if actioned || cnt !== null}
-                                      <span class="ml-auto flex items-center gap-1.5">
-                                        {#if actioned}
-                                          {@const badgeClass = `rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
-                                          {#if actioned.at}
-                                            <ShortAge
-                                              at={actioned.at}
-                                              {now}
-                                              title={actioned.title}
-                                              class={badgeClass}
-                                            />
-                                          {:else}
-                                            <span class={badgeClass} title={actioned.title}>
-                                              &gt;{LAST_ACTIONED_WINDOW_DAYS}d
-                                            </span>
-                                          {/if}
-                                        {/if}
-                                        {#if cnt !== null}
-                                          <span class="text-xs tabular-nums text-sidebar-foreground/50">
-                                            {cnt}
-                                          </span>
-                                        {/if}
+                                    <!-- Beside the label, not the count: the counts stay one right-aligned column. -->
+                                    {#if actioned}
+                                      {@const badgeClass = `shrink-0 rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
+                                      {#if actioned.at}
+                                        <ShortAge
+                                          at={actioned.at}
+                                          {now}
+                                          title={actioned.title}
+                                          class={badgeClass}
+                                        />
+                                      {:else}
+                                        <span class={badgeClass} title={actioned.title}>
+                                          &gt;{LAST_ACTIONED_WINDOW_DAYS}d
+                                        </span>
+                                      {/if}
+                                    {/if}
+                                    {#if cnt !== null}
+                                      <span class="ml-auto text-xs tabular-nums text-sidebar-foreground/50">
+                                        {cnt}
                                       </span>
                                     {/if}
                                   </a>
@@ -244,7 +253,9 @@
                           <span>{item.label}</span>
                           {#if cnt !== null}
                             <span
-                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                item
+                              ) ?? 'text-sidebar-foreground/70'}"
                             >
                               {cnt}
                             </span>

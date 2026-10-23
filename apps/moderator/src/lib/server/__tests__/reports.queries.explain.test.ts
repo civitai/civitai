@@ -94,6 +94,12 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     await plans();
   });
 
+  it('getReportOldestOpen — the materialized CTE and every union branch', async () => {
+    await service.getReportOldestOpen();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
   it('getMostReportedPage — the same shape, paged, and its count', async () => {
     // The page adds an OFFSET inside that CTE and a second statement counting the same predicate.
     // Both plan here because neither is exercised by any other tier without a database.

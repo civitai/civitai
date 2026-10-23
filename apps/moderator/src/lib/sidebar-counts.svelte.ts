@@ -30,14 +30,16 @@ function ttlFetched<T>(url: string) {
 }
 
 const counts = ttlFetched<Record<string, number>>('/api/sidebar-counts');
-const lastActioned = ttlFetched<Record<string, string>>('/api/sidebar-last-actioned');
+const lastActioned = ttlFetched<Record<string, { at: string; by: string | null }>>(
+  '/api/sidebar-last-actioned'
+);
 
 export function sidebarCounts() {
   void counts.refresh();
   return counts.store;
 }
 
-/** `countKey` → ISO time a moderator last actioned that queue; absent when there is none to show. */
+/** `countKey` → when, and by whom, a moderator last actioned that queue; absent when there is none. */
 export function sidebarLastActioned() {
   void lastActioned.refresh();
   return lastActioned.store;

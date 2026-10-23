@@ -290,7 +290,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
-      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
   },

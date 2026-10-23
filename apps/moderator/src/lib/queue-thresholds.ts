@@ -1,4 +1,5 @@
 import { relativeTime } from './format';
+import { reportCountKey, reportEntities } from './reports';
 
 // Retool's `thresholds` and `colors` Functions from Moderation Status, recovered from the raw export.
 //
@@ -47,6 +48,9 @@ const THRESHOLDS: Record<string, readonly number[]> = {
   urgent: [5, 4, 1, 1, 0],
   errors: [30, 20, 10, 5, 0],
   articleReviews: [30, 20, 10, 5, 0],
+  // Ours, not Retool's: pending scam restrictions. A first cut, set 2026-10; move it once the queue's
+  // working level is known.
+  scamRestrictions: [200, 100, 50, 20, 0],
   // Ours, not Retool's: a healthy pipeline holds 0.
   stuckIngestion: [200, 50, 10, 1, 0],
   // Overdue rows only — never queue DEPTH, which is large and healthy for the types that hold rows on
@@ -104,15 +108,27 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
  * plainly rather than borrow another queue's scale, since the scales are not comparable.
  */
 export function queueSeverityClass(key: string, count: number | null): string | null {
-  const steps = THRESHOLDS[COUNT_KEY_ALIASES[key] ?? key];
-  if (!steps || count === null) return null;
-  return severityAt(steps, count);
+  const rank = queueSeverityRank(key, count);
+  return rank === null ? null : SEVERITY[rank];
 }
 
-/** The first of `steps` (descending, worst first) that `value` reaches, as its class. */
-const severityAt = (steps: readonly number[], value: number): string | null => {
+/** The yellow step: a queue at this rank or worse (lower) is over its threshold and wants a moderator. */
+export const URGENT_SEVERITY_RANK = 2;
+
+export const severityClassForRank = (rank: number | null): string | null =>
+  rank === null ? null : SEVERITY[rank] ?? null;
+
+/** `queueSeverityClass` as a number, 0 worst: for ranking queues against each other. */
+export function queueSeverityRank(key: string, count: number | null): number | null {
+  const steps = THRESHOLDS[COUNT_KEY_ALIASES[key] ?? key];
+  if (!steps || count === null) return null;
+  return severityIndex(steps, count);
+}
+
+/** The first of `steps` (descending, worst first) that `value` reaches. */
+const severityIndex = (steps: readonly number[], value: number): number | null => {
   const index = steps.findIndex((threshold) => value >= threshold);
-  return index === -1 ? null : SEVERITY[index] ?? null;
+  return index === -1 ? null : index;
 };
 
 export const hasQueueThreshold = (key: string) => (COUNT_KEY_ALIASES[key] ?? key) in THRESHOLDS;
@@ -124,27 +140,39 @@ export const LAST_ACTIONED_WINDOW_DAYS = 7;
 const LAST_ACTIONED_HOURS = [72, 24, 6, 1, 0] as const;
 
 /**
- * The nav's "last actioned" badge for a queue, coloured by the steps above. `at` is absent when nothing
- * was actioned inside the window. `null` for a queue with no recent action and nothing waiting: an
- * empty queue needs nobody, so a red badge there would only be noise.
+ * The queues the last-actioned lookup covers (`getReportLastActioned`). For these, no time means nobody
+ * acted inside the window; for every other queue it means there is no source to ask.
+ */
+const LAST_ACTIONED_KEYS: ReadonlySet<string> = new Set(reportEntities.map(reportCountKey));
+
+export const tracksLastActioned = (countKey: string | undefined): countKey is string =>
+  !!countKey && LAST_ACTIONED_KEYS.has(countKey);
+
+/**
+ * The "last actioned" badge for a queue, coloured by the steps above. `at` is absent when nothing was
+ * actioned inside the window. `null` for a queue the lookup does not cover, and for one with no recent
+ * action and nothing waiting: an empty queue needs nobody, so a red badge there would only be noise.
  */
 export function lastActionedBadge(
+  countKey: string | undefined,
   at: string | undefined,
   count: number | null,
   now = Date.now()
 ): { at?: string; class: string; title: string } | null {
+  if (!tracksLastActioned(countKey)) return null;
   if (!at) {
     return count
       ? { class: SEVERITY[0], title: `No moderator action in ${LAST_ACTIONED_WINDOW_DAYS} days` }
       : null;
   }
+  return { at, class: ageSeverityClass(at, now), title: `Last actioned ${relativeTime(at)}` };
+}
+
+/** How stale a "last worked" time is, on the `LAST_ACTIONED_HOURS` steps. */
+export function ageSeverityClass(at: string, now = Date.now()): string {
   // Clamped: a server clock ahead of the browser's would put a fresh action in the future.
   const hours = Math.max(0, (now - new Date(at).getTime()) / 3_600_000);
-  return {
-    at,
-    class: severityAt(LAST_ACTIONED_HOURS, hours)!,
-    title: `Last actioned ${relativeTime(at)}`,
-  };
+  return SEVERITY[severityIndex(LAST_ACTIONED_HOURS, hours)!];
 }
 
 /**

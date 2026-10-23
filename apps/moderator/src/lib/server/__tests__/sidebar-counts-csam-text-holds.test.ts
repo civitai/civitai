@@ -31,6 +31,7 @@ vi.mock('../rating-reviews.service', () => ({
 vi.mock('../reports.service', () => ({
   getReportCounts: async () => ({}),
   getReportLastActioned: async () => ({}),
+  getReportOldestOpen: async () => ({}),
 }));
 vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
 vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));

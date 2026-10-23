@@ -1,8 +1,7 @@
 <script lang="ts">
   import { dateTime, shortAge } from '$lib/format';
 
-  // `now` is for a caller that ticks: the age is computed once per render, so it only moves when the
-  // caller re-renders it with a new `now`.
+  // `now` lets a ticking caller (minuteClock) re-age the label; without it the age is fixed at render.
   let {
     at,
     now,

@@ -89,12 +89,12 @@ export async function getReviews(
  * `getReviews` lists. Retool's SubmittedReviewImageCount.
  *
  * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
- * version, so a reviewer of popular versions takes seconds warm and tens of seconds cold. Driving it
- * from the reviewer's images instead is slower for prolific reviewers, so neither shape wins.
+ * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
+ * instead is slower for prolific reviewers, so neither shape wins.
  *
  * The body of the `ResourceReviewHelper` VIEW, inlined and correlated to the row — NEVER join the view
  * itself. It groups over every review and the qual does not push through, so both a join and a keyed
- * `IN (…)` lookup run past 60s. (The main app hit the same wall: resourceReview.service.ts.)
+ * `IN (…)` lookup time out. (The main app hit the same wall: resourceReview.service.ts.)
  */
 export async function getReviewImageCounts(
   userId: number,

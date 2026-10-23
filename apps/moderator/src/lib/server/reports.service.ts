@@ -5,7 +5,7 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
-import { SYSTEM_USER_ID } from './users.service';
+import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
@@ -413,22 +413,61 @@ export async function getReportCounts(): Promise<Record<string, number>> {
 /** A moderator's review outcome: upheld or dismissed. Moving a report to Processing is not a review. */
 const REVIEWED_REPORT_STATUSES = [ReportStatus.Actioned, ReportStatus.Unactioned];
 
+export type LastActioned = { at: string; by: string | null };
+
 /**
- * When a moderator last reviewed a report of each type, keyed like `getReportCounts`, as ISO strings. Types with nothing inside the window are absent. The system user is excluded, as in
- * `getReportHistory`: its expiry run is nobody working the queue. A writer that sets `status` without
- * stamping `statusSetAt`/`statusSetBy` is invisible here, so every report status write must stamp both.
+ * When a moderator last reviewed a report of each type, and who, keyed like `getReportCounts`. Types
+ * with nothing inside the window are absent. The system user is excluded, as in `getReportHistory`:
+ * its expiry run is nobody working the queue. A writer that sets `status` without stamping
+ * `statusSetAt`/`statusSetBy` is invisible here, so every report status write must stamp both.
  */
-export async function getReportLastActioned(): Promise<Record<string, string>> {
+export async function getReportLastActioned(): Promise<Record<string, LastActioned>> {
   // Both predicates are literals to match `Report_human_statusSetAt_idx`, which hardcodes the system
   // user's id; a bound parameter leaves the planner unable to prove the partial index applies. `<>`
   // rather than getReportHistory's `is distinct from` for the same reason, so a null setter is dropped.
-  const recent = sql`select "id", "statusSetAt" from "Report"
+  const recent = sql`select "id", "statusSetAt", "statusSetBy" from "Report"
     where "statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
       and "statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
       and "status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})`;
-  const rows = await perReportType(recent, sql<Date | null>`max(r."statusSetAt")`);
+  // Epoch milliseconds rather than the timestamp: inside JSON the column loses the driver's UTC
+  // parsing, and a zone-less string parses as the reader's local time.
+  const rows = await perReportType(
+    recent,
+    sql<{ at: number | null; by: number | null }>`json_build_object(
+      'at', (extract(epoch from max(r."statusSetAt")) * 1000)::bigint,
+      'by', (array_agg(r."statusSetBy" order by r."statusSetAt" desc))[1])`
+  );
+  const users = await usersByIds(rows.flatMap(([, v]) => (v.by ? [v.by] : [])));
   return Object.fromEntries(
-    rows.flatMap(([key, at]) => (at ? [[key, new Date(at).toISOString()]] : []))
+    rows.flatMap(([key, v]) =>
+      v.at
+        ? [
+            [
+              key,
+              {
+                at: new Date(Number(v.at)).toISOString(),
+                by: (v.by && users.get(v.by)?.username) || null,
+              },
+            ],
+          ]
+        : []
+    )
+  );
+}
+
+/** When the oldest new report of each type was filed, keyed like `getReportCounts`, as ISO strings. */
+export async function getReportOldestOpen(): Promise<Record<string, string>> {
+  const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
+  const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
+  // The same set `getReportCounts` counts, so the age describes the reports behind the badge.
+  const open = sql`select "id", "createdAt" from "Report"
+    where "status" in (${statuses}) and "reason" in (${reasons})`;
+  const rows = await perReportType(
+    open,
+    sql<number | null>`(extract(epoch from min(r."createdAt")) * 1000)::bigint`
+  );
+  return Object.fromEntries(
+    rows.flatMap(([key, ms]) => (ms ? [[key, new Date(Number(ms)).toISOString()]] : []))
   );
 }
 
