@@ -106,7 +106,7 @@ export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHas
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
-export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
+export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
 export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
 
@@ -2147,6 +2147,8 @@ export interface ApiKey {
   clientId: string | null;
   client?: OauthClient | null;
   buzzLimit: JsonValue | null;
+  workerDeviceId: number | null;
+  workerDevice?: WorkerDevice | null;
 }
 
 export interface OauthClient {
@@ -2175,6 +2177,31 @@ export interface OauthClient {
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
+  workerClient?: WorkerClient | null;
+  workerDevices?: WorkerDevice[];
+}
+
+export interface WorkerClient {
+  clientId: string;
+  client?: OauthClient;
+  provider: string;
+  saladContainerGroupIds: string[];
+  createdAt: Date;
+}
+
+export interface WorkerDevice {
+  id: number;
+  clientId: string;
+  client?: OauthClient;
+  issuer: string;
+  subject: string;
+  status: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  lastIp: string | null;
+  blockedAt: Date | null;
+  blockedReason: string | null;
+  tokens?: ApiKey[];
 }
 
 export interface UserRole {

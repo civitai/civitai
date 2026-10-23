@@ -7,7 +7,13 @@ import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { logAxiomError } from '$lib/server/axiom';
 import { OriginNotAllowedError } from '$lib/server/oauth/errors';
-import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
+import {
+  ACCESS_TOKEN_TTL,
+  ACCESS_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  WORKER_TOKEN_TTL,
+} from '$lib/server/oauth/constants';
+import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope } from '$lib/server/oauth/scope';
 import {
@@ -19,7 +25,8 @@ import {
 } from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
 
-// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants.
+// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, and the
+// worker token-exchange grant (lib/server/oauth/worker-grant.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -42,10 +49,11 @@ export const POST: RequestHandler = async ({ request }) => {
   const clientIp = getClientIp(request);
   const ip = clientIp ?? 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
+  const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
   // fresh bucket each request.
-  if (!(await checkOAuthRateLimit('token', clientIp))) {
+  if (!(await checkOAuthRateLimit(isWorkerExchange ? 'worker-token' : 'token', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);
     return json(
@@ -72,6 +80,8 @@ export const POST: RequestHandler = async ({ request }) => {
   );
 
   const oauthReq = toOAuthRequest({ method: 'POST', headers: oauthHeaders, body });
+  const workerGrant: WorkerGrantRequestContext = { clientIp };
+  Object.assign(oauthReq, { workerGrant });
   const respHeaders = new Headers();
 
   try {
@@ -104,6 +114,19 @@ export const POST: RequestHandler = async ({ request }) => {
       setPublicClientCors(respHeaders, origin);
     } else {
       setWildcardCors(respHeaders);
+    }
+
+    if (isWorkerExchange) {
+      return json(
+        {
+          access_token: token.accessToken,
+          issued_token_type: ACCESS_TOKEN_TYPE,
+          token_type: 'Bearer',
+          expires_in: WORKER_TOKEN_TTL,
+          scope: token.scope,
+        },
+        { headers: respHeaders }
+      );
     }
 
     const grantType = body.grant_type;

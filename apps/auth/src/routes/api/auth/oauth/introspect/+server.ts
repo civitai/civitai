@@ -13,19 +13,21 @@ import { getClientIp } from '$lib/server/auth/request';
 // Access tokens are opaque (`civitai_` + 36 random chars, only the salted hash stored), so a
 // first-party service that receives one cannot verify it offline. link-service is the caller:
 // it introspects a Civitai Link client's token — the desktop app or the ComfyUI node pack — and
-// requires the LinkConnect bit before minting an instance key.
+// requires the LinkConnect bit before minting an instance key. The orchestrator is the caller for
+// `Worker` tokens, which it checks when a worker registers.
 //
-// NOT a public endpoint. The caller must be a CONFIDENTIAL client AND on the
-// OAUTH_INTROSPECTION_CLIENT_IDS allowlist; every other outcome is 401 invalid_client. Any token
-// miss — unknown, expired, wrong type, absent, owned by a disabled account, or a single-purpose
-// client-credentials token — is 200 {active:false}, never a distinguishing error.
+// NOT a public endpoint. The caller must be a CONFIDENTIAL client on OAUTH_INTROSPECTION_CLIENT_IDS
+// (answered for user access tokens) or OAUTH_WORKER_INTROSPECTION_CLIENT_IDS (answered for `Worker`
+// tokens); every other outcome is 401 invalid_client. Any token miss — unknown, expired, wrong type,
+// absent, owned by a disabled account, a single-purpose client-credentials token, a blocked worker
+// device, or a token kind this caller may not see — is 200 {active:false}, never a distinguishing error.
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
 /** Read per request, not at module load: the value must be settable between test cases. */
-function allowedIntrospectionClients(): Set<string> {
+function clientIdList(value: string | undefined): Set<string> {
   return new Set(
-    (env.OAUTH_INTROSPECTION_CLIENT_IDS ?? '')
+    (value ?? '')
       .split(',')
       .map((id) => id.trim())
       .filter(Boolean)
@@ -70,9 +72,9 @@ export const POST: RequestHandler = async ({ request }) => {
   // real client's budget and block Link pairing.
   if (!(await checkOAuthRateLimit('introspect-anon', getClientIp(request)))) return rateLimited();
 
-  if (!clientId || !clientSecret || !allowedIntrospectionClients().has(clientId)) {
-    return invalidClient();
-  }
+  const seesAccess = clientIdList(env.OAUTH_INTROSPECTION_CLIENT_IDS).has(clientId);
+  const seesWorker = clientIdList(env.OAUTH_WORKER_INTROSPECTION_CLIENT_IDS).has(clientId);
+  if (!clientId || !clientSecret || (!seesAccess && !seesWorker)) return invalidClient();
 
   const client = await db
     .selectFrom('OauthClient')
@@ -89,12 +91,21 @@ export const POST: RequestHandler = async ({ request }) => {
     return invalidClient();
   }
 
-  if (!(await checkOAuthRateLimit('introspect', clientId))) return rateLimited();
+  if (!(await checkOAuthRateLimit(seesWorker ? 'introspect-worker' : 'introspect', clientId))) {
+    return rateLimited();
+  }
 
   const token = typeof body.token === 'string' ? body.token : '';
   if (!token) return json({ active: false }, { headers: NO_STORE });
 
   const now = new Date();
+  const hash = generateSecretHash(token);
+  if (seesWorker) {
+    const worker = await introspectWorkerToken(hash, now);
+    if (worker) return json(worker, { headers: NO_STORE });
+  }
+  if (!seesAccess) return json({ active: false }, { headers: NO_STORE });
+
   const row = await db
     .selectFrom('ApiKey')
     .innerJoin('User', 'User.id', 'ApiKey.userId')
@@ -105,7 +116,7 @@ export const POST: RequestHandler = async ({ request }) => {
       'ApiKey.expiresAt',
       'User.username',
     ])
-    .where('ApiKey.key', '=', generateSecretHash(token))
+    .where('ApiKey.key', '=', hash)
     .where('ApiKey.type', '=', 'Access')
     .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
     // RFC 7662 scopes `active` to the token, but this answer is the sole authorization input a
@@ -136,3 +147,39 @@ export const POST: RequestHandler = async ({ request }) => {
     { headers: NO_STORE }
   );
 };
+
+/**
+ * The introspection body for a live `Worker` token, or null. Live: unexpired, its device not blocked, and
+ * its client still a workload client.
+ */
+async function introspectWorkerToken(hash: string, now: Date) {
+  const row = await db
+    .selectFrom('ApiKey')
+    .innerJoin('WorkerDevice', 'WorkerDevice.id', 'ApiKey.workerDeviceId')
+    .innerJoin('WorkerClient', 'WorkerClient.clientId', 'ApiKey.clientId')
+    .select([
+      'ApiKey.tokenScope',
+      'ApiKey.clientId',
+      'ApiKey.expiresAt',
+      'WorkerDevice.issuer',
+      'WorkerDevice.subject',
+      'WorkerClient.provider',
+    ])
+    .where('ApiKey.key', '=', hash)
+    .where('ApiKey.type', '=', 'Worker')
+    .where('ApiKey.expiresAt', '>=', now)
+    .where('WorkerDevice.status', '=', 'active')
+    .executeTakeFirst();
+  if (!row?.expiresAt) return null;
+
+  return {
+    active: true,
+    client_id: row.clientId ?? undefined,
+    worker_provider: row.provider,
+    device_id: row.subject,
+    device_issuer: row.issuer,
+    scope: String(row.tokenScope),
+    exp: Math.floor(row.expiresAt.getTime() / 1000),
+    token_type: 'Bearer',
+  };
+}

@@ -125,6 +125,17 @@ describe('client_credentials grant', () => {
     expect(h.inserts).toHaveLength(0);
   });
 
+  it('refuses WorkerRegister even when the client ceiling has it', async () => {
+    h.client = confidentialClient({
+      allowedScopes: TokenScope.UserRead | CATALOG | TokenScope.WorkerRegister,
+    });
+    const res = await token(TokenScope.WorkerRegister);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+  });
+
   it('refuses the catalog bit when the client ceiling lacks it', async () => {
     h.client = confidentialClient({ allowedScopes: TokenScope.UserRead });
     const res = await token(CATALOG);
