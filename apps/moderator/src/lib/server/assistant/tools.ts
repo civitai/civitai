@@ -32,6 +32,7 @@ import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
 import {
+  type AccountRow,
   getAccounts,
   getOpenUserReports,
   HUMAN_REPORT_REASONS,
@@ -118,7 +119,7 @@ const ACCOUNT_FIELDS = [
   'strikes',
   'email',
   'normalizedEmail',
-] as const;
+] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
 
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
@@ -397,21 +398,23 @@ export const TOOLS = [
     requires: [LOOKUP, USER_REPORTS],
     run: async ({ userIds, fields }, ctx) => {
       const { accounts, missing } = await getAccounts(userIds);
-      const wanted = new Set<string>(fields ?? ACCOUNT_FIELDS);
+      const wanted = fields && new Set<string>(fields);
+      const askedForEmails = !wanted || wanted.has('email') || wanted.has('normalizedEmail');
       // Not fetched at all unless asked for: a column nobody needs should not be read, least of all an
       // address.
-      const rows =
-        wanted.has('email') || wanted.has('normalizedEmail')
-          ? await withEmails(ctx, accounts)
-          : accounts;
+      const rows = askedForEmails ? await withEmails(ctx, accounts) : accounts;
       return {
         data: {
-          accounts: rows.map((row) =>
-            Object.fromEntries(
-              Object.entries(row).filter(([key]) => key === 'userId' || wanted.has(key))
-            )
-          ),
+          accounts: wanted
+            ? rows.map((row) =>
+                Object.fromEntries(
+                  Object.entries(row).filter(([key]) => key === 'userId' || wanted.has(key))
+                )
+              )
+            : rows,
           missing,
+          // Said outright: rows without an address otherwise read as accounts that share none.
+          ...(fields && askedForEmails && !showEmails(ctx) ? { emailsWithheld: true } : {}),
         },
         rows: accounts.length,
         truncated: false,

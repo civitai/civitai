@@ -262,32 +262,58 @@ describe('registration emails', () => {
   });
 
   describe('get_accounts fields', () => {
-    const accounts = async (args: unknown, grants: string[] = ['assistant.emails']) =>
-      ((await run('get_accounts', args, [LOOKUP_PAGE], grants)).data as { accounts: object[] })
-        .accounts;
+    const data = async (args: unknown, paths = [LOOKUP_PAGE], grants = ['assistant.emails']) =>
+      (await run('get_accounts', args, paths, grants)).data as {
+        accounts: object[];
+        emailsWithheld?: true;
+      };
+    const accounts = async (args: unknown, grants?: string[]) =>
+      (await data(args, undefined, grants)).accounts;
+    // Every column `getAccounts` returns, so a column lost on the way out shows.
+    const fullRow = (userId: number) => ({
+      userId,
+      username: `u${userId}`,
+      createdAt: new Date('2025-01-02T03:04:05Z'),
+      bannedAt: null,
+      banReason: 'spam',
+      deletedAt: null,
+      muted: true,
+      strikes: 2,
+    });
 
     it('returns only the columns asked for, and always the id', async () => {
       expect(await accounts({ userIds: [3, 4], fields: ['normalizedEmail'] })).toEqual([
         { userId: 3, normalizedEmail: 'sock3@gmail.com' },
         { userId: 4, normalizedEmail: 'sock4@gmail.com' },
       ]);
+      expect(await accounts({ userIds: [3], fields: ['email'] })).toEqual([
+        { userId: 3, email: 'Sock.3+x@GoogleMail.com' },
+      ]);
     });
 
     it('returns every column when none are named, as before', async () => {
-      expect(await accounts({ userIds: [3] })).toEqual([
-        {
-          userId: 3,
-          username: 'u3',
-          email: 'Sock.3+x@GoogleMail.com',
-          normalizedEmail: 'sock3@gmail.com',
-        },
-      ]);
+      getAccounts.mockImplementationOnce(async (ids: number[]) => ({
+        accounts: ids.map(fullRow) as never,
+        missing: [],
+      }));
+      expect(await data({ userIds: [3] })).toEqual({
+        accounts: [
+          { ...fullRow(3), email: 'Sock.3+x@GoogleMail.com', normalizedEmail: 'sock3@gmail.com' },
+        ],
+        missing: [],
+      });
     });
 
-    it('never gives an email to a moderator without assistant.emails, even when asked', async () => {
-      expect(await accounts({ userIds: [3], fields: ['email', 'normalizedEmail'] }, [])).toEqual([
-        { userId: 3 },
-      ]);
+    it('never gives an email without both User Lookup and assistant.emails, and says so', async () => {
+      const fields = ['email', 'normalizedEmail'];
+      for (const [paths, grants] of [
+        [[LOOKUP_PAGE], []],
+        [['/reports/user'], ['assistant.emails']],
+      ]) {
+        const out = await data({ userIds: [3], fields }, paths, grants);
+        expect(out.accounts).toEqual([{ userId: 3 }]);
+        expect(out.emailsWithheld).toBe(true);
+      }
       expect(getRegistrationEmails).not.toHaveBeenCalled();
     });
 
@@ -300,20 +326,18 @@ describe('registration emails', () => {
 
     it('fits a full list of inboxes into one result, where every column does not', async () => {
       // The model sees a result through `fitJson`; a trimmed one has silently lost accounts.
-      const ids = Array.from({ length: 200 }, (_, i) => 4_800_000 + i);
+      const ids = Array.from({ length: 200 }, (_, i) => 9_000_000 + i);
       const address = (id: number) => `firstname.lastname${id % 1000}@outlook.com`;
       getRegistrationEmails.mockImplementation(
         async (list: number[]) => new Map(list.map((id) => [id, address(id)]))
       );
-      const seen = async (fields?: string[]) => {
-        const result = await run(
-          'get_accounts',
-          { userIds: ids, fields },
-          [LOOKUP_PAGE],
-          ['assistant.emails']
-        );
-        return fitJson({ data: result.data, truncated: false }, MAX_TOOL_CHARS).trimmed;
-      };
+      getAccounts.mockImplementation(async (list: number[]) => ({
+        accounts: list.map(fullRow) as never,
+        missing: [],
+      }));
+      const seen = async (fields?: string[]) =>
+        fitJson({ data: await data({ userIds: ids, fields }), truncated: false }, MAX_TOOL_CHARS)
+          .trimmed;
       try {
         expect(await seen(['normalizedEmail'])).toBe(false);
         expect(await seen()).toBe(true);
@@ -321,6 +345,10 @@ describe('registration emails', () => {
         getRegistrationEmails.mockImplementation(
           async (list: number[]) => new Map(list.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
         );
+        getAccounts.mockImplementation(async (list: number[]) => ({
+          accounts: list.map((userId) => ({ userId, username: `u${userId}` })) as never,
+          missing: [],
+        }));
       }
     });
 
