@@ -2047,6 +2047,7 @@ model Post {
   reports         PostReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
+  storylinePendingChapter StorylinePendingChapter?
 
   @@index([modelVersionId])
   @@index([model3dId])
@@ -10065,6 +10066,7 @@ model Storyline {
   heroImagePosition Int    @default(50)
 
   chapters      StorylineChapter[]
+  pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
 
@@ -10107,12 +10109,34 @@ model StorylineChapter {
   branchChoicesFrom StorylineBranchChoice[] @relation("StorylineBranchChoiceFrom")
   branchChoicesTo   StorylineBranchChoice[] @relation("StorylineBranchChoiceTo")
   createClicks      StorylineCreateClick[]
+  pendingContinuations StorylinePendingChapter[]
 
   /// Target of the edge foreign keys, which carry `storylineId` so an edge can never
   /// join chapters from two storylines.
   @@unique([id, storylineId])
   @@index([storylineId])
   @@index([userId])
+}
+
+/// A post draft written from the storyline flow, before it is a chapter: which storyline it will
+/// join and, for a continuation, which chapter it continues. Readers never see it; chapter rows
+/// stay the only live chapters. Removed once the chapter is written, the continuation submitted,
+/// or the author detaches the draft.
+model StorylinePendingChapter {
+  postId          Int               @id
+  post            Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  storylineId     Int
+  storyline       Storyline         @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  /// null = chapter 1. At most one chapter-1 draft per storyline (partial unique index in the
+  /// migration). Keyed with storylineId, so the parent is always a chapter of the same storyline.
+  parentChapterId Int?
+  parentChapter   StorylineChapter? @relation(fields: [parentChapterId, storylineId], references: [id, storylineId], onDelete: Cascade)
+  /// The draft's author when it was linked. Not a relation, as on StorylineChapter.
+  userId          Int
+  createdAt       DateTime          @default(now())
+
+  @@index([storylineId])
+  @@index([parentChapterId])
 }
 
 /// Parent to child link between chapters. Forks happen only at the end of a chapter, so
