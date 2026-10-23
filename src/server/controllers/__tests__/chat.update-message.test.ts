@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as ScamScanQueue from '~/server/services/text-scan/scam-scan-queue';
+import type * as SignalsWrapper from '~/server/signals/wrapper';
 
 const { editChatMessageContent, queueScamScan } = vi.hoisted(() => ({
   editChatMessageContent: vi.fn(),
@@ -22,6 +23,11 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedLinkDomain: async () => undefined,
   throwOnBlockedMessagePattern: async () => undefined,
+}));
+
+vi.mock('~/server/signals/wrapper', async (importOriginal) => ({
+  ...(await importOriginal<typeof SignalsWrapper>()),
+  withSignals: async () => undefined,
 }));
 
 const { updateMessageHandler } = await import('../chat.controller');

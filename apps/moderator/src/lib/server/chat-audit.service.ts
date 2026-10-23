@@ -493,8 +493,25 @@ function lowerBound(sorted: number[], min: number): number {
   return lo;
 }
 
-/** The same edit lands in both sources, its ClickHouse row inserted just after the Postgres one. */
+/**
+ * Recorded edits keep their own order, which is the order the row lock let them through: their
+ * timestamps are taken before the lock, so two racing edits can be stamped the other way round.
+ * Logged-only edits are slotted in by time around them.
+ */
+function interleave(logged: MessageEdit[], recorded: MessageEdit[]): MessageEdit[] {
+  const out: MessageEdit[] = [];
+  let i = 0;
+  for (const r of recorded) {
+    while (i < logged.length && Date.parse(logged[i].at) <= Date.parse(r.at)) out.push(logged[i++]);
+    out.push(r);
+  }
+  return [...out, ...logged.slice(i)];
+}
+
+/** The same edit lands in both sources, its ClickHouse row inserted just after the Postgres one; the
+ *  small lead allowed the other way is clock skew between the app and ClickHouse. */
 const SAME_EDIT_WINDOW_MS = 60_000;
+const SAME_EDIT_SKEW_MS = 5_000;
 
 /**
  * Postgres history starts when it shipped; the ClickHouse log reaches further back while its flag was on.
@@ -521,10 +538,10 @@ export function mergeEdits(
       // Only the recorded edits inside the window are compared.
       for (let k = lowerBound(times, at - SAME_EDIT_WINDOW_MS); k < byTime.length; k++) {
         const { r, ri } = byTime[k];
-        const gap = Math.abs(times[k] - at);
-        if (times[k] - at >= SAME_EDIT_WINDOW_MS) break;
-        if (gap < SAME_EDIT_WINDOW_MS && r.oldValue === l.oldValue && r.newValue === l.newValue)
-          pairs.push({ li, ri, gap });
+        const lag = at - times[k];
+        if (lag <= -SAME_EDIT_SKEW_MS) break;
+        if (lag < SAME_EDIT_WINDOW_MS && r.oldValue === l.oldValue && r.newValue === l.newValue)
+          pairs.push({ li, ri, gap: Math.abs(lag) });
       }
     });
     pairs.sort((a, b) => a.gap - b.gap);
@@ -536,7 +553,7 @@ export function mergeEdits(
       taken.add(ri);
     }
     const onlyLogged = log.filter((_, li) => !dropped.has(li));
-    merged[id] = [...onlyLogged, ...rec].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    merged[id] = interleave(onlyLogged, rec);
   }
   return merged;
 }

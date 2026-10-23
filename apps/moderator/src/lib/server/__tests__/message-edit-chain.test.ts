@@ -39,18 +39,21 @@ const message = vi.hoisted(() => ({
 
 vi.mock('../db', () => {
   let table = '';
+  let limit = Infinity;
   const chain = {
-    selectFrom: (t: string) => ((table = t), chain),
+    selectFrom: (t: string) => ((table = t), (limit = Infinity), chain),
     leftJoin: () => chain,
     innerJoin: () => chain,
     select: () => chain,
     where: () => chain,
     orderBy: () => chain,
-    limit: () => chain,
+    limit: (n: number) => ((limit = n), chain),
     execute: () => {
       if (table !== 'ChatMessageEdit') return Promise.resolve([message]);
       // The relation-missing error a build deployed before its migration gets.
-      return down.recorded ? Promise.reject(new Error('42P01')) : Promise.resolve(recorded);
+      return down.recorded
+        ? Promise.reject(new Error('42P01'))
+        : Promise.resolve(recorded.slice(0, limit));
     },
   };
   return { dbRead: chain };
@@ -227,12 +230,42 @@ describe('edits recorded in Postgres', () => {
   });
 
   it('says the history is incomplete rather than show part of an unbounded one', async () => {
-    // Edits are not rate-limited; the read is capped at 5,000 rows and the mock ignores the LIMIT.
     for (let i = 0; i < 5_001; i++) recorded.push(recordedEdit('2026-09-03T10:00:00Z', `x${i}`));
     const { edits, editsPartial } = await getTranscript(1);
 
     expect(editsPartial).toBe(true);
     expect(edits[7]).toBeUndefined();
+  });
+
+  it('shows a history of exactly the cap in full', async () => {
+    for (let i = 0; i < 5_000; i++) recorded.push(recordedEdit('2026-09-03T10:00:00Z', `x${i}`));
+    const { edits, editsPartial } = await getTranscript(1);
+
+    expect(editsPartial).toBe(false);
+    expect(edits[7]).toHaveLength(5_000);
+  });
+
+  it('keeps recorded edits in the order the lock let them through, whatever their timestamps', async () => {
+    // Two racing edits are stamped before the lock, so the second through can carry the earlier time.
+    recorded.push(
+      recordedEdit('2026-09-03T10:00:05Z', 'v1'),
+      recordedEdit('2026-09-03T10:00:04Z', 'v2', 99)
+    );
+    const { edits } = await getTranscript(1);
+
+    expect(edits[7].map((e) => [e.oldValue, e.newValue])).toEqual([
+      ['v1', 'v2'],
+      ['v2', 'v4'],
+    ]);
+  });
+
+  it('pairs a logged edit only with the recorded edit it trails, not one it precedes', async () => {
+    // A log row lands after its recorded edit. One a full window later, or well before, is another edit.
+    rows.push(edit('2026-09-03 09:59:54', 'v2', 'v4'), edit('2026-09-03 10:01:00', 'v2', 'v4'));
+    recorded.push(recordedEdit('2026-09-03T10:00:00Z', 'v2'));
+    const { edits } = await getTranscript(1);
+
+    expect(edits[7]).toHaveLength(3);
   });
 
   it('still shows recorded edits when the log is down, and says history may be missing', async () => {
