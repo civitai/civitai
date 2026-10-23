@@ -505,8 +505,9 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     uploadedKey = key;
     const url = await stageForkSeed(key, seedZip.buffer);
     if (!isAcceptableSeedUrl(url, store.endpoint)) {
-      // A misconfigured store (http, a port, another host) would be refused by the sandbox
-      // service anyway; refusing here keeps the reason in our logs, not the user's error.
+      // The presigner produced a URL the sandbox service would refuse (an http endpoint or one
+      // with a port is already refused up front, as unconfigured, so this is the case it cannot
+      // see: a URL on another host). Refused here rather than handed to the page to fail there.
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_UNAVAILABLE_HERE_MESSAGE });
     }
     const seed: ForkSeed = { url, sha256: seedZip.sha256, bytes: seedZip.buffer.length };
