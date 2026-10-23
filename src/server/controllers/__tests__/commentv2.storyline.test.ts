@@ -85,6 +85,10 @@ const storylineRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+// A PG ceiling, so with no chapter 1 the browsing-level gate (which falls back to the ceiling)
+// admits a PG reader and only the empty-storyline rule can hide it.
+const EMPTY = { chapters: [], maxNsfwLevel: NsfwLevel.PG };
+
 const reset = () => {
   vi.clearAllMocks();
   blockedPair.ids = [];
@@ -103,7 +107,7 @@ const HIDDEN_FROM_READERS: [string, () => void][] = [
   ],
   [
     'empty (no chapter 1 yet)',
-    () => dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ chapters: [] })),
+    () => dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow(EMPTY)),
   ],
   ['blocked either way with its owner', () => (blockedPair.ids = [OWNER])],
   ['owned by someone the reader hid', () => (hidden.ids = [OWNER])],
@@ -155,7 +159,7 @@ describe.each(HANDLERS)('storyline thread visibility: %s', (_name, handler, serv
 
   it('gates a reply (entity `comment`) by the storyline its parent comment is on', async () => {
     getCommentStorylineId.mockResolvedValue(STORYLINE);
-    dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow({ chapters: [] }));
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow(EMPTY));
     await expect(
       call(as(STRANGER), { entityType: 'comment', entityId: 55, content: '<p>re</p>' } as never)
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
@@ -170,7 +174,7 @@ describe.each(HANDLERS.slice(0, 3))(
 
     it.each([
       ['taken down', { tosViolation: true }],
-      ['empty', { chapters: [] }],
+      ['empty', EMPTY],
     ])('the owner and a moderator still read a storyline that is %s', async (_l, over) => {
       dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow(over));
       await expect(handler({ ctx: as(OWNER), input })).resolves.not.toThrow();
