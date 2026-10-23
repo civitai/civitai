@@ -1,5 +1,10 @@
 import type { ChatRemoteRunner } from '@civitai/components-chat/civitai-chat';
 import { runPaths } from '@civitai/components-chat/runner-protocol';
+import {
+  previewGrantConversation,
+  runnerPreviewOf,
+  type ShownPreview,
+} from '@civitai/app-assistant';
 
 /**
  * Where the page reaches App Assistant's server runner (`apps/assistant-runner`): its run API on the
@@ -25,8 +30,11 @@ export class RunnerCredentialError extends Error {
 export interface RunnerCredentials {
   /** The page's sign-in for the runner (`Authorization: Bearer`), cached until shortly before it expires. */
   viewerToken(): Promise<string>;
-  /** A run grant for one start (or one patch) in `conversationId`, never cached: each start has its own. */
-  grant(conversationId: string, idempotencyKey: string): Promise<string>;
+  /**
+   * A run grant for one start (or one patch) in `conversationId`, never cached: each start has its
+   * own. With `purpose` `preview`, a short-lived preview grant for one Restart preview instead.
+   */
+  grant(conversationId: string, idempotencyKey: string, purpose?: 'preview'): Promise<string>;
 }
 
 async function readToken(
@@ -69,8 +77,12 @@ export function createRunnerCredentials({
       });
       return inflight;
     },
-    async grant(conversationId, idempotencyKey) {
-      const query = new URLSearchParams({ conversationId, idempotencyKey });
+    async grant(conversationId, idempotencyKey, purpose) {
+      const query = new URLSearchParams({
+        conversationId,
+        idempotencyKey,
+        ...(purpose ? { purpose } : {}),
+      });
       const res = await fetchImpl(`${RUN_GRANT_ROUTE}?${query}`, {
         method: 'GET',
         credentials: 'same-origin',
@@ -84,7 +96,7 @@ export function createRunnerCredentials({
 const START_PATH = runPaths.start();
 const [PATCH_PREFIX, PATCH_SUFFIX] = runPaths.patch('\u0000').split('%00') as [string, string];
 
-/** A random key for a grant that no start names (a patch's). */
+/** A random key for a grant that no start names (a patch's, a Restart preview's). */
 function patchKey(): string {
   return `patch-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
@@ -160,6 +172,73 @@ export function createAppAssistantRemoteRunner({
       return fetchImpl(input, { ...init, headers });
     },
   };
+}
+
+/** The runner's Restart preview for `app`, under the base path (its `POST apps/:app/preview`). */
+export function runnerPreviewPath(app: string): string {
+  return `apps/${encodeURIComponent(app)}/preview`;
+}
+
+/** What the page shows when a Restart preview fails without the runner saying why. */
+export const RESTART_PREVIEW_FAILED =
+  'The preview could not start just now. Try again in a moment.';
+
+/** The runner (or civitai, for the grant) would not restart the preview; `message` is for the user. */
+export class RunnerPreviewError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+    this.name = 'RunnerPreviewError';
+  }
+}
+
+/**
+ * Asks the server runner to open `app`'s live preview again, with no reply (no model call, no Buzz):
+ * the page's Restart preview, after a reload found none live. Signed with the viewer token and a
+ * preview grant for this app, which civitai signs for the user. Answers the block and the host the
+ * pane shows (never the tunnel's id), or throws `RunnerPreviewError` with the words to show.
+ */
+export async function restartRunnerPreview(
+  app: string,
+  {
+    credentials,
+    basePath = ASSISTANT_RUNNER_BASE_PATH,
+    fetchImpl = (...args) => fetch(...args),
+  }: { credentials: RunnerCredentials; basePath?: string; fetchImpl?: typeof fetch }
+): Promise<ShownPreview> {
+  let viewer: string;
+  let grant: string;
+  try {
+    viewer = await credentials.viewerToken();
+    grant = await credentials.grant(previewGrantConversation(app), patchKey(), 'preview');
+  } catch (error) {
+    if (error instanceof RunnerCredentialError)
+      throw new RunnerPreviewError(error.message, error.status, error.code);
+    throw new RunnerPreviewError(RESTART_PREVIEW_FAILED, 503);
+  }
+  let res: Response;
+  try {
+    res = await fetchImpl(`${basePath.replace(/\/+$/, '')}/${runnerPreviewPath(app)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${viewer}`,
+        [RUN_GRANT_HEADER]: grant,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ v: 1 }),
+    });
+  } catch {
+    throw new RunnerPreviewError(RESTART_PREVIEW_FAILED, 503);
+  }
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  const shown = res.ok ? runnerPreviewOf(data) : null;
+  if (shown) return shown;
+  throw new RunnerPreviewError(
+    !res.ok && typeof data?.message === 'string' && data.message
+      ? data.message
+      : RESTART_PREVIEW_FAILED,
+    res.ok ? 503 : res.status,
+    typeof data?.error === 'string' ? data.error : undefined
+  );
 }
 
 /**

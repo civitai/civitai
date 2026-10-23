@@ -619,6 +619,13 @@ export interface PageBlockHostProps {
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
   /**
+   * Told the terminal fallback's reason whenever it changes: a reason once the host gives up on the
+   * app (it never became ready in time, its token failed, it reported a fatal error), `null` while it
+   * loads or runs (so also after a Retry that recovered). App Assistant's preview offers its Restart
+   * preview on a reason. Report only: it changes nothing the host does.
+   */
+  onFallbackChange?: (reason: ReturnType<typeof pageFallbackReason>) => void;
+  /**
    * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
    * paints its own boot state (THEMED only if the app is also enabled for the
    * BLOCK_INIT fragment and reads it before first paint; otherwise it is
@@ -861,6 +868,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  onFallbackChange,
   bootSkeleton,
   surface,
   sandbox,
@@ -5327,6 +5335,11 @@ export function PageBlockHost({
   // frame instead of a blank viewport. See pageBlockHostLogic.pageFallbackReason
   // for the status→reason mapping + the anti-spoof rationale.
   const fallbackReason = pageFallbackReason(status);
+  const onFallbackChangeRef = useRef(onFallbackChange);
+  onFallbackChangeRef.current = onFallbackChange;
+  useEffect(() => {
+    onFallbackChangeRef.current?.(fallbackReason);
+  }, [fallbackReason]);
 
   // #4 Retry: re-attempt the load from a terminal fallback. The full re-arm in
   // one place so there's no stuck state and no timer leak across retries:

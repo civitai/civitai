@@ -50,7 +50,13 @@ import {
   createPreviewTools,
   runnerPreviewAction,
 } from '~/components/Apps/AppAssistant/previewTools';
-import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
+import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import {
+  RESTART_PREVIEW_FAILED,
+  appAssistantRemoteRunnerFor,
+  createRunnerCredentials,
+  restartRunnerPreview,
+} from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   createSandboxClient,
@@ -74,6 +80,9 @@ export const APP_STARTING_HOLD = 'Your app is starting…';
 
 /** How long the page keeps its record of a held message: the chat's own `QUEUE_TIMEOUT_MS` (3 minutes). */
 export const HELD_RECORD_MS = 3 * 60_000;
+
+/** No Restart preview in progress, and none failed. */
+const IDLE_RESTART = { pending: false, error: null } as const;
 
 function EnableCard({
   onEnable,
@@ -274,6 +283,13 @@ export function AppAssistantWorkspace({
   const openRef = useRef(sandboxes.open.mutateAsync);
   openRef.current = sandboxes.open.mutateAsync;
 
+  // On the server runner, a reload (or opening an app) shows no preview until a reply starts one, so
+  // the page looks for a live one itself (`probedApp`) and, finding none, offers the runner's Restart
+  // preview in the pane (`noLivePreview`); `restart` is that restart's progress for the open app.
+  const [noLivePreview, setNoLivePreview] = useState(false);
+  const [restart, setRestart] = useState<{ pending: boolean; error: string | null }>(IDLE_RESTART);
+  const restarting = useRef(false);
+  const probedApp = useRef<string | null>(null);
   // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
     const current = live.current.session;
@@ -286,6 +302,7 @@ export function AppAssistantWorkspace({
   const showPreview = useCallback((next: PreviewSession | null) => {
     live.current.session = next;
     setSession(next);
+    if (next) setNoLivePreview(false);
     // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
     if (next && !previewShown.current) {
       previewShown.current = true;
@@ -362,12 +379,15 @@ export function AppAssistantWorkspace({
 
   // The server runner holds the tools and the gate; the page tells it which app is open, and signs
   // each request (a viewer token) and each start (a run grant). Read once, as the chat starts.
+  const runnerCredentials = useMemo(() => createRunnerCredentials(), []);
   const runner = useMemo(
     () =>
-      appAssistantRemoteRunnerFor(remoteRunner, () => ({
-        app: live.current.active?.app ?? null,
-      })),
-    [remoteRunner]
+      appAssistantRemoteRunnerFor(
+        remoteRunner,
+        () => ({ app: live.current.active?.app ?? null }),
+        () => runnerCredentials
+      ),
+    [remoteRunner, runnerCredentials]
   );
   // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
   // the runner's start_preview says only which block it shows and where (never the tunnel's id):
@@ -385,7 +405,10 @@ export function AppAssistantWorkspace({
       if (typeof app !== 'string') return;
       void refetchRef.current().then(({ data }) => {
         const opened = data?.find((s) => s.app === app);
-        if (opened) setActiveName(opened.name);
+        if (!opened) return;
+        // Being built now: its preview opens with its dev server, so there is none to look for.
+        probedApp.current = opened.name;
+        setActiveName(opened.name);
       });
     },
     [gate, remoteRunner, showPreview, stopPreview]
@@ -590,6 +613,77 @@ export function AppAssistantWorkspace({
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
+  // The Restart preview offer and its progress belong to the open app; a paused app has no preview.
+  useEffect(() => {
+    setNoLivePreview(false);
+    setRestart(IDLE_RESTART);
+  }, [activeName]);
+  useEffect(() => {
+    if (active?.state === 'suspended' || revoked) setNoLivePreview(false);
+  }, [active?.state, revoked]);
+  // On the server runner, once per app opened (on a visit, or from the switcher) and seen running: a
+  // live preview of it is shown at once; none (or no answer) offers Restart preview. civitai lists a
+  // tunnel until its idle window ends even when its sandbox side is gone, so a listed one can still
+  // fail to load: the pane then offers Restart preview too (`AppAssistantPreview`).
+  const runningApp = remoteRunner && canPreview && active?.state === 'running' ? active : null;
+  useEffect(() => {
+    if (!runningApp || probedApp.current === runningApp.name) return;
+    probedApp.current = runningApp.name;
+    if (live.current.session) return;
+    const { name, app } = runningApp;
+    const blockId = isAppBlockId(app) ? app : null;
+    void (async () => {
+      let frame: Awaited<ReturnType<typeof fetchPreviewFrame>> | null = null;
+      try {
+        frame = blockId ? await fetchPreviewFrame(blockId) : null;
+      } catch {
+        frame = null;
+      }
+      // Unless the user moved on, or a reply showed one meanwhile.
+      if (live.current.active?.name !== name || live.current.session) return;
+      if (frame && blockId)
+        return showPreview({
+          blockId,
+          host: 'host' in frame ? frame.host ?? '' : '',
+          sessionId: null,
+          view: ++runnerViews.current,
+        });
+      setNoLivePreview(true);
+    })();
+  }, [runningApp, showPreview]);
+  /** The pane's Restart preview: the runner opens the open app's preview again, with no reply. */
+  const restartPreview = useCallback(async () => {
+    const app = live.current.active;
+    // One restart at a time: a second click joins nothing and sends nothing.
+    if (!app || restarting.current) return;
+    restarting.current = true;
+    setRestart({ pending: true, error: null });
+    try {
+      // A paused app is started first, by the page's own start; the runner waits for it to run.
+      if (app.state === 'suspended') await openRef.current(app.app);
+      const shown = await restartRunnerPreview(app.app, { credentials: runnerCredentials });
+      if (live.current.active?.app !== app.app) return;
+      setRestart(IDLE_RESTART);
+      showPreview({ ...shown, sessionId: null, view: ++runnerViews.current });
+    } catch (error) {
+      if (live.current.active?.app === app.app)
+        setRestart({
+          pending: false,
+          error: error instanceof Error && error.message ? error.message : RESTART_PREVIEW_FAILED,
+        });
+    } finally {
+      restarting.current = false;
+    }
+  }, [runnerCredentials, showPreview]);
+  const previewRestart = useMemo(
+    () =>
+      remoteRunner && canPreview
+        ? { onRestart: () => void restartPreview(), pending: restart.pending, error: restart.error }
+        : undefined,
+    [remoteRunner, canPreview, restartPreview, restart]
+  );
+  // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview.
+  const paneShown = !!session || (!!previewRestart && noLivePreview);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
   useEffect(() => {
     if (pickedOnLoad.current || !sandboxes.list.data) return;
@@ -867,7 +961,7 @@ export function AppAssistantWorkspace({
           data-testid="app-assistant-chat-pane"
           className={clsx(
             'min-h-0 flex-col overflow-hidden',
-            session ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
+            paneShown ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
             shownTab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
@@ -887,7 +981,7 @@ export function AppAssistantWorkspace({
             remoteRunner={runner}
           />
         </Paper>
-        {session && (
+        {paneShown && (
           <Paper
             withBorder
             radius="md"
@@ -897,7 +991,11 @@ export function AppAssistantWorkspace({
               shownTab === 'preview' ? 'flex' : 'hidden'
             )}
           >
-            <AppAssistantPreview canPreview={canPreview} session={session} />
+            <AppAssistantPreview
+              canPreview={canPreview}
+              session={session}
+              restart={previewRestart}
+            />
           </Paper>
         )}
       </div>

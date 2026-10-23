@@ -45,3 +45,12 @@ export function runnerPreviewOf(output: unknown): ShownPreview | null {
   if (typeof host !== 'string' || !HOST.test(host)) return null;
   return { blockId, host };
 }
+
+/**
+ * The conversation a preview grant names for the page's Restart preview on the server runner:
+ * `preview:<app>`. civitai signs what the page asks for; the runner takes the grant only for that
+ * app's restart, so one grant opens one app's preview.
+ */
+export function previewGrantConversation(app: string): string {
+  return `preview:${app}`;
+}

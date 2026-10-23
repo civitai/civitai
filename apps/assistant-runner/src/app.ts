@@ -11,8 +11,10 @@ import {
   type RunErrorResponse,
   type RunJson,
 } from '@civitai/components-chat/runner-protocol';
+import { isAppBlockId, previewGrantConversation } from '@civitai/app-assistant';
 import { z } from 'zod';
 
+import type { PreviewRestarts, RestartErrorCode } from './app-assistant/preview-restart';
 import type { Authenticator } from './interfaces';
 import { MintRefusedError } from './minter';
 import type { RunService } from './service';
@@ -25,6 +27,8 @@ export interface AppOptions {
   authenticator?: Authenticator;
   /** Checks the run grant a start (or a patch) carries. Without one every start is refused. */
   grants?: Pick<TokenVerifier, 'grant'>;
+  /** The page's Restart preview (`POST apps/:app/preview`). Without it that answers 503. */
+  previews?: PreviewRestarts;
   /** The path the run API is served under (`RUNNER_BASE_PATH`); `''` for the root. */
   basePath?: string;
   logger?: FastifyServerOptions['logger'];
@@ -104,7 +108,18 @@ const startBody = z.object({
   page: z.record(z.string(), json).optional(),
 });
 
+/** What each refused Restart preview answers with. */
+const RESTART_STATUS: Record<RestartErrorCode, number> = {
+  refused: 403,
+  'not-found': 404,
+  'not-running': 409,
+  'rate-limited': 429,
+  failed: 502,
+  unavailable: 503,
+};
+
 const stopBody = z.object({ v: z.literal(1) });
+const previewBody = z.object({ v: z.literal(1) });
 const stopByKeyBody = z.object({ v: z.literal(1), idempotencyKey: id, conversationId: id });
 const patchBody = z.object({
   v: z.literal(1),
@@ -181,17 +196,20 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   /**
    * The run grant the request carries, verified and bound to this viewer and conversation (and, for
-   * a start, its idempotency key); `null` when there is none or it is not one of those.
+   * a start, its idempotency key); `null` when there is none or it is not one of those. A preview
+   * grant is good only where `preview` is asked for, and only a preview grant is good there.
    */
   const grantFor = async (
     request: FastifyRequest,
     conversationId: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    preview = false
   ): Promise<VerifiedGrant | null> => {
     const token = grantHeader(request.headers);
     const grant = token ? await grants.grant(token) : null;
     if (
       !grant ||
+      grant.preview !== preview ||
       grant.userId !== request.userId ||
       grant.conversationId !== conversationId ||
       (idempotencyKey !== undefined && grant.idempotencyKey !== idempotencyKey)
@@ -284,6 +302,35 @@ export function buildApp(options: AppOptions): FastifyInstance {
         }
         if (!found) return refuse(reply, 'not-found', 'No such chat.');
         return reply.code(204).send();
+      }
+    );
+
+    // The page's Restart preview: opens the app's live preview again with no reply (no model call,
+    // no Buzz), after a reload found none live. Answers the block and host shown, never the tunnel's
+    // id. Needs a preview grant for this app (`X-Run-Grant`), which civitai signs for the viewer.
+    app.post<{ Params: { app: string } }>(
+      '/apps/:app/preview',
+      { preHandler: authed },
+      async (request, reply) => {
+        if (!previewBody.safeParse(request.body ?? { v: 1 }).success)
+          return refuse(reply, 'bad-request', 'The restart request is not one this runner reads.');
+        const appKey = request.params.app;
+        // App Assistant makes every app key a valid block id (`newAppKey`).
+        if (!isAppBlockId(appKey)) return refuse(reply, 'bad-request', 'That is not an app key.');
+        const grant = await grantFor(request, previewGrantConversation(appKey), undefined, true);
+        if (!grant)
+          return refuse(
+            reply,
+            'refused',
+            `This restart needs a current preview grant for this app in ${GRANT_HEADER}.`
+          );
+        if (!options.previews)
+          return refuse(reply, 'unavailable', 'The live preview is not set up here.');
+        const outcome = await options.previews.restart(request.userId, appKey, grant.token);
+        if (outcome.ok) return { v: 1, blockId: outcome.blockId, host: outcome.host };
+        return reply
+          .code(RESTART_STATUS[outcome.error])
+          .send({ v: 1, error: outcome.error, message: outcome.message });
       }
     );
 

@@ -450,8 +450,8 @@ describe('POST apps/:app/preview', () => {
     });
     const text = await res.text();
     expect(res.status).toBe(200);
+    expect(text, 'the tunnel’s id reached the browser').not.toContain(SESSION);
     expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK, host: HOST });
-    expect(text).not.toContain(SESSION);
     // Control: civitai did hand the runner that id.
     expect(tunnels.started).toHaveLength(1);
   });
