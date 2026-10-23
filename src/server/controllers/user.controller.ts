@@ -643,7 +643,11 @@ export const updateUserHandler = async ({
   try {
     const user = await getUserById({
       id,
-      select: { profilePictureId: true, profilePicture: { select: { userId: true } } },
+      select: {
+        username: true,
+        profilePictureId: true,
+        profilePicture: { select: { userId: true } },
+      },
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -763,7 +767,8 @@ export const updateUserHandler = async ({
       usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
     );
 
-    await bustUserCreator(id);
+    // The name before this save, so a rename also purges responses cached under the old name.
+    await bustUserCreator(id, { usernames: user.username ? [user.username] : [] });
 
     // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
     // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
