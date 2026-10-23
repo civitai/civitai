@@ -277,4 +277,18 @@ describe('event listings apply the challenge feed visibility rules', () => {
     expect(event.challenges).toHaveLength(1);
     expect(challengeCount).toBe(1);
   });
+
+  it("shows a scanned user challenge in the site's own currency on the green site", async () => {
+    expect(await shown({ source: 'User', buzzType: 'green' }, greenIn)).toBe(true);
+  });
+
+  it('shows a creator their own challenge before it is visible', async () => {
+    expect(await shown({ createdById: VIEWER, visibleAt: '2999-01-01' }, mature)).toBe(true);
+  });
+
+  it('leaves cancelled challenges out of the count', async () => {
+    await seed([visible, { ...visible, status: 'Cancelled' }]);
+    const { challengeCount } = await getChallengeEventById(EVENT, { isGreen: false }, true);
+    expect(challengeCount).toBe(1);
+  });
 });
