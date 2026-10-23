@@ -62,9 +62,10 @@ each, tier `paid`. The step type is typed locally until the orchestration client
 
 - At most `VECTOR_EMBED_MAX_IN_FLIGHT` workflows run at once per process.
 - A 429 or 5xx backs off exponentially with jitter, never sooner than `Retry-After`. It gives up
-  after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a batch has one `externalId`, reused across its retries,
-  so a submit that succeeded server-side is not paid for twice. It is random rather than derived
-  from the inputs, because the orchestrator would also return a _failed_ workflow for its key.
+  after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a batch has one `externalId`, reused across
+  its retries, so a submit that succeeded server-side is not paid for twice. It is random rather
+  than derived from the inputs, because the orchestrator would also return a _failed_ workflow
+  for its key.
 - A batch the orchestrator rejects (400, or a failed workflow) is split in half, at most four
   times (down to groups of 8), to isolate the bad input. What is still failing then is counted
   as `failed`, and the rest are embedded.
@@ -72,10 +73,11 @@ each, tier `paid`. The step type is typed locally until the orchestration client
   yet submitted are skipped. The vectors already returned are stored before the error is raised,
   so a retry pays only for what is missing.
 - Every batch's model stamp is checked against the collection before its vectors are accepted.
-  The first batch of a call runs alone, and checks are serialised within a process, so batches
-  of one process cannot record two models into a new collection. Across processes there is no
-  compare-and-set: **fill a new collection from one process first** (the backfill canary), then
-  let others write.
+  Until a model is recorded, a call's first batch runs alone, and checks are serialised within
+  a process, so one process cannot record two models into a new collection. Across processes
+  there is no compare-and-set, so the consumer never embeds into a collection whose model is
+  not yet recorded: **the backfill canary records it first**. Until then the consumer only
+  deletes and updates payloads.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync
@@ -106,7 +108,8 @@ the metrics watcher and never configures the Debezium connector.
   one re-read. Offsets are committed only after the Qdrant writes for everything before them
   succeed.
 - It embeds only when `VECTOR_SYNC_EMBED_ENABLED` and `CDC_IMAGE_ENABLED` are both on, and
-  Kafka Connect (`DEBEZIUM_CONNECT_URL`) confirms the connector streams `public.Image`. Block,
+  Kafka Connect (`DEBEZIUM_CONNECT_URL`) confirms the connector streams `public.Image` and is
+  running. It re-checks every 10 minutes and stops embedding if that stops being true. Block,
   review and scan changes touch only the Image row, so without Image events a blocked image would
   keep its vector. Otherwise it deletes and updates payloads, and counts what it would have
   embedded as `embedOff`.
@@ -117,9 +120,10 @@ the metrics watcher and never configures the Debezium connector.
   embedding (deletes and payload updates continue) rather than paying for rejected vectors. The
   health response reports it (`embedding: false`, `embedStopped`). It lasts until the process
   restarts, which pays for one more flush before stopping again.
-- `GET` on the health port answers 503 when no flush has succeeded for 10 minutes. A flush
-  still in progress (under 2 hours) is healthy only if none has failed since the last success,
-  so a liveness probe neither kills one slow embed mid-way nor hides a retry loop.
+- `GET` on the health port answers 200 within 10 minutes of a successful flush. Past that it
+  stays 200 while workflows keep finishing (within 35 minutes, longer than the workflow
+  timeout) and fewer than 3 flushes in a row have failed. So a liveness probe neither kills one
+  slow embed mid-way nor hides a retry loop.
 
 ### Streaming the Image table
 
@@ -160,9 +164,10 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
   address the run for `VECTOR_COLLECTION` in their own env, and log it. `status` prints the cursor.
   `reset` clears it. SIGTERM finishes in-flight pages and stops.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
-  so that live sync is already removing blocked images. Kafka Connect must also confirm the connector streams Image. `--without-image-cdc` lifts the
-  Image conditions for a canary; it needs `--limit`, and the reconciler should be run over the
-  same range afterwards.
+  so that live sync is already removing blocked images. Kafka Connect must also confirm the
+  connector streams Image and is running. `--without-image-cdc` lifts the Image conditions for
+  a canary; it needs `--limit`, and the reconciler should be run over the same range
+  afterwards.
 
 ## Reconciler
 

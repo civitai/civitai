@@ -5,7 +5,8 @@ import { describe, expect, test, vi } from 'vitest';
 import { runBackfill } from '@/vector-sync/backfill';
 import type { RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
-import { ModelMismatchError } from '@/vector-sync/qdrant';
+import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
+import type { QdrantClient } from '@qdrant/js-client-rest';
 import { buildEmbedInput, chunkInputs, Embedder, MixedStampError } from '@/vector-sync/embedder';
 import { eligibleSql, isEligible, type ImageRow } from '@/vector-sync/eligibility';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
@@ -106,6 +107,8 @@ class FakeStore {
     this.afterUpsert?.();
   };
   assertModel = async (stamp: ModelStamp) => void this.stamps.push(stamp);
+  stamped = true;
+  isStamped = async () => this.stamped;
   idsInRange = async (lo: number, hi: number) =>
     [...this.points.keys()].filter((id) => id >= lo && id < hi).sort((a, b) => a - b);
 }
@@ -706,11 +709,16 @@ describe('review round: paid-path failure modes', () => {
 });
 
 describe('embedding gate', () => {
-  const connector = (tables: string) =>
-    (async () =>
-      new Response(JSON.stringify({ 'table.include.list': tables }), {
-        status: 200,
-      })) as unknown as typeof fetch;
+  const connector = (tables: string, taskState = 'RUNNING') =>
+    (async (url: string | URL | Request) =>
+      new Response(
+        JSON.stringify(
+          String(url).endsWith('/status')
+            ? { connector: { state: 'RUNNING' }, tasks: [{ id: 0, state: taskState }] }
+            : { 'table.include.list': tables }
+        ),
+        { status: 200 }
+      )) as unknown as typeof fetch;
   const ON = {
     VECTOR_SYNC_EMBED_ENABLED: 'true',
     CDC_IMAGE_ENABLED: 'true',
@@ -759,6 +767,10 @@ describe('embedding gate', () => {
         { fetchImpl: (async () => new Response('', { status: 404 })) as unknown as typeof fetch }
       )
     ).toMatch(/could not be read/);
+    // Listed but not flowing.
+    expect(await reason({}, { fetchImpl: connector('public.Image', 'FAILED') })).toMatch(
+      /not running/
+    );
     expect(await reason({ CDC_IMAGE_ENABLED: undefined }, { withoutImageCdc: true })).toBeNull();
   });
 
@@ -835,14 +847,76 @@ describe('review round 2', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  test('a flush retry loop is unhealthy even while a retry is in progress; one slow flush is not', () => {
+  test('health: a slow flush making progress after one failure stays up; a retry loop does not', () => {
     const queue = new VectorSyncQueue(deps(new FakePg(), new FakeStore()), async () => undefined);
     const t0 = 1_000_000_000;
     queue.lastFlushOk = t0;
-    queue.flushStartedAt = t0 + 11 * 60_000;
-    expect(queue.isHealthy(t0 + 12 * 60_000)).toBe(true);
-    queue.lastFlushFailed = t0 + 10 * 60_000;
-    expect(queue.isHealthy(t0 + 12 * 60_000)).toBe(false);
+    queue.consecutiveFailures = 1;
+    queue.lastProgress = t0 + 20 * 60_000;
+    expect(queue.isHealthy(t0 + 25 * 60_000)).toBe(true);
+    // Retries restart the flush every tick, which refreshes progress; the failure count is what tells.
+    queue.consecutiveFailures = 3;
+    expect(queue.isHealthy(t0 + 25 * 60_000)).toBe(false);
+    queue.consecutiveFailures = 0;
+    expect(queue.isHealthy(t0 + 60 * 60_000)).toBe(false);
+  });
+
+  test('the consumer does not embed into a collection whose model is not yet recorded', async () => {
+    const pg = new FakePg().put(imageRow(1));
+    const store = new FakeStore();
+    store.stamped = false;
+    const embedder = new FakeEmbedder();
+    const queue = new VectorSyncQueue(deps(pg, store, embedder), async () => undefined);
+    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '0' });
+    await queue.flush();
+    expect(embedder.calls).toEqual([]);
+    store.stamped = true;
+    queue.add(1, { topic: 'postgres.Image', partition: 0, offset: '1' });
+    await queue.flush();
+    expect(embedder.calls).toEqual([['1']]);
+  });
+
+  test('two concurrent first model checks on an empty collection cannot both pass', async () => {
+    // Qdrant metadata as the real server keeps it: merged on update, read with a delay.
+    let metadata: Record<string, unknown> = { model: 'wemm-2b', dimensions: 256 };
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+    const client = {
+      getCollection: async () => {
+        await tick();
+        return { config: { metadata: { ...metadata } } };
+      },
+      updateCollection: async (
+        _name: string,
+        { metadata: m }: { metadata: Record<string, unknown> }
+      ) => {
+        await tick();
+        metadata = { ...metadata, ...m };
+      },
+    };
+    const store = new VectorStore(client as unknown as QdrantClient, 'c');
+    const results = await Promise.allSettled([
+      store.assertModel(STAMP),
+      store.assertModel({ ...STAMP, modelRevision: 'r2' }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+    expect(metadata.modelRevision).toBe('r1');
+  });
+
+  test('once a stamp is recorded, a call runs its batches in parallel again', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return new Response(body(idsIn(init), 'r1'), { status: 200 });
+    }) as unknown as typeof fetch;
+    const e = embedderWith(fetchImpl, 4);
+    await e.embed(inputs(128));
+    peak = 0;
+    await e.embed(inputs(4 * 128));
+    expect(peak).toBe(4);
   });
 
   test('a mixed-model error from the real embed contract also stops consumer embedding', async () => {

@@ -125,6 +125,14 @@ export class VectorStore {
     if (stampConflicts(after, got)) throw new ModelMismatchError(after, got);
   }
 
+  /** Whether a model revision has been recorded. Once true it stays true, so it is cached. */
+  async isStamped() {
+    this.stamped ||= !!(await this.readStamp()).modelRevision;
+    return this.stamped;
+  }
+
+  private stamped = false;
+
   private async readStamp(): Promise<Partial<ModelStamp>> {
     const info = await this.client.getCollection(this.collection);
     return (info.config.metadata ?? {}) as Partial<ModelStamp>;

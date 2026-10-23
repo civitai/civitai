@@ -43,8 +43,9 @@ export class VectorSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
-  lastFlushFailed: number | null = null;
-  flushStartedAt: number | null = null;
+  /** A flush starting or an embed workflow finishing. */
+  lastProgress = Date.now();
+  consecutiveFailures = 0;
   /** Why embedding stopped at runtime, if it did. */
   embedStopped: string | null = null;
 
@@ -69,7 +70,6 @@ export class VectorSyncQueue {
   flush(): Promise<void> {
     this.flushing ??= this.doFlush().finally(() => {
       this.flushing = null;
-      this.flushStartedAt = null;
     });
     return this.flushing;
   }
@@ -79,14 +79,20 @@ export class VectorSyncQueue {
       this.lastFlushOk = Date.now();
       return;
     }
-    this.flushStartedAt = Date.now();
+    this.noteProgress();
     const ids = [...this.pending];
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
     this.offsets = new Map();
     try {
       const started = Date.now();
-      const stats = await syncImageIds(ids, this.deps);
+      // A new collection's model is recorded by one process first (the backfill canary); until
+      // then this consumer does not embed into it, so two writers cannot stamp it differently.
+      const stamped = !!this.deps.embedder && (await this.deps.store.isStamped());
+      if (this.deps.embedder && !stamped) {
+        logger.warn('vector-sync: collection has no recorded model yet; not embedding this flush');
+      }
+      const stats = await syncImageIds(ids, stamped ? this.deps : { ...this.deps, embedder: null });
       logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, 'vector-sync: flushed');
     } catch (err) {
       // Put the work back; newer offsets taken meanwhile stay, older ones are re-covered by them.
@@ -95,16 +101,10 @@ export class VectorSyncQueue {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
       }
-      this.lastFlushFailed = Date.now();
-      if (
-        (err instanceof ModelMismatchError || err instanceof MixedStampError) &&
-        this.deps.embedder
-      ) {
-        // Retrying would pay for the same rejected vectors every tick. Stop embedding until a
-        // new collection is set up; deletes and payload updates carry on.
-        logger.error({ err }, 'vector-sync: embedder model changed; embedding stopped');
-        this.deps.embedder = null;
-        this.embedStopped = (err as Error).message;
+      this.consecutiveFailures++;
+      if (err instanceof ModelMismatchError || err instanceof MixedStampError) {
+        // Retrying would pay for the same rejected vectors every tick.
+        this.stopEmbedding((err as Error).message);
       }
       throw err;
     }
@@ -115,19 +115,30 @@ export class VectorSyncQueue {
       logger.warn({ err }, 'vector-sync: offset commit failed');
     }
     this.lastFlushOk = Date.now();
+    this.consecutiveFailures = 0;
+  }
+
+  noteProgress() {
+    this.lastProgress = Date.now();
+  }
+
+  /** Embedding stays off until the process restarts; deletes and payload updates carry on. */
+  stopEmbedding(reason: string) {
+    if (!this.deps.embedder) return;
+    logger.error({ reason }, 'vector-sync: embedding stopped');
+    this.deps.embedder = null;
+    this.embedStopped = reason;
   }
 
   /**
-   * Unhealthy when flushes have kept failing for 10 minutes. A flush still in progress counts as
-   * healthy only if none has failed since the last success, so one slow embed is not killed
-   * mid-way (it would redeliver and pay again) while a retry loop still is.
+   * Healthy within 10 minutes of a successful flush. Past that, a slow flush that is still
+   * finishing workflows stays healthy (killing it would lose paid work), but not one whose
+   * flushes keep failing: retries restart the flush every tick, so they look like progress.
+   * 35 minutes outlasts the 30-minute workflow timeout.
    */
   isHealthy(now = Date.now()) {
     if (now - this.lastFlushOk < 10 * 60_000) return true;
-    const failedSinceOk = this.lastFlushFailed !== null && this.lastFlushFailed > this.lastFlushOk;
-    return (
-      !failedSinceOk && this.flushStartedAt !== null && now - this.flushStartedAt < 2 * 60 * 60_000
-    );
+    return this.consecutiveFailures < 3 && now - this.lastProgress < 35 * 60_000;
   }
 }
 
@@ -168,6 +179,15 @@ async function main() {
   const queue = new VectorSyncQueue({ pg, store, embedder }, (offsets) =>
     consumer.commitOffsets(offsets)
   );
+  if (embedder) embedder.onProgress = () => queue.noteProgress();
+  // The connector can lose Image after startup (the watcher recreates it from its own env), and
+  // then blocks stop arriving.
+  const gate = setInterval(() => {
+    if (!embedder || queue.embedStopped) return;
+    embedBlockedReason()
+      .then((reason) => reason && queue.stopEmbedding(reason))
+      .catch((err) => logger.error({ err }, 'vector-sync: gate re-check failed'));
+  }, 10 * 60_000);
 
   let stopping = false;
   const timer = setInterval(() => {
@@ -234,6 +254,7 @@ async function main() {
     stopping = true;
     logger.info({ signal }, 'vector-sync: shutting down');
     clearInterval(timer);
+    clearInterval(gate);
     try {
       consumer.pause(topics.map((topic) => ({ topic })));
       await queue.flush();

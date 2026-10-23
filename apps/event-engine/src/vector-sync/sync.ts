@@ -8,7 +8,7 @@ import { getImageRows, getPayloads } from './source';
 
 export type VectorStoreLike = Pick<
   VectorStore,
-  'existing' | 'delete' | 'setPayloads' | 'upsert' | 'assertModel'
+  'existing' | 'delete' | 'setPayloads' | 'upsert' | 'assertModel' | 'isStamped'
 >;
 
 export type SyncDeps = {
@@ -59,15 +59,30 @@ export async function embedBlockedReason({
   const connectUrl = process.env.DEBEZIUM_CONNECT_URL;
   if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the Image stream cannot be verified';
   try {
-    const res = await fetchImpl(`${connectUrl}/connectors/${CONNECTOR_NAME}/config`);
-    if (!res.ok) return `the connector config could not be read (${res.status})`;
-    const tables = String(
-      ((await res.json()) as Record<string, unknown>)['table.include.list'] ?? ''
-    );
+    const base = `${connectUrl}/connectors/${CONNECTOR_NAME}`;
+    const [configRes, statusRes] = await Promise.all([
+      fetchImpl(`${base}/config`),
+      fetchImpl(`${base}/status`),
+    ]);
+    if (!configRes.ok || !statusRes.ok) {
+      return `the connector could not be read (${configRes.status}/${statusRes.status})`;
+    }
+    const conf = (await configRes.json()) as Record<string, unknown>;
+    const tables = String(conf['table.include.list'] ?? '');
     if (!tables.split(',').includes('public.Image'))
       return 'the connector does not stream public.Image';
+    // Listed is not flowing: a failed task streams nothing.
+    const status = (await statusRes.json()) as {
+      connector?: { state?: string };
+      tasks?: Array<{ state?: string }>;
+    };
+    const running =
+      status.connector?.state === 'RUNNING' &&
+      !!status.tasks?.length &&
+      status.tasks.every((t) => t.state === 'RUNNING');
+    if (!running) return 'the connector is not running';
   } catch (err) {
-    return `the connector config could not be read (${(err as Error).message})`;
+    return `the connector could not be read (${(err as Error).message})`;
   }
   return null;
 }

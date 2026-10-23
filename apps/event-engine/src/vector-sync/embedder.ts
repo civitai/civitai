@@ -153,6 +153,10 @@ type EmbedCall = {
 };
 
 export class Embedder {
+  /** Called whenever a workflow returns vectors. */
+  onProgress?: () => void;
+  /** Set once a batch's stamp has been accepted; the collection then has one recorded. */
+  private stampSeen = false;
   private readonly limit: ReturnType<typeof pLimit>;
   private readonly fetch: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -200,11 +204,12 @@ export class Embedder {
       }
     };
     const [first, ...rest] = chunkInputs(inputs);
-    // The first batch runs alone, so its model stamp is accepted (and, for a new collection,
-    // recorded) before any other batch can be compared against an empty stamp.
-    if (first) await this.limit(() => run(first));
+    // Until a stamp has been accepted, the first batch runs alone, so its model is recorded
+    // before any other batch is compared against an empty stamp.
+    const queued = this.stampSeen ? [first, ...rest] : rest;
+    if (first && !this.stampSeen) await this.limit(() => run(first));
     // allSettled, not all: one failing batch must not discard the vectors others paid for.
-    await Promise.allSettled(rest.map((batch) => this.limit(() => run(batch))));
+    await Promise.allSettled(queued.filter(Boolean).map((batch) => this.limit(() => run(batch))));
     return call.result;
   }
 
@@ -247,6 +252,8 @@ export class Embedder {
       throw new MixedStampError(first, stamp);
     }
     await call.acceptStamp?.(stamp);
+    this.stampSeen = true;
+    this.onProgress?.();
     call.result.stamp ??= stamp;
     for (const item of output.data) call.result.vectors.set(Number(item.id), item.embedding);
   }
