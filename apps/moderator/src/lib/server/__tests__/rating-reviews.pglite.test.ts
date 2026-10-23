@@ -56,6 +56,11 @@ async function fileReview(
   return r.id;
 }
 
+const listPending = async () =>
+  service.hydrateRatingReviews(
+    await service.ratingReviewRowQuery().where('rr.status', '=', 'Pending').execute()
+  );
+
 const review = async (id: number) =>
   (
     await rows<{
@@ -486,7 +491,7 @@ describe('resolveRatingReview', () => {
     // Filed while the mask still topped out at R.
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
     await expect(
       service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
@@ -503,7 +508,7 @@ describe('resolveRatingReview', () => {
     });
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4]);
     await expect(
       service.resolveRatingReview({ reviewId: id, appliedLevel: 8, moderatorId: mod })
@@ -639,7 +644,7 @@ describe('resolveRatingReview', () => {
   });
 });
 
-describe('getRatingReviews', () => {
+describe('hydrateRatingReviews', () => {
   it('summarises a crucible by its mask level and a collection by its SFW/NSFW bucket', async () => {
     const crucibleId = await seedEntity(db, 'Crucible', { userId: owner, nsfwLevel: 1 | 4 });
     const collectionId = await seedEntity(db, 'Collection', {
@@ -650,7 +655,7 @@ describe('getRatingReviews', () => {
     await fileReview('Crucible', crucibleId);
     await fileReview('Collection', collectionId);
 
-    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const items = await listPending();
     const byType = Object.fromEntries(items.map((i) => [i.entityType, i]));
 
     expect(byType.Crucible.entity).toMatchObject({
@@ -667,7 +672,7 @@ describe('getRatingReviews', () => {
     });
   });
 
-  it('joins each entity, shows only a text-scan raise, and filters by type', async () => {
+  it('joins each entity and shows only a text-scan raise', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'hello' });
     const entryId = await seedEntity(db, 'BountyEntry', {
       userId: owner,
@@ -690,8 +695,8 @@ describe('getRatingReviews', () => {
     await fileReview('BountyEntry', entryId);
     await fileReview('Model', 404);
 
-    const all = await service.getRatingReviews({ status: 'Pending' });
-    const byType = Object.fromEntries(all.items.map((i) => [i.entityType, i]));
+    const all = await listPending();
+    const byType = Object.fromEntries(all.map((i) => [i.entityType, i]));
 
     expect(byType.Post.entity).toMatchObject({
       id: postId,
@@ -703,8 +708,6 @@ describe('getRatingReviews', () => {
     expect(byType.BountyEntry.scan).toBeNull();
     expect(byType.Model.entity).toBeNull();
 
-    const posts = await service.getRatingReviews({ status: 'Pending', entityType: 'Post' });
-    expect(posts.items.map((i) => i.entityType)).toEqual(['Post']);
     expect(await service.getRatingReviewCounts('Post')).toEqual({
       Pending: 1,
       Actioned: 0,
@@ -714,6 +717,222 @@ describe('getRatingReviews', () => {
       Pending: 3,
       Actioned: 0,
       Unactioned: 0,
+    });
+  });
+});
+
+describe('rating review images', () => {
+  async function seedImage(row: {
+    url: string;
+    postId?: number;
+    index?: number | null;
+    needsReview?: string | null;
+    acceptableMinor?: boolean;
+    nsfwLevel?: number;
+    type?: string;
+  }) {
+    const [r] = await rows<{ id: number }>(
+      db,
+      `INSERT INTO "Image" ("url", "type", "postId", "index", "needsReview", "acceptableMinor", "nsfwLevel")
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING "id"`,
+      [
+        row.url,
+        row.type ?? 'image',
+        row.postId ?? null,
+        row.index ?? null,
+        row.needsReview ?? null,
+        row.acceptableMinor ?? false,
+        row.nsfwLevel ?? 1,
+      ]
+    );
+    return r.id;
+  }
+  const connect = (imageId: number, entityType: string, entityId: number) =>
+    db.query(
+      `INSERT INTO "ImageConnection" ("imageId", "entityType", "entityId") VALUES ($1, $2, $3)`,
+      [imageId, entityType, entityId]
+    );
+
+  async function seedModelWithVersions() {
+    const modelId = await seedEntity(db, 'Model', { userId: owner });
+    const draft = await seedEntity(db, 'ModelVersion', {
+      modelId,
+      status: 'Draft',
+      index: 0,
+    });
+    const first = await seedEntity(db, 'ModelVersion', { modelId, index: 1 });
+    const second = await seedEntity(db, 'ModelVersion', { modelId, index: 2 });
+    const post = (modelVersionId: number, extra: Record<string, unknown> = {}) =>
+      seedEntity(db, 'Post', {
+        userId: owner,
+        modelVersionId,
+        publishedAt: '2026-09-01T00:00:00.000Z',
+        ...extra,
+      });
+    return { modelId, draft, first, second, post };
+  }
+
+  it('gives every entity type its own cover, not another image', async () => {
+    const decoy = await seedImage({ url: 'decoy' });
+
+    const postId = await seedEntity(db, 'Post', { userId: owner });
+    await seedImage({ url: 'post-second', postId, index: 2 });
+    await seedImage({ url: 'post-first', postId, index: 1 });
+
+    const { modelId, first, post } = await seedModelWithVersions();
+    const modelPost = await post(first);
+    await seedImage({ url: 'model-cover', postId: modelPost, index: 0 });
+
+    const articleCover = await seedImage({ url: 'article-cover', type: 'video' });
+    const articleId = await seedEntity(db, 'Article', { userId: owner, coverId: articleCover });
+
+    const bountyId = await seedEntity(db, 'Bounty', { userId: owner });
+    const entryId = await seedEntity(db, 'BountyEntry', { userId: owner });
+    await connect(await seedImage({ url: 'bounty-b' }), 'Bounty', bountyId);
+    await connect(await seedImage({ url: 'entry-a' }), 'BountyEntry', entryId);
+    await connect(await seedImage({ url: 'entry-b' }), 'BountyEntry', entryId);
+
+    const challengeId = await seedEntity(db, 'Challenge', {
+      coverImageId: await seedImage({ url: 'challenge-cover' }),
+    });
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      imageId: await seedImage({ url: 'crucible-cover' }),
+      heroImageId: decoy,
+    });
+    const heroOnlyId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      heroImageId: await seedImage({ url: 'crucible-hero' }),
+    });
+    const collectionId = await seedEntity(db, 'Collection', {
+      userId: owner,
+      imageId: await seedImage({ url: 'collection-cover' }),
+    });
+
+    for (const [type, id] of [
+      ['Post', postId],
+      ['Model', modelId],
+      ['Article', articleId],
+      ['Bounty', bountyId],
+      ['BountyEntry', entryId],
+      ['Challenge', challengeId],
+      ['Crucible', crucibleId],
+      ['Crucible', heroOnlyId],
+      ['Collection', collectionId],
+    ] as const)
+      await fileReview(type, id);
+
+    const items = await listPending();
+    const cover = (type: string, id: number) =>
+      items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl;
+
+    expect(cover('Post', postId)).toBe('post-first');
+    expect(cover('Model', modelId)).toBe('model-cover');
+    expect(cover('Article', articleId)).toBe('article-cover');
+    expect(cover('Bounty', bountyId)).toBe('bounty-b');
+    expect(cover('BountyEntry', entryId)).toBe('entry-a');
+    expect(cover('Challenge', challengeId)).toBe('challenge-cover');
+    expect(cover('Crucible', crucibleId)).toBe('crucible-cover');
+    expect(cover('Crucible', heroOnlyId)).toBe('crucible-hero');
+    expect(cover('Collection', collectionId)).toBe('collection-cover');
+    expect(items.find((i) => i.entityType === 'Article')?.entity?.coverType).toBe('video');
+  });
+
+  it('leaves the cover empty for an entity with no image', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner });
+    await fileReview('Post', postId);
+    const items = await listPending();
+    expect(items[0].entity?.coverUrl).toBeNull();
+  });
+
+  it('shows a model its owner’s images in the CSAM-queue order: published first, then version, post, image index', async () => {
+    const { modelId, draft, first, second, post } = await seedModelWithVersions();
+    const draftPost = await post(draft, { publishedAt: null });
+    await seedImage({ url: 'draft-img', postId: draftPost, index: 0 });
+    const firstPost = await post(first);
+    await seedImage({ url: 'first-b', postId: firstPost, index: 2 });
+    await seedImage({ url: 'needs-review', postId: firstPost, index: 1, needsReview: 'minor' });
+    await seedImage({ url: 'first-a', postId: firstPost, index: 0 });
+    await seedImage({ url: 'minor', postId: firstPost, index: 3, acceptableMinor: true });
+    await seedImage({ url: 'second-img', postId: await post(second), index: 0 });
+    // Another account's post never feeds the model's gallery.
+    await seedImage({ url: 'foreign', postId: await post(first, { userId: mod }), index: 0 });
+    await fileReview('Model', modelId);
+
+    const items = await listPending();
+    expect(items[0].entity?.coverUrl).toBe('first-a');
+
+    const preview = await service.getRatingReviewImages('Model', modelId, 10);
+    expect(preview.images.map((i) => i.url)).toEqual([
+      'first-a',
+      'needs-review',
+      'first-b',
+      'minor',
+      'second-img',
+      'draft-img',
+    ]);
+    expect(preview.total).toBe(6);
+  });
+
+  it('still shows the images of a model whose posts are all unpublished', async () => {
+    const { modelId, first, post } = await seedModelWithVersions();
+    await seedImage({
+      url: 'only-unpublished',
+      postId: await post(first, { publishedAt: null }),
+      index: 0,
+    });
+    await fileReview('Model', modelId);
+
+    expect((await listPending())[0].entity?.coverUrl).toBe('only-unpublished');
+    const preview = await service.getRatingReviewImages('Model', modelId);
+    expect(preview.images.map((i) => i.url)).toEqual(['only-unpublished']);
+    expect(preview.total).toBe(1);
+  });
+
+  it('previews a post in author order, capped, with the full count and each level', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner });
+    await seedImage({ url: 'c', postId, index: 3, nsfwLevel: 4 });
+    await seedImage({ url: 'a', postId, index: 1, nsfwLevel: 1 });
+    await seedImage({ url: 'b', postId, index: 2, nsfwLevel: 2 });
+
+    const preview = await service.getRatingReviewImages('Post', postId, 2);
+
+    expect(preview.total).toBe(3);
+    expect(preview.images.map((i) => [i.url, i.nsfwLevel])).toEqual([
+      ['a', 1],
+      ['b', 2],
+    ]);
+  });
+
+  it('previews an article with its cover first, then connected images', async () => {
+    const cover = await seedImage({ url: 'cover' });
+    const body = await seedImage({ url: 'body' });
+    const articleId = await seedEntity(db, 'Article', { userId: owner, coverId: cover });
+    await connect(body, 'Article', articleId);
+    await connect(cover, 'Article', articleId);
+
+    const preview = await service.getRatingReviewImages('Article', articleId);
+
+    expect(preview.images.map((i) => i.url)).toEqual(['cover', 'body']);
+    expect(preview.total).toBe(2);
+  });
+
+  it('previews a bounty entry from its connections and a challenge by its cover alone', async () => {
+    const entryId = await seedEntity(db, 'BountyEntry', { userId: owner });
+    await connect(await seedImage({ url: 'e1' }), 'BountyEntry', entryId);
+    await connect(await seedImage({ url: 'e2' }), 'BountyEntry', entryId);
+    const challengeId = await seedEntity(db, 'Challenge', {
+      coverImageId: await seedImage({ url: 'ch' }),
+    });
+
+    expect((await service.getRatingReviewImages('BountyEntry', entryId)).images).toHaveLength(2);
+    expect(await service.getRatingReviewImages('Challenge', challengeId)).toMatchObject({
+      total: 1,
+      images: [{ url: 'ch' }],
+    });
+    expect(await service.getRatingReviewImages('Collection', 404)).toEqual({
+      total: 0,
+      images: [],
     });
   });
 });

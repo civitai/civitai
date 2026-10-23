@@ -41,7 +41,9 @@ import {
 import {
   ecosystemBaseModelGate,
   gateEligibleEcosystems,
+  modalityEligibleEcosystems,
   RESOURCE_INTENT_V1_GATE_SPEC_HASH,
+  V1_TAGS_REQUEST_MEDIA_TYPE,
 } from '~/server/services/resource-intent-tags/gate';
 import {
   scoreTagRequest,
@@ -454,9 +456,15 @@ const afterResponse = () => new Promise<void>((resolve) => setImmediate(resolve)
 const v1ModelTypes = (kind: TagKind) =>
   kind === 'checkpoint' ? (['Checkpoint'] as const) : RESOURCE_INTENT_COOC_SPEC.addonTypes;
 
-/** The v1 score, the tags choosing only an ecosystem with enough resources under its gate. */
+/**
+ * The v1 score. A caller's baseModel is the ecosystem and the tags choose none (`scoreTagRequest`);
+ * without one, the tags choose only an ecosystem with enough resources under its gate whose base
+ * model generates the request's media type.
+ */
 function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
-  const rankable = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
+  const gated = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
+  const modality = modalityEligibleEcosystems(index, V1_TAGS_REQUEST_MEDIA_TYPE);
+  const rankable = new Set([...gated].filter((id) => modality.has(id)));
   return scoreTagRequest(index, req, TAG_SCORE_PARAMS, rankable);
 }
 

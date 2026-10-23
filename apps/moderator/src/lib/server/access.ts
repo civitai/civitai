@@ -164,7 +164,7 @@ export const NAVIGATION: NavLink[] = [
       },
     ],
   },
-  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  // Every rated entity's owner disputes.
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
@@ -442,6 +442,11 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
 /** The Investigate button: the assistant page AND the right to run it. */
 export const canInvestigate = (locals: App.Locals) =>
   canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
+
+/** The training-data viewer: whoever `/api/training-data` would serve, so a page never shows a
+ *  button that only answers 403. */
+export const canViewTrainingData = (user: RoleUser) =>
+  canAccess(user, '/audit/training-data') || canAccess(user, '/audit/training-models');
 
 /** Same grant as User Lookup. */
 export const canSeeAddresses = (locals: App.Locals) =>

@@ -1,3 +1,4 @@
+import type { ColumnType } from 'kysely';
 import type { Generated, Timestamp } from '../moderator-db/types';
 import type {
   PlaybookStatus,
@@ -6,6 +7,11 @@ import type {
   TurnStatus,
   TurnToolCall,
 } from '$lib/assistant/types';
+
+/** Postgres `numeric` reads back as a string. */
+type Numeric = ColumnType<string, number | string, number | string>;
+export type SpendCapScope = 'role' | 'user';
+export type PriceSource = 'live' | 'list';
 
 /**
  * The mod assistant's tables, declared here rather than in the generated `moderator-db/types.ts` for
@@ -43,6 +49,8 @@ export type AssistantTables = {
     prompt_tokens: Generated<number>;
     completion_tokens: Generated<number>;
     total_tokens: Generated<number>;
+    cost_usd: Numeric | null;
+    price_source: PriceSource | null;
     created_at: Generated<Timestamp>;
     finished_at: Timestamp | null;
   };
@@ -80,5 +88,22 @@ export type AssistantTables = {
     response: string | null;
     created_at: Generated<Timestamp>;
     resolved_at: Timestamp | null;
+  };
+  assistant_spend_cap: {
+    scope: SpendCapScope;
+    subject: string;
+    usd_per_day: Numeric;
+    updated_by: number;
+    updated_at: Generated<Timestamp>;
+  };
+  assistant_spend_cap_change: {
+    id: Generated<string>;
+    actor_id: number;
+    scope: SpendCapScope;
+    subject: string;
+    usd_before: Numeric | null;
+    usd_after: Numeric | null;
+    reason: string | null;
+    at: Generated<Timestamp>;
   };
 };

@@ -4,6 +4,7 @@ import { getClickhouse } from './clickhouse';
 import { getRedis } from './redis';
 import { dbRead } from './db';
 import { logAxiomError, logToAxiom } from './axiom';
+import { SYSTEM_USER_ID } from './users.service';
 
 const MAX_GLOBAL_BONUS = 5;
 
@@ -108,7 +109,10 @@ async function getIneligibleReporters(userIds: number[]): Promise<Set<number>> {
     .where('id', 'in', userIds)
     .where('rewardsEligibility', '=', 'Ineligible')
     .execute();
-  return new Set(rows.map((row) => row.id));
+  const ineligible = new Set(rows.map((row) => row.id));
+  // The system account files reports on Civitai's behalf; an accepted one earns nobody Buzz.
+  if (userIds.includes(SYSTEM_USER_ID)) ineligible.add(SYSTEM_USER_ID);
+  return ineligible;
 }
 
 // Reads the shared MULTIPLIERS_FOR_USER cache (populated by the main app) for the TIER only; a miss

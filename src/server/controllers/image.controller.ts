@@ -1,5 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import { chunk } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
@@ -87,6 +86,7 @@ import type {
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
 import { requiresImageDbPath } from './../schema/image.schema';
+import { FEED_MAX_LIMIT } from '~/server/services/feed-shadow.service';
 import {
   getAllImages,
   getEntityCoverImage,
@@ -442,8 +442,33 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
-// Keeps one completion fetch inside the search index's hit window.
+// One completion fetch stays inside the search index's hit window (posts) and the feed service's
+// page (rows): a fetch the feed can't answer whole goes to the search index instead.
 const COMPLETION_POSTS_PER_FETCH = 25;
+const COMPLETION_ROWS_PER_FETCH = FEED_MAX_LIMIT;
+
+/**
+ * Groups posts into completion fetches of at most `COMPLETION_POSTS_PER_FETCH` posts and
+ * `COMPLETION_ROWS_PER_FETCH` rows, in order. A post larger than one fetch goes alone.
+ */
+export function packPostCompletions(postIds: number[], rowsOf: (postId: number) => number) {
+  const batches: number[][] = [];
+  let batch: number[] = [];
+  let rows = 0;
+  for (const postId of postIds) {
+    const r = rowsOf(postId);
+    const full = batch.length >= COMPLETION_POSTS_PER_FETCH || rows + r > COMPLETION_ROWS_PER_FETCH;
+    if (batch.length && full) {
+      batches.push(batch);
+      batch = [];
+      rows = 0;
+    }
+    batch.push(postId);
+    rows += r;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
@@ -624,7 +649,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         (postId) => rowCountOf(postId) > posts[postId].length
       );
       const completions = await Promise.all(
-        chunk(partialPostIds, COMPLETION_POSTS_PER_FETCH).map((postIds) =>
+        packPostCompletions(partialPostIds, rowCountOf).map((postIds) =>
           fetchFn({
             ...pageFetchArgs,
             cursor: undefined,

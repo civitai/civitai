@@ -3108,12 +3108,16 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
+  // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =
-    (data.sfwName !== undefined && data.sfwName !== beforeUpdate?.sfwName) ||
-    (data.sfwDescription !== undefined && data.sfwDescription !== beforeUpdate?.sfwDescription);
+    (data.sfwName !== undefined && data.sfwName !== (beforeUpdate?.sfwName ?? null)) ||
+    (data.sfwDescription !== undefined &&
+      data.sfwDescription !== (beforeUpdate?.sfwDescription ?? null));
   const coverChanged =
-    (data.coverImageId !== undefined && data.coverImageId !== beforeUpdate?.coverImageId) ||
-    (data.sfwCoverImageId !== undefined && data.sfwCoverImageId !== beforeUpdate?.sfwCoverImageId);
+    (data.coverImageId !== undefined &&
+      data.coverImageId !== (beforeUpdate?.coverImageId ?? null)) ||
+    (data.sfwCoverImageId !== undefined &&
+      data.sfwCoverImageId !== (beforeUpdate?.sfwCoverImageId ?? null));
   // Checked as it will be stored: a save carrying only one .com field, or only a cover (the step
   // that lists a mature model on .com), still has its whole face checked.
   const storedSfwName = data.sfwName !== undefined ? data.sfwName : beforeUpdate?.sfwName;

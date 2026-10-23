@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   feedFliptContext,
   feedHydrateQuery,
+  hydrateWithReadRescue,
   reasonLabel,
   serveFromFeed,
 } from '../feed-primary.service';
@@ -204,5 +205,42 @@ describe('serveFromFeed hydration outcomes', () => {
       hydrate: async () => [],
     });
     expect(r).toEqual({ ok: false, reason: 'hydrate:empty' });
+  });
+});
+
+describe('hydrateWithReadRescue', () => {
+  const rowsOn = (byTarget: Record<string, number[]>) =>
+    vi.fn(async (q: { dbTarget?: string }) =>
+      (byTarget[q.dbTarget ?? ''] ?? []).map((id) => ({ id }))
+    );
+
+  it('retries an empty DataPacket page on the read replica', async () => {
+    const load = rowsOn({ datapacket: [], read: [1, 2] });
+    const onRescue = vi.fn();
+    const rows = await hydrateWithReadRescue({ dbTarget: 'datapacket' }, load, onRescue);
+    expect(rows.map((r) => r.id)).toEqual([1, 2]);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(load.mock.calls[1][0]).toEqual({ dbTarget: 'read' });
+    expect(onRescue).toHaveBeenCalledWith('rescued');
+  });
+
+  it('reports a page empty on both as still empty', async () => {
+    const onRescue = vi.fn();
+    const rows = await hydrateWithReadRescue(
+      { dbTarget: 'datapacket' },
+      rowsOn({ datapacket: [], read: [] }),
+      onRescue
+    );
+    expect(rows).toEqual([]);
+    expect(onRescue).toHaveBeenCalledWith('still-empty');
+  });
+
+  it('leaves a page with rows, or any other target, to its single read', async () => {
+    const withRows = rowsOn({ datapacket: [3] });
+    expect((await hydrateWithReadRescue({ dbTarget: 'datapacket' }, withRows)).length).toBe(1);
+    expect(withRows).toHaveBeenCalledTimes(1);
+    const onRead = rowsOn({ read: [] });
+    expect(await hydrateWithReadRescue({ dbTarget: 'read' }, onRead)).toEqual([]);
+    expect(onRead).toHaveBeenCalledTimes(1);
   });
 });

@@ -235,6 +235,8 @@ const m = vi.hoisted(() => ({
   openError: null as unknown,
   listError: null as unknown,
   listNeverLoaded: true,
+  /** The session the preview pane was last rendered with. */
+  previewSession: undefined as unknown,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
@@ -277,7 +279,10 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
   };
 });
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
-  AppAssistantPreview: () => <div data-testid="preview" />,
+  AppAssistantPreview: ({ session }: { session: unknown }) => {
+    m.previewSession = session;
+    return <div data-testid="preview" />;
+  },
 }));
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
   useSandboxes: (client: { list: () => Promise<unknown> } | null) => {
@@ -504,6 +509,7 @@ beforeEach(() => {
   m.openError = null;
   m.listError = null;
   m.listNeverLoaded = true;
+  m.previewSession = undefined;
 });
 
 describe('AppAssistantWorkspace with no apps', () => {
@@ -2113,5 +2119,76 @@ describe('AppAssistantWorkspace tool gate', () => {
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
       allow: true,
     });
+  });
+});
+
+describe('AppAssistantWorkspace preview on the server runner', () => {
+  const HOST = 'dev-0123456789abcdef.civit.ai';
+  const RunnerWorkspace = () => (
+    <ModalsProvider>
+      <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+    </ModalsProvider>
+  );
+  async function mountRunner(width = 1440) {
+    await page.viewport(width, 900);
+    renderWithProviders(<RunnerWorkspace />);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
+  /** The runner journaled a finished call (`tool-reported`); the chat hands it to the page. */
+  const reported = (name: string, output: unknown, isError = false) =>
+    m.chat!.onToolResult!({ name, input: {}, output, isError });
+  const pane = () => page.getByTestId('app-assistant-preview-pane');
+
+  test('shows the preview the runner started, a fresh frame on each start, and hides it on stop', async () => {
+    await mountRunner();
+    await openFirst();
+    expect(pane().query()).toBeNull();
+
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST, next_step: 'x' });
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toEqual({ blockId: 'app-aaaa', host: HOST, sessionId: null, view: 1 });
+
+    // Started again (the user came back): a new view, so the pane fetches a fresh frame.
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await vi.waitFor(() => expect(m.previewSession).toMatchObject({ view: 2 }));
+
+    reported('stop_preview', { stopped: true });
+    await expect.element(pane()).not.toBeInTheDocument();
+    // The page has no id for the runner's tunnel and never stops it: the runner and civitai do.
+    expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('a failed start shows nothing', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { error: 'Too many previews' }, true);
+    await settle();
+    expect(pane().query()).toBeNull();
+  });
+
+  test('NEGATIVE CONTROL: replies in the browser show only the page’s own start', async () => {
+    await mount();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await settle();
+    expect(pane().query()).toBeNull();
+  });
+
+  test('on a phone, Chat/Preview appears once the runner’s preview exists, on Preview', async () => {
+    await mountRunner(375);
+    await openFirst();
+    expect(document.querySelector('[role="radiogroup"]')).toBeNull();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(page.getByRole('radio', { name: 'Preview' })).toBeChecked();
+  });
+
+  test('opening another app hides it, stopping nothing', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    await openFromSwitcher('app-bbbb');
+    await expect.element(pane()).not.toBeInTheDocument();
+    expect(m.stop).not.toHaveBeenCalled();
   });
 });

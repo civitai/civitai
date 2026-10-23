@@ -48,8 +48,9 @@ section that holds the detail.
 - **2026-10-21 — the Phase 3 backfill is built** as steps of one admin endpoint that reuse the
   mirror's row functions, with an `unmirrored` report (skipped rows by reason), a `parity`
   report (the old-versus-new checks in the checklist, as counts with sample ids) and the two
-  residue sweeps. Not yet run; the reader re-point and the reverse-copy script are still open
-  (_Phase 3_).
+  residue sweeps. Run on prod 2026-10-21, converged with parity all zero. The parity monitor job
+  and the reverse-copy script (not yet proven on a prod sample) followed the same day; the reader
+  re-point is still open (_Phase 3_).
 - **2026-10-20 — the Phase 2 mirror is built (`20261120120000_comment_v3_mirror`), and the
   moderation work moves to Phase 4.** The lock pair (`toggleLockCommentsThread`) and the mutes
   (`toggleThreadMute`/`toggleSectionMute`) are mirrored by triggers on `Thread` and `ThreadMute`,
@@ -1260,8 +1261,13 @@ Phase 4 prerequisite) — still before any write flip.
 **Rollback story** (why reads flip before writes): while writes still land in the old tables,
 flipping a surface's reads back is instant and lossless — dual-write kept both sides current. Once
 a surface's _writes_ flip, new rows exist only in CommentV3; rolling that back requires a
-reverse-copy (CommentV3 → old tables, trivial since ids are shared) — keep that script ready
-before the first write flip, and don't remove a surface's old write path until it has soaked.
+reverse-copy (CommentV3 → old tables: ids are shared, but a v3-only comment also needs its entity's
+root `Thread` and its parent's reply `Thread` recreated, a model comment follows its parent's
+shape into the v1 or v2 table, and edits, deletes and links must flow back; the `reverse*` steps of
+the backfill endpoint do this, scoped to the flip's window and surface so a comment the mirror
+yielded on is never taken for a v3 delete, nor a post-rollback ghost for a v3 write) — proven on a
+prod sample before the first write flip, and don't remove a surface's old write path until it has
+soaked.
 
 **Phase 4 — flip reads, then writes, per surface, behind Flipt.** **Prerequisite — readers move
 first:** dual-write makes CommentV3 a complete superset of both old tables, so every cross-surface

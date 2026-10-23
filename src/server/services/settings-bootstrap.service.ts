@@ -61,6 +61,22 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
   // `_app`'s hasAuthCookie carve-out exists to avoid.
   const session = await getServerAuthSession({ req, res });
+  return resolveSettingsBootstrapSeeds(req, session);
+}
+
+/** The bootstrap's `session`: a session with no user fields is "signed out", never a session. */
+export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAuthSession>>) {
+  return session?.user && Object.keys(session.user).length > 0 ? session : null;
+}
+
+/**
+ * Everything in the bootstrap after the session lookup, for an already-resolved session. Split out
+ * so a caller can decide on the session (e.g. a feature flag) before paying for the seeds.
+ */
+export async function resolveSettingsBootstrapSeeds(
+  req: AuthArgs['req'],
+  session: Awaited<ReturnType<typeof getServerAuthSession>>
+) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
   // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
@@ -131,7 +147,7 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
     browsingSettingsAddons,
     liveNow,
     navBanners,
-    session: session?.user && Object.keys(session.user).length > 0 ? session : null,
+    session: bootstrapSession(session),
   };
 }
 
@@ -172,6 +188,35 @@ function bootstrapHost(): string {
   }
 }
 
+type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<string, string>> };
+
+/**
+ * The request the settings bootstrap reads, built from a page's (or page-data endpoint's) own
+ * request. ONE builder for every in-process caller, so they cannot drift:
+ *
+ *   - URL: always `SETTINGS_BOOTSTRAP_PATH`, never the caller's. `getServerAuthSession` treats a
+ *     `?token=` query parameter as an API credential, and a page URL may carry an unrelated one —
+ *     it must never replace the cookie viewer.
+ *   - Headers and cookies: the caller's, so the session is the caller's.
+ *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
+ *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
+ *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
+ *   - Its own `req.context`, unless `context` is passed: whatever the session lookup records (the
+ *     credential) lands there, never on the caller's request by accident.
+ */
+export function settingsBootstrapRequest(
+  request: BootstrapSourceRequest,
+  { host, context }: { host?: string; context?: Record<string, unknown> } = {}
+): AuthArgs['req'] {
+  // The bootstrap reads only `authorization` and `host` from the headers (plus the parsed cookies).
+  return {
+    headers: { ...request.headers, host: host ?? bootstrapHost() },
+    cookies: request.cookies,
+    url: SETTINGS_BOOTSTRAP_PATH,
+    ...(context ? { context } : {}),
+  } as unknown as AuthArgs['req'];
+}
+
 /**
  * The bootstrap for a page that is being server-rendered, with no HTTP request to ourselves.
  *
@@ -195,16 +240,11 @@ function bootstrapHost(): string {
  * as "no bootstrap", NOT as "signed out".
  */
 export async function resolveSettingsBootstrapForRender(
-  request: IncomingMessage & { cookies?: Partial<Record<string, string>> }
+  request: BootstrapSourceRequest
 ): Promise<unknown> {
-  // Every other request field the bootstrap reads is the page's own, unchanged: it reads only
-  // `authorization` and `host` from the headers (plus the parsed cookies), and `fetch` forwarded
-  // `authorization` and `cookie` as-is.
-  const req = {
-    headers: { ...request.headers, host: bootstrapHost() },
-    cookies: request.cookies,
-    url: SETTINGS_BOOTSTRAP_PATH,
-  } as unknown as AuthArgs['req'];
+  // Every other request field the bootstrap reads is the page's own, unchanged: `fetch`
+  // forwarded `authorization` and `cookie` as-is.
+  const req = settingsBootstrapRequest(request);
   const res = {
     getHeader: () => undefined,
     setHeader: () => undefined,

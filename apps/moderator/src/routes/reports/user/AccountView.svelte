@@ -78,23 +78,24 @@
 </script>
 
 {#if account}
-  <!-- The account card IS the header — who this is, its ban/mute/strike state, and the User Lookup and
-       site links. A heading above it repeated the username and both links. It sits across both
-       columns because that state decides what every tab's evidence and every action means. -->
-  {#if account.details}
-    <UserCard card={account.details.card} lookupLink openReports={false}>
-      {#snippet actions()}
-        {#if canInvestigate && account}
-          <InvestigateButton userId={account.suspectId} reportId={openReports[0]?.id ?? null} />
-        {/if}
-      {/snippet}
-    </UserCard>
-  {:else}
-    <h2 class="m-0 text-lg font-semibold">Account #{account.suspectId}</h2>
-  {/if}
-  <ReadOnlyNotice {can} images={!!account.details} owner={!!account.details} />
+  {#snippet itemHeader()}
+    <!-- The account card IS the header: it carries the username, ban/mute/strike state and both links,
+         so no separate heading repeats them. -->
+    {#if account.details}
+      <UserCard card={account.details.card} lookupLink openReports={false}>
+        {#snippet actions()}
+          {#if canInvestigate && account}
+            <InvestigateButton userId={account.suspectId} reportId={openReports[0]?.id ?? null} />
+          {/if}
+        {/snippet}
+      </UserCard>
+    {:else}
+      <h2 class="m-0 text-lg font-semibold">Account #{account.suspectId}</h2>
+    {/if}
+    <ReadOnlyNotice {can} images={!!account.details} owner={!!account.details} />
+  {/snippet}
 
-  <ReportDetailColumns>
+  <ReportDetailColumns header={itemHeader}>
     {#snippet evidence()}
       {#if account.details}
         <!-- Keyed so an open filter or selection cannot survive moving to a different account. -->

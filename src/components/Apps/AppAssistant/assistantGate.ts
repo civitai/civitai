@@ -137,6 +137,13 @@ export function renderChecklist(call: ChatToolCall): HTMLElement | undefined {
   return card;
 }
 
+/**
+ * What a passing report_ready's card says was checked. `sandbox__preview_check` loads the app in a
+ * headless browser in the sandbox (a stand-in for civitai.com), not the user's live preview.
+ */
+export const READY_CARD_TEXT =
+  '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.';
+
 /** The card a passing report_ready shows: the user's sign that the checks ran. The default card otherwise. */
 export function renderReady(call: ChatToolCall): HTMLElement | undefined {
   if (call.state !== 'done' || (call.output as { ready?: unknown } | null)?.ready !== true)
@@ -145,7 +152,6 @@ export function renderReady(call: ChatToolCall): HTMLElement | undefined {
   card.setAttribute('role', 'status');
   card.style.cssText =
     'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-  card.textContent =
-    '✓ Checked: the preview renders, the tests and the typecheck pass, and every checklist item is done.';
+  card.textContent = READY_CARD_TEXT;
   return card;
 }

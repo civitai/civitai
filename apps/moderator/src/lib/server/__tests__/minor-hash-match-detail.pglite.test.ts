@@ -33,7 +33,7 @@ const SCHEMA = `
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT, "createdAt" TIMESTAMP(3) DEFAULT now());
 CREATE TABLE "Model" (
   id INTEGER PRIMARY KEY, "userId" INTEGER, status TEXT NOT NULL DEFAULT 'Published',
-  "createdAt" TIMESTAMP(3) DEFAULT now(), "deletedAt" TIMESTAMP(3)
+  "createdAt" TIMESTAMP(3) DEFAULT now(), "deletedAt" TIMESTAMP(3), mode TEXT, meta JSONB DEFAULT '{}'
 );
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER);
 CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "modelVersionId" INTEGER);
