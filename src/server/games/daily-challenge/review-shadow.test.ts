@@ -1,13 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as LoggingClient from '~/server/logging/client';
-
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn() }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom,
-}));
-
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { reviewWithShadow } from './review-shadow';
+
+const { logToAxiom } = loggingMock;
 
 const review = (summary: string, model = 'xiaomi/mimo-v2.5') => ({
   score: { theme: 7, wittiness: 5, humor: 4, aesthetic: 8 },
