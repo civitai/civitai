@@ -38,7 +38,7 @@ const envelope = (status: string, type = 'task.closed') =>
       task_id: TASK_ID,
       status,
       closed: new Date().toISOString(),
-      url: `https://hq.civitai.com/t/${TASK_ID}`,
+      url: `https://tasks.example.test/t/${TASK_ID}`,
     },
   });
 
@@ -84,19 +84,18 @@ const run = (body: string, headers: Record<string, string>) => {
   return handler(req as never, res as never).then(() => res);
 };
 
-// An in-memory SET NX, so a replay is suppressed by the handler's real dedupe logic.
-const claimed = new Set<string>();
+// In-memory keys, so a replay is suppressed by the handler's real dedupe logic.
+const processed = new Set<string>();
 
 beforeEach(() => {
   vi.clearAllMocks();
-  claimed.clear();
+  processed.clear();
   envMock.set({ HQ_WEBHOOK_SECRET: SECRET });
-  redisMock.sysRedis.setNxKeepTtlWithEx.mockImplementation(async (key: string) => {
-    if (claimed.has(key)) return false;
-    claimed.add(key);
-    return true;
+  redisMock.sysRedis.exists.mockImplementation(async (key: string) => Number(processed.has(key)));
+  redisMock.sysRedis.set.mockImplementation(async (key: string) => {
+    processed.add(key);
+    return 'OK';
   });
-  redisMock.sysRedis.del.mockImplementation(async (key: string) => Number(claimed.delete(key)));
 });
 
 describe('hq webhook endpoint', () => {
@@ -167,8 +166,8 @@ describe('hq webhook endpoint', () => {
     expect(resolveBugsByClickupTaskId).not.toHaveBeenCalled();
   });
 
-  it('acks an event type it does not handle', async () => {
-    const body = envelope('complete', 'task.updated');
+  it('acks an event type it does not handle, whatever its data looks like', async () => {
+    const body = JSON.stringify({ type: 'task.created', data: { id: 42, title: 'x' } });
 
     const res = await run(body, signedHeaders(body));
 
@@ -212,8 +211,26 @@ describe('hq webhook endpoint', () => {
     expect(resolveBugsByClickupTaskId).toHaveBeenCalledTimes(2);
   });
 
-  it('answers 5xx without resolving when the delivery cannot be claimed', async () => {
-    redisMock.sysRedis.setNxKeepTtlWithEx.mockRejectedValueOnce(new Error('redis down'));
+  it('answers 5xx when an entry fails to close, and the retry runs again', async () => {
+    resolveBugsByClickupTaskId.mockResolvedValueOnce({
+      matched: [1, 2],
+      resolved: [{ id: 1, previousStatus: 'Open' }],
+      skipped: [],
+      failed: [{ id: 2, error: 'lock timeout' }],
+    });
+    const body = envelope('complete');
+    const headers = signedHeaders(body, { id: 'msg_partial' });
+
+    const partial = await run(body, headers);
+    const retried = await run(body, headers);
+
+    expect(partial._status()).toBe(500);
+    expect(retried._status()).toBe(200);
+    expect(resolveBugsByClickupTaskId).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 5xx without resolving when the dedupe check fails', async () => {
+    redisMock.sysRedis.exists.mockRejectedValueOnce(new Error('redis down'));
     const body = envelope('complete');
 
     const res = await run(body, signedHeaders(body));
