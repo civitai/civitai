@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ConsentBanner } from './ConsentBanner';
 import { ThirdPartyConsentContext } from './consent.context';
-import { CONSENT_COOKIE, CONSENT_COOKIE_MAX_AGE, type ConsentDecision } from './consent.utils';
+import { writeConsentCookie, type ConsentDecision } from './consent.utils';
 
 type Props = {
   children: React.ReactNode;
@@ -18,18 +18,12 @@ export function CAConsentManager({ children, initialConsent, loggedIn }: Props) 
   const [consent, setConsent] = useState<ConsentDecision | null>(effectiveInitial);
 
   const persist = useCallback((value: ConsentDecision) => {
-    if (typeof document !== 'undefined') {
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-      document.cookie = `${CONSENT_COOKIE}=${value}; Path=/; Max-Age=${CONSENT_COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
-    }
+    writeConsentCookie(value);
     setConsent(value);
   }, []);
 
   const reset = useCallback(() => {
-    if (typeof document !== 'undefined') {
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-      document.cookie = `${CONSENT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
-    }
+    writeConsentCookie(null);
     setConsent(null);
   }, []);
 

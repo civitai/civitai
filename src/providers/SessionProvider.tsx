@@ -46,9 +46,13 @@ async function fetchSession(): Promise<Session | null | undefined> {
   }
 }
 
+/** A session that arrives after mount (a shell page's page data), adopted once. */
+export type SessionSeed = { session: Session | null };
+
 export function SessionProvider({
   children,
   session: initial,
+  seed,
   refetchOnWindowFocus = true,
   // Accepted for next-auth API compatibility (call sites pass them); intervals/offline are no-ops here.
   refetchInterval,
@@ -57,6 +61,8 @@ export function SessionProvider({
   /** SSR seed: a Session when known-authed, `null` when known-unauthed (skip the fetch), `undefined` when
    *  unknown (fetch on mount). */
   session?: Session | null;
+  /** `null` while a seed is on its way (no fetch), then the seed. `undefined` when none is coming. */
+  seed?: SessionSeed | null;
   refetchOnWindowFocus?: boolean;
   refetchWhenOffline?: boolean;
   refetchInterval?: number;
@@ -68,6 +74,14 @@ export function SessionProvider({
   // True once we have an authoritative value (a non-undefined seed, or a completed fetch).
   const resolved = useRef(initial !== undefined);
 
+  // Adopted while rendering, so the providers below see the session in the same render as the
+  // rest of the seed (the per-user flag overlay query is enabled by it).
+  const [seedAdopted, setSeedAdopted] = useState(false);
+  if (seed && !seedAdopted) {
+    setSeedAdopted(true);
+    setData((prev) => (prev === undefined ? seed.session : prev));
+  }
+
   const update = useCallback(async () => {
     const next = await fetchSession();
     // `undefined` = couldn't determine: keep the current session, but resolve a still-loading INITIAL state to
@@ -77,10 +91,11 @@ export function SessionProvider({
     return next ?? null;
   }, []);
 
-  // Initial fetch only when the seed was `undefined` (unknown).
+  // Initial fetch only when the seed was `undefined` (unknown) and no later seed is coming.
   useEffect(() => {
-    if (!resolved.current) void update();
-  }, [update]);
+    if (seed) resolved.current = true;
+    if (!resolved.current && seed !== null) void update();
+  }, [update, seed]);
 
   useEffect(() => {
     if (!refetchOnWindowFocus) return;

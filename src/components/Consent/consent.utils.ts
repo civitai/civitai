@@ -15,6 +15,16 @@ export function isConsentRequired(region: RegionInfo | null | undefined): boolea
   return CONSENT_REQUIRED_REGIONS.has(region.fullLocationCode);
 }
 
+/** Persists a decision, or clears it with `null`. */
+export function writeConsentCookie(value: ConsentDecision | null) {
+  if (typeof document === 'undefined') return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie =
+    value === null
+      ? `${CONSENT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`
+      : `${CONSENT_COOKIE}=${value}; Path=/; Max-Age=${CONSENT_COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
+}
+
 export function parseConsentCookie(value: unknown): ConsentDecision | null {
   return value === 'accepted' || value === 'rejected' ? value : null;
 }
