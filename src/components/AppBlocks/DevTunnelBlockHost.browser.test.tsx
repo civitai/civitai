@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import router from 'next/router';
+import { renderToString } from 'react-dom/server';
+import { MantineProvider } from '@mantine/core';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -263,6 +265,22 @@ describe('/apps/dev/[blockId] client', () => {
     expect(router.reload).not.toHaveBeenCalled();
   });
 
+  // 🔴 REGRESSION (round-1 audit). Live reload counts the frame's `load` events, so the
+  // frame must never be in the server-rendered HTML: there it can finish loading before
+  // hydration attaches the listener, and the missed load hides the first reload for good.
+  test('the dev-tunnel host is not server-rendered — it mounts on the client', async () => {
+    const html = renderToString(
+      <MantineProvider>
+        <DevTunnelPage {...FRAME} />
+      </MantineProvider>
+    );
+    expect(html).not.toContain('data-testid="page-block-host"');
+
+    // Positive control: the same page does mount the host once on the client.
+    renderWithProviders(<DevTunnelPage {...FRAME} />);
+    await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
+  });
+
   test('CONTROL: re-rendering with the SAME entry URL does not remount', async () => {
     const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
@@ -271,7 +289,10 @@ describe('/apps/dev/[blockId] client', () => {
     expect(m.hostMounts).toBe(1);
   });
 
-  test('a fresh mint that comes back with no tunnel shows the start commands — no loop', async () => {
+  // INVARIANT, not regression coverage: the mocked host never reports a reload on its
+  // own, so this cannot see a loop — the no-loop property lives in PageBlockHost's
+  // once-per-mount report. What it pins is that the page settles on the start commands.
+  test('a fresh mint that comes back with no tunnel shows the start commands', async () => {
     const screen = await renderWithProviders(<DevTunnelPage {...FRAME} />);
     await expect.element(page.getByTestId('page-block-host')).toBeInTheDocument();
     (m.hostProps?.onGuestReloaded as () => void)();

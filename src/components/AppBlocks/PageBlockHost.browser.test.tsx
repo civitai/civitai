@@ -1703,7 +1703,9 @@ describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
     const onGuestReloaded = await mountAt('dev-tunnel');
     await driveToReady();
     await settle();
-    // Positive control for the predicate's other half: the INITIAL load is not a reload.
+    // Nothing reloaded yet. (NOT a control for "the initial load after ready is not a
+    // reload": the initial load here landed BEFORE ready, so the status check rejects it.
+    // That ordering is pinned by the predicate's unit test, devTunnelGuestReload.test.ts.)
     expect(onGuestReloaded).not.toHaveBeenCalled();
 
     guestReload();
@@ -1739,6 +1741,38 @@ describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
     await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
   });
 
+  test('dev-tunnel: a BLOCK_HELLO after ready (a reload whose entry was still valid) asks once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // The reloaded document announces itself; its own load follows.
+    postFromBlock('BLOCK_HELLO');
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  // 🔴 REGRESSION (round-1 audit). An app whose boot replaces its document ONCE before
+  // READY (a `location.replace`, Vite's dependency-optimizer reload): the first document's
+  // load, then the second document's hello, READY, and the second document's own load.
+  // Counting loads over the frame's whole life called that last load a reload — on every
+  // remount, a loop. The second document's hello must restart the count.
+  test('dev-tunnel: a document replaced during boot is not a reload once it is ready', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // document 1 has loaded
+    postFromBlock('BLOCK_HELLO'); // document 2 announces itself, still loading
+    await driveToReady();
+    guestReload(); // document 2's own load, after READY
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count is live: a further load on document 2 is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
   test.each(['page-run', 'private-run'] as const)(
     '%s: a reload after BLOCK_READY never asks — dev-tunnel only',
     async (surface) => {
@@ -1746,6 +1780,7 @@ describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
       await driveToReady();
 
       for (let i = 0; i < 3; i++) guestReload();
+      postFromBlock('BLOCK_HELLO');
       await settle();
       expect(onGuestReloaded).not.toHaveBeenCalled();
     }
