@@ -559,10 +559,105 @@ export async function getDailyChallenges(
   return mapChallengeRowsToCards(items, site);
 }
 
+// Who may see challenge `c` in a public list: the feed and event listings share these, so one
+// can't drift from the other.
+async function challengeVisibilityConditions({
+  isGreen,
+  viewerId,
+  canAccessUserChallenges,
+  browsingLevel,
+}: {
+  isGreen: boolean;
+  viewerId: number | undefined;
+  canAccessUserChallenges: boolean;
+  browsingLevel?: number;
+}): Promise<Prisma.Sql[]> {
+  const conditions: Prisma.Sql[] = [];
+
+  // Only show challenges past their visibility window — except to their own creator, so a creator
+  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan/POI gates below.
+  conditions.push(
+    viewerId
+      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
+      : Prisma.sql`c."visibleAt" <= now()`
+  );
+
+  // Scan gate: hide challenges that haven't passed the moderation scan, except from their
+  // own creator (so a creator can preview their pending challenge). System/mod challenges
+  // default to Scanned, so they're unaffected.
+  conditions.push(
+    viewerId
+      ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${viewerId})`
+      : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
+  );
+
+  // A challenge with no cover image is incomplete — never surface it in the feed.
+  conditions.push(Prisma.sql`c."coverImageId" IS NOT NULL`);
+
+  // POI gate: keep challenges whose cover depicts a real person out of public feeds (the image
+  // scanner sets Image.poi). Creator can still see their own, mirroring the scan gate above.
+  conditions.push(
+    viewerId
+      ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${viewerId})`
+      : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
+  );
+
+  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
+  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
+  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
+  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
+  conditions.push(
+    viewerId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${viewerId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
+  );
+
+  // Domain-currency gate: green user challenges surface only on the green site, yellow only
+  // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
+  // universal and show on both domains, mirroring the scan/POI gates.
+  const domainCurrency = deriveDomainCurrency(isGreen);
+  conditions.push(
+    viewerId
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${viewerId})`
+      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
+  );
+
+  // Block/hide gate: drop user challenges whose creator the viewer has blocked/hidden (or who
+  // blocked the viewer) — parity with comment/review feeds. System/mod challenges are exempt.
+  const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(viewerId));
+  if (blockSql) conditions.push(blockSql);
+
+  // User-created challenges stay behind the `userChallenges` flag. Enforced here rather than only
+  // in the feed UI so a hand-rolled `source: ['User']` request can't list them either.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
+
+  // Content level filter — the challenge's own rating (`nsfwLevel`, the highest level its
+  // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
+  // cover level is required to intersect too, so a challenge that under-declares its rating can't
+  // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
+  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
+  // above.
+  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
+    isGreen,
+    isLoggedIn: viewerId != null,
+    requested: browsingLevel,
+  });
+  if (effectiveBrowsingLevel > 0) {
+    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
+    conditions.push(
+      viewerId ? Prisma.sql`(c."createdById" = ${viewerId} OR ${levelSql})` : levelSql
+    );
+  }
+
+  return conditions;
+}
+
 export async function getInfiniteChallenges(
   input: GetInfiniteChallengesInput & {
     currentUserId?: number;
-    isGreen?: boolean;
+    isGreen: boolean;
     canAccessUserChallenges?: boolean;
   }
 ) {
@@ -588,58 +683,14 @@ export async function getInfiniteChallenges(
   // Build WHERE conditions using parameterized queries (SQL injection safe)
   const conditions: Prisma.Sql[] = [];
 
-  // Only show challenges past their visibility window — except to their own creator, so a creator
-  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan/POI gates below.
   conditions.push(
-    currentUserId
-      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`c."visibleAt" <= now()`
+    ...(await challengeVisibilityConditions({
+      isGreen,
+      viewerId: currentUserId,
+      canAccessUserChallenges,
+      browsingLevel,
+    }))
   );
-
-  // Scan gate: hide challenges that haven't passed the moderation scan, except from their
-  // own creator (so a creator can preview their pending challenge). System/mod challenges
-  // default to Scanned, so they're unaffected.
-  conditions.push(
-    currentUserId
-      ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
-  );
-
-  // A challenge with no cover image is incomplete — never surface it in the feed.
-  conditions.push(Prisma.sql`c."coverImageId" IS NOT NULL`);
-
-  // POI gate: keep challenges whose cover depicts a real person out of public feeds (the image
-  // scanner sets Image.poi). Creator can still see their own, mirroring the scan gate above.
-  conditions.push(
-    currentUserId
-      ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
-  );
-
-  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
-  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
-  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
-  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
-  conditions.push(
-    currentUserId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
-  );
-
-  // Domain-currency gate: green user challenges surface only on the green site, yellow only
-  // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
-  // universal and show on both domains, mirroring the scan/POI gates.
-  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
-  conditions.push(
-    currentUserId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
-      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
-  );
-
-  // Block/hide gate: drop user challenges whose creator the viewer has blocked/hidden (or who
-  // blocked the viewer) — parity with comment/review feeds. System/mod challenges are exempt.
-  const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(currentUserId));
-  if (blockSql) conditions.push(blockSql);
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -650,11 +701,6 @@ export async function getInfiniteChallenges(
       Prisma.sql`c.status NOT IN ('Completing'::"ChallengeStatus", 'Completed'::"ChallengeStatus", 'Cancelled'::"ChallengeStatus")`
     );
   }
-
-  // User-created challenges stay behind the `userChallenges` flag. Enforced here rather than only
-  // in the feed UI so a hand-rolled `source: ['User']` request can't list them either.
-  if (!canAccessUserChallenges)
-    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   // Source filter (parameterized)
   if (source && source.length > 0) {
@@ -686,25 +732,6 @@ export async function getInfiniteChallenges(
   // Scope to a single event's challenges (e.g. an event's own challenges page)
   if (challengeEventId) {
     conditions.push(Prisma.sql`c."eventId" = ${challengeEventId}`);
-  }
-
-  // Content level filter — the challenge's own rating (`nsfwLevel`, the highest level its
-  // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
-  // cover level is required to intersect too, so a challenge that under-declares its rating can't
-  // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
-  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
-  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
-  // above.
-  const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
-    isGreen: isGreen ?? false,
-    isLoggedIn: currentUserId != null,
-    requested: browsingLevel,
-  });
-  if (effectiveBrowsingLevel > 0) {
-    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
-    );
   }
 
   // User participation filter (requires logged-in user)
@@ -868,7 +895,7 @@ export async function getInfiniteChallenges(
   }
 
   const challenges = await mapChallengeRowsToCards(items, {
-    isGreen: isGreen ?? false,
+    isGreen,
     viewerId: currentUserId,
   });
 
@@ -3355,12 +3382,32 @@ async function getEventCoverImages(coverImageIds: (number | null)[], site: SiteV
   return map;
 }
 
+async function visibleChallengeIds(
+  ids: number[],
+  site: SiteViewer,
+  canAccessUserChallenges: boolean
+): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const conditions = await challengeVisibilityConditions({
+    isGreen: site.isGreen,
+    viewerId: site.viewerId,
+    canAccessUserChallenges,
+  });
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Challenge" c
+    WHERE c.id IN (${Prisma.join(ids)}) AND ${Prisma.join(conditions, ' AND ')}
+  `;
+  return new Set(rows.map((r) => r.id));
+}
+
 /**
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
  */
-export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventListItem[]> {
-  const excludedUserIds = await getChallengeExcludedUserIds(site.viewerId);
+export async function getActiveEvents(
+  site: SiteViewer,
+  canAccessUserChallenges: boolean
+): Promise<ChallengeEventListItem[]> {
   const events = await dbRead.challengeEvent.findMany({
     where: {
       active: true,
@@ -3376,20 +3423,7 @@ export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventL
       endDate: true,
       coverImageId: true,
       challenges: {
-        where: {
-          visibleAt: { lte: new Date() },
-          status: { not: ChallengeStatus.Cancelled },
-          // Block/hide gate — drop user challenges whose creator the viewer blocked/hid.
-          // System/mod event challenges are exempt via the source OR-branch.
-          ...(excludedUserIds.length > 0
-            ? {
-                OR: [
-                  { source: { not: ChallengeSource.User } },
-                  { createdById: { notIn: excludedUserIds } },
-                ],
-              }
-            : {}),
-        },
+        where: { status: { not: ChallengeStatus.Cancelled } },
         orderBy: { startsAt: 'asc' },
         select: {
           id: true,
@@ -3413,6 +3447,14 @@ export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventL
       },
     },
   });
+
+  const visibleIds = await visibleChallengeIds(
+    events.flatMap((e) => e.challenges.map((c) => c.id)),
+    site,
+    canAccessUserChallenges
+  );
+  for (const event of events)
+    event.challenges = event.challenges.filter((c) => visibleIds.has(c.id));
 
   const eventCoverMap = await getEventCoverImages(
     events.map((e) => e.coverImageId),
@@ -3576,7 +3618,8 @@ export async function getActiveEvents(site: SiteViewer): Promise<ChallengeEventL
  */
 export async function getChallengeEventById(
   id: number,
-  site: SiteViewer
+  site: SiteViewer,
+  canAccessUserChallenges: boolean
 ): Promise<ChallengeEventListItem & { challengeCount: number; active: boolean }> {
   const event = await dbRead.challengeEvent.findUnique({
     where: { id },
@@ -3589,20 +3632,21 @@ export async function getChallengeEventById(
       endDate: true,
       coverImageId: true,
       active: true,
-      _count: {
-        select: {
-          challenges: {
-            where: {
-              visibleAt: { lte: new Date() },
-              status: { not: ChallengeStatus.Cancelled },
-            },
-          },
-        },
-      },
     },
   });
   if (!event) throw throwNotFoundError('Challenge event not found');
 
+  const conditions = await challengeVisibilityConditions({
+    isGreen: site.isGreen,
+    viewerId: site.viewerId,
+    canAccessUserChallenges,
+  });
+  const [{ count }] = await dbRead.$queryRaw<[{ count: bigint }]>`
+    SELECT COUNT(*) AS count FROM "Challenge" c
+    WHERE c."eventId" = ${id}
+      AND c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus"
+      AND ${Prisma.join(conditions, ' AND ')}
+  `;
   const coverMap = await getEventCoverImages([event.coverImageId], site);
   return {
     id: event.id,
@@ -3613,7 +3657,7 @@ export async function getChallengeEventById(
     endDate: event.endDate,
     coverImage: event.coverImageId ? coverMap.get(event.coverImageId) ?? null : null,
     challenges: [],
-    challengeCount: event._count.challenges,
+    challengeCount: Number(count),
     active: event.active,
   };
 }
@@ -4045,7 +4089,7 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen?: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
 ) {
   const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
 
@@ -4070,7 +4114,7 @@ export async function getCompletedChallengesWithWinners(
 
   // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
   // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
-  const domainCurrency = deriveDomainCurrency(isGreen ?? false);
+  const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
     currentUserId
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
@@ -4085,7 +4129,7 @@ export async function getCompletedChallengesWithWinners(
   // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
   // their own.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
-    isGreen: isGreen ?? false,
+    isGreen,
     isLoggedIn: currentUserId != null,
     requested: browsingLevel,
   });
@@ -4263,8 +4307,7 @@ export async function getCompletedChallengesWithWinners(
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
-    const hideThumb =
-      (isGreen ?? false) && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
+    const hideThumb = isGreen && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
@@ -4297,7 +4340,7 @@ export async function getCompletedChallengesWithWinners(
   const challenges: ChallengeWithWinnersListItem[] = items.map((item) => {
     const coverImage = coverWithinSite(
       item.coverImageId ? coverImageMap.get(item.coverImageId) : null,
-      { isGreen: isGreen ?? false, viewerId: currentUserId }
+      { isGreen, viewerId: currentUserId }
     );
     const metadata = parseChallengeMetadata(item.metadata);
     const parsedCategories = challengeJudgingCategoriesSchema.safeParse(item.judgingCategories);

@@ -346,7 +346,12 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(({ ctx }) => getActiveEvents({ isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })),
+    .query(({ ctx }) =>
+      getActiveEvents(
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Public: Get single event by ID
   getEventById: publicProcedure
@@ -354,7 +359,11 @@ export const challengeRouter = router({
     .input(z.object({ id: z.number() }))
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getChallengeEventById(input.id, { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })
+      getChallengeEventById(
+        input.id,
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
     ),
 
   // Moderator: Get all challenge events
