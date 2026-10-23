@@ -48,6 +48,10 @@ describe('releaseVelocity', () => {
   it('needs two samples', () => {
     expect(releaseVelocity([at(10, 0)], 5)).toBe(0);
   });
+
+  it('is zero for samples with no time between them, not infinite', () => {
+    expect(releaseVelocity([at(0, 10), at(50, 10)], 10)).toBe(0);
+  });
 });
 
 describe('shouldGoBack', () => {

@@ -8,6 +8,7 @@ import {
   PHONE_VIEWPORT,
   renderAtViewport,
 } from '../../../../../test/geometry-setup';
+import { SWIPE_COMMIT_FRACTION, SWIPE_FLICK_MIN_PX } from './swipeBack';
 import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
 import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
 import type * as AppProvider from '~/providers/AppProvider';
@@ -131,6 +132,12 @@ function freezeSlide(panel: Element, ms: number) {
 
 const START = { x: 100, y: 300 };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A pause by the clock, so a flick's gap does not depend on when the timer gets to run. */
+const spin = (ms: number) => {
+  const until = performance.now() + ms;
+  while (performance.now() < until);
+};
+const FLICK_PX = 60;
 
 /** A finger on `target`: `to` moves it by (dx, dy) from where it touched down, `lift` lets go there. */
 function finger(target: Element) {
@@ -159,7 +166,6 @@ function finger(target: Element) {
 
 const behindLayer = () => document.querySelector<HTMLElement>('[inert]');
 const panelLeft = (panel: Element) => box(panel).left;
-const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 
 describe('dragging a nested level back', () => {
   async function renderNested() {
@@ -180,14 +186,17 @@ describe('dragging a nested level back', () => {
     await nextLayout();
     expect(panelLeft(panel)).toBeCloseTo(resting + 80, 0);
     // The level behind is on screen, a step to the left of where it will rest.
-    const behind = behindLayer()!;
-    expect(behind.contains(groupRow())).toBe(true);
-    expect(panelLeft(behind)).toBeLessThan(resting);
+    const behind = behindLayer();
+    expect(behind, 'the level behind').not.toBeNull();
+    expect(behind!.contains(groupRow())).toBe(true);
+    const behindEarly = panelLeft(behind!);
+    expect(behindEarly).toBeLessThan(resting);
 
     touch.to(220);
     await nextLayout();
     expect(panelLeft(panel)).toBeCloseTo(resting + 220, 0);
-    expect(panelLeft(behind)).toBeGreaterThan(-100);
+    // It trails the finger: further along, the level behind has come closer to where it rests.
+    expect(panelLeft(behind!)).toBeGreaterThan(behindEarly);
 
     // Rest the finger first: this goes back on the distance dragged, not on a flick.
     await sleep(160);
@@ -195,6 +204,8 @@ describe('dragging a nested level back', () => {
     // Settling takes a visible time: the panel is still there, on its way off.
     expect(downloads()).not.toBeNull();
     expect(panel.style.transition).toContain('transform');
+    // It goes off to the right, a full panel width from where it rests.
+    expect(panel.style.transform).toBe(`translateX(${box(panel).width}px)`);
     await vi.waitFor(() => expect(downloads()).toBeNull());
     expect(behindLayer()).toBeNull();
     const landed = scrollPanel(groupRow());
@@ -218,19 +229,44 @@ describe('dragging a nested level back', () => {
     expect(downloads()).not.toBeNull();
     expect(panelLeft(scrollPanel(downloads()))).toBe(resting);
     expect(scrollPanel(downloads()).style.transform).toBe('');
+    expect(scrollPanel(downloads()).style.transition).toBe('');
+
+    // And the panel is free to be dragged again.
+    const again = finger(downloads()!);
+    again.to(40);
+    again.to(80);
+    await nextLayout();
+    expect(behindLayer()).not.toBeNull();
+    again.to(0);
+    again.lift(0);
+    await vi.waitFor(() => expect(behindLayer()).toBeNull());
   });
 
   test('a quick flick goes back from a short distance', async () => {
     const { panel } = await renderNested();
-    // 60px is past a flick's distance and well short of the commit distance, and it is let go at speed.
-    expect(60).toBeLessThan(box(panel).width * 0.35);
+    // Past a flick's distance, well short of the commit distance, and let go at speed.
+    expect(FLICK_PX).toBeGreaterThanOrEqual(SWIPE_FLICK_MIN_PX);
+    expect(FLICK_PX).toBeLessThan(box(panel).width * SWIPE_COMMIT_FRACTION);
     const touch = finger(downloads()!);
-    touch.to(30);
-    await sleep(8);
-    touch.to(60);
-    touch.lift(60);
+    touch.to(FLICK_PX / 2);
+    spin(8);
+    touch.to(FLICK_PX);
+    touch.lift(FLICK_PX);
     await vi.waitFor(() => expect(downloads()).toBeNull());
     expect(groupRow()).not.toBeNull();
+  });
+
+  test('a drag begun while the panel is still sliding in does not start', async () => {
+    await renderMenu();
+    await press(groupRow()!);
+    const panel = scrollPanel(downloads());
+    expect(panel.getAnimations().length, 'the slide-in should be running').toBeGreaterThan(0);
+    const touch = finger(downloads()!);
+    touch.to(40);
+    touch.to(120);
+    await nextLayout();
+    expect(behindLayer()).toBeNull();
+    touch.lift(120);
   });
 
   test('a mostly vertical drag is left to scroll, and a leftward one is ignored', async () => {
@@ -251,7 +287,35 @@ describe('dragging a nested level back', () => {
     }
   });
 
-  test('a second finger cancels the drag back to the nested level', async () => {
+  // A real second finger sends a touchstart with two touches; a touchmove with two is the fallback.
+  test.each(['touchstart', 'touchmove'])(
+    'a second finger (%s) cancels the drag back to the nested level',
+    async (type) => {
+      const { panel, resting } = await renderNested();
+      const target = downloads()!;
+      const touch = finger(target);
+      touch.to(40);
+      touch.to(90);
+      await nextLayout();
+      expect(panelLeft(panel)).toBeGreaterThan(resting + 80);
+
+      target.dispatchEvent(
+        new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          touches: [0, 1].map(
+            (i) => new Touch({ identifier: i, target, clientX: 100 + i * 50, clientY: 300 })
+          ),
+          changedTouches: [new Touch({ identifier: 1, target, clientX: 150, clientY: 300 })],
+        })
+      );
+      await vi.waitFor(() => expect(behindLayer()).toBeNull());
+      expect(downloads()).not.toBeNull();
+      expect(panelLeft(scrollPanel(downloads()))).toBe(resting);
+    }
+  );
+
+  test('a cancelled touch snaps the panel back', async () => {
     const { panel, resting } = await renderNested();
     const target = downloads()!;
     const touch = finger(target);
@@ -260,18 +324,7 @@ describe('dragging a nested level back', () => {
     await nextLayout();
     expect(panelLeft(panel)).toBeGreaterThan(resting + 80);
 
-    const second = (type: string) =>
-      target.dispatchEvent(
-        new TouchEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          touches: ['a', 'b'].map(
-            (_, i) => new Touch({ identifier: i, target, clientX: 100 + i * 50, clientY: 300 })
-          ),
-          changedTouches: [new Touch({ identifier: 1, target, clientX: 150, clientY: 300 })],
-        })
-      );
-    second('touchmove');
+    target.dispatchEvent(new TouchEvent('touchcancel', { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(behindLayer()).toBeNull());
     expect(downloads()).not.toBeNull();
     expect(panelLeft(scrollPanel(downloads()))).toBe(resting);
@@ -290,7 +343,9 @@ describe('dragging a nested level back', () => {
       } as unknown as MediaQueryList);
     const spy = vi
       .spyOn(window, 'matchMedia')
-      .mockImplementation((query) => (query === REDUCED_MOTION ? reduced(query) : real(query)));
+      .mockImplementation((query) =>
+        query.includes('prefers-reduced-motion') ? reduced(query) : real(query)
+      );
     try {
       const { panel, resting } = await renderNested();
       const touch = finger(downloads()!);

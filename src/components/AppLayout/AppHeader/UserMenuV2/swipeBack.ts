@@ -128,12 +128,19 @@ export function useSwipeBack({ enabled, onBack }: { enabled: boolean; onBack: ()
 
   const bind = {
     onTouchStart: (event: TouchEvent) => {
+      const dragged = gesture.current;
+      // A second finger touching down abandons a drag in progress.
+      if (event.touches.length > 1) {
+        gesture.current = null;
+        if (dragged?.intent === 'back') settle(false, dragged);
+        return;
+      }
       const start = point(event);
       const panel = ref.current;
       // A slide-in still running would override the transform this sets.
-      const busy = settling.current || panel?.getAnimations().length;
+      const busy = settling.current || panel?.getAnimations?.().length;
       gesture.current =
-        start && panel && event.touches.length === 1 && !busy
+        start && panel && !busy
           ? { start, samples: [start], intent: undefined, width: panel.offsetWidth, offset: 0 }
           : null;
     },
