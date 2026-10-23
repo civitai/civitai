@@ -45,7 +45,6 @@
         {/snippet}
         {#snippet badges(c)}
           {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-          {#if c.nsfw}<Badge variant="secondary">nsfw</Badge>{/if}
         {/snippet}
       </CommentList>
 
@@ -65,7 +64,7 @@
             {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
               {c.entityType} {c.entityId}
             {:else}
-              thread {c.threadId}
+              comment {c.id}
             {/if}
           </a>
         {/snippet}

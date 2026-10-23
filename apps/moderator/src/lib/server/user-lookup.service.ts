@@ -654,8 +654,6 @@ const COUNT_SOURCES = [
   ['Posts', 'Post', 'posts', null],
   ['Articles', 'Article', 'articles', null],
   ['Collections', 'Collection', 'collections', null],
-  ['Model comments', 'Comment', null, 'comments'],
-  ['Image comments', 'CommentV2', null, 'comments'],
   ['Reviews', 'ResourceReview', null, 'reviews'],
   // Retool's ninth row. `AllCountsUnion` does not produce it, so it was invisible to an export-driven
   // port — but a moderator judging harassment is counting DMs.
@@ -691,14 +689,46 @@ async function getModelFlags(userId: number) {
   ].filter((f) => f.count > 0);
 }
 
+/**
+ * The two comment rows. "Model comments" are the model-page discussion (rows with an old `Comment`
+ * id, the same split as the lists), "Image comments" everything else (the label is Retool's). Deleted comments are left out: a tombstone keeps its `userId`.
+ */
+async function getCommentCounts(userId: number) {
+  const r = await dbRead
+    .selectFrom('CommentV3')
+    .select((eb) => [
+      eb.fn.count<string>(sql`CASE WHEN "legacyV1Id" IS NOT NULL THEN 1 END`).as('model'),
+      eb.fn.count<string>(sql`CASE WHEN "legacyV1Id" IS NULL THEN 1 END`).as('other'),
+    ])
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null)
+    .executeTakeFirst();
+  return [
+    {
+      label: 'Model comments',
+      count: Number(r?.model ?? 0),
+      profilePath: null,
+      appSection: 'comments',
+    },
+    {
+      label: 'Image comments',
+      count: Number(r?.other ?? 0),
+      profilePath: null,
+      appSection: 'comments',
+    },
+  ];
+}
+
 async function getCommentFlags(userId: number) {
   const r = await dbRead
-    .selectFrom('Comment')
+    .selectFrom('CommentV3')
     .select((eb) => [
       eb.fn.count<string>(sql`CASE WHEN "tosViolation" THEN 1 END`).as('tos'),
       eb.fn.count<string>(sql`CASE WHEN "hidden" THEN 1 END`).as('hidden'),
     ])
     .where('userId', '=', userId)
+    .where('legacyV1Id', 'is not', null)
+    .where('deletedAt', 'is', null)
     .executeTakeFirst();
   return [
     { label: 'ToS', count: Number(r?.tos ?? 0) },
@@ -707,7 +737,7 @@ async function getCommentFlags(userId: number) {
 }
 
 export async function getCounts(userId: number): Promise<UserCounts> {
-  const [counts, modelFlags, commentFlags] = await Promise.all([
+  const [tableCounts, commentCounts, modelFlags, commentFlags] = await Promise.all([
     Promise.all(
       COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {
         const r = await dbRead
@@ -718,9 +748,13 @@ export async function getCounts(userId: number): Promise<UserCounts> {
         return { label, count: Number(r?.count ?? 0), profilePath, appSection };
       })
     ),
+    getCommentCounts(userId),
     getModelFlags(userId),
     getCommentFlags(userId),
   ]);
+  // The comment rows sit where Retool listed them, after Collections.
+  const after = tableCounts.findIndex((c) => c.label === 'Collections') + 1;
+  const counts = [...tableCounts.slice(0, after), ...commentCounts, ...tableCounts.slice(after)];
 
   return counts.map((c) =>
     c.label === 'Models'

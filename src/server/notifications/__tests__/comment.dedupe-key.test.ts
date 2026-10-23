@@ -2,8 +2,10 @@ import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   CommentNotificationPriority,
-  commentDedupeKeyByVersion,
+  commentDedupeKeyByShape,
   commentNotifications,
+  v3EntityJoins,
+  v3ThreadType,
 } from '~/server/notifications/comment.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import {
@@ -49,15 +51,16 @@ describe('comment notifications — shared dedupe key', () => {
   });
 
   it.each(['new-thread-response', 'new-comment-reply'])(
-    '%s picks its namespace from details.version (it can see both comment tables)',
+    '%s picks its namespace from the detail shape (it can see model and other comments)',
     (type) => {
-      expect(sqlFor(type)).toContain(commentDedupeKeyByVersion);
+      expect(sqlFor(type)).toContain(commentDedupeKeyByShape);
     }
   );
 
-  it('the v1/v2 namespace is load-bearing — Comment and CommentV2 ids overlap', () => {
-    // Same id, different table: these must NOT collide, or a legacy-comment notification would
-    // suppress an unrelated CommentV2 one.
+  it('the v1/v2 namespace is load-bearing — rows written before the shared sequence overlap', () => {
+    // A v1 comment's old id and a v2 comment's id can be the same number, and historical rows keep
+    // their namespaced keys; these must NOT collide, or a model-comment notification would suppress
+    // an unrelated one on another surface.
     expect(sqlFor('new-comment')).not.toContain(`'comment:v2:'`);
     expect(sqlFor('new-comment-nested')).not.toContain(`'comment:v2:'`);
   });
@@ -65,12 +68,12 @@ describe('comment notifications — shared dedupe key', () => {
   it.each(['new-comment-reply', 'new-thread-response'])(
     '%s only claims the key for a thread threadUrlMap can address',
     (type) => {
-      // Both fall back to threadType 'comment' for an unmapped Thread entity (clubPost,
-      // model3dReview), which renders a dead link. Claiming there would suppress a working owner
+      // Both fall back to threadType 'comment' for an entity threadUrlMap can't address
+      // (model3dReview), which renders a dead link. Claiming there would suppress a working owner
       // notification — that is exactly how the mention/challenge regression got in.
       expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
-      // V1 rows have no threadType and build their URL from modelId, so they always claim.
-      expect(sqlFor(type)).toContain(`when details->>'version' is null then`);
+      // Model comments have no threadType and build their URL from modelId, so they always claim.
+      expect(sqlFor(type)).toContain(`when details->>'threadType' is null then`);
     }
   );
 
@@ -85,16 +88,19 @@ describe('comment notifications — shared dedupe key', () => {
     // A mention in a model description has no comment behind it, so it must stay opted out (NULL).
     expect(sql).toContain(`when details->>'mentionedIn' <> 'comment' then null`);
     // Comment mentions share the source event with the comment.notifications types.
-    expect(sql).toContain(commentDedupeKeyByVersion);
+    expect(sql).toContain(commentDedupeKeyByShape);
   });
 
-  it.each(V2_TYPES)('%s stamps details.version, which routes the detail fetch', (type) => {
-    // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and sends
-    // anything with `version !== 2` to the legacy `Comment` table. Comment and CommentV2 ids
-    // overlap, so a V2 processor that forgets this doesn't fail — it silently attaches a DIFFERENT
-    // comment's body, avatar and username to the notification. Nothing else guards it.
-    expect(sqlFor(type)).toContain(`'version', 2`);
-  });
+  it.each([...V1_TYPES, ...V2_TYPES])(
+    '%s stamps details.version 3, which routes the detail fetch to CommentV3',
+    (type) => {
+      // `comment.detail-fetcher.ts` registers itself for EVERY key in commentNotifications and
+      // reads CommentV3 for all of them: a versionless row by `legacyV1Id`, a versioned one by
+      // `id`. A processor that drops the version doesn't fail — it silently attaches a DIFFERENT
+      // comment's body, avatar and username, or none. Nothing else guards it.
+      expect(sqlFor(type)).toContain(`'version', 3`);
+    }
+  );
 
   it('every dedupeKey is derived from commentId only — never from the recipient or the type', () => {
     // A key that varied per user or per type would dedupe nothing; this is the whole mechanism.
@@ -217,32 +223,28 @@ describe('a type that claims the dedupe key must render', () => {
           {
             ...base,
             mentionedIn: 'comment',
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'model',
             threadParentId: 1,
           },
           {
             ...base,
             mentionedIn: 'comment',
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'challenge',
             threadParentId: 1,
           },
           {
             ...base,
             mentionedIn: 'comment',
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'model3d',
             threadParentId: 1,
           },
           {
             ...base,
             mentionedIn: 'comment',
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'comicProject',
             threadParentId: 3314,
           },
@@ -252,8 +254,7 @@ describe('a type that claims the dedupe key must render', () => {
           {
             ...base,
             mentionedIn: 'comment',
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'appListing',
             threadParentId: null,
             appListingSlug: 'pixel-forge',
@@ -267,32 +268,30 @@ describe('a type that claims the dedupe key must render', () => {
             modelName: 'M',
           },
         ];
-      // Unions both comment tables, so it must render for both detail shapes.
+      // Reads model and non-model comments, so it must render for both detail shapes.
       case 'new-thread-response':
         return [
-          { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
-          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
-          { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 3, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 3, threadType: 'comicProject', threadParentId: 3314 },
+          { ...base, version: 3, threadType: 'crucible', threadParentId: 12 },
           {
             ...base,
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'appListing',
             threadParentId: null,
             appListingSlug: 'pixel-forge',
           },
           { ...base, modelId: 1, modelName: 'M', parentId: 5, parentType: 'comment' },
         ];
-      // CommentV2 only — its SQL always stamps version 2.
+      // Non-model comments only — always the thread-addressed shape.
       case 'new-comment-reply':
         return [
-          { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
-          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
-          { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 3, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 3, threadType: 'comicProject', threadParentId: 3314 },
+          { ...base, version: 3, threadType: 'crucible', threadParentId: 12 },
           {
             ...base,
-            version: 2,
-            threadId: 7,
+            version: 3,
             threadType: 'appListing',
             threadParentId: null,
             appListingSlug: 'pixel-forge',
@@ -369,22 +368,14 @@ describe('a type that claims the dedupe key must render', () => {
   });
 
   it('new-mention resolves the same thread entities as the types it outranks', () => {
-    // It suppresses new-thread-response, so anything that one can address, this one must address too.
+    // It suppresses new-thread-response, so anything that one can address, this one must address
+    // too. Both build the thread type and the slug from the same shared fragments, so parity is
+    // asserted as both carrying them rather than per entity.
     const mention = defs['new-mention'].prepareQuery!({ lastSent: '2026-01-01' });
-    for (const entity of ['challengeId', 'model3dId', 'comicProjectId']) {
-      expect(mention, `new-mention resolves ${entity}`).toContain(`t."${entity}"`);
-    }
-    // ...and it ADDRESSES appListing threads, for the same reason the reply processors now do.
-    //
-    // 🔴 INVERTED, deliberately. This used to assert the opposite — that new-mention carried the
-    // same `appListingId IS NULL` exclusion the reply processors did. The parity invariant is
-    // unchanged and is what matters: whatever new-thread-response can address, new-mention must
-    // address too, or a mention silently suppresses a working thread-response. Both sides moved
-    // together, so the pair is asserted together.
     const threadResponse = defs['new-thread-response'].prepareQuery!({ lastSent: '2026-01-01' });
     for (const sql of [mention, threadResponse]) {
-      expect(sql).toContain('LEFT JOIN "app_listings" al ON al."serial_id" =');
-      expect(sql).toContain(`WHEN al.slug IS NOT NULL THEN 'appListing'`);
+      expect(sql).toContain(v3ThreadType('c'));
+      expect(sql).toContain(v3EntityJoins('c'));
       expect(sql).toContain(`'appListingSlug', al.slug`);
     }
   });

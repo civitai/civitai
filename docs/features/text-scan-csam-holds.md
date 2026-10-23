@@ -31,8 +31,10 @@ A profile hold shows a "Profile" card: avatar, cover and SFW cover as captioned 
 every other image) and the bio, message, their SFW variants and location as plain text. A comment
 hold shows a "Commented on" card with the parent's title, a link and up to four of its images. A
 legacy model `Comment` resolves to its model (the hold row also links to the comment on the model
-page). A `CommentV2` resolves through its thread, or its root thread for a reply, to a post, model,
-image or article; other targets (bounty, review, question, answer) show the type and a link only. All
+page). A `CommentV2` resolves to the entity on its `CommentV3` row (a reply carries its entity on its own
+row): a post, model, image or article gets the full card, any other entity type shows the type and a
+link only, and a comment with no `CommentV3` row (question and answer comments were never migrated)
+has no parent card. All
 of it is read for the page's holds in one query per type and, like the cover images, a failed read
 leaves the card out rather than the page down.
 

@@ -295,17 +295,12 @@ export const getAllTimeTotals = createCache({
       getClickhouse().$query<{ reactions: number | string }>(
         `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
       ),
+      // Replies count too: each carries the image on its own row. Deleted comments do not.
       sql<{ comments: number | string }>`
-        WITH roots AS MATERIALIZED (
-          SELECT t.id FROM "Thread" t JOIN "Image" i ON i.id = t."imageId" WHERE i."userId" = ${uid}
-        ), threads AS MATERIALIZED (
-          SELECT id FROM roots
-          UNION ALL
-          SELECT c.id FROM "Thread" c JOIN roots r ON c."rootThreadId" = r.id
-        )
         SELECT count(*) AS comments
-        FROM "CommentV2" cv JOIN threads th ON th.id = cv."threadId"
-        WHERE cv."userId" <> ${uid}
+        FROM "CommentV3" cv JOIN "Image" i ON i.id = cv."entityId"
+        WHERE cv."entityType" = 'image' AND i."userId" = ${uid}
+          AND cv."userId" <> ${uid} AND cv."deletedAt" IS NULL
       `.execute(dbRead),
     ]);
     return {
@@ -757,9 +752,8 @@ async function fetchImageViewDetail(
       ),
       sql<{ date: string; value: number | string }>`
       SELECT c."createdAt"::date AS date, count(*)::int AS value
-      FROM "CommentV2" c
-      JOIN "Thread" t ON t.id = c."threadId"
-      WHERE (t."imageId" = ${id} OR t."rootThreadId" IN (SELECT id FROM "Thread" WHERE "imageId" = ${id}))
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'image' AND c."entityId" = ${id} AND c."deletedAt" IS NULL
         AND c."createdAt" >= ${from}::date AND c."createdAt" < (${to}::date + 1)
       GROUP BY date ORDER BY date
     `

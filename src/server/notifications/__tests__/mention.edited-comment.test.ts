@@ -6,31 +6,29 @@ const sql = (mentionNotifications as unknown as Record<string, Def>)['new-mentio
   lastSent: '2026-10-06T23:38:00.000Z',
 });
 
-const branches = sql.split(/\bUNION\b/);
-const commentBranch = (table: string) => {
-  const branch = branches.find((b) => b.includes(`FROM "${table}" c`));
-  if (!branch) throw new Error(`no branch reads "${table}"`);
+// The model-description arm is UNIONed on; the comment arm is the one that reads CommentV3.
+const commentBranch = () => {
+  const branch = sql.split(/UNION/).find((b) => b.includes('FROM "CommentV3" c'));
+  if (!branch) throw new Error('no branch reads "CommentV3"');
   return branch;
 };
 
 describe('new-mention — a mention added by editing a comment', () => {
-  it.each(['CommentV2', 'Comment'])('%s rows edited since the last run are re-read', (table) => {
-    expect(commentBranch(table)).toMatch(
-      /c\."createdAt" > '2026-10-06T23:38:00\.000Z' OR c\."updatedAt" > '2026-10-06T23:38:00\.000Z'/
+  it('rows edited since the last run are re-read', () => {
+    expect(commentBranch()).toMatch(
+      /c."createdAt" > '2026-10-06T23:38:00.000Z' OR c."updatedAt" > '2026-10-06T23:38:00.000Z'/
     );
   });
 
-  it.each(['CommentV2', 'Comment'])('%s edits only count on recently created comments', (table) => {
-    expect(commentBranch(table)).toContain(
+  it('edits only count on recently created comments', () => {
+    expect(commentBranch()).toContain(
       `c."createdAt" > '2026-10-06T23:38:00.000Z'::timestamp - interval '1 day'`
     );
   });
 
-  it.each(['CommentV2', 'Comment'])(
-    '%s comments removed by moderation or hidden stay quiet when edited',
-    (table) => {
-      expect(commentBranch(table)).toContain(`c."tosViolation" = false`);
-      expect(commentBranch(table)).toContain(`c.hidden IS NOT TRUE`);
-    }
-  );
+  it('comments removed by moderation, hidden or deleted stay quiet when edited', () => {
+    expect(commentBranch()).toContain(`c."tosViolation" = false`);
+    expect(commentBranch()).toContain(`c.hidden IS NOT TRUE`);
+    expect(commentBranch()).toContain(`c."deletedAt" IS NULL`);
+  });
 });

@@ -758,20 +758,11 @@ describe('the detector has no write surface', () => {
     expect(importSpecifiers(planted)).toEqual(['~/server/services/user-restriction.service']);
   });
 
-  it('performs exactly six database operations, all of them reads', () => {
-    // 🔴 THE LEDGER. A write added anywhere in these files is a seventh member and fails here; a
-    // read removed is a missing member and fails here too (dropping `commentV2.groupBy` would
-    // silently turn every newer-comment-only account's post count into a zero).
-    //
-    // 🔴 IT WENT FROM FIVE TO SEVEN WITH THE HEURISTICS, THEN SEVEN TO EIGHT WITH THE FILENAME
-    // SOURCE, AND NOW EIGHT TO SIX. The two that left are `comment.findMany` and
-    // `commentV2.findMany` — the comment-text samples the templating heuristic used to compare —
-    // deleted with that fingerprint source. They are the whole database saving of that change, and
-    // this ledger is where it is legible: two per-run reads on the comment tables, gone.
-    //
-    // What did NOT go: `comment.groupBy`/`commentV2.groupBy`. Those are the COHORT's post counts,
-    // a different question on the same tables, and they decide membership rather than feed a
-    // fingerprint.
+  it('performs exactly five database operations, all of them reads', () => {
+    // 🔴 THE LEDGER. A Prisma write added to these files is a new member and fails here; a read
+    // removed is a missing one (dropping `commentV3.groupBy` zeroes every account's comment count).
+    // It sees neither ClickHouse (ledger below) nor Kysely: `commentV3Counts` reads through
+    // `kyselyRead.selectFrom`, which the Kysely ledger below pins to the read client.
     //
     // 🔴 `image.findMany` IS ONE MEMBER SERVING TWO READS. The filename source reads uploaded
     // `Image.name` values; `asset-staging` reads the staged subset's timestamps. This ledger records
@@ -787,12 +778,32 @@ describe('the detector has no write surface', () => {
     // ClickHouse ledger below exists. Adding a source that is not Prisma leaves this assertion
     // completely unmoved, which is the exact shape of hole this file is built to refuse.
     expect(databaseOperations(detectorSources())).toEqual([
-      'comment.groupBy',
-      'commentV2.groupBy',
+      'commentV3.groupBy',
       'image.findMany',
       'image.groupBy',
       'model.groupBy',
       'user.findMany',
+    ]);
+  });
+
+  it('takes only the read-only Kysely client — the Kysely ledger', () => {
+    // The operation ledger anchors on Prisma handles and cannot see a Kysely call, and the import
+    // ledger names the module but not the binding. `kyselyDb` also exports `kyselyWrite`, so the
+    // binding is the thing to pin: with only `kyselyRead` in scope no write can be built here.
+    const KYSELY_IMPORT = /import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*'~\/server\/db\/kyselyDb'/g;
+    const bindingsIn = (source: string) =>
+      [...source.matchAll(KYSELY_IMPORT)].flatMap((m) =>
+        m[1]
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean)
+      );
+    const bindings = new Set(detectorSources().flatMap(({ source }) => bindingsIn(source)));
+    expect([...bindings].sort()).toEqual(['kyselyRead']);
+    // Negative control: the scan sees a write client when one is imported.
+    expect(bindingsIn("import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';")).toEqual([
+      'kyselyRead',
+      'kyselyWrite',
     ]);
   });
 
@@ -877,6 +888,9 @@ describe('the detector has no write surface', () => {
       'crypto',
       '~/server/clickhouse/client',
       '~/server/db/client',
+      // For `kyselyRead` in cohort.ts. The module also exports `kyselyWrite`; the Kysely ledger
+      // below is what checks which one is used.
+      '~/server/db/kyselyDb',
       '~/server/logging/client',
       '~/server/services/bot-account-detection/cohort',
       '~/server/services/bot-account-detection/evidence',

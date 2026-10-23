@@ -27,29 +27,32 @@ export const reactionNotifications = createNotificationProcessor({
       ), affected AS (
         SELECT DISTINCT
           "commentId" affected_id
-        FROM "CommentReaction"
+        FROM "CommentV3Reaction"
         WHERE "createdAt" > '${lastSent}'
       ), affected_value AS (
         SELECT
           a.affected_id,
           COUNT(r."commentId") reaction_count
-        FROM "CommentReaction" r
+        FROM "CommentV3Reaction" r
         JOIN affected a ON a.affected_id = r."commentId"
         GROUP BY a.affected_id
         HAVING COUNT(*) >= ${commentReactionMilestones[0]}
       ), reaction_milestone AS (
+        -- Ids in the key and the permalink are the v1 ids: a comment renumbered by the backfill must
+        -- not re-announce every milestone it already passed under its old id.
         SELECT
           c."userId" "ownerId",
           JSON_BUILD_OBJECT(
             'modelName', m.name,
             'modelId', m.id,
-            'rootCommentId', COALESCE(c."parentId", c.id),
-            'commentId', c.id,
+            'rootCommentId', COALESCE(rt."legacyV1Id", rt.id),
+            'commentId', COALESCE(c."legacyV1Id", c.id),
             'reactionCount', ms.value
           ) "details"
         FROM affected_value a
-        JOIN "Comment" c on c.id = a.affected_id
-        JOIN "Model" m ON m.id = c."modelId"
+        JOIN "CommentV3" c ON c.id = a.affected_id AND c."entityType" = 'model' AND c."deletedAt" IS NULL
+        JOIN "CommentV3" rt ON rt.id = c."rootId"
+        JOIN "Model" m ON m.id = c."entityId"
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE c."createdAt" > '${milestoneNotificationFix}'
       )

@@ -1,5 +1,33 @@
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+
+const kysely = vi.hoisted(() => {
+  const state = {
+    calls: [] as { table: string; where: unknown[][] }[],
+    answers: [] as unknown[],
+  };
+  const selectFrom = (table: string) => {
+    const call = { table, where: [] as unknown[][] };
+    state.calls.push(call);
+    const query = {
+      select: () => query,
+      where: (...a: unknown[]) => {
+        call.where.push(a);
+        return query;
+      },
+      executeTakeFirst: async () =>
+        state.answers.length > 1 ? state.answers.shift() : state.answers[0],
+    };
+    return query;
+  };
+  return { state, selectFrom };
+});
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyRead: { selectFrom: kysely.selectFrom },
+}));
+
 import { sectionMuteSchema } from '~/server/schema/commentv2.schema';
 import {
   getSectionMuted,
@@ -7,6 +35,7 @@ import {
   toggleSectionMute,
   toggleThreadMute,
 } from '../commentsv2.service';
+import { notCommentMuted } from '~/server/notifications/base.notifications';
 
 /**
  * Muting a comment's thread can run before that thread exists — a comment's reply thread is created
@@ -17,6 +46,8 @@ import {
 const db = dbMock.dbWrite;
 
 beforeEach(() => {
+  kysely.state.calls.length = 0;
+  kysely.state.answers = [undefined];
   vi.clearAllMocks();
   db.threadMute.deleteMany.mockResolvedValue({ count: 0 });
   db.threadMute.createMany.mockResolvedValue({ count: 1 });
@@ -266,46 +297,39 @@ describe('getThreadMuted', () => {
 
     expect(dbMock.dbRead.commentV2.findUnique).toHaveBeenCalledWith({
       where: { id: 5 },
-      select: { threadId: true, tosViolation: true, childThread: { select: { id: true } } },
+      select: { tosViolation: true, childThread: { select: { id: true } } },
     });
   });
 
   /**
-   * The seed and the `own` operand are separate expressions over the same two ids, so pointing
-   * either at the wrong one is silent. Seeded wrong, a user's own mute is invisible; `own` keyed
-   * wrong, their own mute reports as inherited and the menu refuses to let them unmute it.
+   * The menu has to read the predicate the notification suppression reads, or the label and the
+   * notification disagree. Asserted on the statement, because the mock answers whatever SQL it is
+   * handed: a hand-written copy of the predicate would pass every row-mocking test below.
    */
-  it('seeds the walk at the reply thread and keys `own` on it', async () => {
+  it('reads the suppression predicate itself, keyed on this comment and this caller', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
     walk([{ own: true, ancestor: false }]);
 
     await getThreadMuted({ commentId: 5, userId: 42 });
 
     const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
-    // The CTE arrives as a `Prisma.raw` value rather than in the strings array, so read its own SQL.
-    const [cte, ...values] = call.slice(1) as [{ sql: string }, ...number[]];
-    expect(cte.sql).toContain('SELECT 77 "id", 0 "depth"');
-    expect(values).toEqual([77, 77, 42]);
+    const [predicate, ...values] = call.slice(1) as [{ sql: string }, ...number[]];
+    expect(predicate.sql).toBe(notCommentMuted('u.id', 'c'));
+    // Caller first, comment second: swapped, a mute set by user 5 on comment 42 would answer.
+    expect(values).toEqual([42, 5]);
 
-    // Both `bool_or` operands interpolate the SAME id, so the values array cannot tell them apart:
-    // swap the two aliases and it is byte-identical while `viaAncestor` inverts. And `<>` in place
-    // of `IS DISTINCT FROM` is NULL for every row once the seed is NULL, which is precisely the
-    // reply-less bug this pair exists to guard. Only the statement text can see either.
     const statement = (call[0] as string[]).join('?');
-    expect(statement).toContain('bool_or(tm."threadId" IS NOT NULL AND mt."id" = ?::int) "own"');
+    // `ancestor` is the suppression's verdict inverted; `own` is this user's mute on this comment.
+    expect(statement).toContain('NOT ? "ancestor"');
     expect(statement).toContain(
-      'bool_or(tm."threadId" IS NOT NULL AND mt."id" IS DISTINCT FROM ?::int) "ancestor"'
+      'EXISTS (SELECT 1 FROM "CommentMute" m WHERE m."userId" = u.id AND m."commentId" = c.id) "own"'
     );
+    expect(statement).toContain('FROM "CommentV3" c, (SELECT ?::int AS id) u');
+    // The lock covers the comment itself, every ancestor and the topic, as the create refuses.
+    expect(statement).toContain('lk.path @> c.path AND lk.locked');
     expect(statement).toContain(
-      'LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ?'
+      'ct."entityType" = c."entityType" AND ct."entityId" = c."entityId"'
     );
-
-    // The row type is a cast, not a checked contract: drop this column and `row.locked` is
-    // undefined, `?? false` makes it false, and `canMute` is unconditionally true. Every test here
-    // supplies `locked` from the mock, so nothing else observes what the SQL computes. The join
-    // must stay inner — outer, `th.locked` is NULL on an unresolvable hop and `bool_or` skips it.
-    expect(statement).toContain('bool_or(th.locked) "locked"');
-    expect(statement).toMatch(/\n\s*JOIN "Thread" th ON th\.id = mt\."id"/);
   });
 
   /**
@@ -353,7 +377,7 @@ describe('getThreadMuted', () => {
    * to has none — and returning early there reported "not muted" on most comments inside a muted
    * discussion while notifications were correctly suppressed.
    */
-  it('still walks ancestors for a comment nobody has replied to', async () => {
+  it('reports an ancestor mute on a comment nobody has replied to', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
     walk([{ own: false, ancestor: true, locked: false }]);
 
@@ -363,10 +387,6 @@ describe('getThreadMuted', () => {
       // No reply thread, but the chain is unlocked, so the create would succeed.
       canMute: true,
     });
-    // Seeded from the comment's own thread when there is no reply thread — mutating the fallback
-    // seeds the walk nowhere and every row-mocking test here would still pass.
-    const [, cte] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [unknown, { sql: string }];
-    expect(cte.sql).toContain('SELECT 10 "id", 0 "depth"');
   });
 
   /**
@@ -428,7 +448,7 @@ describe('getSectionMuted', () => {
     ['article', 'articleId'],
   ] as const)('resolves the %s section by its own column', async (entityType, column) => {
     dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
-    dbMock.dbRead.threadMute.findUnique.mockResolvedValue(null);
+    kysely.state.answers = [undefined];
 
     await getSectionMuted({ entityType, entityId: 5, userId: 7 });
 
@@ -449,7 +469,7 @@ describe('getSectionMuted', () => {
 
   it('reports a section that exists and is not muted', async () => {
     dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
-    dbMock.dbRead.threadMute.findUnique.mockResolvedValue(null);
+    kysely.state.answers = [undefined];
 
     expect(await getSectionMuted({ entityType: 'image', entityId: 5, userId: 1 })).toEqual({
       muted: false,
@@ -459,15 +479,29 @@ describe('getSectionMuted', () => {
 
   it('scopes the lookup to the caller', async () => {
     dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
-    dbMock.dbRead.threadMute.findUnique.mockResolvedValue({ userId: 7 });
+    kysely.state.answers = [{ userId: 7 }];
 
     const result = await getSectionMuted({ entityType: 'image', entityId: 5, userId: 7 });
 
-    expect(dbMock.dbRead.threadMute.findUnique).toHaveBeenCalledWith({
-      where: { userId_threadId: { userId: 7, threadId: 42 } },
-      select: { userId: true },
-    });
+    const [lookup] = kysely.state.calls;
+    expect(lookup.table).toBe('CommentTopicMute');
+    expect(lookup.where).toEqual([
+      ['userId', '=', 7],
+      ['entityType', '=', 'image'],
+      ['entityId', '=', 5],
+    ]);
     expect(result).toEqual({ muted: true, hasThread: true });
+  });
+
+  it('answers not-muted for a retired thread type that has no topic, without a lookup', async () => {
+    // `question` is a valid section type but not a CommentEntityType; casting it would fail the query.
+    dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
+
+    expect(await getSectionMuted({ entityType: 'question', entityId: 5, userId: 7 })).toEqual({
+      muted: false,
+      hasThread: true,
+    });
+    expect(kysely.state.calls).toHaveLength(0);
   });
 });
 
