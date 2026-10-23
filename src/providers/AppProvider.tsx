@@ -66,13 +66,17 @@ type AppProviderProps = {
   isAuthed: boolean;
   /**
    * Only for an app that booted on a static shell page: `null` until its page data arrives (the
-   * viewer-dependent queries below stay off and `regionPending` is true), then the region and
-   * verified-bot values a server render would have seeded, applied once.
+   * viewer-dependent queries below stay off and `regionPending` is true), then the viewer's
+   * region, and the ToS and site-alert seeds the shell render did not carry, applied once.
    */
   shell?: AppShellUpgrade | null;
 };
 
-export type AppShellUpgrade = { region?: RegionInfo; verifiedBot: VerifiedBot | null };
+export type AppShellUpgrade = {
+  region?: RegionInfo;
+  tosMeta?: TosMeta;
+  siteAlerts?: SiteAlertsPayload;
+};
 
 type AppContext = {
   seed: number;
@@ -222,7 +226,8 @@ export function AppProvider({
         : {
             ...state,
             region: shell?.region,
-            verifiedBot: shell?.verifiedBot ?? null,
+            tosMeta: state.tosMeta ?? shell?.tosMeta,
+            siteAlerts: state.siteAlerts ?? shell?.siteAlerts,
             regionPending: shellPending,
           },
     [state, shell, shellPending]

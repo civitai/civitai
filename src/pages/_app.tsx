@@ -167,7 +167,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: {
       session,
       colorScheme,
-      cookies: pageCookies = parseCookies(getCookies()),
+      cookies: pageCookies,
       flags,
       userFeatureFlags,
       tosMeta,

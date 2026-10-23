@@ -1,11 +1,10 @@
-import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { TosMeta } from '~/server/services/content.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
-import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   SHELL_BYPASS_PARAM,
   SHELL_BYPASS_VALUE,
@@ -14,31 +13,33 @@ import {
 import type { Session } from '~/types/session';
 
 /**
- * The 200 body of `GET /api/page-data/images/[imageId]` after its JSON round trip: members the
- * endpoint leaves `undefined` are absent.
+ * The members of the 200 body of `GET /api/page-data/images/[imageId]` that a shell boot reads,
+ * after the JSON round trip (members the endpoint leaves `undefined` are absent).
  */
 export type ShellPageData = {
   session: Session | null;
   settings?: UserContentSettings;
   tosMeta?: TosMeta;
-  announcements?: AnnouncementsSeed;
   following?: number[];
-  browsingSettingsAddons?: BrowsingSettingsAddon[];
-  liveNow: boolean;
   navBanners?: NavBanner[];
+  siteAlerts?: SiteAlertsPayload;
   flags: FeatureAccess;
   userFeatureFlags?: FeatureAccess;
   chatSettings?: UserSettingsChat;
-  region?: RegionInfo;
+  region: RegionInfo;
   adsGated: boolean;
   trpcState: unknown;
 };
 
-/** Present in every 200 body the endpoint sends; pinned against the endpoint by its own suite. */
+/**
+ * Without any of these the body is not adopted and the page falls back to a full render. `region`
+ * is here because consent fails open on a missing region; the full render fails closed instead.
+ * Pinned against the endpoint by its own suite.
+ */
 export const SHELL_PAGE_DATA_REQUIRED_KEYS = [
   'session',
-  'liveNow',
   'flags',
+  'region',
   'adsGated',
   'trpcState',
 ] as const;
@@ -97,7 +98,8 @@ export function shellFallbackUrl(status: number, href: string): string | null {
   const url = new URL(href);
   if (url.searchParams.get(SHELL_BYPASS_PARAM) === SHELL_BYPASS_VALUE) return null;
   url.searchParams.set(SHELL_BYPASS_PARAM, SHELL_BYPASS_VALUE);
-  return `${url.pathname}${url.search}${url.hash}`;
+  // A path starting `//` would be read as another origin by `location.replace`.
+  return `/${url.pathname.replace(/^\/+/, '')}${url.search}${url.hash}`;
 }
 
 /** Indirection so tests can observe the navigation; `replace` keeps the shell out of history. */

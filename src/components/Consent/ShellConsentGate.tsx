@@ -2,7 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { ConsentBanner } from './ConsentBanner';
 import { CONSENT_NOT_REQUIRED, ThirdPartyConsentContext } from './consent.context';
-import { isConsentRequired, writeConsentCookie, type ConsentDecision } from './consent.utils';
+import {
+  initialConsentDecision,
+  isConsentRequired,
+  requiredConsentContext,
+  writeConsentCookie,
+  type ConsentDecision,
+} from './consent.utils';
 
 const REGION_PENDING: ThirdPartyConsentContext = {
   consent: null,
@@ -40,7 +46,7 @@ export function ShellConsentGate({
   // and the session have both been applied.
   const [initial, setInitial] = useState<ConsentDecision | null | undefined>(undefined);
   if (!pending && initial === undefined)
-    setInitial(initialConsent ?? (loggedIn ? 'accepted' : null));
+    setInitial(initialConsentDecision(initialConsent, loggedIn));
   const [choice, setChoice] = useState<{ consent: ConsentDecision | null } | null>(null);
   const consent = choice ? choice.consent : initial ?? null;
 
@@ -56,14 +62,7 @@ export function ShellConsentGate({
   const value = useMemo<ThirdPartyConsentContext>(() => {
     if (pending) return REGION_PENDING;
     if (!required) return CONSENT_NOT_REQUIRED;
-    return {
-      consent,
-      required: true,
-      allowed: consent === 'accepted',
-      accept: () => persist('accepted'),
-      reject: () => persist('rejected'),
-      reset,
-    };
+    return requiredConsentContext(consent, persist, reset);
   }, [pending, required, consent, persist, reset]);
 
   return (

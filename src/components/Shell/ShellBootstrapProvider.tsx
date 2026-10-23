@@ -43,7 +43,8 @@ export function useShellReady() {
 /** The `_app` values a shell boot replaces, as the current page passed them. */
 type ShellPageInputs = {
   onShellPage: boolean;
-  cookies: ParsedCookies;
+  /** Absent on a client-side navigation, where the jar is read instead. */
+  cookies?: ParsedCookies;
   hasAuthCookie: boolean;
   adsGated: boolean;
 };
@@ -105,15 +106,19 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     if (!active) return;
     setCookies(parseCookies(getCookies()));
     let cancelled = false;
+    const fallBack = (status: number) => {
+      setFailed(true);
+      const to = shellFallbackUrl(status, window.location.href);
+      if (to) shellNavigation.replace(to);
+    };
     void adoptShellPageData().then((result) => {
       if (cancelled) return;
-      if (!result.ok) {
-        setFailed(true);
-        const to = shellFallbackUrl(result.status, window.location.href);
-        if (to) shellNavigation.replace(to);
-        return;
+      if (!result.ok) return fallBack(result.status);
+      try {
+        seedShellCaches(queryClient, result.data);
+      } catch {
+        return fallBack(500);
       }
-      seedShellCaches(queryClient, result.data);
       setData(result.data);
     });
     return () => {
@@ -128,12 +133,17 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
   );
   const flagsSeed = useMemo(() => (data && ready ? { flags: data.flags } : null), [data, ready]);
   const appShell = useMemo(
-    () => (data && ready ? { region: data.region, verifiedBot: null } : null),
+    () =>
+      data && ready
+        ? { region: data.region, tosMeta: data.tosMeta, siteAlerts: data.siteAlerts }
+        : null,
     [data, ready]
   );
 
   const pageValues = {
-    cookies: page.cookies,
+    // `_app`'s own default, kept off the shell page: there the hydration render must match the
+    // viewer-independent server HTML, so the jar is read only in the effect above.
+    cookies: page.cookies ?? parseCookies(page.onShellPage ? {} : getCookies()),
     hasAuthCookie: page.hasAuthCookie,
     adsGated: page.adsGated,
   };
@@ -144,7 +154,7 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     // by client navigation afterwards carries real ones.
     ...(page.onShellPage
       ? {
-          cookies: cookies ?? page.cookies,
+          cookies: cookies ?? pageValues.cookies,
           hasAuthCookie: data && ready ? !!data.session : page.hasAuthCookie,
           adsGated: data && ready ? data.adsGated : true,
         }

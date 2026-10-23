@@ -316,7 +316,7 @@ function ShellAppShell({
   shell,
   initialConsent,
 }: {
-  shell: { region?: RegionInfo; verifiedBot: null } | null;
+  shell: { region?: RegionInfo } | null;
   initialConsent: ConsentDecision | null;
 }) {
   return (
@@ -358,9 +358,7 @@ describe('ThirdPartyConsentProvider — on a shell boot, closed until the region
     );
     await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
 
-    await rerender(
-      <ShellAppShell shell={{ region: CALIFORNIA, verifiedBot: null }} initialConsent={null} />
-    );
+    await rerender(<ShellAppShell shell={{ region: CALIFORNIA }} initialConsent={null} />);
 
     await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
@@ -373,9 +371,7 @@ describe('ThirdPartyConsentProvider — on a shell boot, closed until the region
     const { rerender } = await renderWithProviders(
       <ShellAppShell shell={null} initialConsent="rejected" />
     );
-    await rerender(
-      <ShellAppShell shell={{ region: CALIFORNIA, verifiedBot: null }} initialConsent="rejected" />
-    );
+    await rerender(<ShellAppShell shell={{ region: CALIFORNIA }} initialConsent="rejected" />);
 
     await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
@@ -388,9 +384,7 @@ describe('ThirdPartyConsentProvider — on a shell boot, closed until the region
     );
     await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
 
-    await rerender(
-      <ShellAppShell shell={{ region: TEXAS, verifiedBot: null }} initialConsent={null} />
-    );
+    await rerender(<ShellAppShell shell={{ region: TEXAS }} initialConsent={null} />);
 
     await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-required', 'false');

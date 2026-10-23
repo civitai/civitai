@@ -70,9 +70,13 @@ export function SessionProvider({
   // `data` IS the loading state: `undefined` = not yet resolved (loading), `null` = resolved signed-out,
   // `Session` = signed-in. So there's no separate loading flag — and a background refetch (focus / interval /
   // signal-driven update) never flips status back to 'loading', which would flash gated UI despite valid data.
-  const [data, setData] = useState<Session | null | undefined>(initial);
+  // A seed on its way (`null` at mount) outranks `initial`: a shell render's session props say
+  // nothing about the viewer.
+  const [data, setData] = useState<Session | null | undefined>(() =>
+    seed === null ? undefined : initial
+  );
   // True once we have an authoritative value (a non-undefined seed, or a completed fetch).
-  const resolved = useRef(initial !== undefined);
+  const resolved = useRef(seed !== null && initial !== undefined);
 
   // Adopted while rendering, so the providers below see the session in the same render as the
   // rest of the seed (the per-user flag overlay query is enabled by it).
