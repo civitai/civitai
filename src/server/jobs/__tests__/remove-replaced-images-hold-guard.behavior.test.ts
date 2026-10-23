@@ -52,7 +52,11 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, dequeued: [] as number[] }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  dequeued: [] as number[],
+  restamped: [] as number[],
+}));
 
 const HOLD_MIGRATION = path.resolve(
   __dirname,
@@ -67,7 +71,9 @@ const BLOCKED_USER = 4; // another of their images is CSAM-blocked, on no sent r
 const LISTED_USER = 5; // another of their images is listed on a holding report -> kept
 const MARKED_USER = 6; // an active hold marker -> kept
 const PLACEHOLDER_OWNER = -1; // -> kept
-const SELF_FLAGGED_USER = 7; // the replaced image itself is flagged for CSAM review -> kept
+// The replaced image itself is flagged for CSAM review -> kept. Its flag also holds the account, so
+// this pins the outcome, not the row-level re-check, which only matters for a flag landing mid-DELETE.
+const SELF_FLAGGED_USER = 7;
 const LAPSED_USER = 8; // their report was sent and archived over a year ago -> deleted
 const OTHER_FLAG_USER = 10; // another image has a review flag that is not CSAM -> deleted
 const RELEASED_USER = 11; // their hold marker was released -> deleted
@@ -180,6 +186,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   holder.dequeued = [];
+  holder.restamped = [];
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
 
@@ -205,8 +212,10 @@ beforeEach(async () => {
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
-    if (strings.join('').includes('DELETE FROM "JobQueue"'))
-      holder.dequeued.push(...(values.find(Array.isArray) as number[]));
+    const sql = strings.join('');
+    const ids = (values.find(Array.isArray) as number[]) ?? [];
+    if (sql.includes('DELETE FROM "JobQueue"')) holder.dequeued.push(...ids);
+    if (sql.includes('UPDATE "JobQueue" SET "createdAt"')) holder.restamped.push(...ids);
     return 0;
   }) as never);
 
@@ -274,6 +283,12 @@ describe('remove-replaced-images under an account hold', () => {
     expect(sorted(holder.dequeued)).toEqual(sorted([...DELETED, READOPTED, GONE]));
   });
 
+  it('moves a held image to the back of the queue, so held rows cannot fill the batch', async () => {
+    await run();
+
+    expect(sorted(holder.restamped)).toEqual(sorted(HELD));
+  });
+
   it('holds every image when the marker table exists without its view', async () => {
     await holder.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserMoved"`);
     try {
@@ -282,6 +297,9 @@ describe('remove-replaced-images under an account hold', () => {
       expect(result.deleted).toBe(0);
       for (const id of QUEUED.filter((id) => id !== GONE)) expect(await remaining()).toContain(id);
       expect(sorted(holder.dequeued)).toEqual([READOPTED, GONE]);
+      expect(sorted(holder.restamped)).toEqual(
+        sorted(QUEUED.filter((id) => id !== READOPTED && id !== GONE))
+      );
     } finally {
       await holder.db.exec(`ALTER VIEW "EvidenceHeldUserMoved" RENAME TO "EvidenceHeldUser"`);
     }

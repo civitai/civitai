@@ -123,10 +123,20 @@ export const removeReplacedImages = createJob(
       await getStillPresentImageIds(deletableIds.filter((id) => !deletedSet.has(id)))
     );
 
-    // A held image stays queued until its hold ends. Everything else leaves: the deleted ones are
-    // done, one deleted some other way has nothing left to reap, and a re-adopted one has no pending
-    // replacement. If it is replaced again, the enqueue re-inserts it with a fresh clock (ON CONFLICT
-    // DO UPDATE in `queueReplacedImageDeletion`).
+    // A held image stays queued until its hold ends, re-stamped so it goes to the back of the
+    // oldest-first batch and is checked again a window later, rather than filling every run's batch.
+    if (held.size) {
+      await dbWrite.$executeRaw`
+        UPDATE "JobQueue" SET "createdAt" = NOW()
+        WHERE type = ${JobQueueType.ReplacedImageDelete}::"JobQueueType"
+          AND "entityType" = ${EntityType.Image}::"EntityType"
+          AND "entityId" = ANY(${[...held]}::integer[])
+      `;
+    }
+
+    // Everything else leaves: the deleted ones are done, one deleted some other way has nothing left
+    // to reap, and a re-adopted one has no pending replacement. If it is replaced again, the enqueue
+    // re-inserts it with a fresh clock (ON CONFLICT DO UPDATE in `queueReplacedImageDeletion`).
     const dequeueIds = queuedIds.filter((id) => !held.has(id));
     if (dequeueIds.length) {
       await dbWrite.$executeRaw`
