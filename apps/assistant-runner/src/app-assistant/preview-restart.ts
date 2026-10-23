@@ -1,6 +1,8 @@
 import {
   SandboxApiError,
   createSandboxClient,
+  isAppBlockId,
+  previewGrantConversation,
   type Sandbox,
   type SandboxClient,
 } from '@civitai/app-assistant';
@@ -35,6 +37,13 @@ export type RestartOutcome =
 
 /** What the HTTP layer asks for (`POST apps/:app/preview`): one restart, for a verified viewer. */
 export interface PreviewRestarts {
+  /**
+   * The conversation a preview grant for `app` must name (`preview:<app>`), or `null` when `app` is
+   * not an app key. Asked of the restarter, not imported by the HTTP layer: `app.ts` takes nothing
+   * at run time from `@civitai/app-assistant`, which the test runner's child processes (`tsx`, the
+   * package read as CommonJS) cannot import names from.
+   */
+  grantConversation(app: string): string | null;
   /** `grant` is the request's own preview grant, already verified for this user and app. */
   restart(userId: string, app: string, grant: string): Promise<RestartOutcome>;
 }
@@ -54,6 +63,11 @@ export const RESTART_MESSAGES = {
     'The preview could not connect to your app. Make sure its dev server runs, then try again.',
   unavailable: 'The preview could not start just now. Try again in a moment.',
 } as const;
+
+/** `PreviewRestarts.grantConversation`: App Assistant makes every app key a valid block id (`newAppKey`). */
+export function restartGrantConversation(app: string): string | null {
+  return isAppBlockId(app) ? previewGrantConversation(app) : null;
+}
 
 export interface PreviewRestarterOptions {
   sandboxUrl: string;
@@ -106,6 +120,10 @@ export class PreviewRestarter implements PreviewRestarts {
     const run = this.#restart(app, grant).finally(() => this.#inflight.delete(key));
     this.#inflight.set(key, run);
     return run;
+  }
+
+  grantConversation(app: string): string | null {
+    return restartGrantConversation(app);
   }
 
   #allow(userId: string): boolean {

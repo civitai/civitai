@@ -9,6 +9,7 @@ import {
 } from '../app-assistant/dev-tunnel';
 import {
   PreviewRestarter,
+  restartGrantConversation,
   RESTART_LIMIT,
   RESTART_MESSAGES,
   type PreviewRestarts,
@@ -322,6 +323,7 @@ async function serve(previews?: PreviewRestarts): Promise<string> {
 function recording(outcome: RestartOutcome = { ok: true, blockId: APP, host: HOST }) {
   const calls: [string, string, string][] = [];
   const previews: PreviewRestarts = {
+    grantConversation: restartGrantConversation,
     restart: async (userId, appKey, grant) => {
       calls.push([userId, appKey, grant]);
       return outcome;
@@ -407,10 +409,15 @@ describe('POST apps/:app/preview', () => {
 
   it('answers 400 to a key that is not an app’s, and 503 when restarts are not set up', async () => {
     const viewer = `Bearer ${await signViewer(keys, 'u1')}`;
-    const base = await serve();
+    const { calls, previews } = recording();
+    const configured = await serve(previews);
     expect(
-      (await post(base, 'Not_An_App', { authorization: viewer, 'x-run-grant': 'x' })).status
+      (await post(configured, 'Not_An_App', { authorization: viewer, 'x-run-grant': 'x' })).status
     ).toBe(400);
+    expect(calls).toEqual([]);
+    await app!.close();
+    app = undefined;
+    const base = await serve();
     expect(
       await post(base, APP, { authorization: viewer, 'x-run-grant': await previewGrant('u1', APP) })
     ).toEqual({

@@ -11,7 +11,6 @@ import {
   type RunErrorResponse,
   type RunJson,
 } from '@civitai/components-chat/runner-protocol';
-import { isAppBlockId, previewGrantConversation } from '@civitai/app-assistant';
 import { z } from 'zod';
 
 import type { PreviewRestarts, RestartErrorCode } from './app-assistant/preview-restart';
@@ -314,19 +313,19 @@ export function buildApp(options: AppOptions): FastifyInstance {
       async (request, reply) => {
         if (!previewBody.safeParse(request.body ?? { v: 1 }).success)
           return refuse(reply, 'bad-request', 'The restart request is not one this runner reads.');
+        const { previews } = options;
+        if (!previews) return refuse(reply, 'unavailable', 'The live preview is not set up here.');
         const appKey = request.params.app;
-        // App Assistant makes every app key a valid block id (`newAppKey`).
-        if (!isAppBlockId(appKey)) return refuse(reply, 'bad-request', 'That is not an app key.');
-        const grant = await grantFor(request, previewGrantConversation(appKey), undefined, true);
+        const conversation = previews.grantConversation(appKey);
+        if (!conversation) return refuse(reply, 'bad-request', 'That is not an app key.');
+        const grant = await grantFor(request, conversation, undefined, true);
         if (!grant)
           return refuse(
             reply,
             'refused',
             `This restart needs a current preview grant for this app in ${GRANT_HEADER}.`
           );
-        if (!options.previews)
-          return refuse(reply, 'unavailable', 'The live preview is not set up here.');
-        const outcome = await options.previews.restart(request.userId, appKey, grant.token);
+        const outcome = await previews.restart(request.userId, appKey, grant.token);
         if (outcome.ok) return { v: 1, blockId: outcome.blockId, host: outcome.host };
         return reply
           .code(RESTART_STATUS[outcome.error])
