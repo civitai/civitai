@@ -87,7 +87,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // status and credits nothing.
     if (ACTIONABLE_STATUSES.includes(paymentStatus)) {
       const payment = await client.getPaymentStatus(event.payment_id);
-      if (!payment) throw new Error(`Payment ${event.payment_id} not found on NOWPayments`);
+      if (!payment) {
+        log({ stage: 'payment-verify-unavailable', paymentId: event.payment_id });
+        throw new Error(`Payment ${event.payment_id} not found on NOWPayments`);
+      }
 
       const verified = eventFromPayment(payment);
       if (verified.payment_id !== event.payment_id) {

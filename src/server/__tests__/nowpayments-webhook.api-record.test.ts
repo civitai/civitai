@@ -130,6 +130,13 @@ describe('nowpayments webhook: the payment comes from NOWPayments', () => {
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.cryptoDeposit.upsert).not.toHaveBeenCalled();
     expect(signalSend).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        stage: 'payment-verify-unavailable',
+        paymentId: PAYMENT_ID,
+      })
+    );
   });
 
   it('credits the owner and amount NOWPayments reports, not the ones in the request', async () => {
