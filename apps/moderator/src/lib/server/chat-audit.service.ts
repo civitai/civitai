@@ -4,6 +4,7 @@ import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { escapeLike } from './like';
 import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
+import { recordChatReads, type Reader } from './chat-read-audit';
 
 // The PAGE LOAD half of Chat Audit (Retool's "Chat Audit" app) — search, the chat list, a transcript and
 // the member panel. The expensive aggregates live in chat-insights.service.ts behind
@@ -152,7 +153,7 @@ const SEARCH_LIMIT = 50;
  */
 const CONTENT_SEARCH_DAYS = 90;
 
-export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
+export async function searchChats(reader: Reader, rawTerm: string): Promise<ChatSearch | null> {
   const term = rawTerm.trim();
   if (!term) return null;
 
@@ -175,7 +176,7 @@ export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
     slow: mode === 'content',
     contentSearchDays: CONTENT_SEARCH_DAYS,
     ambiguousUsername: mode === 'chat' && (await usernameExists(term)),
-    chats: ids.length ? await summariseChats(ids, mode, term) : [],
+    chats: ids.length ? await summariseChats(reader, ids, mode, term) : [],
   };
 }
 
@@ -256,6 +257,7 @@ export async function chatMessageCounts(
 // Retool's FindChats joined member names with string_agg and split on ',', which corrupts any username
 // containing a comma. A real array avoids inventing a delimiter.
 async function summariseChats(
+  reader: Reader,
   chatIds: number[],
   mode: SearchMode,
   term: string
@@ -288,6 +290,10 @@ async function summariseChats(
 
   const byChat = await chatMessageCounts(chatIds);
   const excerpts = await chatExcerpts(chatIds, mode, term);
+  await recordChatReads(
+    reader,
+    [...excerpts].map(([chatId, e]) => ({ chatId, subjectId: e.userId }))
+  );
 
   return rows
     .map((r) => ({
@@ -391,6 +397,7 @@ const chatMessageRead = (chatId: number) =>
 // moderation, so a report filed about a message the sender then removed pointed at a transcript that
 // did not contain it.
 export async function getTranscript(
+  reader: Reader,
   chatId: number,
   limit = 300
 ): Promise<{
@@ -411,6 +418,7 @@ export async function getTranscript(
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit).reverse();
   const edited = page.filter((r) => r.editedAt).map((r) => r.id);
+  if (page.length) await recordChatReads(reader, [{ chatId }]);
 
   return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
 }
@@ -578,7 +586,21 @@ export type UserMessages = { rows: ChatMessageWithChat[]; chats: number; truncat
  * re-resolve it by name. A rename between the two lookups would silently answer about whoever holds the
  * old name now, and usernames are reusable.
  */
-export async function getUserMessagesById(userId: number, limit = 50): Promise<UserMessages> {
+/** One account's messages span many chats: a read of each chat they appear in, attributed to them. */
+const recordUserMessageReads = (reader: Reader, rows: ChatMessageWithChat[]) =>
+  recordChatReads(
+    reader,
+    [...new Map(rows.map((r) => [r.chatId, r.userId])).entries()].map(([chatId, subjectId]) => ({
+      chatId,
+      subjectId,
+    }))
+  );
+
+export async function getUserMessagesById(
+  reader: Reader,
+  userId: number,
+  limit = 50
+): Promise<UserMessages> {
   if (!isInt4Id(userId)) return { rows: [], chats: 0, truncated: false };
 
   const [rows, distinct] = await Promise.all([
@@ -607,14 +629,16 @@ export async function getUserMessagesById(userId: number, limit = 50): Promise<U
       .executeTakeFirst(),
   ]);
 
-  return {
-    truncated: rows.length > limit,
-    chats: Number(distinct?.n ?? 0),
-    rows: rows.slice(0, limit),
-  };
+  const page = rows.slice(0, limit);
+  await recordUserMessageReads(reader, page);
+  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
 }
 
-export async function getUserMessages(username: string, limit = 100): Promise<UserMessages | null> {
+export async function getUserMessages(
+  reader: Reader,
+  username: string,
+  limit = 100
+): Promise<UserMessages | null> {
   const name = username.replace(/^@/, '');
 
   // Null for an unresolved term, not an empty result. `USERNAME_SHAPE` matches things that are not
@@ -654,11 +678,9 @@ export async function getUserMessages(username: string, limit = 100): Promise<Us
       .executeTakeFirst(),
   ]);
 
-  return {
-    truncated: rows.length > limit,
-    chats: Number(distinct?.n ?? 0),
-    rows: rows.slice(0, limit),
-  };
+  const page = rows.slice(0, limit);
+  await recordUserMessageReads(reader, page);
+  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
 }
 
 /** Does this chat exist at all? Separates "empty conversation" from "no such chat" — a shared link with
