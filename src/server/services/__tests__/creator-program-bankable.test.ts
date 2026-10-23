@@ -49,12 +49,15 @@ function mockLedger({
   snapshot,
   earned,
   spent = 0,
+  spentToday = 0,
   consumed,
   ingestSettled = true,
 }: {
   snapshot?: number;
   earned: number;
+  /** Paid to other users before the start of today, then since. */
   spent?: number;
+  spentToday?: number;
   consumed: number;
   ingestSettled?: boolean;
 }) {
@@ -64,7 +67,8 @@ function mockLedger({
     if (sql.includes('AS settled')) return ingestSettled ? [{ settled: 1 }] : [];
     if (sql.includes('AS consumed'))
       return [{ earned: String(earned), consumed: String(consumed) }];
-    if (sql.includes('AS spent')) return [{ spent: String(spent) }];
+    if (sql.includes('AS spent'))
+      return [{ spent: String(sql.includes('AND date < ') ? spent : spentToday) }];
     throw new Error(`unexpected query: ${sql}`);
   });
 }
@@ -304,6 +308,36 @@ describe('getBankableAmount', () => {
     expect(spentSql).not.toContain('(7, 40000, 100000)');
   });
 
+  it('reads only the days after the stored total of what was paid, then stores the new total', async () => {
+    sysRedis.hGet.mockImplementation(async (key: string) =>
+      key === REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT
+        ? JSON.stringify({ through: '2026-12-10T00:00:00.000Z', spent: 500 })
+        : '0'
+    );
+    mockLedger({ earned: 10_000, spent: 300, spentToday: 200, consumed: 0 });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(1_000);
+    expect(issuedSql("AND date < '2026-12-15 00:00:00'")).toContain(
+      "date >= '2026-12-10 00:00:00'"
+    );
+    expect(sysRedis.hSet).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      String(userId),
+      JSON.stringify({ through: '2026-12-15T00:00:00.000Z', spent: 800 })
+    );
+  });
+
+  it('does not store the total of what was paid while ingest has not reached it', async () => {
+    mockLedger({ earned: 10_000, spent: 300, consumed: 0, ingestSettled: false });
+
+    expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(300);
+    expect(sysRedis.hSet).not.toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it('reads closed months only for what was consumed, leaving this month to the bank account', async () => {
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
@@ -409,9 +443,14 @@ describe('getBountyFunders', () => {
 describe('paidToUsersSql', () => {
   // Pinned whole: a wrong account column still returns a plausible number.
   it('counts payments from the creator, sales they bought and their part of bounties they funded', () => {
-    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00'`;
+    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00' AND date < '2026-12-01 00:00:00'`;
     expect(
-      squash(paidToUsersSql(42, [{ bountyId: 7, userId: 42, unitAmount: 60, total: 100 }]))
+      squash(
+        paidToUsersSql(42, [{ bountyId: 7, userId: 42, unitAmount: 60, total: 100 }], {
+          from: BANKABLE_CUTOVER,
+          to: new Date('2026-12-01T00:00:00Z'),
+        })
+      )
     ).toBe(
       squash(`SELECT sum(amount) AS spent FROM (SELECT toInt64(amount) AS amount FROM buzzTransactions
         WHERE fromAccountId = 42 AND ${paidTo}

@@ -166,10 +166,10 @@ export type BankableAmount = BankableLedger & {
  * A row dated past the settle point shows ingest has reached it; the clock alone would store a
  * short snapshot forever if ingest stalled.
  */
-async function hasIngestSettled(now: Date) {
-  if (now < SNAPSHOT_SETTLED_AT || !clickhouse) return false;
+async function hasIngestSettled(now: Date, settledAt = SNAPSHOT_SETTLED_AT) {
+  if (now < settledAt || !clickhouse) return false;
   const rows = await clickhouse.$query<{ settled: number }>`
-    SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${SNAPSHOT_SETTLED_AT} LIMIT 1
+    SELECT 1 AS settled FROM buzzTransactions WHERE date >= ${settledAt} LIMIT 1
   `;
   return rows.length > 0;
 }
@@ -222,13 +222,17 @@ async function getBountiesFundedBy(userId: number) {
 }
 
 /**
- * What `userId` paid other users since the cutover, counted where it became bankable for them:
+ * What `userId` paid other users in a window, counted where it became bankable for them:
  * paid from their own account, a platform-paid sale they bought, and their part of a bounty they
  * helped fund.
  */
-export function paidToUsersSql(userId: number, funded: BountyFunder[]) {
+export function paidToUsersSql(
+  userId: number,
+  funded: BountyFunder[],
+  { from, to }: { from: Date; to?: Date }
+) {
   const paidTo = `toAccountId > 0 AND toAccountId != ${userId} AND toAccountType IN (${buzzBankTypesSql})
-    AND date >= ${clickhouseDateTime(BANKABLE_CUTOVER)}`;
+    AND date >= ${clickhouseDateTime(from)}${to ? ` AND date < ${clickhouseDateTime(to)}` : ''}`;
   const arms = [
     `SELECT toInt64(amount) AS amount FROM buzzTransactions
     WHERE fromAccountId = ${userId} AND ${paidTo}
@@ -253,6 +257,69 @@ export function paidToUsersSql(userId: number, funded: BountyFunder[]) {
   return `SELECT sum(amount) AS spent FROM (${arms.join(' UNION ALL ')})`;
 }
 
+type SpentThrough = { through: string; spent: number };
+
+function readSpentThrough(raw: string | null | undefined): SpentThrough | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<SpentThrough>;
+    const through = new Date(value?.through ?? NaN);
+    return Number.isFinite(through.getTime()) && Number.isFinite(value?.spent)
+      ? { through: through.toISOString(), spent: Number(value.spent) }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the creator paid other users since the cutover. Scanning the whole window on every read
+ * measured seconds, so the total up to the last settled UTC day is stored and only the days after
+ * it are read.
+ */
+async function getSpent(userId: number, now: Date) {
+  if (!clickhouse) return 0;
+  const ch = clickhouse;
+  const settled = dayjs
+    .utc(now.getTime() - SNAPSHOT_SETTLE_MS)
+    .startOf('day')
+    .toDate();
+  const through = settled > BANKABLE_CUTOVER ? settled : BANKABLE_CUTOVER;
+
+  const [stored, funded] = await Promise.all([
+    sysRedis
+      .hGet(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT, String(userId))
+      .then((raw) => readSpentThrough(decodeRedisString(raw))),
+    getBountiesFundedBy(userId),
+  ]);
+  const closed =
+    stored && new Date(stored.through) <= through
+      ? stored
+      : { through: BANKABLE_CUTOVER.toISOString(), spent: 0 };
+  const closedThrough = new Date(closed.through);
+
+  const spentIn = async (window: { from: Date; to?: Date }) => {
+    const [row] = await ch.$query<{ spent: number }>(paidToUsersSql(userId, funded, window));
+    return Number(row?.spent ?? 0);
+  };
+  const [added, live] = await Promise.all([
+    closedThrough < through ? spentIn({ from: closedThrough, to: through }) : 0,
+    spentIn({ from: through }),
+  ]);
+
+  if (
+    closedThrough < through &&
+    (await hasIngestSettled(now, new Date(through.getTime() + SNAPSHOT_SETTLE_MS)))
+  )
+    await sysRedis.hSet(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
+      String(userId),
+      JSON.stringify({ through: through.toISOString(), spent: closed.spent + added })
+    );
+
+  return closed.spent + added + live;
+}
+
 /**
  * The ClickHouse half of the bankable amount, or `null` before the cutover or without ClickHouse
  * (only the tier cap applies then). This month's deposits are not in it: see `withBankedThisMonth`.
@@ -263,9 +330,8 @@ export async function getBankableLedger(
 ): Promise<BankableLedger | null> {
   if (now < BANKABLE_CUTOVER || !clickhouse) return null;
 
-  const ch = clickhouse;
   const monthStart = dayjs.utc(now).startOf('month').toDate();
-  const [snapshot, [sums], [paid]] = await Promise.all([
+  const [snapshot, [sums], spent] = await Promise.all([
     getCutoverSnapshot(userId, now),
     clickhouse.$query<{ earned: number; consumed: number }>`
       SELECT
@@ -288,15 +354,13 @@ export async function getBankableLedger(
             AND date >= ${BANKABLE_CUTOVER} AND date < ${monthStart}
         ) AS consumed
     `,
-    getBountiesFundedBy(userId).then((funded) =>
-      ch.$query<{ spent: number }>(paidToUsersSql(userId, funded))
-    ),
+    getSpent(userId, now),
   ]);
 
   return {
     snapshot,
     earned: Number(sums?.earned ?? 0),
-    spent: Number(paid?.spent ?? 0),
+    spent,
     consumed: Number(sums?.consumed ?? 0),
   };
 }
