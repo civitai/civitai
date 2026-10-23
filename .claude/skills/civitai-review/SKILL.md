@@ -146,6 +146,26 @@ which you skipped and why. Typical shapes:
 | reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
 | intent | is a feature with an intent doc or a stated request to measure against |
 
+### When a review-record store is configured, each lane also returns a structured result
+
+If your own instructions (or the primary checkout's `CLAUDE.local.md`) name a **review-record store**
+for PR reviews, the lanes' work is recorded there so a later reviewer of the same PR can see it and not
+redo it (step 3a). For that, open each lane's prompt with **its published lane prompt file**,
+verbatim, from the **default branch** (`origin/main`), never from the PR or the tree under review, and
+take its version from those same bytes; the store's instructions say how the version is computed. Put
+the inputs above (the scope, the intent doc for the intent lane, the delivery route, the diff on a
+re-run) after the file, never inside it. The prompt ends with the structured-result contract. Record the
+exact model id each lane reports it ran on, not the alias in its definition. A lane run from an edited or
+different copy of the file cannot claim that version, and a result recorded under a version or model it
+did not run is worse than no record.
+
+The lane's own definition must come from the default branch too: when a store is configured, run step 0's
+`git checkout origin/main -- .claude` even for a `main`-based head, so a PR that edits a lane cannot
+review itself under its own edit. A lane with no prompt file on the default branch is spawned as usual
+and recorded as no run at all.
+
+No store configured: nothing here changes, and step 3a does not apply.
+
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
 🔴 **This is normal, not exceptional. Expect it every round.** Measured across one project's four review
@@ -209,7 +229,32 @@ Across all three sections:
 
 🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
 commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
-permanent. They live in the conversation until they are fixed.
+permanent. They live in the conversation, and in the review-record store if one is configured (step 3a),
+until they are fixed.
+
+## 3a. Record the review (only when a review-record store is configured)
+
+The store's own instructions say where and how to write; this step says **when** and **what**.
+
+1. **When you spawn the lanes**, record a run for each lane at the head SHA under review, marked running,
+   with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
+   run is what tells a later reviewer the PR is being reviewed locally.
+2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
+   version, model, finish time and findings count, and record its findings in the structured form the
+   lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
+   complete with no findings.
+
+The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it
+is exact: same head SHA, same prompt version and model, every finding as the lane wrote it. Record a
+lane's findings as it wrote them, including ones you drop at step 3; consolidation is a separate
+judgement. A push after the review is a new head, and nothing recorded at the old head covers it: each
+fix-loop or re-targeted re-run is a new run at the new head, recorded as in 1 and 2.
+
+The correctness lane is also re-run independently by a hosted reviewer, whatever you record. Record it
+anyway: the overlap between the two is what the record measures.
+
+Step 3's rule covers the record too: never copy an open safety finding from it into a PR body, commit
+message or file in this repo.
 
 ## 4. The fix loop
 
