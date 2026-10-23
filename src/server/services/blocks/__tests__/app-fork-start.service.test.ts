@@ -25,7 +25,7 @@ const m = vi.hoisted(() => ({
   summary: vi.fn(),
   forkable: vi.fn(),
   reconstruct: vi.fn(),
-  setProvenance: vi.fn(async (..._a: unknown[]) => true),
+  setProvenance: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({

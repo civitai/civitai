@@ -11,14 +11,14 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  */
 
 const mocks = vi.hoisted(() => ({
-  startAppFork: vi.fn(async (..._a: unknown[]) => ({
+  startAppFork: vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
     forkSlug: 'garden-fork-1f2e',
     parentName: 'Garden',
     parentListingId: 'apl_router_6001',
     seed: { url: 'https://seeds.router.test/x.zip', sha256: 'b'.repeat(64), bytes: 1234 },
-  })),
-  getForkSessionForUser: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
-  isAppBlocksForkEnabled: vi.fn(async (..._a: unknown[]) => true),
+  }),
+  getForkSessionForUser: vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
+  isAppBlocksForkEnabled: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
   scope: 'full' as string,
 }));
 

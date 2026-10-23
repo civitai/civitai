@@ -1,4 +1,4 @@
-import { useRouter } from 'next/router';
+import Router from 'next/router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
@@ -127,7 +127,7 @@ beforeEach(async () => {
   m.user = SIGNED_IN;
   m.detail = detail();
   m.starts = [];
-  vi.mocked(useRouter().push).mockClear();
+  vi.mocked(Router.push).mockClear();
 });
 
 async function renderStorePage(d: ListingDetail) {
@@ -144,7 +144,7 @@ describe('the store page — Fork in the "Use this app" card', () => {
     expect(fork.element().textContent).toBe('Fork');
     await userEvent.click(fork);
     expect(m.starts).toEqual([{ listingId: LISTING_ID }]);
-    expect(vi.mocked(useRouter().push)).toHaveBeenCalledWith(`/apps/assistant?fork=${FORK_SLUG}`);
+    expect(vi.mocked(Router.push)).toHaveBeenCalledWith(`/apps/assistant?fork=${FORK_SLUG}`);
   });
 
   test.each([
@@ -191,7 +191,7 @@ describe('the running app’s ⋮ menu — Fork', () => {
     expect(item.element().textContent).toBe('Fork');
     await userEvent.click(item);
     expect(m.starts).toEqual([{ listingId: LISTING_ID }]);
-    expect(vi.mocked(useRouter().push)).toHaveBeenCalledWith(`/apps/assistant?fork=${FORK_SLUG}`);
+    expect(vi.mocked(Router.push)).toHaveBeenCalledWith(`/apps/assistant?fork=${FORK_SLUG}`);
   });
 
   test.each(['dev-tunnel', 'review-preview'])('hidden on the %s surface', async (surface) => {

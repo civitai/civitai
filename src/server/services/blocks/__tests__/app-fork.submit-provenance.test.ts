@@ -17,7 +17,7 @@ import type * as AppForkService from '~/server/services/blocks/app-fork.service'
  */
 
 const m = vi.hoisted(() => ({
-  setProvenance: vi.fn(async (..._a: unknown[]) => true),
+  setProvenance: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
 }));
 
 vi.mock('~/utils/bundle-s3', () => ({

@@ -1,4 +1,4 @@
-import { useRouter } from 'next/router';
+import Router from 'next/router';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
@@ -85,11 +85,14 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         props.chatRef.current = {
           newChat: m.newChat,
           send: async (text: string) => {
-            m.chat?.onBeforeSend?.(text, () => ({ release() {}, cancel() {} }));
+            m.chat?.onBeforeSend?.(text, () => ({
+              release: () => undefined,
+              cancel: () => undefined,
+            }));
             m.sent.push(text);
           },
-          addEventListener() {},
-          removeEventListener() {},
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
         };
       });
       useEffect(() => {
@@ -179,7 +182,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppAssistantWorkspace } = await import('./AppAssistantWorkspace');
 
-const router = useRouter() as unknown as {
+const router = Router as unknown as {
   query: Record<string, unknown>;
   pathname: string;
   push: ReturnType<typeof vi.fn>;
@@ -262,7 +265,10 @@ describe('a fresh fork', () => {
   test('a message of the user’s own answers the card', async () => {
     await mount();
     await expect.element(page.getByTestId('app-fork-setup')).toBeInTheDocument();
-    m.chat?.onBeforeSend?.('make the flowers blue', () => ({ release() {}, cancel() {} }));
+    m.chat?.onBeforeSend?.('make the flowers blue', () => ({
+      release: () => undefined,
+      cancel: () => undefined,
+    }));
     await expect.element(page.getByTestId('app-fork-setup')).not.toBeInTheDocument();
   });
 });
