@@ -1,6 +1,6 @@
 ---
 name: generation-gate-rules
-description: Hide a generator ecosystem or model version from everyone except moderators — always "available to moderators, hidden" — and lift that gate again. Reads and writes the same generation gate rules the /moderator/generation-config page edits. Use before a new generator model's code deploys, and to remove the gate at launch. Called by onboard-generator-model; usable on its own.
+description: Hide a generator ecosystem or model version from everyone except moderators — "available to moderators, hidden" — and lift that gate again; or, during a provider outage, disable it for everyone except moderators with a message users see, and enable it again. Reads and writes the same generation gate rules the /moderator/generation-config page edits. Use before a new generator model's code deploys, to remove the gate at launch, and when one generator's provider is down. Called by onboard-generator-model; usable on its own.
 ---
 
 # Generation Gate Rules
@@ -21,6 +21,10 @@ Gate targets:
 
 Adding the rule **before** the code deploys is safe. A rule that names something the running code doesn't know yet has no effect.
 
+## What `disable` writes
+
+For an outage, when one generator fails for everyone and the cause is outside our code (a provider is down, out of credit, or changed its API). The rule is **available to moderators, disabled**, with the `--message` you pass. Non-moderators still see the generator, greyed out with that message, and the server refuses their requests. Moderators can still generate, so they can tell when it recovers. Run `enable` once a fresh read shows successes again.
+
 ## Commands
 
 | Command | What it does |
@@ -28,6 +32,8 @@ Adding the rule **before** the code deploys is safe. A rule that names something
 | `list [--json]` | Every rule on the site. |
 | `add --ecosystem <key>` or `add --version <id>` `[--message <m>] [--writable]` | Adds a rule this skill owns, with the id `onboard-eco-<key>` or `onboard-mv-<id>`. |
 | `remove --ecosystem <key>` or `remove --version <id>` `[--from-rule <id>] [--writable]` | Removes this skill's rule. With `--from-rule`, removes the target from a rule someone set by hand. |
+| `disable --ecosystem <key>` or `disable --version <id>` `--message <m> [--writable]` | Adds or rewrites the incident rule `incident-<key>-<UTC date>` (key lowercased) or `incident-mv-<id>-<UTC date>`, then reads it back. |
+| `enable --ecosystem <key>` or `enable --version <id>` `[--writable]` | Deletes every `incident-*` rule that names only this target, then reads back that they are gone. It refuses if an incident rule also gates something else. |
 
 - **`add` is idempotent.** If the rule already exists, it does nothing. If another rule already covers the target, it says so.
 - **`remove` never edits a rule it doesn't own unless you pass `--from-rule`.** Without the flag, it lists the hand-made rules that gate the target.

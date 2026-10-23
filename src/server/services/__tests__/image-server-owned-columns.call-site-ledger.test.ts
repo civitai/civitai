@@ -637,6 +637,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['imageId: id', 'imageId: id'],
     decision: 'subject',
   },
+  'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
+    writes: ['imageId'],
+    decision: 'owner-checked',
+    guards: { imageId: 'if (image.post.userId !== userId)' },
+  },
   // The owner's cover and banner picks: from this storyline's own chapters by the owner or an
   // endorsed collaborator, refused otherwise. A pick sent back unchanged is not judged again.
   'src/server/services/storyline.service.ts#updateStoryline': {
@@ -646,6 +651,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
+  },
+  'src/server/services/text-scan/actions/image-caption.ts#applyImageCaptionTextScan': {
+    writes: ['imageId: entityId'],
+    decision: 'server-derived',
   },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],

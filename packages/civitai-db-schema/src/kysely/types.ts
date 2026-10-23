@@ -2172,6 +2172,16 @@ export type ChatMessage = {
   editedAt: Timestamp | null;
   deletedAt: Timestamp | null;
 };
+export type ChatMessageEdit = {
+  id: Generated<number>;
+  messageId: number;
+  /**
+   * No relation: a deleted editor must neither block nor erase the history.
+   */
+  editorId: number;
+  previousContent: string;
+  createdAt: Generated<Timestamp>;
+};
 export type ChatReport = {
   chatId: number;
   reportId: number;
@@ -2677,6 +2687,7 @@ export type CosmeticShopItem = {
   rejectionReason: string | null;
   listed: Generated<boolean>;
   itemDefinitionId: number | null;
+  eventTags: Generated<string[]>;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;
@@ -3314,6 +3325,24 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+};
+export type ImageCaption = {
+  imageId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+   */
+  userId: number;
+  content: string;
+  /**
+   * The text scan refused it: never shown to readers. Set and cleared only by the scan.
+   */
+  refused: Generated<boolean>;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+   */
+  nsfwLevel: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ImageCdnAccess = {
   url: string;
@@ -6107,6 +6136,7 @@ export type DB = {
   Chat: Chat;
   ChatMember: ChatMember;
   ChatMessage: ChatMessage;
+  ChatMessageEdit: ChatMessageEdit;
   ChatReport: ChatReport;
   Club: Club;
   ClubAdmin: ClubAdmin;
@@ -6202,6 +6232,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;

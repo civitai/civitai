@@ -36,6 +36,8 @@ export const STORYLINE_PATH_LIMIT = 200;
 /** Most chapters the Story page's map reads, nearest chapter 1 first. */
 export const STORYLINE_GRAPH_LIMIT = 300;
 export const STORYLINE_MAX_COLLABORATORS = 50;
+/** Longest caption on one chapter image; `ImageCaption.content` is VARCHAR(500) to match. */
+export const STORYLINE_CAPTION_MAX_LENGTH = 500;
 /** Most chapter authors a storyline header lists besides its owner and collaborators. */
 export const STORYLINE_MAX_CONTRIBUTORS = 50;
 
