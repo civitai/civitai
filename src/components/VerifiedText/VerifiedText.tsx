@@ -17,7 +17,7 @@ const statusColors: Record<ScanResultCode, DefaultMantineColor> = {
   Pending: 'gray',
   Success: 'green',
   Danger: 'red',
-  Error: 'orange',
+  Error: 'gray',
 };
 const statusIcon: Record<ScanResultCode, JSX.Element> = {
   Pending: <IconRadarOff size={12} />,
