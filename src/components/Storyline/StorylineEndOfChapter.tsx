@@ -169,77 +169,79 @@ export function StorylineEndOfChapter({
                 : 'Add a chapter of your own. The creator reviews it before it joins the story.'}
             </Text>
           </div>
-          <div className="flex flex-col items-stretch gap-2 @md:flex-row @md:flex-wrap @md:items-center @md:gap-x-4">
-            {canWrite && (
-              <Button
-                component={Link}
-                href={storylineContinueUrl({
-                  parentChapterId: chapterId,
-                  chapterNumber: chapterDepth + 2,
-                })}
-                color="violet"
-                leftSection={<IconPencil size={16} />}
-                onClick={() => tracking.trackCreateClick({ chapterId })}
-                data-testid="storyline-write-next"
-              >
-                Write the next chapter
-              </Button>
-            )}
+          <div className="flex flex-col gap-3 @md:flex-row @md:items-start @md:justify-between">
+            <div className="flex flex-col items-stretch gap-2 @md:items-start">
+              {canWrite && (
+                <Button
+                  component={Link}
+                  href={storylineContinueUrl({
+                    parentChapterId: chapterId,
+                    chapterNumber: chapterDepth + 2,
+                  })}
+                  color="violet"
+                  leftSection={<IconPencil size={16} />}
+                  onClick={() => tracking.trackCreateClick({ chapterId })}
+                  data-testid="storyline-write-next"
+                >
+                  Write the next chapter
+                </Button>
+              )}
+              {canWrite && !isOwner && terms && (
+                <Text size="xs" c="dimmed" data-testid="storyline-write-next-price">
+                  {terms.price > 0
+                    ? `${storylinePriceLabel(terms.price)} when you publish`
+                    : 'Free to submit'}
+                </Text>
+              )}
+              {parentPostId && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {isOwner ? (
+                    <>
+                      <Anchor
+                        component="button"
+                        type="button"
+                        size="sm"
+                        onClick={() =>
+                          openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+                        }
+                        data-testid="storyline-add-own-chapter"
+                      >
+                        or use a post you already made
+                      </Anchor>
+                      <Anchor
+                        component="button"
+                        type="button"
+                        size="sm"
+                        onClick={() =>
+                          openStorylineContinueModal({
+                            parentPostId,
+                            parentChapterId: chapterId,
+                            mode: 'join',
+                          })
+                        }
+                        data-testid="storyline-join-existing-chapter"
+                      >
+                        Join an existing chapter
+                      </Anchor>
+                    </>
+                  ) : (
+                    <StorylineContinueWithPost parentPostId={parentPostId} />
+                  )}
+                </div>
+              )}
+            </div>
             <Anchor
               component="button"
               type="button"
               size="xs"
               c="dimmed"
-              className="self-center @md:ml-auto"
+              className="self-center @md:self-start"
               onClick={() => openStorylineEarlyAccess({ chapterId, storylineId })}
               data-testid="storyline-early-access-link"
             >
               Story tool coming soon · get early access
             </Anchor>
           </div>
-          {canWrite && !isOwner && terms && (
-            <Text size="xs" c="dimmed" data-testid="storyline-write-next-price">
-              {terms.price > 0
-                ? `${storylinePriceLabel(terms.price)} when you publish`
-                : 'Free to submit'}
-            </Text>
-          )}
-          {parentPostId && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              {isOwner ? (
-                <>
-                  <Anchor
-                    component="button"
-                    type="button"
-                    size="sm"
-                    onClick={() =>
-                      openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
-                    }
-                    data-testid="storyline-add-own-chapter"
-                  >
-                    or use a post you already made
-                  </Anchor>
-                  <Anchor
-                    component="button"
-                    type="button"
-                    size="sm"
-                    onClick={() =>
-                      openStorylineContinueModal({
-                        parentPostId,
-                        parentChapterId: chapterId,
-                        mode: 'join',
-                      })
-                    }
-                    data-testid="storyline-join-existing-chapter"
-                  >
-                    Join an existing chapter
-                  </Anchor>
-                </>
-              ) : (
-                <StorylineContinueWithPost parentPostId={parentPostId} />
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
