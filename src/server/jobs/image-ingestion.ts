@@ -16,6 +16,7 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -523,8 +524,8 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
-    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -635,7 +636,33 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
-    const held = [...new Set([...heldActive, ...appealHeld, ...csamReviewHeld, ...evidenceHeld])];
+    // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
+    // reason above. Read over the owners those holds can name: one with a CSAM review flag or a CSAM
+    // block. An image held only by a report listing it is left to the DELETE's own guard.
+    const accountHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT i.id FROM "Image" i
+        WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+          AND i."userId" IN (
+            SELECT c."userId" FROM (
+              SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+              UNION
+              SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+            ) c
+            WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+          )
+      `
+    ).map((x) => x.id);
+
+    const held = [
+      ...new Set([
+        ...heldActive,
+        ...appealHeld,
+        ...csamReviewHeld,
+        ...evidenceHeld,
+        ...accountHeld,
+      ]),
+    ];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -652,6 +679,7 @@ export const removeBlockedImages = createJob(
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       });
       return {
         processed: 0,
@@ -659,6 +687,7 @@ export const removeBlockedImages = createJob(
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
         evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       };
     }
 

@@ -80,6 +80,7 @@ const {
   appealedIds,
   csamFlaggedIds,
   evidenceHeldUserIds,
+  accountHeldIds,
   withoutModActivity,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
@@ -92,6 +93,8 @@ const {
   const csamFlaggedIds: number[] = [];
   // Owners under a hold marker.
   const evidenceHeldUserIds: number[] = [];
+  // Blocked images of accounts under any other account hold.
+  const accountHeldIds: number[] = [];
   // Images whose block has no moderator takedown on record, so they take the non-retracting call.
   const withoutModActivity: number[] = [];
   const mockEnv = {
@@ -126,6 +129,8 @@ const {
       ? flatten(first.strings, first.values)
       : flatten(first, rawValues);
     sqlLog.push(sql);
+    // Routed before the report lookup below: the account hold reads "CsamReport" too.
+    if (sql.includes('SELECT c."userId" FROM')) return accountHeldIds.map((id) => ({ id }));
     if (sql.includes('FROM "CsamReport"')) {
       if (holdLookup.error) throw holdLookup.error;
       return heldUsers;
@@ -170,6 +175,7 @@ const {
     appealedIds,
     csamFlaggedIds,
     evidenceHeldUserIds,
+    accountHeldIds,
     withoutModActivity,
     mockEnv,
     mockDbRead: {
@@ -278,6 +284,7 @@ beforeEach(() => {
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
   evidenceHeldUserIds.length = 0;
+  accountHeldIds.length = 0;
   withoutModActivity.length = 0;
   extraImages.length = 0;
   extraQueue.length = 0;
@@ -396,6 +403,20 @@ describe('remove-blocked-images retention clock', () => {
       // The legal-hold lookup passes a `Prisma.sql` object, not a template.
       mockDbWrite.$queryRaw.mock.calls.some(([first]) =>
         ('strings' in first ? first.strings : first).join('?').includes('"EvidenceHeldUser"')
+      )
+    ).toBe(true);
+  });
+
+  it('keeps every Blocked image of an account under any other account hold out of the batch', async () => {
+    accountHeldIds.push(1);
+    await runJob();
+
+    expect(deletedIds()).not.toContain(1);
+    expect(batchWhere()?.entityId?.notIn).toContain(1);
+    // Read off the primary, as the other holds are.
+    expect(
+      mockDbWrite.$queryRaw.mock.calls.some(([first]) =>
+        ('strings' in first ? first.strings : first).join('?').includes('SELECT c."userId" FROM')
       )
     ).toBe(true);
   });

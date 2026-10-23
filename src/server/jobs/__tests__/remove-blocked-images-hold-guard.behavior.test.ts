@@ -83,6 +83,7 @@ const SECONDARY_USER = 7; // the secondary user on a report sent within the year
 const LONG_CLOSED_SECONDARY_USER = 8; // the secondary user on LONG_CLOSED_USER's report
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report naming SECONDARY_USER
 const PLACEHOLDER_OWNER = -1;
+const FLAGGED_USER = 63; // one of whose images is flagged for CSAM review
 
 // Image ids, named for the case each one pins.
 const PLAIN = 10; // blocked, no hold -> deleted
@@ -251,7 +252,7 @@ beforeEach(async () => {
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${PLAIN}, ${PLAIN_USER}, 'Blocked', NULL),
       (${APPEALED}, ${PLAIN_USER}, 'Blocked', 'appeal'),
-      (${FLAGGED}, ${PLAIN_USER}, 'Blocked', 'csam'),
+      (${FLAGGED}, ${FLAGGED_USER}, 'Blocked', 'csam'),
       (${UNBLOCKED}, ${PLAIN_USER}, 'Scanned', NULL),
       (${REPORTED}, ${OPEN_REPORT_USER}, 'Blocked', NULL),
       (${SENT_UNARCHIVED}, ${SENT_UNARCHIVED_USER}, 'Blocked', NULL),
@@ -346,7 +347,8 @@ describe('purgeHoldGuard on the delete', () => {
 
     await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
 
-    expect((await remaining()).filter((id) => id >= extra[0])).toEqual([lastFlagged]);
+    // One flagged image holds the account, so the first batch is kept as well as the last.
+    expect((await remaining()).filter((id) => id >= extra[0])).toEqual(extra);
   });
 
   describe('the appeal training-copy hold', () => {
@@ -423,9 +425,9 @@ describe('purgeHoldGuard on the delete', () => {
       ).rejects.toMatchObject(held);
       routeToPostgres();
       await expect(assertOwnersNotUnderLegalHold([PLACEHOLDER_OWNER])).rejects.toMatchObject(held);
-      // An account leg: PLAIN_USER is on no report but has an image under CSAM review.
+      // An account leg: FLAGGED_USER is on no report but has an image under CSAM review.
       routeToPostgres();
-      await expect(assertOwnersNotUnderLegalHold([PLAIN_USER])).rejects.toMatchObject(held);
+      await expect(assertOwnersNotUnderLegalHold([FLAGGED_USER])).rejects.toMatchObject(held);
       // The control.
       routeToPostgres();
       await expect(
@@ -1139,6 +1141,72 @@ describe('purgeHoldGuard on the delete', () => {
     await imageService.deleteImages([...ALL, ...MARKED], true);
 
     expect(await remaining()).toEqual([]);
+  });
+});
+
+describe('purgeHoldGuard holds every image of an account under any account hold', () => {
+  const OWNER = 64;
+  const [A, B, C] = [80, 81, 82];
+  const OTHER_SUBJECT = 65; // names nobody else; lists one of OWNER's images
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion) VALUES
+        (${A}, ${OWNER}, 'Blocked'), (${B}, ${OWNER}, 'Blocked'), (${C}, ${OWNER}, 'Blocked');
+    `)
+  );
+  const purge = async () => {
+    await imageService.deleteImages([A, B, C, PLAIN], true, { onlyWhere: purgeHoldGuard(NO_COPY) });
+    return (await remaining()).filter((id) => [A, B, C, PLAIN].includes(id));
+  };
+
+  it.each([
+    [
+      'one image flagged for CSAM review',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${C}`,
+    ],
+    ['a CSAM block on no sent report', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${C}`],
+    [
+      'an image a holding report lists, naming someone else',
+      `INSERT INTO "CsamReport" ("userId", images) VALUES (${OTHER_SUBJECT}, '[{"id": ${C}}]')`,
+    ],
+  ])('keeps all of them for %s, and deletes an unheld image beside them', async (_, hold) => {
+    await holder.db.exec(hold);
+
+    expect(await purge()).toEqual([A, B, C]);
+  });
+
+  it.each([
+    ['a review flag other than CSAM', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = ${C}`],
+    [
+      'a CSAM block a sent report naming them lists, past the hold',
+      `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${C};
+       INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${OWNER}, now() - interval '2 years', now(), '[{"id": ${C}}]')`,
+    ],
+    [
+      'an image listed on a report that no longer holds',
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${OTHER_SUBJECT}, now() - interval '2 years', now(), '[{"id": ${C}}]')`,
+    ],
+  ])('deletes all of them with only %s', async (_, state) => {
+    await holder.db.exec(state);
+
+    expect(await purge()).toEqual([]);
+  });
+
+  it('binds accountHoldSql to an outer unaliased "Image" row, not to its own', async () => {
+    await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${C}`);
+    const q = Prisma.sql`
+      SELECT id FROM "Image"
+      WHERE id = ANY(${[A, PLAIN]}::int[])
+        AND ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+      ORDER BY id`;
+
+    const { rows } = await holder.db.query<{ id: number }>(q.text, q.values as unknown[]);
+
+    // PLAIN's owner has no flagged image: only OWNER's row is held.
+    expect(rows.map((r) => r.id)).toEqual([A]);
   });
 });
 

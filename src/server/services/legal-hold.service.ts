@@ -68,8 +68,9 @@ const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 function holdLegsSql(id: Prisma.Sql) {
   return {
     report: userNamedOnHoldingReportSql(id),
+    // Aliased, so `id` may be a column of an outer unaliased "Image" without being captured here.
     'image-review': Prisma.sql`EXISTS (
-      SELECT 1 FROM "Image" WHERE "userId" = ${id} AND "needsReview" = 'csam'
+      SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
     // A blocked image counts as reported only when a sent report naming them lists it.
     'image-blocked': Prisma.sql`EXISTS (
