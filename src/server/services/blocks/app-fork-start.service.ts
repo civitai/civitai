@@ -397,11 +397,10 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   const { getStoreVisibleListingSummary } = await import(
     '~/server/services/blocks/app-listing.service'
   );
-  // MUTANT (do not merge): the visibility gate fails open.
-  const parent = (await getStoreVisibleListingSummary(
+  const parent = await getStoreVisibleListingSummary(
     { id: input.listingId },
     { redCapable: input.redCapable, scope: input.scope, floor: 'public' }
-  )) ?? { id: input.listingId, slug: '', name: 'unchecked' };
+  );
   if (!parent) {
     throw new TRPCError({ code: 'NOT_FOUND', message: FORK_PARENT_UNAVAILABLE_MESSAGE });
   }

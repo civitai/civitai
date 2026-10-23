@@ -1304,20 +1304,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // `manifest` or anything else the client sent. Best-effort and never throws.
   if (existingApp == null) {
     const { applyForkSessionToFirstPublishRequest } = await import('./app-fork-start.service');
-    const fromSession = await applyForkSessionToFirstPublishRequest({
-      publishRequestId,
-      slug,
-      submittedByUserId,
-    });
-    // MUTANT (do not merge): fall back to a parent the MANIFEST declares.
-    if (!fromSession && typeof manifest.forkOfAppBlockId === 'string') {
-      const { setPublishRequestForkProvenance } = await import('./app-fork.service');
-      await setPublishRequestForkProvenance(dbWrite, {
-        publishRequestId,
-        forkOfAppBlockId: manifest.forkOfAppBlockId,
-        forkOfCommitSha: String(manifest.forkOfCommitSha ?? ''),
-      }).catch(() => false);
-    }
+    await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
   }
 
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
