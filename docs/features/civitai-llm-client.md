@@ -6,7 +6,7 @@ OpenAI-compatible chat completions client targeting Civitai's Orchestrator (`POS
 
 - **OpenAI-compatible chat completions** against the Orchestrator endpoint.
 - **`getJsonCompletion<T>`** — schema-typed JSON output with built-in parse fallbacks.
-- **Prefix-based routing** — `urn:air:*` models route to this client; everything else stays on OpenRouter. No call site has to choose a backend manually.
+- **Prefix-based routing** — `urn:air:*` and `civitai/*` models route to this client; everything else stays on OpenRouter. No call site has to choose a backend manually.
 - **Drop-in API** — same `SimpleMessage` shape, same `temperature` / `maxTokens` / `retries` semantics, same return type as `openrouter.getJsonCompletion`.
 - **Defensive normalization** for the Orchestrator's stricter validator and Qwen's default thinking behavior.
 - **Per-call `debug` flag** for opt-in request/response logging.
@@ -23,7 +23,8 @@ OpenAI-compatible chat completions client targeting Civitai's Orchestrator (`POS
                            ▼
                 ┌─────────────────────┐
                 │ pickClient(model)   │
-                │  urn:air:* → civitai│
+                │  urn:air:*,         │
+                │  civitai/* → civitai│
                 │  else      → openR  │
                 └────────┬────────────┘
               ┌──────────┴───────────┐
@@ -44,7 +45,8 @@ Dispatcher rule (`src/server/games/daily-challenge/generative-content.ts`):
 
 ```ts
 function pickClient(model: string) {
-  if (model.startsWith('urn:air:')) {
+  if (isCivitaiHostedModel(model)) {
+    // urn:air:* or civitai/*
     if (!civitaiLLM) throw new Error('Civitai LLM not connected');
     return civitaiLLM;
   }
@@ -53,17 +55,17 @@ function pickClient(model: string) {
 }
 ```
 
-URN-prefixed models hit the Civitai LLM client. All other model strings (`openai/*`, `anthropic/*`, `moonshotai/*`, `stepfun/*`, etc.) stay on OpenRouter.
+URN- and `civitai/`-prefixed models hit the Civitai LLM client. All other model strings (`openai/*`, `anthropic/*`, `moonshotai/*`, `stepfun/*`, etc.) stay on OpenRouter.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `src/server/services/ai/civitai-llm.ts` | Thin OpenAI-compatible client + defenses |
-| `src/server/services/ai/openrouter.ts` | OpenRouter SDK wrapper; hosts `AI_MODELS` constants (including Civitai-hosted URNs) |
-| `src/server/games/daily-challenge/generative-content.ts` | Dispatcher, per-function model defaults, five call sites |
-| `src/components/Challenge/Playground/ModelSelector.tsx` | Mod-only model picker |
-| `src/components/Challenge/Playground/playground.store.ts` | Zustand store; versioned `migrate` keeps persisted defaults current |
+| File                                                      | Purpose                                                                             |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `src/server/services/ai/civitai-llm.ts`                   | Thin OpenAI-compatible client + defenses                                            |
+| `src/server/services/ai/openrouter.ts`                    | OpenRouter SDK wrapper; hosts `AI_MODELS` constants (including Civitai-hosted URNs) |
+| `src/server/games/daily-challenge/generative-content.ts`  | Dispatcher, per-function model defaults, five call sites                            |
+| `src/components/Challenge/Playground/ModelSelector.tsx`   | Mod-only model picker                                                               |
+| `src/components/Challenge/Playground/playground.store.ts` | Zustand store; versioned `migrate` keeps persisted defaults current                 |
 
 ## Public API
 
@@ -71,7 +73,7 @@ URN-prefixed models hit the Civitai LLM client. All other model strings (`openai
 import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 
 const result = await civitaiLLM!.getJsonCompletion<MyShape>({
-  model: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
+  model: 'civitai/qwen3.8',
   messages: [
     { role: 'system', content: 'You are a JSON-producing assistant.' },
     { role: 'user', content: 'Return {"hello":"world"}.' },
@@ -79,7 +81,7 @@ const result = await civitaiLLM!.getJsonCompletion<MyShape>({
   temperature: 1,
   maxTokens: 8192, // default
   retries: 3,
-  debug: false,            // opt-in per-call info logging
+  debug: false, // opt-in per-call info logging
   suppressThinking: false, // opt-in JSON-only directive for thinking models
 });
 ```
@@ -145,13 +147,13 @@ const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
 const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.GPT_5_NANO;
 ```
 
-| Function | Default | Reason |
-|----------|---------|--------|
-| `generateCollectionDetails` | `GPT_4O_MINI` | Short text generation |
-| `generateArticle` | `GPT_4O_MINI` | Persona / creative writing |
-| `generateThemeElements` | `GPT_4O_MINI` | Keyword extraction |
-| `generateReview` | `GPT_5_NANO` | Stricter image scoring |
-| `generateWinners` | `GPT_4O_MINI` | Narrative + ranking |
+| Function                    | Default       | Reason                     |
+| --------------------------- | ------------- | -------------------------- |
+| `generateCollectionDetails` | `GPT_4O_MINI` | Short text generation      |
+| `generateArticle`           | `GPT_4O_MINI` | Persona / creative writing |
+| `generateThemeElements`     | `GPT_4O_MINI` | Keyword extraction         |
+| `generateReview`            | `GPT_5_NANO`  | Stricter image scoring     |
+| `generateWinners`           | `GPT_4O_MINI` | Narrative + ranking        |
 
 Caller-supplied `input.model` overrides the default at every site. The mod-only Playground (`ModelSelector.tsx`) is the primary way to override interactively.
 
@@ -159,18 +161,22 @@ Caller-supplied `input.model` overrides the default at every site. The mod-only 
 
 To make a call site use a Civitai-hosted model:
 
-1. Confirm the model is registered in `AI_MODELS` (`src/server/services/ai/openrouter.ts`). URN-shaped values route to this client automatically.
-2. Pass the URN as `input.model` (or set it as the call-site default).
+1. Confirm the model is registered in `AI_MODELS` (`src/server/services/ai/openrouter.ts`). URN-shaped and `civitai/*` values route to this client automatically.
+2. Pass the URN or `civitai/*` alias as `input.model` (or set it as the call-site default).
 3. If the model emits chain-of-thought by default, pass `suppressThinking: true`.
 4. Optionally surface the model in `ModelSelector.tsx` for mod testing.
 
-No dispatcher change is needed — URN-prefix routing already directs all `urn:air:*` models to the Civitai LLM client.
+No dispatcher change is needed — prefix routing already directs all `urn:air:*` and `civitai/*` models to the Civitai LLM client.
 
 The Orchestrator accepts both `chat_template_kwargs` and `response_format`, so either can be set directly on the request body instead of the prompt-based workaround:
 
 ```ts
 const body = {
-  model, messages: finalMessages, temperature, max_tokens: maxTokens, stream: false,
+  model,
+  messages: finalMessages,
+  temperature,
+  max_tokens: maxTokens,
+  stream: false,
   response_format: { type: 'json_object' },
   chat_template_kwargs: { enable_thinking: false },
 };
@@ -180,10 +186,10 @@ Measured 2026-09-21 against the abliterated Qwen3 model: both return 200. `respo
 
 ## Env Vars
 
-| Var | Used For |
-|-----|----------|
-| `ORCHESTRATOR_ENDPOINT` | Base URL. Trailing slashes are stripped. |
-| `ORCHESTRATOR_ACCESS_TOKEN` | Bearer token. |
+| Var                         | Used For                                 |
+| --------------------------- | ---------------------------------------- |
+| `ORCHESTRATOR_ENDPOINT`     | Base URL. Trailing slashes are stripped. |
+| `ORCHESTRATOR_ACCESS_TOKEN` | Bearer token.                            |
 
 If either is missing, `civitaiLLM` exports as `undefined`. The dispatcher then throws `'Civitai LLM not connected'` if a URN model is requested, surfacing a clear setup error instead of an opaque network failure.
 

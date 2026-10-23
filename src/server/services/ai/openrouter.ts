@@ -33,7 +33,6 @@ export const AI_MODELS = {
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
   // Served by the Civitai orchestrator's chat-completions endpoint (civitai-llm client), not OpenRouter.
   CIVITAI_QWEN_3_8: 'civitai/qwen3.8',
-  QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
   // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
   // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
   JEV: 'typesafe/jev-1.13',
