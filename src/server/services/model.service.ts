@@ -6048,9 +6048,10 @@ export const privateModelFromTraining = async ({
         },
       });
 
-      // Do this after the fact to avoid some triggers.
+      // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
+      // if a moderator later restores one through a path that leaves availability alone.
       await dbWrite.modelVersion.updateMany({
-        where: { modelId: id, ...keepDowned },
+        where: { modelId: id },
         data: {
           availability: Availability.Private,
         },
