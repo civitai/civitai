@@ -418,6 +418,8 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  onlyModelIds,
+  excludeModelIds,
   _forceBaseModelMetrics,
   eventDecorationViewer,
   faceBrowsingLevel,
@@ -447,6 +449,12 @@ export const getModelsRaw = async ({
   ownerUserId?: number;
   /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
   publicVersionsOnly?: boolean;
+  /**
+   * Restrict to / drop these model ids — the browse feed's official-checkpoint pin. Unlike
+   * `input.ids`, neither relaxes `hidePrivateModels`, so the pinned rows pass every feed filter.
+   */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
   /**
    * The level that picks each model's .com or .red face when `input.browsingLevel` is a content
    * filter rather than the viewer's (the featured block queries every level, then shows SFW only).
@@ -863,6 +871,9 @@ export const getModelsRaw = async ({
   if (allowNoCredit !== undefined) AND.push(Prisma.sql`m."allowNoCredit" = ${allowNoCredit}`);
 
   if (!!ids?.length) AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(ids, ',')})`);
+  if (onlyModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(onlyModelIds, ',')})`);
+  if (excludeModelIds?.length) AND.push(Prisma.sql`mm."modelId" != ALL(${excludeModelIds}::int[])`);
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -1701,6 +1712,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain,
   eventDecorationViewer,
   faceBrowsingLevel,
+  onlyModelIds,
+  excludeModelIds,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1713,6 +1726,9 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain?: DomainColor;
   /** See `getModelsRaw`. */
   faceBrowsingLevel?: number;
+  /** See `getModelsRaw`. */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1737,6 +1753,8 @@ export const getModelsWithImagesAndModelVersions = async ({
     include: ['cosmetics'],
     eventDecorationViewer,
     faceBrowsingLevel,
+    onlyModelIds,
+    excludeModelIds,
   });
 
   const modelVersionIds = items
