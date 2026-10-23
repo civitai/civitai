@@ -30,8 +30,15 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions, getVotedItemOwner, sourceOrder } =
-  await import('../scan-label.service');
+const {
+  claimNext,
+  castVote,
+  getCounters,
+  getOpenFlaggerVersions,
+  getVotedItemOwner,
+  isControlFlaggerVersion,
+  sourceOrder,
+} = await import('../scan-label.service');
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
 const KEEP = { block: false } as const;
@@ -164,6 +171,42 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+
+  describe('control samples stay blind', () => {
+    const CONTROL_VERSION = 'control-sample@2026-10-17';
+    beforeEach(async () => {
+      await seedItem(1, { version: 'scan@1' });
+      await seedItem(2, { version: CONTROL_VERSION, sources: ['control-sample'] });
+    });
+
+    it('never lists the control version as a filter', async () => {
+      expect(await getOpenFlaggerVersions()).toEqual(['scan@1']);
+    });
+
+    it('serves and counts no control item when the control version is the filter', async () => {
+      expect(await claimNext(1, { flaggerVersion: CONTROL_VERSION }, NOW)).toBeNull();
+      expect((await getCounters(1, { flaggerVersion: CONTROL_VERSION }, NOW)).openInFilter).toBe(0);
+    });
+
+    it('still reaches a control item by its scanner flag', async () => {
+      // A control item that a scan later flags too keeps its control lane.
+      await pg.query(
+        `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+         SELECT id, 'orchestrator-scan', 'scan@2', 'wf-2-scan', '2026-10-13T08:00:00Z'
+         FROM "ScanLabelItem" WHERE "imageId" = 2`
+      );
+      expect((await getOpenFlaggerVersions()).sort()).toEqual(['scan@1', 'scan@2']);
+      expect((await claimNext(1, { flaggerVersion: 'scan@2' }, NOW))!.imageId).toBe(2);
+      // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
+      expect(await isControlFlaggerVersion('scan@2')).toBe(false);
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+    });
+
+    it('recognises the control version, and only it', async () => {
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+      expect(await isControlFlaggerVersion('scan@1')).toBe(false);
+    });
   });
 });
 
