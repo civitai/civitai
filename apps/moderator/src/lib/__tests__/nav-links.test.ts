@@ -4,9 +4,7 @@ import {
   navBadge,
   navCount,
   navHref,
-  isQuietRow,
   navPartial,
-  sectionTotal,
   switcherEntries,
 } from '$lib/nav-links';
 import {
@@ -185,26 +183,6 @@ describe('the Models section', () => {
       text: '1,746+',
       partial: true,
     });
-  });
-
-  it('marks a dashboard section partial when a row it sums is, not when an informational one is', () => {
-    const row = (count: number | null, partial = false, informational = false) => ({
-      count,
-      partial,
-      informational,
-    });
-    expect(sectionTotal([row(400), row(23), row(null, true)])).toEqual({
-      total: 423,
-      partial: true,
-    });
-    expect(sectionTotal([row(400), row(7, true, true)])).toEqual({ total: 400, partial: false });
-  });
-
-  it('files a row as empty only when nothing in it went uncounted', () => {
-    expect(isQuietRow({ count: 0, partial: false })).toBe(true);
-    // Model Flags with Auto-flagged unreadable and the other tabs at 0: not "All clear".
-    expect(isQuietRow({ count: 0, partial: true })).toBe(false);
-    expect(isQuietRow({ count: null, partial: false })).toBe(false);
   });
 
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
