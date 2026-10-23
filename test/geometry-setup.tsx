@@ -111,8 +111,7 @@
  * on a PR it REPORTS and on a push to `main` it BLOCKS. Do not write "the blocking
  * tier" about this project without that qualifier.
  *
- * `component` is still ungated: no project selector in that workflow matches it, and
- * its only CI home is the preview pipeline's report-only `preview / component-tests`.
+ * `component` runs in that workflow too, as its own `Component tests` job.
  *
  * `pnpm run test:geometry` is still the whole command locally, and the glob is
  * disjoint from every other project's, so adding a file here cannot change what any

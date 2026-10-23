@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
-import { STORYLINE_CEILING_LEVELS, STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
+import {
+  STORYLINE_CAPTION_MAX_LENGTH,
+  STORYLINE_CEILING_LEVELS,
+  STORYLINE_PATH_LIMIT,
+} from '~/shared/utils/storyline';
 
 const ceilingSchema = z
   .number()
@@ -21,7 +25,8 @@ const picksSchema = {
 };
 
 export const createStorylineSchema = z.object({
-  postId: z.number().int().positive(),
+  /** Chapter 1, when the storyline starts from a post already published. Omitted, it starts empty. */
+  postId: z.number().int().positive().optional(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
@@ -38,6 +43,14 @@ export const updateStorylineSchema = z.object({
   ...picksSchema,
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
+
+/** Empty text deletes the caption. */
+export const setStorylineImageCaptionSchema = z.object({
+  imageId: z.number().int().positive(),
+  content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
+});
+
+export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
 
 export const storylineCollaboratorSchema = z.object({
   storylineId: z.number().int().positive(),
@@ -80,6 +93,8 @@ export const storylineLinkTargetsSchema = z.object({
 });
 
 export const storylineIdSchema = z.object({ id: z.number().int().positive() });
+
+export const storylinePendingForPostSchema = z.object({ postId: z.number().int().positive() });
 
 export const getStorylineSchema = z.object({
   id: z.number().int().positive(),

@@ -38,10 +38,32 @@ describe('the instructions on the server runner', () => {
     previewHost: null,
   };
 
-  it('say the live preview is not there, and never how to start one', () => {
+  it('tell the assistant the preview opens by itself once the dev server starts, and to look with preview_check', () => {
     const text = shared.buildAssistantInstructions({ ...input, runner: 'remote' });
-    expect(text).toContain(shared.REMOTE_NO_PREVIEW);
-    expect(text).not.toContain('call start_preview with');
+    expect(text).toContain(shared.REMOTE_PREVIEW);
+    // The whole sentence: a reworded preview step must be re-read here.
+    expect(shared.REMOTE_PREVIEW).toBe(
+      'Live preview (it opens beside this chat in the user’s page, and you can see the same running app): start the dev server with sandbox__dev_server_start (or sandbox__dev_server_restart when one is already running) and leave it running; the preview then opens for the user by itself, and the answer of that call says so (or why it could not). Do not call start_preview to open it. To see what the user sees, call sandbox__preview_check, which loads the same dev server, with screenshot: true when how it looks matters (and viewport: mobile for a phone); if no image comes back, go by its text and never describe a picture you did not receive. sandbox__preview_check needs the dev server running: start it first, or it answers render: server_error. Call start_preview only when the user asks to reopen the preview, and stop_preview when they ask to stop it.'
+    );
+    // The dev server comes before the check that needs it.
+    const order = ['sandbox__dev_server_start', 'sandbox__preview_check'].map((name) =>
+      shared.REMOTE_PREVIEW.indexOf(name)
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The runner does the tunnel steps itself.
+    expect(text).not.toMatch(/sandbox__tunnel_/);
+  });
+
+  it('without the preview, still tell the assistant to start the dev server before preview_check', () => {
+    for (const runner of ['remote', 'browser'] as const) {
+      const text = shared.buildAssistantInstructions({ ...input, canPreview: false, runner });
+      expect(text).toContain(shared.NO_PREVIEW);
+      expect(text).not.toContain(shared.REMOTE_PREVIEW);
+    }
+    expect(shared.NO_PREVIEW).toBe(
+      'Live preview is not enabled for this account: do not call start_preview, and tell the user there is no live preview. To see the app yourself, start the dev server with sandbox__dev_server_start and leave it running, then call sandbox__preview_check (with screenshot: true when how it looks matters; if no image comes back, go by its text and never describe a picture you did not receive); it answers render: server_error until the dev server runs.'
+    );
   });
 
   it('leave the browser’s instructions exactly as they were', () => {

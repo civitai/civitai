@@ -5,8 +5,9 @@ import type { ModelStatus } from '@civitai/db-schema/enums';
 
 export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
 export const POST_MAXIMUM_SCHEDULE_MONTHS = 3;
-/** Minimum spacing between one creator's scheduled posts when a batch is scheduled. */
-export const POST_BATCH_MIN_GAP_MINUTES = 30;
+/** Minimum spacing between one creator's scheduled posts when a batch is scheduled. Twelve an hour
+ *  keeps the 150-a-day tier reachable within a day. */
+export const POST_BATCH_MIN_GAP_MINUTES = 5;
 export const POST_BATCH_MAX_POSTS = 200;
 export const POST_BATCH_MAX_IMAGES = 500;
 /** Posts created per chunked `scheduleBatch` call (docs/batch-scheduling-plan.md); the client sends a
@@ -21,8 +22,9 @@ export const POST_SCHEDULE_JITTER_MAX_MINUTES = 9;
  * can move toward each other by at most `POST_SCHEDULE_JITTER_MAX_MINUTES`, and the on-the-hour
  * nudge adds one more.
  */
-export const POST_BATCH_MIN_EVERY_MINUTES = 40;
-export const POST_BATCH_MIN_SPREAD_SLOT_MINUTES = 40;
+export const POST_BATCH_MIN_EVERY_MINUTES =
+  POST_BATCH_MIN_GAP_MINUTES + POST_SCHEDULE_JITTER_MAX_MINUTES + 1;
+export const POST_BATCH_MIN_SPREAD_SLOT_MINUTES = POST_BATCH_MIN_EVERY_MINUTES;
 
 const MINUTE_MS = 60_000;
 

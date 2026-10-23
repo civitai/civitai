@@ -89,7 +89,7 @@ describe('comment notifications — per-thread mute', () => {
   // well as documented.
   it('exempts exactly new-mention, on purpose', () => {
     expect([...MUTE_EXEMPT]).toEqual(['new-mention']);
-    expect(filteredTypes).toHaveLength(14);
+    expect(filteredTypes).toHaveLength(15);
   });
 
   it('finds the family on the real objects', () => {

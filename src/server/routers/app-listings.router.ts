@@ -17,7 +17,10 @@ import {
   getAppListingDetailSchema,
   listAllListingsForModerationSchema,
   listAppListingsSchema,
+  listListingForksSchema,
+  type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
 import {
   getMyAppListingReviewSchema,
   listAppListingReviewsSchema,
@@ -874,6 +877,17 @@ export const appListingsRouter = router({
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      // FORK OPT-IN — turning it ON is behind the `app-blocks-fork` rollout flag (fail-closed),
+      // CLI token included. Turning it OFF never is: an author who opted in while the flag was on
+      // must still be able to withdraw consent after a rollback. Evaluated only when the patch
+      // turns it on, so no other edit pays for a flag eval. Ownership is still the service's gate
+      // (`loadOwnedEditableListing`: owner or accepted collaborator).
+      if (input.patch.forkable === true) {
+        const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+        if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: FORK_SETTING_DISABLED_MESSAGE });
+        }
+      }
       const { updateListing } = await import('~/server/services/blocks/offsite-listing.service');
       try {
         return await updateListing({
@@ -2068,6 +2082,54 @@ export const appListingsRouter = router({
         visibility: input.visibility,
         reason: input.reason,
         moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
+   *
+   * Behind the `app-blocks-fork` rollout flag: off (or absent, or Flipt down) → `null`, and the
+   * page renders no fork section. Same read gates as `getAppDetail`, applied twice: the PARENT
+   * must be a listing this viewer could open (`getStoreVisibleListingSummary` → else `null`, so
+   * this cannot probe a hidden listing), and each FORK is counted and listed only when this viewer
+   * could find it in the store (`listListingForks`). "Forked from …" attribution is NOT here — it
+   * rides `getAppDetail` and is not behind the flag.
+   */
+  listForks: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(listListingForksSchema)
+    .query(async ({ ctx, input }): Promise<ListingForksPage | null> => {
+      const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
+      if (scope === 'none') return null;
+      const redCapable = isRedCapableRequest(ctx);
+      const { getStoreVisibleListingSummary } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      const parent = await getStoreVisibleListingSummary(
+        { id: input.listingId },
+        { redCapable, scope, floor }
+      );
+      if (!parent) return null;
+      const [{ listListingForks }, { dbRead }] = await Promise.all([
+        import('~/server/services/blocks/app-listing-forks.service'),
+        import('~/server/db/client'),
+      ]);
+      return listListingForks(dbRead, {
+        parentListingId: parent.id,
+        cursor: input.cursor ?? null,
+        limit: input.limit,
+        scope,
+        floor,
+        redCapable,
       });
     }),
 

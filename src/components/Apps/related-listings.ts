@@ -3,8 +3,7 @@
  *
  * Picks what the unified listing detail shows under its discovery rail. Pure so
  * the correctness coverage lands in the node `unit` project — the fast,
- * deterministic suite CI runs on every PR, whereas the browser-mode component
- * suites are not run in CI at all (same rationale as `appListingCardView` /
+ * deterministic suite CI runs on every PR (same rationale as `appListingCardView` /
  * `appListingDetailView` / `recentAppsRail`).
  *
  * Selection policy, in order:
@@ -118,8 +117,8 @@ export function isRelatedRailLoading(opts: {
  * The rail's HEADING — and its `aria-label`, which is the same string.
  *
  * 🔴 Lives here, not inline in the component, for this module's stated reason:
- * the browser-mode component suites are not run in CI, so an expression that
- * renders a user-facing string is only actually GUARDED once it is pure. It was
+ * an expression that renders a user-facing string is testable in the node project once
+ * it is pure. It was
  * inline, and that made `RelatedListings` the one call site of
  * `marketplaceCategoryLabel` with no reachable assertion anywhere.
  *

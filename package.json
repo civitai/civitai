@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.351",
+  "version": "5.1.358",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -338,6 +338,7 @@
     "source-map": "^0.7.4",
     "sqids": "^0.3.0",
     "stacktrace-parser": "^0.1.10",
+    "standardwebhooks": "^1.1.1",
     "stream-to-blob": "^2.0.1",
     "stripe": "^11.6.0",
     "superjson": "^2.2.6",

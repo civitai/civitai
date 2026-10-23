@@ -19,7 +19,8 @@ export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
   ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
   ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",
   ${Prisma.raw(alias)}."model3dId", ${Prisma.raw(alias)}."model3dReviewId",
-  ${Prisma.raw(alias)}."appListingId", ${Prisma.raw(alias)}."crucibleId"
+  ${Prisma.raw(alias)}."appListingId", ${Prisma.raw(alias)}."crucibleId",
+  ${Prisma.raw(alias)}."storylineId"
 ) > 0`;
 
 /**

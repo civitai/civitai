@@ -6,6 +6,7 @@ import {
   notBlockedBetween,
   notCommentMuted,
 } from '~/server/notifications/base.notifications';
+import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
@@ -174,6 +175,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
     crucible: `/crucibles/${threadParentId}?${queryString}`,
+    storyline: `${storylineUrl(threadParentId)}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
     comicProject: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
@@ -1016,6 +1018,48 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_crucible_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-crucible-comment');
+    `,
+  },
+  'new-storyline-comment': {
+    displayName: 'New comments on your storylines',
+    category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.EntityOwner,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your storyline: "${details.storylineTitle}"`,
+      url: `${storylineUrl(details.storylineId)}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_storyline_comment AS (
+        SELECT DISTINCT
+          s."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 3,
+            'storylineId', s.id,
+            'storylineTitle', s.title,
+            'commentId', c.id,
+            'username', u.username
+          ) as "details"
+        FROM "CommentV3" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Storyline" s ON s.id = c."entityId"
+        WHERE c."entityType" = 'storyline'
+          AND c."parentId" IS NULL
+          AND ${liveV3Since(lastSent)}
+          AND s."userId" > 0
+          AND c."userId" != s."userId"
+          AND NOT s."tosViolation"
+          AND ${notBlockedBetween('s."userId"', 'c."userId"')}
+          AND ${notCommentMuted('s."userId"', 'c')}
+      )
+      SELECT
+        concat('new-comment-storyline:owner:v3:', details->>'commentId') "key",
+        ${commentDedupeKey('v2')} "dedupeKey",
+        "ownerId" "userId",
+        'new-storyline-comment' "type",
+        details
+      FROM new_storyline_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-storyline-comment');
     `,
   },
   // Model3D comments mirror the Model 3-tier (`new-comment` / `new-comment-response` /

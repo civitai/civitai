@@ -4,6 +4,7 @@ import { getClickhouse } from './clickhouse';
 import { clickhouseDate } from './clickhouse-date';
 import { escapeLike } from './like';
 import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
+import { recordChatReads, type Reader } from './chat-read-audit';
 
 // The PAGE LOAD half of Chat Audit (Retool's "Chat Audit" app) — search, the chat list, a transcript and
 // the member panel. The expensive aggregates live in chat-insights.service.ts behind
@@ -53,8 +54,8 @@ export type ChatMessageRow = {
   username: string | null;
   bannedAt: Date | null;
   content: string;
-  /** Set when the sender rewrote the message. The ORIGINAL text is not kept on the row — an edit
-   *  overwrites `content` — so it comes from the audit log instead; see `getMessageEdits`. */
+  /** Set when the sender rewrote the message. An edit overwrites `content`, so earlier versions come
+   *  from the edit history instead; see `getRecordedEdits` and `getMessageEdits`. */
   editedAt: Date | null;
   /** Deleted messages are hidden from both participants but retained for exactly this. A report is
    *  usually filed about a message the sender then removed, so omitting them hid the evidence. */
@@ -62,7 +63,7 @@ export type ChatMessageRow = {
 };
 
 /**
- * ONE edit, from the `chatAuditEvents` log — the only place a superseded version survives.
+ * ONE edit, from `ChatMessageEdit` or, for edits before it shipped, the `chatAuditEvents` log.
  *
  * A message carries a LIST of these, oldest first, because 144 of the 1,025 edited messages on the
  * site were edited more than once and one was edited 21 times. Collapsing them to first-and-last
@@ -152,7 +153,7 @@ const SEARCH_LIMIT = 50;
  */
 const CONTENT_SEARCH_DAYS = 90;
 
-export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
+export async function searchChats(reader: Reader, rawTerm: string): Promise<ChatSearch | null> {
   const term = rawTerm.trim();
   if (!term) return null;
 
@@ -175,7 +176,7 @@ export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
     slow: mode === 'content',
     contentSearchDays: CONTENT_SEARCH_DAYS,
     ambiguousUsername: mode === 'chat' && (await usernameExists(term)),
-    chats: ids.length ? await summariseChats(ids, mode, term) : [],
+    chats: ids.length ? await summariseChats(reader, ids, mode, term) : [],
   };
 }
 
@@ -256,6 +257,7 @@ export async function chatMessageCounts(
 // Retool's FindChats joined member names with string_agg and split on ',', which corrupts any username
 // containing a comma. A real array avoids inventing a delimiter.
 async function summariseChats(
+  reader: Reader,
   chatIds: number[],
   mode: SearchMode,
   term: string
@@ -288,6 +290,10 @@ async function summariseChats(
 
   const byChat = await chatMessageCounts(chatIds);
   const excerpts = await chatExcerpts(chatIds, mode, term);
+  await recordChatReads(
+    reader,
+    [...excerpts].map(([chatId, e]) => ({ chatId, subjectId: e.userId }))
+  );
 
   return rows
     .map((r) => ({
@@ -391,16 +397,19 @@ const chatMessageRead = (chatId: number) =>
 // moderation, so a report filed about a message the sender then removed pointed at a transcript that
 // did not contain it.
 export async function getTranscript(
+  reader: Reader,
   chatId: number,
   limit = 300
 ): Promise<{
   rows: ChatMessageRow[];
   truncated: boolean;
-  /** Every edit per message, oldest first. Null when the audit log could not be read — distinct from
-   *  an empty map, which says the log was read and holds nothing for these messages. */
-  edits: Record<number, MessageEdit[]> | null;
+  /** Every edit per message, oldest first. */
+  edits: Record<number, MessageEdit[]>;
+  /** A history source could not be read, so a message may have more versions than `edits` holds — and
+   *  one with none is unknown, not unrecorded. */
+  editsPartial: boolean;
 }> {
-  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {} };
+  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {}, editsPartial: false };
 
   const rows = await chatMessageRead(chatId)
     // Newest first so the cap drops the OLDEST; reversed here for reading order.
@@ -410,9 +419,151 @@ export async function getTranscript(
 
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit).reverse();
-  const edited = page.filter((r) => r.editedAt).map((r) => r.id);
+  const edited = page.filter((r) => r.editedAt);
+  if (page.length) await recordChatReads(reader, [{ chatId }]);
 
-  return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
+  const [recorded, logged] = await Promise.all([
+    getRecordedEdits(edited),
+    getMessageEdits(
+      chatId,
+      edited.map((r) => r.id)
+    ),
+  ]);
+  return {
+    rows: page,
+    truncated,
+    edits: mergeEdits(recorded ?? {}, logged ?? {}),
+    editsPartial: recorded === null || logged === null,
+  };
+}
+
+/** Per transcript, across all its messages. */
+const RECORDED_EDITS_CAP = 5_000;
+
+/**
+ * Edits from `ChatMessageEdit`, written in the same statement as the edit. Each row holds the text it
+ * replaced; the text it left is the next row's, or the message's current content.
+ */
+async function getRecordedEdits(
+  messages: Pick<ChatMessageRow, 'id' | 'userId' | 'content'>[]
+): Promise<Record<number, MessageEdit[]> | null> {
+  if (!messages.length) return {};
+
+  try {
+    const rows = await dbRead
+      .selectFrom('ChatMessageEdit')
+      .select(['messageId', 'editorId', 'previousContent', 'createdAt'])
+      .where(
+        'messageId',
+        'in',
+        messages.map((m) => m.id)
+      )
+      .orderBy('id', 'asc')
+      .limit(RECORDED_EDITS_CAP + 1)
+      .execute();
+    // Edits are not rate-limited, so one message can carry any number of them. Over the cap the
+    // transcript shows none rather than an arbitrary subset, and says the history is incomplete.
+    if (rows.length > RECORDED_EDITS_CAP) return null;
+
+    const byId = new Map(messages.map((m) => [m.id, m]));
+    const byMessage: Record<number, MessageEdit[]> = {};
+    for (const r of rows) {
+      const message = byId.get(r.messageId);
+      if (!message) continue;
+      const chain = (byMessage[r.messageId] ??= []);
+      const prev = chain.at(-1);
+      if (prev) prev.newValue = r.previousContent;
+      chain.push({
+        at: new Date(r.createdAt).toISOString(),
+        oldValue: r.previousContent,
+        newValue: message.content,
+        truncated: false,
+        actorRole: r.editorId === message.userId ? 'owner' : 'moderator',
+      });
+    }
+    return byMessage;
+  } catch (e) {
+    // The moderator app can deploy before the table's migration is applied.
+    console.error('[chat-audit] recorded message edits unavailable', e);
+    return null;
+  }
+}
+
+/** First index whose value is at least `min`, in an ascending list. */
+function lowerBound(sorted: number[], min: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < min) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Recorded edits keep their own order, which is the order the row lock let them through: their
+ * timestamps are taken before the lock, so two racing edits can be stamped the other way round.
+ * Logged-only edits are slotted in by time around them.
+ */
+function interleave(logged: MessageEdit[], recorded: MessageEdit[]): MessageEdit[] {
+  const out: MessageEdit[] = [];
+  let i = 0;
+  for (const r of recorded) {
+    while (i < logged.length && Date.parse(logged[i].at) <= Date.parse(r.at)) out.push(logged[i++]);
+    out.push(r);
+  }
+  return [...out, ...logged.slice(i)];
+}
+
+/** The same edit lands in both sources, its ClickHouse row inserted just after the Postgres one; the
+ *  small lead allowed the other way is clock skew between the app and ClickHouse. */
+const SAME_EDIT_WINDOW_MS = 60_000;
+const SAME_EDIT_SKEW_MS = 5_000;
+
+/**
+ * Postgres history starts when it shipped; the ClickHouse log reaches further back while its flag was on.
+ * A logged edit that matches a recorded one (same text either side, moments apart) is that edit, so it is
+ * dropped; the rest are earlier edits only the log saw.
+ */
+export function mergeEdits(
+  recorded: Record<number, MessageEdit[]>,
+  logged: Record<number, MessageEdit[]>
+): Record<number, MessageEdit[]> {
+  const merged: Record<number, MessageEdit[]> = {};
+  for (const id of new Set([...Object.keys(recorded), ...Object.keys(logged)].map(Number))) {
+    const rec = recorded[id] ?? [];
+    const log = logged[id] ?? [];
+    // Closest pairs first, so text that goes back and forth inside the window pairs each logged edit
+    // with its own recorded one rather than whichever came first.
+    const byTime = rec
+      .map((r, ri) => ({ r, ri, at: Date.parse(r.at) }))
+      .sort((a, b) => a.at - b.at);
+    const times = byTime.map((x) => x.at);
+    const pairs: { li: number; ri: number; gap: number }[] = [];
+    log.forEach((l, li) => {
+      const at = Date.parse(l.at);
+      // Only the recorded edits inside the window are compared.
+      for (let k = lowerBound(times, at - SAME_EDIT_WINDOW_MS); k < byTime.length; k++) {
+        const { r, ri } = byTime[k];
+        const lag = at - times[k];
+        if (lag <= -SAME_EDIT_SKEW_MS) break;
+        if (lag < SAME_EDIT_WINDOW_MS && r.oldValue === l.oldValue && r.newValue === l.newValue)
+          pairs.push({ li, ri, gap: Math.abs(lag) });
+      }
+    });
+    pairs.sort((a, b) => a.gap - b.gap);
+    const dropped = new Set<number>();
+    const taken = new Set<number>();
+    for (const { li, ri } of pairs) {
+      if (dropped.has(li) || taken.has(ri)) continue;
+      dropped.add(li);
+      taken.add(ri);
+    }
+    const onlyLogged = log.filter((_, li) => !dropped.has(li));
+    merged[id] = interleave(onlyLogged, rec);
+  }
+  return merged;
 }
 
 /** Messages shown above the oldest held one and below the newest held one. */
@@ -501,8 +652,8 @@ export async function getJudgedMessages(
 }
 
 /**
- * The text a message had BEFORE it was edited, from the `chatAuditEvents` ClickHouse log — Postgres
- * keeps only the current version. Best-effort: the log being down must not take the transcript with it.
+ * Edits from the `chatAuditEvents` ClickHouse log, the only record of those made before
+ * `ChatMessageEdit` existed. Best-effort: the log being down must not take the transcript with it.
  */
 async function getMessageEdits(
   chatId: number,
@@ -578,7 +729,21 @@ export type UserMessages = { rows: ChatMessageWithChat[]; chats: number; truncat
  * re-resolve it by name. A rename between the two lookups would silently answer about whoever holds the
  * old name now, and usernames are reusable.
  */
-export async function getUserMessagesById(userId: number, limit = 50): Promise<UserMessages> {
+/** One account's messages span many chats: a read of each chat they appear in, attributed to them. */
+const recordUserMessageReads = (reader: Reader, rows: ChatMessageWithChat[]) =>
+  recordChatReads(
+    reader,
+    [...new Map(rows.map((r) => [r.chatId, r.userId])).entries()].map(([chatId, subjectId]) => ({
+      chatId,
+      subjectId,
+    }))
+  );
+
+export async function getUserMessagesById(
+  reader: Reader,
+  userId: number,
+  limit = 50
+): Promise<UserMessages> {
   if (!isInt4Id(userId)) return { rows: [], chats: 0, truncated: false };
 
   const [rows, distinct] = await Promise.all([
@@ -607,14 +772,16 @@ export async function getUserMessagesById(userId: number, limit = 50): Promise<U
       .executeTakeFirst(),
   ]);
 
-  return {
-    truncated: rows.length > limit,
-    chats: Number(distinct?.n ?? 0),
-    rows: rows.slice(0, limit),
-  };
+  const page = rows.slice(0, limit);
+  await recordUserMessageReads(reader, page);
+  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
 }
 
-export async function getUserMessages(username: string, limit = 100): Promise<UserMessages | null> {
+export async function getUserMessages(
+  reader: Reader,
+  username: string,
+  limit = 100
+): Promise<UserMessages | null> {
   const name = username.replace(/^@/, '');
 
   // Null for an unresolved term, not an empty result. `USERNAME_SHAPE` matches things that are not
@@ -654,11 +821,9 @@ export async function getUserMessages(username: string, limit = 100): Promise<Us
       .executeTakeFirst(),
   ]);
 
-  return {
-    truncated: rows.length > limit,
-    chats: Number(distinct?.n ?? 0),
-    rows: rows.slice(0, limit),
-  };
+  const page = rows.slice(0, limit);
+  await recordUserMessageReads(reader, page);
+  return { truncated: rows.length > limit, chats: Number(distinct?.n ?? 0), rows: page };
 }
 
 /** Does this chat exist at all? Separates "empty conversation" from "no such chat" — a shared link with

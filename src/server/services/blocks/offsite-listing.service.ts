@@ -35,6 +35,13 @@ import {
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
 import {
+  FORKABLE_OFFSITE_MESSAGE,
+  FORKABLE_ON_REVISION_MESSAGE,
+  assertForkableWritable,
+  readListingForkable,
+  writeListingForkable,
+} from '~/server/services/blocks/app-fork.service';
+import {
   BETA_MESSAGE_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
@@ -1459,6 +1466,22 @@ export async function updateListing(opts: {
   if (effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined) {
     assertBetaWritable(listing.betaAvailable);
   }
+  // FORK OPT-IN ("Let others fork this app's source"). TRIVIAL like beta — never material, never
+  // staged on a shadow — so it is written to the LIVE listing after whichever branch below
+  // applies the rest of the patch. Its refusals are hoisted here with the others, so nothing has
+  // been written when one throws.
+  //
+  // `buildListingPatchData` does not know this key, so it never reaches a Prisma `data` object —
+  // which is required, not incidental: the column is no-type and does not exist on the delegate.
+  const forkable = effectivePatch.forkable;
+  if (forkable !== undefined) {
+    // An off-site app has no source on the platform, so there is nothing to fork.
+    if (listing.kind !== 'onsite') {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_OFFSITE_MESSAGE });
+    }
+    // Read only when the patch names the key, so no other edit pays for it.
+    assertForkableWritable((await readListingForkable(listingId, dbRead)).available);
+  }
   const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: listing.sourceRepoAvailable,
@@ -1471,6 +1494,9 @@ export async function updateListing(opts: {
   // anyway, so it applies the whole patch in one update exactly as before.
   const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
 
+  // Every non-throwing branch assigns this and `break`s, so the fork opt-in below has ONE write
+  // site after whichever branch ran.
+  let result: UpdateListingResult;
   switch (listing.status) {
     case 'removed': {
       // 🔴 `removed` IS TWO DIFFERENT STATES WEARING ONE STATUS STRING. An owner who
@@ -1568,7 +1594,8 @@ export async function updateListing(opts: {
       // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'rejected':
       // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
@@ -1588,7 +1615,8 @@ export async function updateListing(opts: {
       // the `removed` branch above, including the part about the rule not being uniform.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'approved': {
       const material = patchHasMaterialChange(effectivePatch, {
@@ -1610,7 +1638,8 @@ export async function updateListing(opts: {
         // are hydrated live and could never be stale; only `category` needs this.)
         await bustAppListingCatalogCache().catch(() => undefined);
 
-        return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        break;
       }
       // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
       // patch (material + trivial) is written to the shadow. Assets are edited
@@ -1662,7 +1691,8 @@ export async function updateListing(opts: {
       // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
-      return { listingId, status: listing.status, requiresReview: true, shadowId };
+      result = { listingId, status: listing.status, requiresReview: true, shadowId };
+      break;
     }
     default:
       throw new OffsiteRequestError(
@@ -1670,6 +1700,16 @@ export async function updateListing(opts: {
         `cannot edit a listing in status ${listing.status}`
       );
   }
+
+  // FORK OPT-IN, onto the LIVE listing — `listingId`, never the shadow the material branch may
+  // have just minted (a shadow's opt-in would be read by nothing). Reached only after a branch
+  // succeeded, so a refused edit never changes it. Not atomic with that branch's write: a failure
+  // here leaves the rest of the patch applied and surfaces the error, and re-saving converges
+  // (both writes are idempotent). Not a catalog axis, so no bust.
+  if (forkable !== undefined) {
+    await writeListingForkable(dbWrite, listingId, forkable);
+  }
+  return result;
 }
 
 export type BeginListingRevisionResult = { shadowId: string; created: boolean };
@@ -2821,6 +2861,12 @@ export async function updateRevisionDraft(opts: {
       'INVALID_REVISION',
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
+  }
+  // 🔴 THE FORK OPT-IN IS NEVER STAGED, and this path cannot write it: `buildListingPatchData`
+  // does not know the key, so accepting it here would DROP it silently and report success. It is
+  // refused instead, before anything is written; `updateListing` writes it to the live listing.
+  if (patch.forkable !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
   }
   await throwOnBlockedUserContent(listingAuthorText(patch), {
     isModerator,

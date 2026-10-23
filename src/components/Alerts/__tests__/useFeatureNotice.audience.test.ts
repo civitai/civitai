@@ -18,9 +18,8 @@ const act = (React as unknown as { act: typeof actType }).act;
  * the `unit` project, deliberately.
  *
  * The notice components are covered by `*.browser.test.tsx` files, which are a
- * separate Vitest project (`component`, real Chromium). CI runs
- * `vitest run --project unit`. A browser-only assertion is therefore reassurance
- * and not a gate, so the load-bearing claim — *a targeted notice is not offered
+ * separate Vitest project (`component`, real Chromium, `Component tests` in CI).
+ * The load-bearing claim — *a targeted notice is not offered
  * to a non-member and is offered to a member* — lives in a `.test.ts` that the
  * blocking job executes. `happy-dom` + `react-dom/client` is the pattern this
  * repo already uses to render a hook in the node project (see

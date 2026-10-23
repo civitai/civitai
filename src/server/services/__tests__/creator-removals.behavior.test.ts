@@ -91,11 +91,14 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" ("id" serial PRIMARY KEY, "reason" text NOT NULL);
     CREATE TABLE "UserReport" ("userId" integer NOT NULL, "reportId" integer NOT NULL);
+    -- Stands in for the hold-marker view; its definition is pinned against the real migration in
+    -- remove-blocked-images-hold-guard.behavior.test.ts.
+    CREATE TABLE "EvidenceHeldUser" ("userId" integer PRIMARY KEY, "heldUntil" timestamp(3));
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption"`);
+  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser"`);
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -126,6 +129,16 @@ describe('the removed-images list', () => {
 
     expect(result.items.map((i) => i.imageId)).toEqual([REMOVED_AGAIN, STILL_REMOVED, REJECTED]);
     expect(result.total).toBe(3);
+  });
+
+  // A hold marker's kept image reads as a moderator block; listing it with an appeal link would
+  // tell its owner something unusual is going on. The case above is the control.
+  it('lists nothing, and so offers no appeal, to an owner under a hold marker', async () => {
+    await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`);
+
+    const result = await getMyRemovedImages(OWNER);
+
+    expect(result).toEqual({ total: 0, truncated: false, items: [] });
   });
 
   it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {

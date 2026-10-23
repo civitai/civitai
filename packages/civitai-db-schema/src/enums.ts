@@ -559,6 +559,7 @@ export const CommentEntityType = {
   model3dReview: 'model3dReview',
   appListing: 'appListing',
   crucible: 'crucible',
+  storyline: 'storyline',
 } as const;
 
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];

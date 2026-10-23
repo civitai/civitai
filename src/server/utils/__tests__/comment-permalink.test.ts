@@ -60,6 +60,7 @@ const HANDLED: Array<[string, Partial<Record<keyof CommentPermalinkRow, unknown>
   ['image', { entityType: 'image' }, `/images/${PARENT_ID}?${QUERY}`],
   ['model3d', { entityType: 'model3d' }, `/3d-models/${PARENT_ID}?${QUERY}`],
   ['crucible', { entityType: 'crucible' }, `/crucibles/${PARENT_ID}?${QUERY}`],
+  ['storyline', { entityType: 'storyline' }, `/storylines/${PARENT_ID}?${QUERY}`],
 ];
 
 describe('buildCommentPermalink — the appListing branch', () => {

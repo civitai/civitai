@@ -14,7 +14,7 @@
   );
 </script>
 
-<ReportQueueShell detailLabel="Reported account" detail={children}>
+<ReportQueueShell title="User reports" detailLabel="Reported account" detail={children}>
   {#snippet queue()}
     <QueuePanel {data} {suspectId} />
   {/snippet}

@@ -29,7 +29,6 @@ export function ImageCard({ data }: Props) {
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
       cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
-      badgeClassName={cardClasses.badgeScrim}
       eventDecoration={data.eventDecoration?.data}
       eventDecorationOn={{ entityType: 'Image', entityId: data.id }}
       routedDialog={{
@@ -54,12 +53,19 @@ export function ImageCard({ data }: Props) {
         </div>
       }
       footer={({ safe }) => (
-        <div className={cardClasses.footerScrim}>
+        <div className="flex w-full flex-col gap-2">
           {/* In the footer, not over the media: this card's footer is painted on
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
           {safe && <RemixedCardFlyout imageId={data.id} />}
-          <UserAvatarSimple {...data.user} />
+          <UserAvatarSimple
+            {...data.user}
+            classNames={{
+              avatar: cardClasses.creatorAvatar,
+              namePill: cardClasses.creatorPill,
+              namePillPlate: cardClasses.creatorPillPlate,
+            }}
+          />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
               className={cardClasses.reactions}

@@ -38,12 +38,14 @@ export function userNamedOnHoldingReportSql(userId: Prisma.Sql): Prisma.Sql {
 /**
  * Whether a user is under a legal hold. The hold is user-level, so any report naming them holds
  * every one of their files, not only the files the report is about. The placeholder owner is always
- * held: who uploaded what it owns is no longer known.
+ * held: who uploaded what it owns is no longer known. So is an owner with an active hold marker.
+ * Names the `EvidenceHeldUser` view, so a database without its migration fails the whole query.
  */
 export function userUnderLegalHoldSql(userId: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     ${userId} = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
     OR ${userNamedOnHoldingReportSql(userId)}
+    OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" ehu WHERE ehu."userId" = ${userId})
   )`;
 }
 
@@ -52,9 +54,6 @@ export function userUnderLegalHoldSql(userId: Prisma.Sql): Prisma.Sql {
  * account and kept it public belongs to the placeholder owner, so its files are held too.
  */
 export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
-  // Once the EvidenceHeldUser view is applied, OR in:
-  //   EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = hm."userId")
-  // Referencing it before its migration is applied fails the whole query.
   return Prisma.sql`EXISTS (
     SELECT 1
     FROM "ModelVersion" hmv

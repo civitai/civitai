@@ -7,7 +7,7 @@
   let { data, children }: { data: LayoutData; children: Snippet } = $props();
 </script>
 
-<ReportQueueShell detailLabel="Reported post" detail={children}>
+<ReportQueueShell title="Post reports" detailLabel="Reported post" detail={children}>
   {#snippet queue()}
     <PostQueue {data} />
   {/snippet}

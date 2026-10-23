@@ -1,4 +1,5 @@
 import { Text, Tooltip, UnstyledButton } from '@mantine/core';
+import clsx from 'clsx';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -33,6 +34,7 @@ export function UserAvatarSimple({
   cosmetics,
   autoplayAnimations,
   withHoverCard = true,
+  classNames,
 }: {
   id: number;
   profilePicture?: ProfileImage | null;
@@ -41,6 +43,11 @@ export function UserAvatarSimple({
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   autoplayAnimations?: boolean;
   withHoverCard?: boolean;
+  /**
+   * `avatar` goes on the avatar wrapper; `namePill` wraps the name in a backing element, and
+   * `namePillPlate` is added to it when the user wears a nameplate.
+   */
+  classNames?: { avatar?: string; namePill?: string; namePillPlate?: string };
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -68,16 +75,30 @@ export function UserAvatarSimple({
     cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
   )?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt'>;
 
+  const name = (
+    <NamePlateText
+      size="sm"
+      fw={500}
+      lineClamp={1}
+      color="white"
+      className={classes.username}
+      nameplate={nameplate?.data}
+      autoplay={autoplayAnimations !== false}
+    >
+      {username}
+    </NamePlateText>
+  );
+
   const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
   return (
     <UserHoverCard user={{ id, deletedAt }} disabled={!withHoverCard}>
       <UnstyledButton
         onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-        className="flex w-fit items-center gap-2"
+        className={clsx('flex w-fit items-center gap-2', classNames?.namePill && 'max-w-full')}
       >
         {displayProfilePicture && (
-          <div className="relative ">
+          <div className={clsx('relative shrink-0', classNames?.avatar)}>
             <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
               {profilePicture &&
               (!features.canViewNsfw
@@ -116,20 +137,18 @@ export function UserAvatarSimple({
           <Text size="sm">{currentUser?.isModerator ? `[deleted] #${id}` : '[deleted]'}</Text>
         ) : (
           <>
-            <NamePlateText
-              size="sm"
-              fw={500}
-              lineClamp={1}
-              color="white"
-              className={classes.username}
-              nameplate={nameplate?.data}
-              autoplay={autoplayAnimations !== false}
-            >
-              {username}
-            </NamePlateText>
+            {classNames?.namePill ? (
+              <div
+                className={clsx(classNames.namePill, nameplate?.data && classNames.namePillPlate)}
+              >
+                {name}
+              </div>
+            ) : (
+              name
+            )}
             {badge?.data.url && (
               <Tooltip label={badge.name} withArrow withinPortal>
-                <div style={{ display: 'flex', width: 28 }}>
+                <div className="shrink-0" style={{ display: 'flex', width: 28 }}>
                   <EdgeMedia
                     src={badge.data.url}
                     anim={badge.data.animated && anim}

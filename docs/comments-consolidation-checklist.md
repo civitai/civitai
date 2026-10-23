@@ -494,8 +494,8 @@ flip — these MUST land before the first Phase 4 write flip):
       `creator-score-self-activity.service.ts` and `bot-account-detection/cohort.ts` read
       CommentV3 (the v1 and v2 comment reads, visible and membership each, became one pair). Left for Phase 4, as writes:
       `scam-cleanup.service.ts` (hide and restore are UPDATEs), the reaction toggle reads, and
-      `assertCommentEntityVisible` / `getCommentThreadBounty` / `getCommentThreadCrucibleId`,
-      which guard v2 writes on the thread they are given
+      `assertCommentEntityVisible` / `getCommentThreadBounty` / `getCommentThreadCrucibleId` /
+      the storyline lookups, which guard v2 writes on the thread they are given
 
 Not on this list, each a surface's own read that moves with it: `comics.router.ts::getChapterThread`
 (Phase 4, comicChapter), the v1 reply counts in `comment.controller.ts` (Phase 4, model),
@@ -541,7 +541,7 @@ With the first write flip (the moderation items moved here from Phases 1 and 2):
       `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two, read by `reports.service.ts`
       context URLs, `user-reports`, `moderation-board`, `text-relabel-snapshot` and
       `getReportedContent`; `csam-holds.queries.ts` likewise; `assertCommentEntityVisible` /
-      `getCommentThreadBounty` / `getCommentThreadCrucibleId` and the reaction toggle reads move
+      `getCommentThreadBounty` / `getCommentThreadCrucibleId` / the storyline lookups and the reaction toggle reads move
       with the v3 write path
 - [ ] Verdict/retention ledgers alias old `Comment` ids via `legacyV1Id`, with the scam-cleanup v3
       branch
@@ -570,6 +570,8 @@ Surface-specific extras:
       `entityId` becomes `ComicChapter.id`, returned by `getChapterThread`); `createChapterComment`
       moves onto the unified service
 - [ ] **crucible**: `getCommentThreadCrucibleId` + `new-crucible-comment` notification
+- [ ] **storyline**: `getCommentThreadStorylineId` / `getCommentStorylineId` +
+      `new-storyline-comment` notification
 - [ ] **model** (last): model discussion UI moves onto the unified provider (display depth 1, same
       presentation); client reaction entityType `commentOld` → `comment`; v1 replica-lag pinning
       (`getDbWithoutLag('commentModel')`) retired or ported. The v1 write path also gates on

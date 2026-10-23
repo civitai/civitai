@@ -31,7 +31,7 @@ export function resolvePoiFlagged({
   poi: boolean | null | undefined;
   meta: ModelMeta | null | undefined;
 }): boolean {
-  return !!isOwner && !!poi && hasOpenTextScanFlag(meta, 'poi');
+  return !!isOwner && !!poi && (!!meta?.poiFlagSnapshot || hasOpenTextScanFlag(meta, 'poi'));
 }
 
 // The enforced privacy boundary for the appeal: whatever the caller passes in
@@ -62,6 +62,9 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
+    poiFlagSnapshot: _poiSnapshot,
+    poiHashMatch: _poiMatch,
+    poiHashCleared: _poiCleared,
     textModeration: _textModeration,
     textScanFlags: _textScanFlags,
     modelRules: _modelRules,
@@ -88,6 +91,9 @@ const MODERATION_OWNED_META_KEYS = [
   'minorHashDismissed',
   'minorHashCleared',
   'minorHashAccepted',
+  'poiFlagSnapshot',
+  'poiHashMatch',
+  'poiHashCleared',
   'textModeration',
   'textScanFlags',
   'modelRules',

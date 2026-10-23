@@ -42,7 +42,10 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
         : 'Ask a question of up to 4,000 characters.'
     );
 
-  const admitted = await admitTurn(chatId, locals.user.id);
+  const admitted = await admitTurn(chatId, {
+    id: locals.user.id,
+    roles: locals.user.roles ?? [],
+  });
   if (!admitted.ok) return json({ error: admitted.error }, { status: admitted.status });
 
   const encoder = new TextEncoder();
@@ -65,7 +68,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
         model: body.data.model ?? null,
         canAccess: (path) => canAccess(locals.user, path),
         hasGrant: (permission) => !!locals.grants[permission],
-        used: admitted.used,
+        allowance: admitted.allowance,
         emit,
       })
         .catch((e) => {

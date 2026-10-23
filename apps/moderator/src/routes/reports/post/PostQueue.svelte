@@ -41,7 +41,6 @@
 </script>
 
 <ReportQueueColumn
-  title="Post reports"
   basePath="/reports/post"
   queue={data}
   items={data.items}

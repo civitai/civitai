@@ -20,6 +20,13 @@ import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/t
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { isWebClient } from '~/server/utils/client-version-saturation';
+import {
+  clientNeedsUpdate,
+  peekFreshClientConfig,
+  peekSiteAlertsVersion,
+} from '~/server/utils/client-config';
+import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import {
   pinResponseWriteToSuperjson,
@@ -93,6 +100,17 @@ const trpcHandler = createNextApiHandler({
       // /api/trpc, but that lives outside this route and its matcher can change, so the route
       // states it itself for every response it writes as devalue.
       headers['Cache-Control'] = PRIVATE_CACHE_CONTROL;
+    }
+
+    // Set here rather than in a middleware: on a streamed batch the head is written before any
+    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    if (isWebClient(ctx?.req?.headers)) {
+      // Never on a response the edge keeps: it would reach current bundles too.
+      const client = peekFreshClientConfig();
+      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+        headers['x-update-required'] = 'true';
+      const alertsVersion = peekSiteAlertsVersion();
+      if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
 
     return Object.keys(headers).length > 0 ? { headers } : {};

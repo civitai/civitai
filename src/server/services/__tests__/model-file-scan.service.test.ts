@@ -25,6 +25,7 @@ const {
   mockLimitConcurrency,
   mockUnpublishModelById,
   mockCheckMinorHashOnScan,
+  mockCheckPoiHashOnScan,
   mockCheckDuplicateHashOnScan,
   mockIsFlipt,
   mockBustOrchestratorModelCache,
@@ -58,6 +59,7 @@ const {
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
     mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
+    mockCheckPoiHashOnScan: vi.fn().mockResolvedValue('skipped'),
     mockCheckDuplicateHashOnScan: vi.fn().mockResolvedValue('none'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
     mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
@@ -133,12 +135,18 @@ vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: mockCheckMinorHashOnScan,
   MINOR_HASH_FILE_TYPE: 'Model',
 }));
+vi.mock('~/server/services/poi-hash.service', () => ({
+  checkPoiHashOnScan: mockCheckPoiHashOnScan,
+}));
 
 // Default ON so the existing wiring tests exercise the real path; the gate's
 // off-state is asserted explicitly below.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    POI_HASH_AUTO_FLAG: 'poi-hash-auto-flag',
+  },
 }));
 
 import {
@@ -1822,6 +1830,47 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyScanOutcome — real-person hash wiring', () => {
+    const scanModelFile = async (type = 'Model') => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 720,
+        type,
+        modelVersionId: 40,
+        modelVersion: { modelId: 65, model: { userId: 790 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      await applyScanOutcome({
+        fileId: 720,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+    };
+
+    it('checks a scanned weights file while its own switch is on', async () => {
+      await scanModelFile();
+      expect(mockCheckPoiHashOnScan).toHaveBeenCalledWith({
+        fileId: 720,
+        modelId: 65,
+        userId: 790,
+        sha256: 'deadbeef',
+      });
+    });
+
+    // Its own switch: throwing it must stop the real-person path without touching the minor one.
+    it('does not run when its switch is off, even with the minor switch on', async () => {
+      mockIsFlipt.mockImplementation(async (flag: string) => flag !== 'poi-hash-auto-flag');
+      await scanModelFile();
+      expect(mockCheckPoiHashOnScan).not.toHaveBeenCalled();
+      expect(mockCheckMinorHashOnScan).toHaveBeenCalled();
+    });
+
+    it('does not run for a non-weights file', async () => {
+      await scanModelFile('Training Data');
+      expect(mockCheckPoiHashOnScan).not.toHaveBeenCalled();
     });
   });
 

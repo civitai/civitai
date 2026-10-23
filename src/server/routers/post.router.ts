@@ -62,6 +62,8 @@ import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure }
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { STORYLINE_SUBMIT_RATE_LIMIT } from '~/shared/utils/storyline-placement';
+import type { PostUpdateInput } from '~/server/schema/post.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -142,6 +144,19 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postUpdateSchema)
     .use(isOwnerOrModerator)
+    // A publish that submits a drafted continuation counts against the submit quota. Every one
+    // carries `expectedPrice`: without it the price check refuses the submission.
+    .use(
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        (input: PostUpdateInput) => input.expectedPrice !== undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
+    )
     .mutation(updatePostHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaDelete })

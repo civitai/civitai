@@ -687,7 +687,8 @@ export async function grantModelTextScanPoi({
   );
   if (!after) return false;
 
-  const { applyModelFlagSideEffects } = await loadModelService();
+  const { applyModelFlagSideEffects, clearPoiHashMeta } = await loadModelService();
+  await clearPoiHashMeta(modelId);
   await applyModelFlagSideEffects({ before, after });
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);

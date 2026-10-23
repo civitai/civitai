@@ -43,7 +43,6 @@
      control over the same question disagreed with it. Resolved reports are Actioned and Unactioned in
      that filter. Every report on the open account is marked, since the account is what is open. -->
 <ReportQueueColumn
-  title="User reports"
   basePath="/reports/user"
   queue={data}
   items={data.items}

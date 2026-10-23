@@ -48,6 +48,14 @@
 
 }
 
+.supportChip {
+  flex-shrink: 0;
+  min-height: 24px;
+  height: 24px;
+  gap: 4px;
+  padding: 0 var(--mantine-spacing-xs);
+}
+
 .supportButtonMediaQuery {
   @container (max-width: theme('screens.sm')) {
     min-height: 28px;

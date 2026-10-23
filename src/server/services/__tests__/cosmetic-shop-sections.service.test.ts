@@ -70,8 +70,10 @@ const sectionRow = {
   items: [officialItem],
 };
 
-const capturedShopItemWhere = () =>
-  mocks.sectionFindMany.mock.calls[0][0].select.items.where.shopItem;
+// The section read, not the event-tag lookup that runs before it with no `items` select.
+const mainSectionsCall = () =>
+  mocks.sectionFindMany.mock.calls.find(([args]) => args?.select?.items)![0];
+const capturedShopItemWhere = () => mainSectionsCall().select.items.where.shopItem;
 // Packs have no cosmetic, so the viewer gating moved into an OR whose second
 // branch carries every cosmetic condition. These read that branch, so the
 // assertions below still describe the same rules.
@@ -137,9 +139,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
       [[3, 11]],
     ]);
     // Mocks ignore `select`, so only this sees a whole-table `_count` re-added here.
-    expect(
-      mocks.sectionFindMany.mock.calls[0][0].select.items.select.shopItem.select._count
-    ).toBeUndefined();
+    expect(mainSectionsCall().select.items.select.shopItem.select._count).toBeUndefined();
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {
@@ -240,12 +240,12 @@ describe('getShopSectionsWithItems viewer gating', () => {
 
   it('only queries hub sections for viewers with the creatorShop flag', async () => {
     await getShopSectionsWithItems({});
-    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([{ items: { some: {} } }]);
+    expect(mainSectionsCall().where.OR).toEqual([{ items: { some: {} } }]);
 
     mocks.sectionFindMany.mockClear();
     mocks.sectionFindMany.mockResolvedValue([sectionRow]);
     await getShopSectionsWithItems({ creatorShopEnabled: true });
-    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([
+    expect(mainSectionsCall().where.OR).toEqual([
       { items: { some: {} } },
       { meta: { path: ['communityHub'], equals: true } },
     ]);

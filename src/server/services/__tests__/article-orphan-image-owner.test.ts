@@ -46,6 +46,8 @@ import {
   upsertArticle,
 } from '~/server/services/article.service';
 import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { articlesSearchIndex } from '~/server/search-index';
 
 const ARTICLE_ID = 21;
 const AUTHOR = 7;
@@ -105,6 +107,21 @@ const UNLINKED = [
   AN_OFFERING_COVER,
 ];
 
+// Covers of the deleted article. They are not content links, so the article's connections omit them,
+// and the article itself uses each one until its row is deleted.
+const OWN_COVER = row(13, { uses: ['article'] });
+const A_MODERATORS_COVER = row(14, { userId: MODERATOR, uses: ['article'] });
+const COVER_IN_A_COLLECTION = row(15, { uses: ['article', 'collectionItems'] });
+const COVERS = [OWN_COVER, A_MODERATORS_COVER, COVER_IN_A_COLLECTION];
+
+/** Set when the article row is deleted, which frees its cover's `article` relation. */
+let deletedArticleCover: number | null = null;
+const deleteArticleWithCover = (cover: Row) =>
+  dbMock.dbWrite.article.delete.mockImplementation((async () => {
+    deletedArticleCover = cover.id;
+    return { coverId: cover.id };
+  }) as never);
+
 const isUnusedCondition = (cond: unknown) =>
   JSON.stringify(cond) === JSON.stringify({ none: {} }) ||
   JSON.stringify(cond) === JSON.stringify({ is: null });
@@ -121,17 +138,20 @@ const matches = (row: Row, where: Record<string, any>) =>
     // `{ none: {} }` on a list relation, `{ is: null }` on a single one: the image is not used there.
     if (!isUnusedCondition(cond))
       throw new Error(`unexpected filter on ${key}: ${JSON.stringify(cond)}`);
-    return !row.uses.includes(key);
+    return !row.uses.includes(key) || (key === 'article' && row.id === deletedArticleCover);
   });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deletedArticleCover = null;
   // The article's own connections, after the edit: every unlinked image.
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
     UNLINKED.map((row) => ({ imageId: row.id })) as never
   );
   dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
-    UNLINKED.filter((row) => matches(row, where)).map((row) => ({ id: row.id }))) as never);
+    [...UNLINKED, ...COVERS]
+      .filter((row) => matches(row, where))
+      .map((row) => ({ id: row.id }))) as never);
   const stored = {
     id: ARTICLE_ID,
     userId: AUTHOR,
@@ -229,6 +249,44 @@ describe('deleteArticleById', () => {
       expect(deletedIds()).toEqual([UNUSED_OWN.id]);
     }
   );
+
+  const deleteWithCover = async (cover: Row) => {
+    deleteArticleWithCover(cover);
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+  };
+
+  it("deletes the author's own unused cover", async () => {
+    await deleteWithCover(OWN_COVER);
+
+    expect(deletedIds().sort((a, b) => a - b)).toEqual([UNUSED_OWN.id, OWN_COVER.id]);
+  });
+
+  it.each([
+    ['a moderator uploaded', A_MODERATORS_COVER],
+    ['is still in a collection', COVER_IN_A_COLLECTION],
+    ['is a service offering cover', AN_OFFERING_COVER],
+  ])('keeps a cover that %s', async (_, cover) => {
+    await deleteWithCover(cover);
+
+    expect(deletedIds()).toEqual([UNUSED_OWN.id]);
+  });
+
+  it('reports the delete and drops it from the index when the cleanup fails', async () => {
+    const queueUpdate = vi
+      .spyOn(articlesSearchIndex, 'queueUpdate')
+      .mockResolvedValue(undefined as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    dbMock.dbWrite.csamReport.count.mockRejectedValue(new Error('db down'));
+    deleteArticleWithCover(OWN_COVER);
+
+    await expect(deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR })).resolves.toEqual({
+      coverId: OWN_COVER.id,
+    });
+    expect(queueUpdate).toHaveBeenCalledWith([
+      { id: ARTICLE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(deletedIds()).toEqual([]);
+  });
 });
 
 /**
@@ -254,6 +312,7 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   tagsNew: 'its tags',
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
+  caption: 'its storyline caption',
 };
 
 describe('unusedAuthorImage', () => {
@@ -290,9 +349,16 @@ describe('an owner with a safety report on file', () => {
     expect(orphanedImageIds).toEqual([]);
   });
 
-  it('keeps every content image when the article is deleted', async () => {
-    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+  it.each([
+    ['the author', AUTHOR, false],
+    ['a moderator', MODERATOR, true],
+  ])(
+    'keeps the cover and every content image when %s deletes the article',
+    async (_, userId, isModerator) => {
+      deleteArticleWithCover(OWN_COVER);
+      await deleteArticleById({ id: ARTICLE_ID, userId, isModerator });
 
-    expect(deletedIds()).toEqual([]);
-  });
+      expect(deletedIds()).toEqual([]);
+    }
+  );
 });

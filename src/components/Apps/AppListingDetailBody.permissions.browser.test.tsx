@@ -16,9 +16,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * is served by `appListings.getAppDetail` → this component.
  *
  * 🔴 READ THIS BEFORE TREATING ANY RESULT HERE AS A GATE: IT IS NOT ONE. This file
- * is in the Vitest browser-mode `component` project, which CI runs only as the
- * preview pipeline's `preview / component-tests` — report-only, non-blocking, and
- * not reported at all when the preview build fails. The GATING half of this change
+ * is in the Vitest browser-mode `component` project, which CI runs as
+ * `Component tests`; no check in this repo blocks a merge. The GATING half of this change
  * lives in the blocking node project, in
  * `src/server/services/blocks/__tests__/app-listing.service.test.ts`, which pins
  * the thing that actually matters for safety: that the disclosure is fed by the
@@ -133,6 +132,8 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
     restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],

@@ -50,8 +50,8 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * P2b AppListingCard component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gate is appListingCardView.test.ts). These pin the
+ * P2b AppListingCard component tests (`Component tests` in CI; the node-tier
+ * gate is appListingCardView.test.ts). These pin the
  * rendered kind badge, recommend label, and kind-aware CTA affordance for a few
  * representative cards, PLUS the owner "Edit" deep-link gating (Item 2), the
  * clamped-title tooltip fallback, the card's LAYOUT contract (a two-line reserved
@@ -657,8 +657,8 @@ describe('AppListingCard', () => {
    * silently wrong. Both are one `getComputedStyle` away in a tier that already
    * renders the card, so there is no excuse for leaving them unpinned.
    *
-   * 🔴 REPORT-ONLY TIER, stated: this is the browser project, so these do not gate
-   * a merge. They are still the only place either number is checked at all.
+   * 🔴 NOT A MERGE GATE: no check in this repo blocks a merge. They are still the only place either
+   * number is checked at all.
    */
   describe('🔴 the Mantine tokens the geometry comments quote', () => {
     test('the next button size up (`md`) is 42px — taller than the 46px row can afford', async () => {

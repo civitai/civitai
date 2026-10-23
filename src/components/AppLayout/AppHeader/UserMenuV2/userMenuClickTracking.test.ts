@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackActionInput } from '~/server/schema/track.schema';
 import type * as HeaderHooks from '~/components/AppLayout/AppHeader/hooks';
 import type * as BuzzUtils from '~/components/Buzz/buzz.utils';
+import type * as AppProvider from '~/providers/AppProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as IsMobile from '~/hooks/useIsMobile';
 
@@ -19,6 +20,7 @@ import type * as IsMobile from '~/hooks/useIsMobile';
 const mocks = vi.hoisted(() => ({
   actions: [] as TrackActionInput[],
   user: { id: 1, username: 'tester' } as { id: number; username: string } | null,
+  flags: { buzz: true } as Record<string, boolean>,
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -50,6 +52,10 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobile>()),
   useIsMobile: () => true,
 }));
+vi.mock('~/providers/AppProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppProvider>()),
+  useAppContext: () => ({ seed: 1 }),
+}));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
 vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzUtils>()),
@@ -57,7 +63,7 @@ vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  useFeatureFlags: () => ({ buzz: true }),
+  useFeatureFlags: () => mocks.flags,
 }));
 vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof HeaderHooks>()),
@@ -66,7 +72,7 @@ vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
 
 const { DesktopHeaderRows, DesktopItem, PinnedList } = await import('./UserMenuDesktop');
 const { MobileHeaderRows, MobileItem, MobilePinned } = await import('./UserMenuMobile');
-const { useDragClickGuard } = await import('./UserMenuParts');
+const { BadgeMuteCtx, useDragClickGuard } = await import('./UserMenuParts');
 const { BuzzMenuItem, UserMenuCtx } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { trackActionInputSchema } = await import('~/server/schema/track.schema');
 
@@ -125,6 +131,7 @@ beforeEach(() => {
   window.addEventListener('click', noNavigate);
   mocks.actions = [];
   mocks.user = { id: 1, username: 'tester' };
+  mocks.flags = { buzz: true };
   handleClose.mockClear();
   buyBuzz.mockClear();
   civitaiLink.onClick.mockClear();
@@ -142,7 +149,7 @@ describe('UserMenu_Click', () => {
     expect(mocks.actions).toEqual([
       {
         type: 'UserMenu_Click',
-        details: { item: 'inventory', group: 'rewards', pinned: false, surface: 'mobile' },
+        details: { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'mobile' },
       },
     ]);
     // A row's own handler is replaced, so it must still close the menu.
@@ -155,7 +162,7 @@ describe('UserMenu_Click', () => {
     await mount(createElement(MobileItem, { item: inventory, pinned: true, fromPins: true }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
@@ -164,7 +171,7 @@ describe('UserMenu_Click', () => {
     await click(row('Link'));
     expect(civitaiLink.onClick).toHaveBeenCalledTimes(1);
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'civitai-link', group: 'help', pinned: false, surface: 'mobile' },
+      { item: 'civitai-link', group: 'creator-tools', pinned: false, surface: 'mobile' },
     ]);
   });
 
@@ -180,7 +187,7 @@ describe('UserMenu_Click', () => {
     await mount(desktop({ item: inventory, onToggle: vi.fn() }));
     await click(row('Inventory'));
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: false, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: false, surface: 'desktop' },
     ]);
   });
 
@@ -190,6 +197,89 @@ describe('UserMenu_Click', () => {
     await click(document.querySelector('[title="Pin"]'));
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(mocks.actions).toEqual([]);
+  });
+
+  describe('muting a count', () => {
+    const waiting = { ...inventory, badge: 3 };
+    const withMute = (toggleMute: () => void, node: ReactNode) =>
+      createElement(BadgeMuteCtx.Provider, { value: toggleMute }, node);
+
+    it.each([
+      [
+        'mobile',
+        '[aria-label="Mute the count on Inventory"]',
+        (item: object) => createElement(MobileItem, { item: item as never, onToggle: vi.fn() }),
+      ],
+      ['desktop', '[title="Mute count"]', (item: object) => desktop({ item, onToggle: vi.fn() })],
+    ])('mutes the %s count without opening or recording the row', async (_s, selector, node) => {
+      const toggleMute = vi.fn();
+      await mount(withMute(toggleMute, node(waiting)));
+      await click(document.querySelector(selector));
+
+      expect(toggleMute).toHaveBeenCalledTimes(1);
+      expect(mocks.actions).toEqual([]);
+      expect(handleClose).not.toHaveBeenCalled();
+    });
+
+    it('shows a muted count as a pressed mute button that can be pressed again', async () => {
+      const toggleMute = vi.fn();
+      await mount(
+        withMute(toggleMute, createElement(MobileItem, { item: { ...waiting, badgeMuted: true } }))
+      );
+      const button = document.querySelector('[aria-label="Mute the count on Inventory"]');
+      expect(button?.getAttribute('aria-pressed')).toBe('true');
+      await click(button);
+      expect(toggleMute).toHaveBeenCalledTimes(1);
+    });
+
+    it('mutes from the keyboard on desktop with M', async () => {
+      const toggleMute = vi.fn();
+      await mount(withMute(toggleMute, desktop({ item: waiting, onToggle: vi.fn() })));
+      await act(async () => {
+        row('Inventory')!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true })
+        );
+      });
+      expect(toggleMute).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['has no count waiting', { provided: true, item: inventory }],
+      ['is not a count that can be muted', { provided: true, item: { ...civitaiLink, badge: 2 } }],
+      ['is shown where counts cannot be muted', { provided: false, item: waiting }],
+    ])('offers no mute on a %s row (phone and desktop)', async (_why, { provided, item }) => {
+      const toggleMute = vi.fn();
+      const phone = createElement(MobileItem, { item: item as never, onToggle: vi.fn() });
+      await mount(provided ? withMute(toggleMute, phone) : phone);
+      expect(document.querySelector('[aria-label*="the count on"]')).toBeNull();
+      document.body.innerHTML = '';
+
+      await mount(
+        provided
+          ? withMute(toggleMute, desktop({ item, onToggle: vi.fn() }))
+          : desktop({ item, onToggle: vi.fn() })
+      );
+      expect(document.querySelector('[title$="count"]')).toBeNull();
+      await act(async () => {
+        row(item.label)!.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true })
+        );
+      });
+      expect(toggleMute).not.toHaveBeenCalled();
+    });
+
+    it('does not mute on Ctrl+M or Cmd+M', async () => {
+      const toggleMute = vi.fn();
+      await mount(withMute(toggleMute, desktop({ item: waiting, onToggle: vi.fn() })));
+      for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+        await act(async () => {
+          row('Inventory')!.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'm', bubbles: true, cancelable: true, ...modifier })
+          );
+        });
+      }
+      expect(toggleMute).not.toHaveBeenCalled();
+    });
   });
 
   // The two Pinned lists are where `pinned: true` comes from, so they are rendered for real.
@@ -206,7 +296,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'desktop' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'desktop' },
     ]);
   });
 
@@ -221,7 +311,7 @@ describe('UserMenu_Click', () => {
     );
     await click(row('Inventory'));
     expect(details()).toEqual([
-      { item: 'inventory', group: 'rewards', pinned: true, surface: 'mobile' },
+      { item: 'inventory', group: 'your-stuff', pinned: true, surface: 'mobile' },
     ]);
   });
 
@@ -246,17 +336,17 @@ describe('UserMenu_Click', () => {
   // their place.
   it.each([
     // Desktop rows are Mantine Menu.Items, which close the menu themselves.
-    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0],
-    ['mobile', () => createElement(MobileHeaderRows), 2],
+    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0, 'Buy Buzz'],
+    ['mobile', () => createElement(MobileHeaderRows), 2, 'Buy'],
   ] as const)(
     'records the %s header rows as header opens, and not Buy Buzz',
-    async (surface, node, closes) => {
+    async (surface, node, closes, buyLabel) => {
       await mount(node());
       await click(row('Avatar'));
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
         [...document.querySelectorAll('.mantine-Button-root')].find(
-          (el) => el.textContent === 'Buy Buzz'
+          (el) => el.textContent === buyLabel
         )
       );
 
@@ -269,6 +359,46 @@ describe('UserMenu_Click', () => {
       expect(trackActionInputSchema.safeParse(mocks.actions[1]).success).toBe(true);
     }
   );
+
+  // The profile row is in no group, so its own pin toggle is the only way to pin it again.
+  it.each([
+    [
+      'desktop',
+      (onTogglePin: () => void) => inMenu(createElement(DesktopHeaderRows, { onTogglePin })),
+      '[title="Pin"]',
+      true,
+    ],
+    [
+      'mobile',
+      (onTogglePin: () => void) => createElement(MobileHeaderRows, { onTogglePin }),
+      '[aria-label="Pin Your Profile"]',
+      false,
+    ],
+  ] as const)(
+    'toggles the %s profile pin without opening or recording the profile',
+    async (_surface, node, toggleSelector, insideLink) => {
+      const onTogglePin = vi.fn();
+      const preventDefault = vi.spyOn(Event.prototype, 'preventDefault');
+      await mount(node(onTogglePin));
+      await click(document.querySelector(toggleSelector));
+
+      expect(onTogglePin).toHaveBeenCalledTimes(1);
+      expect(mocks.actions).toEqual([]);
+      expect(handleClose).not.toHaveBeenCalled();
+      // Desktop only: the toggle sits inside the profile link, and `stopPropagation` keeps the click from
+      // reaching `noNavigate`, so this call is the toggle's own.
+      if (insideLink) expect(preventDefault).toHaveBeenCalled();
+      preventDefault.mockRestore();
+    }
+  );
+
+  it('keeps the Pro chip out of the mobile header rows, whatever the flags', async () => {
+    mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
+    await mount(createElement(MobileHeaderRows));
+
+    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
+    expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
+  });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.
   it('closes the legacy Buzz row without onOpen, and records nothing', async () => {

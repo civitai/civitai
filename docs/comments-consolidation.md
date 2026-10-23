@@ -1322,8 +1322,11 @@ Per-surface cutover checklist additions from the residue sweep:
   chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
   also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it moves onto the
   unified service with this flip.
-- **crucible flip**: the newest surface (#5780); `getCommentThreadCrucibleId` and the
-  `new-crucible-comment` notification go with it.
+- **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
+  with it (#5780).
+- **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /
+  `getCommentStorylineId` (the v2 read gate's thread walk) and the `new-storyline-comment`
+  notification go with it.
 
 **Phase 5 — downstream re-point.** Ordering note: the **read-only** consumers in this phase
 (notification queries, moderator app reads, creator-studio, metrics jobs, the challenge gate) move
@@ -1416,7 +1419,7 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 
 ### Notifications impact (Phase 5 detail)
 
-`src/server/notifications/comment.notifications.ts` defines 17 notification types. Before Phase 3
+`src/server/notifications/comment.notifications.ts` defines 18 notification types. Before Phase 3
 they fell into three shapes:
 
 - **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
@@ -1426,7 +1429,7 @@ they fell into three shapes:
   the shared sequence carries its own id there). They switch to the v3 id with the
   model flip.
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
-  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`,
+  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`, `new-storyline-comment`,
   `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since
   Phase 3 each is `WHERE entityType = X AND parentId IS [NOT] NULL` on CommentV3, the near-copies the
   Phase 5 builder collapses.
@@ -1460,7 +1463,7 @@ What v2 has today:
 - `muteableThreadsCte` (since Phase 3 `threadAncestorsCte`, the block guard's only) in
   `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
   `Thread.commentId → CommentV2.threadId`, capped at `MAX_THREAD_CHAIN_DEPTH = 100`.
-- The mute filter at **14 sites** in `comment.notifications.ts` (crucible added the 14th),
+- The mute filter at **15 sites** in `comment.notifications.ts` (storyline added the 15th),
   producer-side: `notThreadMuted(recipient, threadId)` over the walk until Phase 3, now
   `notCommentMuted(recipient, alias)` in `base.notifications.ts` over CommentV3.
 - Two controls: per-comment (overflow menu) via `toggleThreadMute`, and section-level (beside the
@@ -1492,7 +1495,7 @@ the v2 write path), with three consequences:
   `hasThread: false` and does nothing on an entity with no comments yet. `CommentTopicMute` keys off
   `(entityType, entityId)` and needs no row to exist, so it works before the first comment.
 
-**The mute filter rides on every notification rewrite.** Phase 3 carried it to all 14 sites, and
+**The mute filter rides on every notification rewrite.** Phase 3 carried it to all 15 sites, and
 `no-unmuteable-comment-processor` was re-pointed in the same change (it also fails on a
 comment-family query that reads an old table). A rewrite that drops the filter reads as a clean diff
 and silently un-mutes everyone, so the Phase 5 builder is not optional: one builder is one place it

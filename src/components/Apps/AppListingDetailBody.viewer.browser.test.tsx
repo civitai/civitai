@@ -13,9 +13,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * prev/next, Esc, caption and a `3 / 7` position indicator).
  *
  * 🔴 READ THIS BEFORE TREATING ANY RESULT HERE AS A GATE: IT IS NOT ONE. This file
- * is in the Vitest browser-mode `component` project, which CI runs only as the
- * preview pipeline's `preview / component-tests` — report-only, non-blocking, and
- * not reported at all when the preview build fails. The gating half of this change
+ * is in the Vitest browser-mode `component` project, which CI runs as
+ * `Component tests`; no check in this repo blocks a merge. The node-tier half of this change
  * is `__tests__/appListingScreenshotNav.test.ts`, in the blocking node project,
  * which pins the INDEX ARITHMETIC (open on N, step by one, stop at the ends, skip
  * broken, count only what is reachable). That file cannot see a single DOM node;
@@ -157,6 +156,8 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
     restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
