@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ModelVersionPricingSignal } from '@civitai/buzz';
 import {
   LOOKUP_NOT_FOUND,
   parseResourceLookup,
@@ -58,7 +59,6 @@ const ctx = (overrides: Partial<LookupContext> = {}): LookupContext => ({
   resources: [{ type: 'LORA', baseModels: ['Pony', 'Illustrious'] }],
   filters: { types: [], baseModels: [], loadedOnly: false, turboOnly: false },
   excludedIds: [],
-  skipBaseModel: false,
   ...overrides,
 });
 
@@ -130,12 +130,53 @@ describe('resolveLookupHit', () => {
     expect(note).toBe("“Ink Style” isn't available for generation.");
   });
 
-  it('ignores the base model where the picker does (own / official tabs)', () => {
-    const { versions } = resolveLookupHit(
-      lora([version(2, 'SDXL 1.0')]),
-      ctx({ skipBaseModel: true })
+  // The grid matches the viewer's base-model filter on ANY version, then shows every compatible one.
+  it('applies the viewer base model filter per model, as the grid does', () => {
+    const filters = { types: [], baseModels: ['Illustrious'], loadedOnly: false, turboOnly: false };
+    const model = lora([version(1, 'Pony'), version(3, 'Illustrious')]);
+    const { versions, note } = resolveLookupHit(model, ctx({ filters } as never));
+    expect(versions.map((v) => v.id)).toEqual([1, 3]);
+    expect(note).toBeNull();
+  });
+
+  it('names the "Hide paid" filter when every version is paid', () => {
+    const filters = {
+      types: [],
+      baseModels: [],
+      loadedOnly: false,
+      turboOnly: false,
+      hidePaid: true,
+    };
+    const model = lora([
+      version(1, 'Pony', { pricing: [ModelVersionPricingSignal.GenerationPaid] }),
+    ]);
+    expect(resolveLookupHit(model, ctx({ filters } as never)).note).toBe(
+      '“Ink Style” is hidden by your “Hide paid” filter.'
     );
-    expect(versions.map((v) => v.id)).toEqual([2]);
+  });
+
+  it.each([
+    ['Loaded only', { loadedOnly: true }, {}, { generatorLoaded: false }],
+    ['Turbo only', { turboOnly: true }, {}, { turbo: false }],
+  ])('names the “%s” filter', (label, filterOverrides, ctxOverrides, versionExtra) => {
+    const filters = {
+      types: [],
+      baseModels: [],
+      loadedOnly: false,
+      turboOnly: false,
+      ...filterOverrides,
+    };
+    const model = lora([version(1, 'Pony', versionExtra)]);
+    expect(resolveLookupHit(model, ctx({ filters, ...ctxOverrides })).note).toBe(
+      `“Ink Style” is hidden by your “${label}” filter.`
+    );
+  });
+
+  it('says a turbo version cannot be added where turbo is excluded', () => {
+    const model = lora([version(1, 'Pony', { turbo: true })]);
+    expect(resolveLookupHit(model, ctx({ excludeTurbo: true })).note).toBe(
+      "“Ink Style” is a turbo version, which can't be added here."
+    );
   });
 
   it('falls back to the generic not-found copy for a model with no indexed versions', () => {

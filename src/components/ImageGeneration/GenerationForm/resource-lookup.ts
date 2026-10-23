@@ -41,15 +41,7 @@ type LookupVersion = SelectableVersion & {
   pricing?: ModelVersionPricingSignal[];
 };
 
-type HiddenReason =
-  | 'added'
-  | 'baseModel'
-  | 'filterBaseModel'
-  | 'generate'
-  | 'loaded'
-  | 'turbo'
-  | 'excludeTurbo'
-  | 'paid';
+type HiddenReason = 'added' | 'baseModel' | 'generate' | 'loaded' | 'turbo' | 'excludeTurbo';
 
 export type LookupContext = {
   modelVersionId?: number;
@@ -60,7 +52,6 @@ export type LookupContext = {
   coverageNext?: boolean;
   member?: boolean;
   excludeTurbo?: boolean;
-  skipBaseModel: boolean;
 };
 
 function listOf(items: string[], max = 3) {
@@ -78,6 +69,7 @@ export function resolveLookupHit<V extends LookupVersion>(
   ctx: LookupContext
 ): { versions: V[]; note: string | null } {
   const { resources, filters } = ctx;
+  if (!model.versions.length) return { versions: [], note: LOOKUP_NOT_FOUND };
   const isCheckpoint = model.type === 'Checkpoint';
   const typeName = getDisplayName(model.type);
 
@@ -94,9 +86,20 @@ export function resolveLookupHit<V extends LookupVersion>(
   if (filters.types.length > 0 && !filters.types.includes(model.type as never))
     return { versions: [], note: `“${model.name}” is hidden by your type filter.` };
 
-  const allowedBaseModels = ctx.skipBaseModel
-    ? []
-    : resources.filter((r) => r.type === model.type).flatMap((r) => r.baseModels);
+  // The viewer's own base-model and pricing filters work per MODEL in the grid (a Meilisearch
+  // match on any version), so they are checked the same way here.
+  if (
+    filters.baseModels.length > 0 &&
+    !model.versions.some((v) => filters.baseModels.includes(v.baseModel as never))
+  )
+    return { versions: [], note: `“${model.name}” is hidden by your base model filter.` };
+  if (!model.versions.some((v) => versionSatisfiesPricingFilter(v.pricing, filters)))
+    return { versions: [], note: `“${model.name}” is hidden by your “Hide paid” filter.` };
+
+  // Never relaxed for the own/official tabs: a lookup is not scoped to the viewer's models.
+  const allowedBaseModels = resources
+    .filter((r) => r.type === model.type)
+    .flatMap((r) => r.baseModels);
 
   const visible = selectableVersions(model.versions, {
     canGenerate: ctx.canGenerate,
@@ -106,21 +109,15 @@ export function resolveLookupHit<V extends LookupVersion>(
     loadedOnly: filters.loadedOnly,
     turboOnly: filters.turboOnly,
     excludeTurbo: ctx.excludeTurbo,
-    skipBaseModel: ctx.skipBaseModel,
+    skipBaseModel: false,
     modelBaseModels: allowedBaseModels,
     excludedIds: ctx.excludedIds,
-  }).filter(
-    (v) =>
-      (filters.baseModels.length === 0 || filters.baseModels.includes(v.baseModel as never)) &&
-      versionSatisfiesPricingFilter(v.pricing, filters)
-  );
+  });
 
   const reasonFor = (v: V): HiddenReason | null => {
     if (ctx.excludedIds.includes(v.id)) return 'added';
     if (allowedBaseModels.length > 0 && !allowedBaseModels.includes(v.baseModel))
       return 'baseModel';
-    if (filters.baseModels.length > 0 && !filters.baseModels.includes(v.baseModel as never))
-      return 'filterBaseModel';
     if (
       ctx.canGenerate &&
       !versionGeneratableFor(v, {
@@ -133,7 +130,6 @@ export function resolveLookupHit<V extends LookupVersion>(
     if (filters.loadedOnly && !v.generatorLoaded) return 'loaded';
     if (filters.turboOnly && !v.turbo) return 'turbo';
     if (ctx.excludeTurbo && v.turbo) return 'excludeTurbo';
-    if (!versionSatisfiesPricingFilter(v.pricing, filters)) return 'paid';
     return null;
   };
 
@@ -145,8 +141,6 @@ export function resolveLookupHit<V extends LookupVersion>(
         return `${subject} is for ${listOf(
           baseModels
         )}, which isn't compatible with your selected resources (${listOf(allowedBaseModels)}).`;
-      case 'filterBaseModel':
-        return `${subject} is hidden by your base model filter.`;
       case 'generate':
         return `${subject} isn't available for generation.`;
       case 'loaded':
@@ -155,8 +149,6 @@ export function resolveLookupHit<V extends LookupVersion>(
         return `${subject} is hidden by your “Turbo only” filter.`;
       case 'excludeTurbo':
         return `${subject} is a turbo version, which can't be added here.`;
-      case 'paid':
-        return `${subject} is hidden by your “Hide paid” filter.`;
       default:
         return `${subject} can't be added here.`;
     }
@@ -178,7 +170,6 @@ export function resolveLookupHit<V extends LookupVersion>(
   }
 
   if (visible.length) return { versions: visible, note: null };
-  if (!model.versions.length) return { versions: [], note: LOOKUP_NOT_FOUND };
 
   const reasons = model.versions.map(reasonFor);
   const reason = reasons.every((r) => r === 'baseModel') ? 'baseModel' : reasons[0];

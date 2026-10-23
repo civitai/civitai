@@ -140,6 +140,31 @@ describe('resource picker lookup by pasted link', () => {
     expect(sentFilter()).toMatch(/canGenerate(Next)? = true/);
   });
 
+  it('finds a model by its version id alone', async () => {
+    await getResourceSelectModels(lookupInput({ modelVersionId: 456 }), { user: undefined });
+    const filter = sentFilter();
+    expect(filter).toContain('versions.id = 456');
+    expect(filter).not.toMatch(/(^|[ (])id = /);
+  });
+
+  it("does not narrow to the viewer's own models on the Mine tab", async () => {
+    await getResourceSelectModels(lookupInput({ modelId: 123 }, { tab: 'mine' }), {
+      user: { id: 7 },
+    });
+    expect(sentFilter()).not.toMatch(/AND user\.id = 7/);
+  });
+
+  // The auction picker shows no private model, even the bidder's own, and none that cannot be promoted.
+  it('keeps the auction picker strict', async () => {
+    await getResourceSelectModels(lookupInput({ modelId: 123 }, { selectSource: 'auction' }), {
+      user: { id: 7 },
+    });
+    const filter = sentFilter();
+    expect(filter).toContain('availability != "Private"');
+    expect(filter).not.toContain('user.id = 7');
+    expect(filter).toContain('NOT cannotPromote = true');
+  });
+
   // An unpublished, deleted or unsearchable model is not in the index, so Meili returns nothing —
   // and nothing else may answer instead. The DB-direct record builder ignores availability.
   it('returns nothing for a model the index does not hold, without a database fallback', async () => {

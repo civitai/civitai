@@ -8,17 +8,21 @@ import {
   resolveLookupHit,
   type ResourceLookup,
 } from '~/components/ImageGeneration/GenerationForm/resource-lookup';
-import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { trpc } from '~/utils/trpc';
+import { queryRetry, trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 
 export function ResourceLookupResult({ lookup }: { lookup: ResourceLookup }) {
-  const { selectSource, canGenerate, resources, filters, excludedIds, excludeTurbo, tab } =
+  const { selectSource, canGenerate, resources, filters, excludedIds, excludeTurbo } =
     useResourceSelectContext();
 
   const { data, isLoading, isError } = trpc.model.getResourceSelect.useQuery(
     { tab: 'all', selectSource, canGenerate, limit: 1, lookup },
-    { trpc: { context: { skipBatch: true } } }
+    {
+      trpc: { abortOnUnmount: true, context: { skipBatch: true } },
+      // A 503 is the server's Meili timeout; a retry queues a second search behind the first.
+      retry: (failureCount, error) =>
+        error.data?.code !== 'SERVICE_UNAVAILABLE' && queryRetry(failureCount, error),
+    }
   );
 
   const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
@@ -39,21 +43,9 @@ export function ResourceLookupResult({ lookup }: { lookup: ResourceLookup }) {
             coverageNext: data?.coverageNext,
             member: data?.member,
             excludeTurbo,
-            skipBaseModel: skipBaseModelForOwnTabs(tab, selectSource),
           })
         : null,
-    [
-      model,
-      lookup,
-      resources,
-      filters,
-      excludedIds,
-      canGenerate,
-      data,
-      excludeTurbo,
-      tab,
-      selectSource,
-    ]
+    [model, lookup, resources, filters, excludedIds, canGenerate, data, excludeTurbo]
   );
 
   if (isLoading || loadingPreferences)
