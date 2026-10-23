@@ -43,8 +43,11 @@ export function UserAvatarSimple({
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   autoplayAnimations?: boolean;
   withHoverCard?: boolean;
-  /** `avatar` goes on the avatar wrapper; `namePill` wraps the name in a backing element. */
-  classNames?: { avatar?: string; namePill?: string };
+  /**
+   * `avatar` goes on the avatar wrapper; `namePill` wraps the name in a backing element, and
+   * `namePillPlate` is added to it when the user wears a nameplate.
+   */
+  classNames?: { avatar?: string; namePill?: string; namePillPlate?: string };
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -78,7 +81,7 @@ export function UserAvatarSimple({
       fw={500}
       lineClamp={1}
       color="white"
-      className={classes.username}
+      className={clsx(classes.username, classNames?.namePill && nameplate?.data && classes.onPill)}
       nameplate={nameplate?.data}
       autoplay={autoplayAnimations !== false}
     >
@@ -134,7 +137,15 @@ export function UserAvatarSimple({
           <Text size="sm">{currentUser?.isModerator ? `[deleted] #${id}` : '[deleted]'}</Text>
         ) : (
           <>
-            {classNames?.namePill ? <div className={classNames.namePill}>{name}</div> : name}
+            {classNames?.namePill ? (
+              <div
+                className={clsx(classNames.namePill, nameplate?.data && classNames.namePillPlate)}
+              >
+                {name}
+              </div>
+            ) : (
+              name
+            )}
             {badge?.data.url && (
               <Tooltip label={badge.name} withArrow withinPortal>
                 <div className="shrink-0" style={{ display: 'flex', width: 28 }}>
