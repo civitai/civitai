@@ -73,7 +73,7 @@ const mocks = vi.hoisted(() => ({
   loading: false,
   terms: null as { open: boolean; closedReason: string | null; price: number } | null,
   termsFor: vi.fn(),
-  commentsPostId: vi.fn(),
+  discussion: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
   openDialog: vi.fn(),
@@ -149,10 +149,14 @@ vi.mock('~/components/Storyline/StorylineThumb', () => ({
     </div>
   ),
 }));
-vi.mock('~/components/Post/Detail/PostComments', () => ({
-  PostComments: ({ postId }: { postId: number }) => {
-    mocks.commentsPostId(postId);
-    return <div>Comments for post {postId}</div>;
+vi.mock('~/components/CommentsV2/EntityDiscussion', () => ({
+  EntityDiscussion: ({ entityType, entityId }: { entityType: string; entityId: number }) => {
+    mocks.discussion(entityType, entityId);
+    return (
+      <div>
+        Comments for {entityType} {entityId}
+      </div>
+    );
   },
 }));
 // The header's report menu reads the session, which this scaffold does not mount: unmocked,
@@ -175,7 +179,7 @@ beforeEach(() => {
   mocks.graph = undefined;
   for (const fn of [
     mocks.termsFor,
-    mocks.commentsPostId,
+    mocks.discussion,
     mocks.openContinue,
     mocks.openManage,
     mocks.openDialog,
@@ -240,8 +244,8 @@ describe('StorylinePage', () => {
     expect(page.getByRole('region', { name: 'Contributors' }).element().textContent).toBe(
       'ContributorsSillycat831 chapterCreatortehalex863 chaptersEndorsedTar_Tarj0 chapters'
     );
-    await expect.element(page.getByText('Comments for post 501')).toBeVisible();
-    expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
+    await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
+    expect(mocks.discussion).toHaveBeenCalledWith('storyline', 2);
   });
 
   test('a picked banner shows sharp at its focus', async () => {
@@ -374,9 +378,9 @@ describe('StorylinePage', () => {
     );
   });
 
-  // Chapter 1 hidden from this reader: its post, cover and thread must not be reached through
-  // the storyline, even though getById carries rootPostId.
-  test('a hidden chapter 1 shows no link, cover or thread', async () => {
+  // Chapter 1 hidden from this reader: its post and cover must not be reached through the
+  // storyline, even though getById carries rootPostId. The storyline's own thread still shows.
+  test('a hidden chapter 1 shows no link or cover, and the storyline thread', async () => {
     mocks.storyline = {
       ...STORYLINE,
       // The server drops chapter 1's image from the hero and cover when it is hidden.
@@ -391,7 +395,15 @@ describe('StorylinePage', () => {
     expect(cardCover()).toEqual([{ image: 'none', ratio: '3/4' }]);
     expect(stops()[0]).toBe('1This chapter is hidden by your browsing level');
     expect(page.getByText('Start reading').elements()).toHaveLength(0);
-    expect(mocks.commentsPostId).not.toHaveBeenCalled();
+    await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
+  });
+
+  test('a storyline with no chapter 1 yet shows no discussion', async () => {
+    mocks.storyline = { ...STORYLINE, mainPath: [] };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(mocks.discussion).not.toHaveBeenCalled();
   });
 
   test('a storyline the viewer cannot open says so instead of rendering a shell', async () => {

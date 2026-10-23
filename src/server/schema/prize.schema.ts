@@ -17,5 +17,7 @@ export type ClaimPrizeSchema = z.infer<typeof claimPrizeSchema>;
 
 export const getMyPrizesSchema = z
   .object({ sourceType: z.nativeEnum(PrizeSourceType), sourceId: z.number().int().positive() })
+  // Partial: the browser link sends `{}` / `{ authed: true }` for a no-input call, never undefined.
+  .partial()
   .optional();
 export type GetMyPrizesSchema = z.infer<typeof getMyPrizesSchema>;

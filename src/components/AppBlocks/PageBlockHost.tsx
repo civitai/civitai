@@ -1964,7 +1964,11 @@ export function PageBlockHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // The dev-tunnel preview serves the document store locally, so there a
+        // refused `apps:storage` / `apps:storage:publish` is not shown to the
+        // viewer — decided by the gate from `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`.
+        surface
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
@@ -1998,6 +2002,10 @@ export function PageBlockHost({
       // refusal is the signal; the names are advisory. Delivered solely to the
       // frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      // The block always gets its answer above (an SDK predating local-preview
+      // grants waits on it); the viewer is prompted only when something other than
+      // a locally served document-store scope was refused.
+      if (!ungrantable.promptViewer) return;
       // Copy shared with IframeHost's twin of this path — see the constant for why
       // the wording is surface-neutral (the old "in this preview" clause was false
       // on the live page too, and outright wrong on a model page). Signed out →
@@ -2026,6 +2034,7 @@ export function PageBlockHost({
     reviewMode,
     reviewRunForReal,
     viewerSignedIn,
+    surface,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected

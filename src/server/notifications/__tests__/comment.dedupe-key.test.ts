@@ -33,6 +33,7 @@ const V2_TYPES = [
   'new-bounty-entry-comment',
   'new-challenge-comment',
   'new-crucible-comment',
+  'new-storyline-comment',
   'new-3d-model-comment',
   'new-3d-model-comment-response',
   'new-3d-model-comment-nested',
@@ -273,6 +274,7 @@ describe('a type that claims the dedupe key must render', () => {
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
           { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
           { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 2, threadId: 7, threadType: 'storyline', threadParentId: 17 },
           {
             ...base,
             version: 2,
@@ -289,6 +291,7 @@ describe('a type that claims the dedupe key must render', () => {
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
           { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
           { ...base, version: 2, threadId: 7, threadType: 'crucible', threadParentId: 12 },
+          { ...base, version: 2, threadId: 7, threadType: 'storyline', threadParentId: 17 },
           {
             ...base,
             version: 2,
@@ -323,6 +326,8 @@ describe('a type that claims the dedupe key must render', () => {
         return [{ ...base, version: 2, challengeId: 4, challengeTitle: 'C' }];
       case 'new-crucible-comment':
         return [{ ...base, version: 2, crucibleId: 4, crucibleName: 'C' }];
+      case 'new-storyline-comment':
+        return [{ ...base, version: 2, storylineId: 4, storylineTitle: 'S' }];
       case 'new-comment':
       case 'new-comment-response':
       case 'new-comment-nested':

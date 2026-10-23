@@ -123,6 +123,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       browsingSettingsAddons: bootstrap.browsingSettingsAddons,
       liveNow: bootstrap.liveNow,
       navBanners: bootstrap.navBanners,
+      siteAlerts: bootstrap.siteAlerts,
       flags,
       userFeatureFlags,
       chatSettings,

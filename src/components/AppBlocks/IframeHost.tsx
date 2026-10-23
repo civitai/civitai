@@ -2059,7 +2059,10 @@ export function IframeHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview,
+        // so `promptViewer` always equals `notify` here and is not read.
+        'model-slot'
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // Sent BEFORE the toast so the block's signal cannot be lost to a throwing

@@ -25,6 +25,7 @@ export const threadEntitySelect = {
   model3d: { select: { id: true } },
   appListing: { select: { slug: true } },
   crucible: { select: { id: true } },
+  storyline: { select: { id: true } },
 } satisfies Prisma.ThreadSelect;
 
 /**
@@ -86,6 +87,7 @@ export type ThreadEntitySource = Pick<
   | 'model3d'
   | 'appListing'
   | 'crucible'
+  | 'storyline'
 >;
 
 /**
@@ -142,6 +144,7 @@ const getThreadEntity = (thread: ThreadEntitySource): CommentThreadTarget | null
   // `comicChapter` — two copies of one rule, and the bug lived in the disagreement.
   if (thread.model3d) return { threadType: 'model3d', threadParentId: thread.model3d.id };
   if (thread.crucible) return { threadType: 'crucible', threadParentId: thread.crucible.id };
+  if (thread.storyline) return { threadType: 'storyline', threadParentId: thread.storyline.id };
   if (thread.appListing)
     return {
       threadType: 'appListing',

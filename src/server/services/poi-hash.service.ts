@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { queryWithTimeout } from '~/server/db/db-helpers';
+import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import {
@@ -206,6 +208,13 @@ export async function checkPoiHashOnScan({
 }
 
 type SweepRow = { modelId: number; userId: number; fileId: number; hash: string };
+type SweepResultRow = { candidates: number; backlog: number } & {
+  [K in keyof SweepRow]: SweepRow[K] | null;
+};
+
+/** The sweep's one read, on the replica pool `dbRead` uses (the long-read pool can fall back to the
+ *  primary). Set here rather than left to the connection's default, which differs by role. */
+const SWEEP_TIMEOUT_MS = 120_000;
 
 export type PoiHashSweepReport = {
   since: string;
@@ -227,16 +236,23 @@ export async function sweepPoiHashMatches({
   limit: number;
 }): Promise<PoiHashSweepReport> {
   const since = await getPoiHashSince();
-  const seedFiles = Prisma.sql`
+  // One statement, so the CTEs are built once; driven from Model, so the seed filter runs per model
+  // rather than per version or file.
+  // Bound as text: the pg driver serialises a Date in the process's local offset, which a
+  // timestamp-without-zone comparison would then drop.
+  const sinceSql = Prisma.sql`${since.toISOString()}::timestamptz`;
+  const sweep = Prisma.sql`
+    WITH seed_models AS MATERIALIZED (
+      SELECT m.id FROM "Model" m WHERE ${poiSeedPredicate}
+    ),
     poi_src AS (
       SELECT DISTINCT mfh.hash
-      FROM "Model" m
-      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      FROM seed_models s
+      JOIN "ModelVersion" mv ON mv."modelId" = s.id
       JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = ${MINOR_HASH_FILE_TYPE}
       JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'SHA256'
-      WHERE ${poiSeedPredicate}
     ),
-    matches AS (
+    matches AS MATERIALIZED (
       SELECT m.id AS "modelId", m."userId", mf.id AS "fileId", mfh.hash, mf."createdAt",
              COALESCE(
                mf."createdAt" <= (m.meta->${POI_HASH_CLEARED_KEY}->>'at')::timestamptz, false
@@ -250,34 +266,51 @@ export async function sweepPoiHashMatches({
         AND NOT m.poi
         AND m.status <> 'Deleted'
         AND NOT (${asJsonbObjectSql('m.meta')} ? ${POI_HASH_MATCH_KEY})
+    ),
+    totals AS (
+      SELECT count(DISTINCT "modelId") FILTER (WHERE "createdAt" >= ${sinceSql} AND NOT cleared)::int
+               AS candidates,
+             count(DISTINCT "modelId") FILTER (WHERE "createdAt" < ${sinceSql})::int AS backlog
+      FROM matches
+    ),
+    picked AS (
+      SELECT DISTINCT ON ("modelId") "modelId", "userId", "fileId", hash
+      FROM matches
+      WHERE "createdAt" >= ${sinceSql} AND NOT cleared
+      ORDER BY "modelId", "createdAt", "fileId"
+      LIMIT ${limit}
     )
+    SELECT t.candidates, t.backlog, p."modelId", p."userId", p."fileId", p.hash
+    FROM totals t
+    LEFT JOIN picked p ON TRUE
   `;
 
-  const [totals] = await dbRead.$queryRaw<{ candidates: number; backlog: number }[]>`
-    WITH ${seedFiles}
-    SELECT count(DISTINCT "modelId") FILTER (WHERE "createdAt" >= ${since} AND NOT cleared)::int
-             AS candidates,
-           count(DISTINCT "modelId") FILTER (WHERE "createdAt" < ${since})::int AS backlog
-    FROM matches
-  `;
+  // A timeout throws: logged and rethrown so the job fails, rather than reading as nothing to do.
+  let result: SweepResultRow[];
+  try {
+    ({ rows: result } = await queryWithTimeout<SweepResultRow>(pgDbRead, SWEEP_TIMEOUT_MS, sweep));
+  } catch (error) {
+    await logToAxiom(
+      {
+        type: 'error',
+        name: 'poi-hash-sweep',
+        message: error instanceof Error ? error.message : String(error),
+        since: since.toISOString(),
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw error;
+  }
 
   const report: PoiHashSweepReport = {
     since: since.toISOString(),
-    candidates: totals?.candidates ?? 0,
+    candidates: result[0]?.candidates ?? 0,
     flagged: 0,
     queued: 0,
     failed: 0,
-    backlog: totals?.backlog ?? 0,
+    backlog: result[0]?.backlog ?? 0,
   };
-
-  const rows = await dbRead.$queryRaw<SweepRow[]>`
-    WITH ${seedFiles}
-    SELECT DISTINCT ON ("modelId") "modelId", "userId", "fileId", hash
-    FROM matches
-    WHERE "createdAt" >= ${since} AND NOT cleared
-    ORDER BY "modelId", "createdAt", "fileId"
-    LIMIT ${limit}
-  `;
+  const rows = result.filter((row): row is SweepResultRow & SweepRow => row.modelId !== null);
 
   await limitConcurrency(
     rows.map((row) => async () => {

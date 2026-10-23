@@ -120,6 +120,19 @@
   }
 }
 
+// The modal content scrolls (the contents list can be hundreds of hats tall), so the open stage
+// sticks to the top of what is on screen and is only as tall as that scroll viewport.
+.stageView {
+  position: sticky;
+  top: 0;
+  height: calc(100dvh - 2 * var(--modal-y-offset, 0px));
+  max-height: 100%;
+
+  :global(.mantine-Modal-content[data-full-screen]) & {
+    height: 100dvh;
+  }
+}
+
 // The rarity's colour, a beat before the reward.
 .glow {
   position: absolute;
