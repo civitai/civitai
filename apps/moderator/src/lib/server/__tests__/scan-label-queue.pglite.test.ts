@@ -198,6 +198,9 @@ describe('claimNext order', () => {
       );
       expect((await getOpenFlaggerVersions()).sort()).toEqual(['scan@1', 'scan@2']);
       expect((await claimNext(1, { flaggerVersion: 'scan@2' }, NOW))!.imageId).toBe(2);
+      // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
+      expect(await isControlFlaggerVersion('scan@2')).toBe(false);
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
     });
 
     it('recognises the control version, and only it', async () => {
