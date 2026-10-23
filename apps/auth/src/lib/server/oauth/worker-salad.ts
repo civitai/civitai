@@ -22,7 +22,8 @@ const TOKEN_ERRORS = [
   errors.JOSENotSupported,
 ];
 
-const MAX_TOKEN_LIFETIME_SECONDS = 600;
+// 10 minutes, plus 60 s for clock skew between Salad and us.
+const MAX_TOKEN_LIFETIME_SECONDS = 600 + 60;
 
 type SaladConfig = { jwksUrl: string; issuer: string; audience: string; algorithms: string[] };
 

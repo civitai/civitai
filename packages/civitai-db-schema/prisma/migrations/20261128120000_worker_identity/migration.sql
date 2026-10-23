@@ -3,8 +3,9 @@
 -- block. Every statement is idempotent, so re-running the file is safe. The lock timeout below covers
 -- the statements before the index build; one that fails on it can simply be run again.
 --
--- The CONCURRENTLY index build runs without that timeout. If it fails or is interrupted it leaves an
--- INVALID index behind, which `IF NOT EXISTS` then skips, so re-running it does nothing. Check with
+-- The CONCURRENTLY index build runs with no lock timeout at all (`SET lock_timeout = 0`). If it fails
+-- or is interrupted it leaves an INVALID index behind, which `IF NOT EXISTS` then skips, so re-running
+-- it does nothing. Check with
 --   SELECT indisvalid FROM pg_index WHERE indexrelid = '"ApiKey_workerDeviceId_idx"'::regclass;
 -- and if it is false, run `DROP INDEX CONCURRENTLY "ApiKey_workerDeviceId_idx";`, then the CREATE again.
 --
@@ -74,8 +75,8 @@ END $$;
 ALTER TABLE "ApiKey" VALIDATE CONSTRAINT "ApiKey_workerDeviceId_fkey";
 
 -- A concurrent build waits out every older transaction in the database; under the lock timeout that wait
--- aborts it and leaves an INVALID index.
-RESET lock_timeout;
+-- aborts it and leaves an INVALID index. 0, not RESET: RESET restores a role or database default.
+SET lock_timeout = 0;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "ApiKey_workerDeviceId_idx" ON "ApiKey" ("workerDeviceId");
 

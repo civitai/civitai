@@ -171,7 +171,7 @@ function saladJwt(
     expires = '5m',
     issuer = SALAD_ISSUER,
     audience = SALAD_AUDIENCE,
-  }: { expires?: string | false; issuer?: string; audience?: string } = {}
+  }: { expires?: string | number | false; issuer?: string; audience?: string } = {}
 ): Promise<string> {
   const jwt = new SignJWT({
     salad_machine_id: 'salad-machine-7',
@@ -459,13 +459,23 @@ describe('worker token exchange — Salad IMDS JWT', () => {
     expect(workerKeys()).toHaveLength(0);
   });
 
-  it('refuses a token that expires more than 10 minutes out', async () => {
+  it('refuses a token that expires more than 11 minutes out (10, plus 60 s of skew)', async () => {
     const res = await saladExchange(await saladJwt({}, saladKey, { expires: '365d' }));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
 
+    const justOver = Math.floor(Date.now() / 1000) + 661;
+    const over = await saladExchange(await saladJwt({}, saladKey, { expires: justOver }));
+    expect(over.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+
     expect((await saladExchange(await saladJwt({}, saladKey, { expires: '10m' }))).status).toBe(
+      200
+    );
+    // The 60 s are deliberate: Salad's clock may run ahead of ours. Don't tighten this to 600.
+    const atLimit = Math.floor(Date.now() / 1000) + 660;
+    expect((await saladExchange(await saladJwt({}, saladKey, { expires: atLimit }))).status).toBe(
       200
     );
   });
