@@ -3,7 +3,6 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
-import { UNVERIFIED_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -845,7 +844,7 @@ async function safeCHQuery<T extends object>(query: string, label: string): Prom
 }
 
 export async function investigateCryptoPayments(userId: number): Promise<string> {
-  const [wallets, deposits, buzzTxns] = await Promise.all([
+  const [wallets, deposits, claims, buzzTxns] = await Promise.all([
     safeQuery<CryptoWalletRow>(Prisma.sql`
       SELECT chain, wallet, "smartAccount", "payCurrency"
       FROM "CryptoWallet"
@@ -857,9 +856,18 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
              "feeCurrency", "paidFiat", chain, "createdAt", "updatedAt"
       FROM "CryptoDeposit"
       WHERE "userId" = ${userId}
-        AND status <> 'unverified'
+        AND status NOT IN ('unverified', 'unverified_exhausted')
       ORDER BY "createdAt" DESC
       LIMIT 10
+    `),
+    // Claims get their own, smaller page so planted ones cannot push real deposits out of view.
+    safeQuery<CryptoDepositRow>(Prisma.sql`
+      SELECT "paymentId", status, "payCurrency", "payAmount", "createdAt", "updatedAt"
+      FROM "CryptoDeposit"
+      WHERE "userId" = ${userId}
+        AND status = 'unverified_exhausted'
+      ORDER BY "createdAt" DESC
+      LIMIT 3
     `),
     safeCHQuery<BuzzTransactionRow>(
       `SELECT type, description, externalTransactionId, amount, date
@@ -907,16 +915,6 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
   } else {
     lines.push(`\n--- NOWPAYMENTS DEPOSIT DETAILS (${deposits.length}) ---`);
     for (const d of deposits) {
-      if (UNVERIFIED_DEPOSIT_STATUSES.includes(d.status)) {
-        lines.push(
-          `  Payment #${d.paymentId} [${d.status}] - claimed, not confirmed by NOWPayments: do not credit by hand, escalate`
-        );
-        lines.push(
-          `    Claimed currency: ${d.payCurrency} | Claimed amount: ${d.payAmount ?? 'N/A'}`
-        );
-        lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
-        continue;
-      }
       const buzzTotal = (d.buzzCredited ?? 0) + (d.bonusBuzz ?? 0);
       const multiplierStr = d.multiplier ? ` (${d.multiplier / 100}x multiplier)` : '';
       const fees =
@@ -934,6 +932,20 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
         }${fees}`
       );
       lines.push(`    Buzz credited: ${buzzTotal}${multiplierStr}`);
+      lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
+    }
+  }
+
+  // --- Deposits only claimed in a notification NOWPayments never confirmed ---
+  if (claims.length > 0) {
+    lines.push(`\n--- CLAIMED, NOT CONFIRMED BY NOWPAYMENTS (${claims.length}) ---`);
+    for (const d of claims) {
+      // The currency is whatever the claim said; show it only if it looks like a currency code.
+      const currency = /^[a-z0-9]{2,15}$/i.test(d.payCurrency) ? d.payCurrency : 'unknown';
+      lines.push(
+        `  Payment #${d.paymentId} [${d.status}] - claimed, not confirmed by NOWPayments: do not credit by hand, escalate`
+      );
+      lines.push(`    Claimed currency: ${currency} | Claimed amount: ${d.payAmount ?? 'N/A'}`);
       lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
     }
   }
