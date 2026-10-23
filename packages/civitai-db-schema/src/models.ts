@@ -1730,6 +1730,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  caption?: ImageCaption | null;
 }
 
 export interface ImageTagForReview {
@@ -6490,6 +6491,17 @@ export interface StorylineChapterEdge {
   parentChapter?: StorylineChapter;
   canon: boolean;
   createdAt: Date;
+}
+
+export interface ImageCaption {
+  imageId: number;
+  image?: Image;
+  userId: number;
+  content: string;
+  refused: boolean;
+  nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface StorylineCollaborator {
