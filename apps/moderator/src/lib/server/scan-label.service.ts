@@ -294,6 +294,7 @@ export async function castVote(
       })
       .onConflict((oc) => oc.columns(['itemId', 'userId']).doNothing())
       .executeTakeFirst();
+    // Backstop only: the row lock and `hasVoted` above already refuse a repeat.
     if (!inserted.numInsertedOrUpdatedRows) return { ok: false, reason: 'already-voted' };
 
     const votes = item.votes + 1;

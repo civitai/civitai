@@ -413,9 +413,9 @@ describe('vote slots', () => {
   });
 
   it('does not hand an expired holder back a card someone else took the slot on', async () => {
-    await seedItem(1, { votes: 2 });
+    const last = await seedItem(1, { votes: 2 });
     await claimNext(1, {}, NOW);
-    await claimNext(2, {}, later(LEASE_MS + 1));
+    expect((await claimNext(2, {}, later(LEASE_MS + 1)))!.itemId).toBe(last);
     expect(await claimNext(1, {}, later(LEASE_MS + 2))).toBeNull();
   });
 
@@ -425,6 +425,9 @@ describe('vote slots', () => {
     await claimNext(2, {}, NOW);
     await claimNext(3, {}, NOW);
     await castVote({ itemId: full, userId: 1, choice: KEEP, msOnItem: 1 }, later(10));
+    expect(
+      await castVote({ itemId: full, userId: 4, choice: KEEP, msOnItem: 1 }, later(10))
+    ).toEqual({ ok: false, reason: 'full' });
     const decided = await seedItem(2, { votes: 2 });
     await castVote({ itemId: decided, userId: 1, choice: KEEP, msOnItem: 1 }, later(20));
     expect(await item(decided)).toMatchObject({ status: 'decided' });
