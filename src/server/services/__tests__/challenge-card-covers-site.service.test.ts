@@ -105,6 +105,17 @@ function images(nsfwLevel: number) {
 
 type Site = { isGreen: boolean; viewerId?: number };
 
+// The event paths also run the feed's visibility SQL (tested against Postgres in
+// challenge-event-visibility.sql.behavior.test.ts); here every challenge passes it.
+function eventQueries() {
+  dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    const sql = strings.join('');
+    if (sql.includes('COUNT(*) AS count FROM "Challenge" c')) return [{ count: BigInt(1) }];
+    if (sql.includes('FROM "Challenge" c')) return [{ id: cardRow.id }];
+    return [];
+  }) as never);
+}
+
 // Each list, as served to `site`, reduced to the one cover it returns.
 const paths: Record<string, (site: Site) => Promise<{ url: string } | null | undefined>> = {
   'daily challenges': async (site) => {
@@ -146,19 +157,21 @@ const paths: Record<string, (site: Site) => Promise<{ url: string } | null | und
     dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
       { ...event, challenges: [] },
     ] as never);
-    return (await getActiveEvents(site))[0].coverImage;
+    eventQueries();
+    return (await getActiveEvents(site, true))[0].coverImage;
   },
   'event challenge cover': async (site) => {
     dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
       { ...event, coverImageId: null, challenges: [{ ...cardRow, judgeId: null }] },
     ] as never);
     dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    return (await getActiveEvents(site))[0].challenges[0].coverImage;
+    eventQueries();
+    return (await getActiveEvents(site, true))[0].challenges[0].coverImage;
   },
   'event by id': async (site) => {
     dbMock.dbRead.challengeEvent.findUnique.mockResolvedValue(event as never);
-    return (await getChallengeEventById(event.id, site)).coverImage;
+    eventQueries();
+    return (await getChallengeEventById(event.id, site, true)).coverImage;
   },
 };
 
@@ -198,50 +211,5 @@ describe.each(Object.keys(paths))('%s', (path) => {
 
   it('keeps an X cover on the mature site', async () => {
     expect((await cover(NsfwLevel.X, { isGreen: false, viewerId: VIEWER }))?.url).toBe(COVER_URL);
-  });
-});
-
-describe('active events — which challenges are listed', () => {
-  const OTHER = 444;
-
-  async function listed(nsfwLevel: number, site: Site, createdById = OTHER) {
-    images(NsfwLevel.PG);
-    dbMock.dbRead.challengeEvent.findMany.mockResolvedValue([
-      {
-        ...event,
-        coverImageId: null,
-        challenges: [{ ...cardRow, nsfwLevel, createdById, judgeId: null }],
-      },
-    ] as never);
-    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    return (await getActiveEvents(site))[0].challenges.length === 1;
-  }
-
-  it.each([
-    ['signed out', undefined],
-    ['signed in', VIEWER],
-  ])('leaves out an R challenge on the green site (%s)', async (_, viewerId) => {
-    expect(await listed(NsfwLevel.R, { isGreen: true, viewerId })).toBe(false);
-  });
-
-  it('leaves out a PG-13 challenge on the green site for a signed-out viewer', async () => {
-    expect(await listed(NsfwLevel.PG13, { isGreen: true })).toBe(false);
-  });
-
-  it('lists a PG-13 challenge on the green site for a signed-in viewer', async () => {
-    expect(await listed(NsfwLevel.PG13, { isGreen: true, viewerId: VIEWER })).toBe(true);
-  });
-
-  it('lists a PG challenge on the green site', async () => {
-    expect(await listed(NsfwLevel.PG, { isGreen: true })).toBe(true);
-  });
-
-  it('lists its creator their own R challenge on the green site', async () => {
-    expect(await listed(NsfwLevel.R, { isGreen: true, viewerId: VIEWER }, VIEWER)).toBe(true);
-  });
-
-  it('lists an R challenge on the mature site', async () => {
-    expect(await listed(NsfwLevel.R, { isGreen: false, viewerId: VIEWER })).toBe(true);
   });
 });

@@ -29,7 +29,7 @@ function caller(isGreen: boolean, user: Record<string, unknown> | null) {
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
-    features: { isGreen, canViewNsfw: !isGreen, challengePlatform: true },
+    features: { isGreen, canViewNsfw: !isGreen, challengePlatform: true, userChallenges: true },
     track: {},
     ip: '127.0.0.1',
     cache: {},
@@ -56,12 +56,12 @@ describe.each([
 
   it('getActiveEvents passes the site', async () => {
     await caller(isGreen, user).getActiveEvents();
-    expect(getActiveEvents).toHaveBeenCalledWith(site);
+    expect(getActiveEvents).toHaveBeenCalledWith(site, true);
   });
 
   it('getEventById passes the site', async () => {
     await caller(isGreen, user).getEventById({ id: 7 });
-    expect(getChallengeEventById).toHaveBeenCalledWith(7, site);
+    expect(getChallengeEventById).toHaveBeenCalledWith(7, site, true);
   });
 });
 
@@ -73,7 +73,7 @@ describe('challenge router for a signed-out viewer on the green site', () => {
     await caller(true, null).getActiveEvents();
     await caller(true, null).getEventById({ id: 7 });
     expect(getDailyChallenges).toHaveBeenCalledWith(site);
-    expect(getActiveEvents).toHaveBeenCalledWith(site);
-    expect(getChallengeEventById).toHaveBeenCalledWith(7, site);
+    expect(getActiveEvents).toHaveBeenCalledWith(site, true);
+    expect(getChallengeEventById).toHaveBeenCalledWith(7, site, true);
   });
 });
