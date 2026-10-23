@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
@@ -142,9 +142,8 @@ const backfill = {
   held: [] as number[],
 };
 
-beforeAll(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
+// The tables the migration's triggers attach to, as far as these cases need them.
+const BASE_SCHEMA = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
@@ -190,7 +189,11 @@ beforeAll(async () => {
       "aiNsfwLevel" int,
       "trainingCopyState" text
     );
-  `);
+`;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(BASE_SCHEMA);
   // Reports already sent when the migration runs, for its backfill.
   await holder.db.exec(`
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
@@ -1201,5 +1204,67 @@ describe('the migration backfill', () => {
       { userId: BACKFILL_SECONDARY_USER, releasedById: null, releaseReason: null },
     ]);
     expect(backfill.held).toEqual([BACKFILL_RECENT_USER, BACKFILL_SECONDARY_USER]);
+  });
+});
+
+// Legal's exceptions are expired reports whose holds were promised on. Released by the backfill, the
+// end guard would refuse the extension that follows in the same transaction.
+describe('the migration backfill with a keep list', () => {
+  const KEPT_USER = 33;
+  const KEPT_SECONDARY_USER = 34;
+  const UNLISTED_USER = 35;
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(BASE_SCHEMA);
+    await db.exec(`
+      INSERT INTO "CsamReport" (id, "userId", "reportSentAt", details) VALUES
+        (1, ${KEPT_USER}, now() - interval '400 days', '{"secondaryUserId": ${KEPT_SECONDARY_USER}}'),
+        (2, ${UNLISTED_USER}, now() - interval '400 days', '{}');
+      CREATE TEMP TABLE evidence_hold_backfill_keep (report_id INTEGER PRIMARY KEY);
+      INSERT INTO evidence_hold_backfill_keep VALUES (1);
+    `);
+    await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  });
+  afterAll(() => db.close());
+
+  const heldUsers = async () =>
+    (
+      await db.query<{ userId: number }>(
+        `SELECT "userId" FROM "EvidenceHeldUser" ORDER BY "userId"`
+      )
+    ).rows.map((r) => r.userId);
+
+  it("leaves a listed report's rows unreleased and releases the rest", async () => {
+    const rows = (
+      await db.query<{ userId: number; released: boolean }>(
+        `SELECT "userId", "releasedAt" IS NOT NULL AS released FROM "EvidenceHold" ORDER BY "userId"`
+      )
+    ).rows;
+    expect(rows).toEqual([
+      { userId: KEPT_USER, released: false },
+      { userId: KEPT_SECONDARY_USER, released: false },
+      { userId: UNLISTED_USER, released: true },
+    ]);
+  });
+
+  it("lets the applier's extension hold a listed report again", async () => {
+    // Past its year and unreleased: not held until extended.
+    expect(await heldUsers()).toEqual([]);
+    await db.exec(`
+      UPDATE "EvidenceHold"
+      SET "extendedUntil" = now() + interval '1 year', "extensionRequestedBy" = 'agency',
+          "extensionReference" = 'ref'
+      WHERE "csamReportId" = 1;
+    `);
+    expect(await heldUsers()).toEqual([KEPT_USER, KEPT_SECONDARY_USER]);
+  });
+
+  it('drops the list with the migration', async () => {
+    const { rows } = await db.query<{ t: string | null }>(
+      `SELECT to_regclass('pg_temp.evidence_hold_backfill_keep')::text AS t`
+    );
+    expect(rows).toEqual([{ t: null }]);
   });
 });

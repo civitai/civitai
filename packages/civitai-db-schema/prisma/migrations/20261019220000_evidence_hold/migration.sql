@@ -316,6 +316,11 @@ FOR EACH ROW EXECUTE FUNCTION evidence_hold_purge_on_release();
 
 -- Existing sent reports. One whose year has already passed is recorded as released by the system
 -- user, never put back on hold; that set is the rows with this "releaseReason".
+-- A report whose id the applier has put in this session's evidence_hold_backfill_keep is inserted
+-- unreleased instead, so a hold extended in the same transaction never passes through a release,
+-- which the end guard makes final. The list can only keep a row from being released, never release one.
+CREATE TEMP TABLE IF NOT EXISTS evidence_hold_backfill_keep (report_id INTEGER PRIMARY KEY);
+
 INSERT INTO "EvidenceHold" (
   "userId", "csamReportId", "role", "reportSentAt", "releaseAt", "reason",
   "releasedAt", "releasedById", "releaseReason"
@@ -325,11 +330,16 @@ SELECT
   r."releasedAt", r."releasedById", r."releaseReason"
 FROM "CsamReport" c
 CROSS JOIN LATERAL (
+  SELECT c."reportSentAt" + interval '1 year' <= now()
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_temp.evidence_hold_backfill_keep k WHERE k.report_id = c."id"
+    ) AS released
+) e
+CROSS JOIN LATERAL (
   SELECT
-    CASE WHEN c."reportSentAt" + interval '1 year' <= now() THEN now() END AS "releasedAt",
-    CASE WHEN c."reportSentAt" + interval '1 year' <= now() THEN -1 END AS "releasedById",
-    CASE WHEN c."reportSentAt" + interval '1 year' <= now()
-         THEN 'expired before table existed' END AS "releaseReason"
+    CASE WHEN e.released THEN now() END AS "releasedAt",
+    CASE WHEN e.released THEN -1 END AS "releasedById",
+    CASE WHEN e.released THEN 'expired before table existed' END AS "releaseReason"
 ) r
 CROSS JOIN LATERAL (
   VALUES
@@ -339,3 +349,5 @@ CROSS JOIN LATERAL (
 ) AS v(uid, role)
 WHERE c."reportSentAt" IS NOT NULL AND v.uid IS NOT NULL
 ON CONFLICT ("csamReportId", "userId") WHERE "csamReportId" IS NOT NULL DO NOTHING;
+
+DROP TABLE pg_temp.evidence_hold_backfill_keep;
