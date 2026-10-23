@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getActiveSiteAlerts } from '~/server/services/site-alert.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getBrowsingSettingAddons, getLiveNow } from '~/server/services/system-cache';
@@ -82,63 +83,72 @@ export async function resolveSettingsBootstrapSeeds(
   // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
-  const [settings, tosMeta, announcements, following, browsingSettingsAddons, liveNow, navBanners] =
-    await Promise.all([
-      // Content-settings view so SSR initialData matches the tRPC getSettings response
-      // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
-      // `useQuery({ initialData })` under a global `staleTime: Infinity`: any defined
-      // value is fresh from frame 0 and never refetched, and an empty one resolves
-      // showNsfw/blurNsfw off the JWT, which lags a user who just turned nsfw OFF.
-      // `undefined` leaves the query unseeded so it fetches and self-heals, matching
-      // what `_app` already does on its degraded path.
-      settle(getUserContentSettings(session?.user?.id ?? -1), undefined, 'getUserContentSettings'),
-      // The static per-domain ToS metadata. Resolved here because `content.service` reads
-      // `fs/promises`, which must never be imported into `_app`'s client-bundled graph. The
-      // show/hide decision is computed client-side against the seeded `user.getSettings`,
-      // so this is user-independent and we can resolve it for everyone (it's cheap +
-      // cached). Domain fallback matches createContext's
-      // `getRequestDomainColor(req) ?? 'blue'`.
-      // `undefined` on failure: `useToSUpdateModal` guards on it and simply
-      // doesn't prompt, which beats degrading the whole payload.
-      settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
-      // Seeds the ambient `announcement.getAnnouncements` query (fires on every
-      // bootstrap, anon + authed). Match the resolver byte-for-byte: its
-      // `applyRequestDomainColor` middleware overrides the client input with
-      // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
-      // value here. On failure fall back to undefined and let the client self-heal
-      // via a live fetch.
-      settle(
-        getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
-        undefined,
-        'getCurrentAnnouncements'
-      ),
-      // Seeds the ambient, auth-gated `user.getFollowingUsers` query (fires
-      // on every logged-in bootstrap wherever a follow/notify button mounts).
-      // `getUserFollows` is the same redis-cached fn the resolver calls, so the
-      // seed is byte-identical (a `number[]` of followed userIds). Anon never
-      // fires this query (`enabled: !!currentUser`), so seed authed-only.
-      session?.user
-        ? settle(getUserFollows(session.user.id), undefined, 'getUserFollows')
-        : Promise.resolve(undefined),
-      // Global, user-independent sysRedis reads.
-      //
-      // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
-      // `withSysReadDeadline` timeout and corrupt JSON all RETURN
-      // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
-      // sysRedis the client is seeded with the defaults, and because the provider
-      // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
-      // pinned for the session; the live config is only picked up on the next
-      // bootstrap. Telling "live config" apart from "failed open" would need a
-      // sentinel out of system-cache. `undefined` on the deadline path for the same
-      // reason the old `.catch` used it — react-query treats a `[]` seed as valid
-      // data and pins it as "no restrictions".
-      settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
-      settle(getLiveNow(), false, 'getLiveNow'),
-      // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
-      // the page. Session-only (no cookies), so the anonymous answer is the same for every
-      // anonymous caller, as the route's public cache header requires.
-      settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
-    ]);
+  const [
+    settings,
+    tosMeta,
+    announcements,
+    following,
+    browsingSettingsAddons,
+    liveNow,
+    navBanners,
+    siteAlerts,
+  ] = await Promise.all([
+    // Content-settings view so SSR initialData matches the tRPC getSettings response
+    // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
+    // `useQuery({ initialData })` under a global `staleTime: Infinity`: any defined
+    // value is fresh from frame 0 and never refetched, and an empty one resolves
+    // showNsfw/blurNsfw off the JWT, which lags a user who just turned nsfw OFF.
+    // `undefined` leaves the query unseeded so it fetches and self-heals, matching
+    // what `_app` already does on its degraded path.
+    settle(getUserContentSettings(session?.user?.id ?? -1), undefined, 'getUserContentSettings'),
+    // The static per-domain ToS metadata. Resolved here because `content.service` reads
+    // `fs/promises`, which must never be imported into `_app`'s client-bundled graph. The
+    // show/hide decision is computed client-side against the seeded `user.getSettings`,
+    // so this is user-independent and we can resolve it for everyone (it's cheap +
+    // cached). Domain fallback matches createContext's
+    // `getRequestDomainColor(req) ?? 'blue'`.
+    // `undefined` on failure: `useToSUpdateModal` guards on it and simply
+    // doesn't prompt, which beats degrading the whole payload.
+    settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
+    // Seeds the ambient `announcement.getAnnouncements` query (fires on every
+    // bootstrap, anon + authed). Match the resolver byte-for-byte: its
+    // `applyRequestDomainColor` middleware overrides the client input with
+    // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
+    // value here. On failure fall back to undefined and let the client self-heal
+    // via a live fetch.
+    settle(
+      getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
+      undefined,
+      'getCurrentAnnouncements'
+    ),
+    // Seeds the ambient, auth-gated `user.getFollowingUsers` query (fires
+    // on every logged-in bootstrap wherever a follow/notify button mounts).
+    // `getUserFollows` is the same redis-cached fn the resolver calls, so the
+    // seed is byte-identical (a `number[]` of followed userIds). Anon never
+    // fires this query (`enabled: !!currentUser`), so seed authed-only.
+    session?.user
+      ? settle(getUserFollows(session.user.id), undefined, 'getUserFollows')
+      : Promise.resolve(undefined),
+    // Global, user-independent sysRedis reads.
+    //
+    // `getBrowsingSettingAddons` fails OPEN internally — a redis reject, a
+    // `withSysReadDeadline` timeout and corrupt JSON all RETURN
+    // DEFAULT_BROWSING_SETTINGS_ADDONS rather than throwing. So on degraded
+    // sysRedis the client is seeded with the defaults, and because the provider
+    // passes this to `useQuery({ initialData, staleTime: Infinity })` they are
+    // pinned for the session; the live config is only picked up on the next
+    // bootstrap. Telling "live config" apart from "failed open" would need a
+    // sentinel out of system-cache. `undefined` on the deadline path for the same
+    // reason the old `.catch` used it — react-query treats a `[]` seed as valid
+    // data and pins it as "no restrictions".
+    settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
+    settle(getLiveNow(), false, 'getLiveNow'),
+    // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
+    // the page. Session-only (no cookies), so the anonymous answer is the same for every
+    // anonymous caller, as the route's public cache header requires.
+    settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    settle(getActiveSiteAlerts(), undefined, 'getActiveSiteAlerts'),
+  ]);
   return {
     settings,
     tosMeta,
@@ -147,6 +157,7 @@ export async function resolveSettingsBootstrapSeeds(
     browsingSettingsAddons,
     liveNow,
     navBanners,
+    siteAlerts,
     session: bootstrapSession(session),
   };
 }

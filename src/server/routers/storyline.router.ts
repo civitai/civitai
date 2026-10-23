@@ -11,6 +11,7 @@ import {
   storylineBranchChoiceSchema,
   getStorylineSchema,
   getStorylinesForPostsSchema,
+  storylinePendingForPostSchema,
   storylineChapterReadSchema,
   storylineCollaboratorSchema,
   storylineIdSchema,
@@ -31,6 +32,7 @@ import {
   getStorylineEarlyAccessStatus,
   getStorylineForkShares,
   getStorylineGraph,
+  getPendingChapterForPost,
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
@@ -162,6 +164,16 @@ export const storylineRouter = router({
     .input(joinStorylineEarlyAccessSchema)
     .mutation(({ input, ctx }) =>
       joinStorylineEarlyAccess({ storylineId: input.storylineId, userId: ctx.user.id })
+    ),
+
+  getPendingForPost: storylineMemberProcedure
+    .input(storylinePendingForPostSchema)
+    .query(({ input, ctx }) =>
+      getPendingChapterForPost({
+        postId: input.postId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>

@@ -70,6 +70,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   NAV_BANNERS_DISMISSED_COOKIE,
   parseNavBannersDismissed,
@@ -136,6 +137,7 @@ type CustomAppProps = {
   announcementsDismissed?: DismissedByType;
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
+  siteAlerts?: SiteAlertsPayload;
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -173,6 +175,7 @@ function MyApp(props: CustomAppProps) {
       announcementsDismissed,
       navBanners,
       navBannersDismissed,
+      siteAlerts,
       following,
       seed = Date.now(),
       canIndex,
@@ -258,6 +261,7 @@ function MyApp(props: CustomAppProps) {
       announcementsDismissed={announcementsDismissed}
       navBanners={navBanners}
       navBannersDismissed={navBannersDismissed}
+      siteAlerts={siteAlerts}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -525,6 +529,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     browsingSettingsAddons?: BrowsingSettingsAddon[];
     liveNow?: boolean;
     navBanners?: NavBanner[];
+    siteAlerts?: SiteAlertsPayload;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -582,6 +587,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       browsingSettingsAddons: undefined,
       liveNow: undefined,
       navBanners: undefined,
+      siteAlerts: undefined,
       session: null,
     };
   }
@@ -598,6 +604,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
     navBanners,
+    siteAlerts,
   } = settingsBootstrap;
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
@@ -709,6 +716,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       announcementsDismissed,
       navBanners,
       navBannersDismissed,
+      siteAlerts,
       following,
       seed: Date.now(),
       hasAuthCookie,

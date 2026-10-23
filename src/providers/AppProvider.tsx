@@ -10,6 +10,7 @@ import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -32,6 +33,8 @@ type AppProviderProps = {
   // announcement slot is in the server HTML and never shifts the page when it arrives.
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
+  // SSR-computed `siteAlerts.getActive`, read by the alert strip as the data for its own version.
+  siteAlerts?: SiteAlertsPayload;
   // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
@@ -84,6 +87,7 @@ type AppContext = {
   announcements?: AnnouncementsSeed;
   announcementsDismissed?: DismissedByType;
   navBannersDismissed?: string[];
+  siteAlerts?: SiteAlertsPayload;
   tosMeta?: TosMeta;
   /** Present only on a shell boot: true until the viewer's region is known. */
   regionPending?: boolean;
@@ -125,6 +129,7 @@ export function AppProvider({
   announcementsDismissed,
   navBanners,
   navBannersDismissed,
+  siteAlerts,
   following,
   liveNow,
   chatSettings,
@@ -204,6 +209,7 @@ export function AppProvider({
     announcements: reviveAnnouncementsSeed(announcements),
     announcementsDismissed,
     navBannersDismissed,
+    siteAlerts,
     // All-string payload (current hash + baseline + field keys) — survives the
     // pageProps JSON round-trip as-is, no revival needed.
     tosMeta,

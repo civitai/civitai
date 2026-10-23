@@ -39,7 +39,7 @@ members, then set `enabled: true` for everyone.
 
 - Lead time at least `POST_MINIMUM_SCHEDULE_MINUTES` (10) and at most `POST_MAXIMUM_SCHEDULE_MONTHS`
   (3) out.
-- Batch posts keep `POST_BATCH_MIN_GAP_MINUTES` (30) between each other and the creator's existing
+- Batch posts keep `POST_BATCH_MIN_GAP_MINUTES` (5) between each other and the creator's existing
   scheduled posts, and never land on a `:00` minute (jitter of 1 to 9 minutes, deterministic per batch
   seed), so the publish sweep never sees a burst.
 - A creator's daily post limit (`getDailyPostLimit`, the same tiers as `postRateLimits`) is counted per
