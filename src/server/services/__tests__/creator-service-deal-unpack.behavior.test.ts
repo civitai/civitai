@@ -1324,6 +1324,8 @@ describe('the finals malware scan', () => {
   const CLAM_ERROR = { $type: 'modelClamScan', output: { status: 'error' } };
   const workflow = (status: string, steps: unknown[]) => ({ status, steps });
 
+  /** The upload answers with a signed URL anyone holding it can read: never kept, never logged. */
+  const SIGNED_URL = 'https://blobs.test/signed-secret';
   const fetchMock = vi.fn();
   /** The workflow each id reads as; an id with none set reads as still running. */
   const workflows = new Map<string, ReturnType<typeof workflow>>();
@@ -1341,7 +1343,7 @@ describe('the finals malware scan', () => {
     fetchMock.mockImplementation(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ id: `blob-${++blobs}.bin` }),
+      json: async () => ({ id: `blob-${++blobs}.bin`, url: `${SIGNED_URL}/${blobs}` }),
     }));
     vi.stubGlobal('fetch', fetchMock);
     vi.mocked(orchestrator.submitWorkflow).mockReset();
@@ -1559,6 +1561,11 @@ describe('the finals malware scan', () => {
       scanStatus: 'Passed',
       malwareScanStatus: 'Passed',
     });
+
+    // The upload's signed URL went nowhere: not into the row, not into a log line.
+    const rows = await q(`SELECT * FROM "ServiceDealFile"`);
+    expect(JSON.stringify(rows)).not.toContain(SIGNED_URL);
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain(SIGNED_URL);
 
     await deals.acceptServiceDealDelivery({ dealId, userId: BUYER });
     expect(await asBuyer(fileId)).toMatchObject({ key: row.s3Key });
