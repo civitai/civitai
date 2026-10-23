@@ -32,8 +32,12 @@ export function StorylineImageCaptionBox({
   const value = draft ?? loaded;
   const baseline = saved ?? loaded;
 
+  const utils = trpc.useUtils();
   const mutation = trpc.storyline.setImageCaption.useMutation({
-    onSuccess: (_, { content }) => setSaved(content),
+    onSuccess: (_, { content }) => {
+      setSaved(content);
+      return utils.storyline.getPostImageCaptions.invalidate({ postId });
+    },
     onError: (error) => showErrorNotification({ title: 'Caption not saved', error }),
   });
 

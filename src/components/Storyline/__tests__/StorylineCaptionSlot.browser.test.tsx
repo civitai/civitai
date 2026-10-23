@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   enabled: true,
   userId: 1 as number | undefined,
   setCaption: vi.fn(),
+  invalidate: vi.fn(),
+  captions: [] as { imageId: number; content: string }[],
   fail: false,
 }));
 
@@ -25,38 +27,46 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcMod>()),
-    trpc: makeTrpcProxy({
-      'storyline.getPendingForPost': {
-        useQuery: () => ({ data: mocks.pending, isLoading: false }),
-      },
-      'storyline.getForPosts': {
-        useQuery: (_input: unknown, options?: { enabled?: boolean }) => ({
-          data: options?.enabled === false ? undefined : mocks.forPosts,
-          isLoading: false,
-        }),
-      },
-      'storyline.setImageCaption': {
-        useMutation: (options: MutationOptions & { onError?: (e: Error) => void }) => {
-          const [state, setState] = useState<'idle' | 'success' | 'error'>('idle');
-          return {
-            mutate: (vars: { imageId: number; content: string }) => {
-              mocks.setCaption(vars);
-              if (mocks.fail) {
-                setState('error');
-                options.onError?.(new Error('nope'));
-              } else {
-                setState('success');
-                options.onSuccess?.(null, vars);
-              }
-            },
-            reset: () => setState('idle'),
-            isPending: false,
-            isSuccess: state === 'success',
-            isError: state === 'error',
-          };
+    trpc: makeTrpcProxy(
+      {
+        'storyline.getPendingForPost': {
+          useQuery: () => ({ data: mocks.pending, isLoading: false }),
+        },
+        'storyline.getForPosts': {
+          useQuery: (_input: unknown, options?: { enabled?: boolean }) => ({
+            data: options?.enabled === false ? undefined : mocks.forPosts,
+            isLoading: false,
+          }),
+        },
+        'storyline.getPostImageCaptions': {
+          useQuery: () => ({ data: mocks.captions, isLoading: false }),
+        },
+        'storyline.setImageCaption': {
+          useMutation: (options: MutationOptions & { onError?: (e: Error) => void }) => {
+            const [state, setState] = useState<'idle' | 'success' | 'error'>('idle');
+            return {
+              mutate: (vars: { imageId: number; content: string }) => {
+                mocks.setCaption(vars);
+                if (mocks.fail) {
+                  setState('error');
+                  options.onError?.(new Error('nope'));
+                } else {
+                  setState('success');
+                  options.onSuccess?.(null, vars);
+                }
+              },
+              reset: () => setState('idle'),
+              isPending: false,
+              isSuccess: state === 'success',
+              isError: state === 'error',
+            };
+          },
         },
       },
-    }),
+      {
+        useUtils: () => ({ storyline: { getPostImageCaptions: { invalidate: mocks.invalidate } } }),
+      }
+    ),
   };
 });
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -89,6 +99,8 @@ beforeEach(() => {
   mocks.userId = 1;
   mocks.fail = false;
   mocks.setCaption.mockReset();
+  mocks.invalidate.mockReset();
+  mocks.captions = [];
 });
 
 describe('StorylineCaptionSlot: where the box appears', () => {
@@ -167,6 +179,33 @@ describe('StorylineCaptionSlot: writing', () => {
     (box().element() as HTMLTextAreaElement).blur();
     await vi.waitFor(() => expect(mocks.setCaption).toHaveBeenCalledTimes(2));
     expect(mocks.setCaption).toHaveBeenLastCalledWith({ imageId: 7, content: '' });
+  });
+
+  test('a caption saved earlier fills the box, and emptying it clears it', async () => {
+    mocks.captions = [
+      { imageId: 7, content: 'Saved earlier' },
+      { imageId: 8, content: 'Another picture' },
+    ];
+    renderWithProviders(<StorylineCaptionSlot post={draft} image={image} />);
+
+    await expect.element(box()).toHaveValue('Saved earlier');
+    (box().element() as HTMLTextAreaElement).focus();
+    (box().element() as HTMLTextAreaElement).blur();
+    expect(mocks.setCaption).not.toHaveBeenCalled();
+
+    await box().fill('');
+    (box().element() as HTMLTextAreaElement).blur();
+    await vi.waitFor(() => expect(mocks.setCaption).toHaveBeenCalledTimes(1));
+    expect(mocks.setCaption).toHaveBeenCalledWith({ imageId: 7, content: '' });
+  });
+
+  test('a save refreshes the saved captions of its post', async () => {
+    renderWithProviders(<StorylineCaptionSlot post={draft} image={image} />);
+
+    await box().fill('Hello');
+    (box().element() as HTMLTextAreaElement).blur();
+
+    await vi.waitFor(() => expect(mocks.invalidate).toHaveBeenCalledWith({ postId: 41 }));
   });
 
   test('an untouched empty box saves nothing', async () => {
