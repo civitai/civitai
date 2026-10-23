@@ -72,6 +72,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261022130000_scan_label_queue'));
   await pg.exec(migration('20261022140000_scan_label_outcomes'));
   await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
+  await pg.exec(migration('20261128120000_scan_label_claim_token'));
   await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
   await pg.exec(migration('20260630140000_add_role_table'));
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
