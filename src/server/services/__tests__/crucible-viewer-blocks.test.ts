@@ -319,6 +319,7 @@ describe('active crucibles while a mid-run edit is under review', () => {
 });
 
 describe('active crucibles on the green site', () => {
+  const PG13 = 2;
   const R = 4;
   const green = { isGreen: true };
   const entryWith = (crucible: Record<string, unknown>) => ({
@@ -347,7 +348,8 @@ describe('active crucibles on the green site', () => {
     ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
   });
 
-  it('still lists the host their own crucible on green, without a cover above the ceiling', async () => {
+  // Defence in depth: a host cannot enter their own crucible, so this list never holds it today.
+  it('would list a host their own crucible on green, without a cover above the ceiling', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([matureCrucible]);
 
     await expect(
@@ -361,6 +363,40 @@ describe('active crucibles on the green site', () => {
     await expect(
       caller(signedIn(1, true), green).getUserActiveCrucibles({})
     ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('still applies the review gate to a moderator on green', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entryWith({ ingestion: 'Pending' })]);
+
+    await expect(caller(signedIn(1, true), green).getUserActiveCrucibles({})).resolves.toEqual([]);
+  });
+
+  it.each([null, 0])('withholds an unrated cover (level %s) on green', async (nsfwLevel) => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      entryWith({ image: { url: 'cover', nsfwLevel, ingestion: 'Scanned' } }),
+    ]);
+
+    await expect(
+      caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})
+    ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('shows a PG-13 cover to a signed-in viewer on green', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      entryWith({ image: { url: 'cover', nsfwLevel: PG13, ingestion: 'Scanned' } }),
+    ]);
+
+    await expect(
+      caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})
+    ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: 'cover' }]);
+  });
+
+  it('leaves out a crucible whose text is not safe for green, whatever its level', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entryWith({ textNsfw: true })]);
+
+    await expect(caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})).resolves.toEqual(
+      []
+    );
   });
 
   it('shows both on the mature site', async () => {
