@@ -238,6 +238,9 @@ export async function sweepPoiHashMatches({
   const since = await getPoiHashSince();
   // One statement, so the CTEs are built once; driven from Model, so the seed filter runs per model
   // rather than per version or file.
+  // Bound as text: the pg driver serialises a Date in the process's local offset, which a
+  // timestamp-without-zone comparison would then drop.
+  const sinceSql = Prisma.sql`${since.toISOString()}::timestamptz`;
   const sweep = Prisma.sql`
     WITH seed_models AS MATERIALIZED (
       SELECT m.id FROM "Model" m WHERE ${poiSeedPredicate}
@@ -265,15 +268,15 @@ export async function sweepPoiHashMatches({
         AND NOT (${asJsonbObjectSql('m.meta')} ? ${POI_HASH_MATCH_KEY})
     ),
     totals AS (
-      SELECT count(DISTINCT "modelId") FILTER (WHERE "createdAt" >= ${since} AND NOT cleared)::int
+      SELECT count(DISTINCT "modelId") FILTER (WHERE "createdAt" >= ${sinceSql} AND NOT cleared)::int
                AS candidates,
-             count(DISTINCT "modelId") FILTER (WHERE "createdAt" < ${since})::int AS backlog
+             count(DISTINCT "modelId") FILTER (WHERE "createdAt" < ${sinceSql})::int AS backlog
       FROM matches
     ),
     picked AS (
       SELECT DISTINCT ON ("modelId") "modelId", "userId", "fileId", hash
       FROM matches
-      WHERE "createdAt" >= ${since} AND NOT cleared
+      WHERE "createdAt" >= ${sinceSql} AND NOT cleared
       ORDER BY "modelId", "createdAt", "fileId"
       LIMIT ${limit}
     )

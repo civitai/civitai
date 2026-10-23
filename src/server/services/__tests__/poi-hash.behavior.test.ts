@@ -350,7 +350,7 @@ describe('sweepPoiHashMatches — the read', () => {
     expect(setModelPoi).not.toHaveBeenCalled();
   });
 
-  it('runs under its own 120s ceiling, read-only, on the same connection', async () => {
+  it('runs read-only under its own 120s ceiling', async () => {
     await sweepPoiHashMatches({ limit: 50 });
     const at = pool.sent.findIndex((text) => text.includes('seed_models'));
     expect(pool.sent.slice(0, at)).toEqual([
