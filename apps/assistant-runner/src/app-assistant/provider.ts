@@ -329,13 +329,31 @@ function wrapDevServerStart(
         options
       );
       if (typeof output !== 'string' || !devServerRuns(output)) return output;
-      const auto: AutoPreview | null = await preview.openAfterDevServer(input, options.abortSignal);
+      // A restart with no command runs the previous one: its status names the command it ran.
+      const auto: AutoPreview | null = await preview.openAfterDevServer(
+        { command: commandOf(input) ?? commandOf(parseJson(output)) },
+        options.abortSignal
+      );
       if (!auto) return output;
       if ('error' in auto) return `${output}\n\n${autoPreviewFailed(auto.error)}`;
       context.report?.({ name: START_PREVIEW, input: {}, output: auto.shown, isError: false });
       return `${output}\n\n${AUTO_PREVIEW_SHOWN}`;
     },
   } as typeof tool;
+}
+
+/** The `command` field of a dev server call's input, or of the status it answered. */
+function commandOf(value: unknown): string | undefined {
+  const command = (value as { command?: unknown } | null)?.command;
+  return typeof command === 'string' ? command : undefined;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 /** A dev server start's status says the server runs (an unreadable answer counts as yes). */

@@ -145,11 +145,13 @@ See [Not built yet](#not-built-yet).
        call succeeds (its status says the server runs) and the preview is set up here, the runner runs the steps above for the
        open app, once per app per run, with no decision of the assistant's: the block id, scopes
        and auth come from the project's `block.manifest.json` (the directory the start command
-       `cd`s into, else the app's own key). The page is told by the same `tool-reported`
+       `cd`s into, or, for a restart with no command, the one its status says it ran; else the
+       app's own key). The page is told by the same `tool-reported`
        `start_preview` result, and the assistant reads, after the dev server's own answer, that the
        user now sees the preview, or why it could not open (a refusal never fails the dev
        server's start, and is not tried again in the run). A `start_preview` for the same app and
-       block then answers the same preview without asking civitai again. In production a model
+       block, asking for no other scopes or auth than it was opened with, then answers the same
+       preview without asking civitai again (other scopes or auth open it again with them). In production a model
        had started the dev server, checked the app and reported it ready without ever calling
        `start_preview`.
     A later reply (or Continue after the app was paused) starts or restarts the dev server, which

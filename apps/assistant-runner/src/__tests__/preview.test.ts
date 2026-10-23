@@ -517,6 +517,32 @@ describe('the preview opens by itself once the dev server starts', () => {
     expect(shownReports(reported)).toHaveLength(1);
   });
 
+  it('a restart with no command reads the manifest where its status says the server runs', async () => {
+    fake.add('my-app');
+    const restarted = JSON.stringify({
+      running: true,
+      command: 'cd tip-calc && CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port 5173',
+    });
+    fake.tools.set('dev_server_restart', () => restarted);
+    fake.tools.set('read_file', (args) =>
+      args.path === 'tip-calc/block.manifest.json'
+        ? JSON.stringify({
+            path: args.path,
+            content: JSON.stringify({ blockId: 'tip-calc', scopes: ['models:read:self'] }),
+          })
+        : 'export {}'
+    );
+    const { tools } = await open();
+    await call(tools.tools, 'sandbox__dev_server_restart', {});
+    expect(tunnels.started).toEqual([
+      {
+        blockId: 'tip-calc',
+        sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY,
+        declaredScopes: ['models:read:self'],
+      },
+    ]);
+  });
+
   it('a start_preview asking for other scopes than it opened with opens it again with them', async () => {
     fake.add('my-app');
     const { tools } = await open();
