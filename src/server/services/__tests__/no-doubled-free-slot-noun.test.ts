@@ -9,8 +9,7 @@ import { describe, expect, it } from 'vitest';
  * Both callers did, and it was live on account settings and on remix gallery
  * settings until 2026-08-24 (`868kv227t`). The rendered string is asserted for
  * the sticker caller in `PlacementSpaceSection.freeSlots.browser.test.tsx` — but
- * that file is in the `component` project, which **no CI job runs**, and the
- * remix caller has no test of its own at all. This guard is what covers the
+ * the remix caller has no test of its own at all. This guard is what covers the
  * second caller and every caller after it.
  *
  * A source guard rather than a render, deliberately: the defect is a value at

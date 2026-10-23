@@ -15,7 +15,7 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
  * - Escape with the hat's popover open closes only the popover; with it closed, Escape still closes
  *   the viewer (the modal it opens in, ImageDetailModal's PageModal);
  * - no hat when the image carries none, which is what a viewer outside the preview receives.
- * Browser mode only: placement needs a real layout. These run locally, not in CI.
+ * Browser mode only: placement needs a real layout. CI runs these as `Component tests`.
  */
 
 const svg = (w: number, h: number, fill: string) =>

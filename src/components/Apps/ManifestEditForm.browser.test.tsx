@@ -4,7 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * ManifestEditForm — browser-mode render test (report-only in Tekton).
+ * ManifestEditForm — browser-mode render test (`Component tests` in CI).
  *
  * Covers the per-scope justification authoring surface: a Textarea is rendered
  * for each declared scope (seeded from the stored manifest's

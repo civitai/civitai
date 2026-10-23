@@ -29,8 +29,8 @@ import { OWNER_UNPUBLISH_ACTION } from '~/components/Apps/offsiteOwnerControls';
  * rather than by a set comparison over buttons.
  *
  * 🔴 WHAT THIS FILE CAN AND CANNOT PROVE, stated up front. It runs in the **`unit`**
- * project, which is the tier that BLOCKS; the browser-mode `component` project is
- * report-only. So the routing rules are pinned here where a red is enforceable, and the
+ * project; the browser-mode `component` project runs as `Component tests`. So the
+ * routing rules are pinned here, without a browser, and the
  * rendering is pinned there where it is observable. Neither is sufficient alone: this file
  * would pass with the buttons deleted from the page, and the browser file's ledger is only
  * as good as the table this file pins.

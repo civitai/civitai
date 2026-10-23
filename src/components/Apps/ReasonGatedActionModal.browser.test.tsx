@@ -14,7 +14,7 @@ import {
 
 /**
  * The shared reason-gated primitives (B3) that back EVERY App Blocks moderator
- * reason-required action. Browser-mode (report-only in Tekton): the live counter +
+ * reason-required action. Browser-mode (`Component tests` in CI): the live counter +
  * the inline too-short error at the floor boundary; the disabled-with-Tooltip submit;
  * and the full modal's typed-slug (purge) + extra-input (claim) gates.
  */

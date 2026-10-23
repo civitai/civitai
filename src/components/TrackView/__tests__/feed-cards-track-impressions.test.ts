@@ -25,8 +25,8 @@ import { join, relative, resolve, dirname } from 'node:path';
  * into a plain grid) is not seen here, which is what the named list at the
  * bottom is for.
  *
- * It is a source scan, not a render: the component harness runs in no CI job,
- * and the unit project has no IntersectionObserver to drive.
+ * It is a source scan, not a render: the unit project has no IntersectionObserver
+ * to drive.
  */
 
 const SRC = resolve(__dirname, '..', '..', '..');

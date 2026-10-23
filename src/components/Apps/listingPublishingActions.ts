@@ -324,8 +324,8 @@ export function republishSuccessMessage(
  * The message to show after a successful `withdrawExternalRequest`.
  *
  * 🔴 A PURE FUNCTION RATHER THAN A TERNARY IN THE PANEL, so this branch is covered by the
- * BLOCKING node `unit` project — the browser-mode component suites are report-only, and
- * this particular claim is the one that matters most to get right.
+ * node `unit` project — this particular claim is the one that matters most to get
+ * right.
  *
  * 🔴 THE TWO OUTCOMES ARE NOT EQUALLY REVERSIBLE, and one sentence covered both.
  * `'deleted'` discards a draft. `'removed'` closes the review of a formerly-LIVE listing:

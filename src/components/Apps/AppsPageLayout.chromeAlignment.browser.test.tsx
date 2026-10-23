@@ -62,8 +62,7 @@
  * why the @2560 numbers below no longer match this column.)
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
- * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY, non-blocking, and RED on this
+ * Vitest browser-mode `component` project (`Component tests` in CI), and was RED on this
  * branch for reasons that have nothing to do with `/apps`. The failing files are outside
  * `src/components/Apps` and their subtrees are byte-identical to `origin/main` here; one
  * of them (`RemixGallery/RemixGallerySubmitModal`) fails to IMPORT, which reports as
@@ -82,8 +81,9 @@
  * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
  * `required_status_checks: null` — there is NO required check on this branch, so NO
  * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
- * `geometry:` job says the same thing in its own comment. "Report-only" therefore
- * describes every tier here, and a local run is the only real gate.
+ * `geometry:` job says the same thing in its own comment. "Non-blocking" therefore
+ * describes every tier here: `Component tests` goes red on a PR, `geometry` and `unit`
+ * report as a green job with a red step, and none is a required check.
  *
  * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
  * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the
@@ -92,10 +92,8 @@
  * taxonomy). They are just not enforcement. This file exists because they pin STRUCTURE
  * and only a real browser can pin PIXELS.
  *
- * (Of the browser tiers, only `geometry` is RUN by that workflow at all — report-only on
- * a PR, a real red on a push to `main`. `component`, which collects this file, matches no
- * project selector there. A new rendered-pixel claim is therefore worth more in
- * `geometry`; see `AppsRailHeaderRow.geometry.test.tsx`.)
+ * (That workflow runs both browser tiers: `geometry` report-only on a PR and a real red
+ * on a push to `main`, and `component`, which collects this file, as `Component tests`.)
  *
  * 🔴 WHY THIS FILE LOADS `@mantine/core/styles.css` AND MOST SIBLINGS MUST NOT.
  * The shared component scaffold deliberately omits Mantine's stylesheet, so the
