@@ -376,6 +376,47 @@ describe('applyResult — SFW crucible created on the mature site, with NSFW tex
   });
 });
 
+describe('applyCrucibleNsfwEscalation — detected level', () => {
+  it('rates it at the detected level and names that level to the creator', async () => {
+    findForEscalation.mockResolvedValue(crucible({ buzzType: 'yellow' }));
+
+    await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true, level: NsfwLevel.X });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ nsfwLevel: SFW | NsfwLevel.R | NsfwLevel.X }),
+      })
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          message:
+            "Your crucible's rating was raised to X based on its text, so people browsing safe-for-work content won't see it.",
+        }),
+      })
+    );
+  });
+
+  it('never lowers a crucible already rated above the verdict', async () => {
+    const upToXxx = SFW | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
+    findForEscalation.mockResolvedValue(crucible({ buzzType: 'yellow', nsfwLevel: upToXxx }));
+
+    await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true, level: NsfwLevel.R });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ nsfwLevel: upToXxx }) })
+    );
+    // The notice names the rating the crucible now has, not the verdict that triggered it.
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          message: expect.stringContaining('raised to XXX based on its text'),
+        }),
+      })
+    );
+  });
+});
+
 describe('applyCrucibleNsfwEscalation — row gone', () => {
   it('does nothing', async () => {
     findForEscalation.mockResolvedValue(null);
@@ -393,7 +434,7 @@ describe('applyCrucibleNsfwEscalation — moderator override', () => {
       crucible({ buzzType: 'yellow', status: CrucibleStatus.Active, moderatorNsfwLevel: 1 })
     );
 
-    await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true });
+    await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true, level: NsfwLevel.XXX });
 
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith({

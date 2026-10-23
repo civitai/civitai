@@ -119,6 +119,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // The real-person counterpart of MINOR_HASH_AUTO_FLAG: the scan hook and the nightly sweep that
+  // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
+  // either can be thrown without the other.
+  POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
@@ -325,6 +329,7 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG,
   // Same shape: thrown when the duplicate-hash unpublish misfires, read once per model-file scan.
   FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK,
   // The stop button for a sweep that can permanently double production counters

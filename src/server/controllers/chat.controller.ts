@@ -45,6 +45,7 @@ import {
   signalChatMembersUpdated,
   upsertChat,
   deleteChatMessage,
+  editChatMessageContent,
 } from '~/server/services/chat.service';
 import {
   assertCanPromote,
@@ -1053,9 +1054,9 @@ export const createMessageHandler = async ({
 /**
  * Edit a message. Authors edit their own; moderators edit anyone's.
  *
- * Either way the pre-edit content goes to the audit log first, so a message
- * rewritten after a report was filed still resolves to what it said when it was
- * reported.
+ * Either way the pre-edit content is kept in `ChatMessageEdit`, written with the
+ * edit itself, so a message rewritten after a report was filed still resolves to
+ * what it said when it was reported.
  *
  * Content passes the same blocklist scans `createMessage` applies — the previous
  * incarnation of this handler wrote `content` through unchecked, which is why it
@@ -1076,7 +1077,7 @@ export const updateMessageHandler = async ({
 
     const existing = await dbWrite.chatMessage.findFirst({
       where: { id: messageId },
-      select: { id: true, chatId: true, userId: true, content: true, deletedAt: true },
+      select: { id: true, chatId: true, userId: true, deletedAt: true },
     });
 
     const isOwn = existing?.userId === userId;
@@ -1102,13 +1103,17 @@ export const updateMessageHandler = async ({
     await throwOnBlockedMessagePattern(scannable);
 
     const editedAt = new Date();
-    await dbWrite.chatMessage.update({
-      where: { id: existing.id },
-      data: { content: trimmed, editedAt },
+    const previousContent = await editChatMessageContent({
+      messageId: existing.id,
+      editorId: userId,
+      content: trimmed,
+      editedAt,
     });
+    // Deleted between the check above and the write.
+    if (previousContent === null) throw throwBadRequestError('Deleted messages cannot be edited');
     if (isOwn) queueScamScan({ entityType: 'ChatMessage', entityId: existing.id });
 
-    const before = truncateAuditValue(existing.content);
+    const before = truncateAuditValue(previousContent);
     const after = truncateAuditValue(trimmed);
     await ctx.track
       .chatAudit({

@@ -14,6 +14,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as NotificationService from '~/server/services/notification.service';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
@@ -21,6 +22,12 @@ const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
 const submitTextModeration = vi.fn();
+const createNotification = vi.fn();
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
@@ -488,6 +495,60 @@ describe('updateCrucible — while upcoming', () => {
   it('refuses more prize places than the new entry cap allows', async () => {
     findUnique.mockResolvedValue(upcoming());
     await expect(edit({ maxTotalEntries: 2 })).rejects.toThrow(/more prize places/);
+  });
+});
+
+describe('updateCrucible — starting it now', () => {
+  const startingSends = () =>
+    createNotification.mock.calls.map(([n]) => n).filter((n) => n.type === 'crucible-starting');
+
+  beforeEach(() => {
+    findUnique.mockResolvedValue(upcoming());
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      name: 'Old name',
+      textNsfw: false,
+      ingestion: 'Scanned',
+      image: { ingestion: 'Scanned' },
+    });
+    dbMock.dbWrite.crucibleEngagement.findMany.mockResolvedValue([
+      { userId: OWNER },
+      { userId: 9 },
+    ]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+    createNotification.mockResolvedValue(undefined);
+  });
+
+  it('tells its followers, not the host, when the owner moves the start to now', async () => {
+    await edit({ startAt: new Date(Date.now() - 1000) });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Active });
+    expect(startingSends()).toEqual([
+      expect.objectContaining({ key: 'crucible-starting:1', userIds: [9] }),
+    ]);
+  });
+
+  it('keeps the saved edit when the read for the notification fails', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockRejectedValue(new Error('db hiccup'));
+
+    await expect(edit({ startAt: new Date(Date.now() - 1000) })).resolves.toBeDefined();
+  });
+
+  it('sends nothing for an edit to one already running', async () => {
+    findUnique.mockResolvedValue(crucible());
+    update.mockImplementation(async ({ data }: { data: object }) => ({ ...crucible(), ...data }));
+
+    await edit({ coverImage: { url: 'x' } });
+
+    expect(startingSends()).toEqual([]);
+  });
+
+  it('sends nothing when the new start is still ahead', async () => {
+    await edit({ startAt: new Date(Date.now() + 72 * HOUR) });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+    expect(startingSends()).toEqual([]);
   });
 });
 

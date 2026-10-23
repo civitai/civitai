@@ -57,6 +57,7 @@ vi.mock('~/server/services/model.service', () => ({
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
   setModelMinor: vi.fn(),
   applyModelFlagSideEffects: vi.fn(),
+  clearPoiHashMeta: vi.fn(),
 }));
 vi.mock('~/server/services/minor-hash.service', () => ({
   confirmMinorHashAutoFlag: vi.fn(),

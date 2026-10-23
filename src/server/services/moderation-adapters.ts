@@ -12,6 +12,7 @@ import {
 import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
+  imageCaptionTextScanAdapter,
   modelRulesTextScanAdapter,
   postTextScanAdapter,
   storylineTextScanAdapter,
@@ -39,6 +40,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Collection: collectionTextScanAdapter,
   Post: postTextScanAdapter,
   Storyline: storylineTextScanAdapter,
+  ImageCaption: imageCaptionTextScanAdapter,
   ...textScanShadowAdapters(),
   ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,

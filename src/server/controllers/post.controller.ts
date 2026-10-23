@@ -35,6 +35,9 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { domainSpendType } from '~/server/utils/buzz-helpers';
+import { contentRestriction } from '~/server/common/content-restriction';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -237,7 +240,7 @@ export const createPostWithImagesHandler = async ({
 };
 
 export const updatePostHandler = async ({
-  input: { collectionTagId, ...input },
+  input: { collectionTagId, expectedPrice, ...input },
   ctx,
 }: {
   input: PostUpdateInput;
@@ -355,7 +358,22 @@ export const updatePostHandler = async ({
       }
     }
 
-    const updatedPost = await updatePost({ ...input, user: ctx.user });
+    const updatedPost = await updatePost({
+      ...input,
+      user: ctx.user,
+      // `placement.submitStorylineContinuation`'s procedure guards, for the continuation a
+      // storyline draft submits as it is published (its rate limit is on `post.update` itself).
+      // An owner's draft is held to the owner's own standing in the service.
+      storyline: ctx.features.storylines
+        ? {
+            expectedPrice,
+            spendType: domainSpendType(ctx.features),
+            submitRefusal: contentRestriction(ctx.user),
+            // `post.update` asks a token only for MediaWrite, and a continuation spends Buzz.
+            canSpend: isSessionOrFullUserKey(ctx),
+          }
+        : undefined,
+    });
     const collection = updatedPost.collectionId
       ? await getCollectionById({
           input: { id: updatedPost.collectionId },
@@ -555,6 +573,8 @@ export const updatePostHandler = async ({
         );
       }
     }
+
+    if ('storyline' in updatedPost) return { storyline: updatedPost.storyline };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

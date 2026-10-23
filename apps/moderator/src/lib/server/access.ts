@@ -100,6 +100,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
+      { path: '/images/scan-probe', label: 'Scan Probe' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -211,6 +212,9 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/model-lookup', label: 'Model Lookup' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
+      // Its own grant, not Chat Audit's: it shows which moderator read whose conversations, which is
+      // oversight of the moderators themselves.
+      { path: '/retool/chat-audit-log', label: 'Chat Audit Log' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
       { path: '/retool/image-help', label: 'Image Help Requests' },
       { path: '/retool/queue-stats', label: 'Queue Stats' },

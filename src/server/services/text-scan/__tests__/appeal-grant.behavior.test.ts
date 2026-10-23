@@ -100,6 +100,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   applyModelFlagSideEffects: mockSideEffects,
+  clearPoiHashMeta: vi.fn(),
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
