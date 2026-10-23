@@ -209,6 +209,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return touched;
   }
 
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): neither exists.
+  if (sql.includes('to_regclass')) return [{ present: false }];
+
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {
     const userId = values[0] as number;
