@@ -2619,7 +2619,7 @@ export const REDIS_SYS_KEYS = {
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
     // Hash: field = creator userId, value = JSON { through, spent }: Buzz the creator paid other
     // users from the bankable cutover up to `through`, a settled UTC day boundary. Only later days
-    // are read from ClickHouse. No TTL.
+    // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
     BANKABLE_SPENT: 'creator-program:bankable-spent',
     // String, Buzz. The smallest two-way amount between a creator and one user that the
     // counterparty review files. Ops-owned and deliberately without a default in code: the review

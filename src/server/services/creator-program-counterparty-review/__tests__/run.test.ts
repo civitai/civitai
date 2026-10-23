@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
-import { receivedFromUsersSql, SENT_TO_USER_SQL } from '~/server/services/creator-program-bankable';
+import {
+  platformPaidFromUsersSql,
+  receivedFromUsersSql,
+  SENT_TO_USER_SQL,
+} from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
@@ -120,21 +124,6 @@ describe('runCounterpartyReview', () => {
     expect(report.findings[0].reason).toContain(
       'with account 22: received 5,000 Buzz, sent back 4,000'
     );
-  });
-
-  it('reads the supporters of awarded bounties into the pairs it files', async () => {
-    const w = world();
-    w.ch.$query.mockImplementation(async (sql: string) => {
-      if (sql.includes('AS counterpartyId'))
-        return (sql.includes('(7, 99, 5000, 5000)') ? [pair(99, 5_000, 5_000)] : []) as never[];
-      return [{ bountyId: 7 }] as never[];
-    });
-    w.deps.findBountyFunders = async (ids) =>
-      ids.includes(7) ? [{ bountyId: 7, userId: 99, unitAmount: 5_000, total: 5_000 }] : [];
-
-    await runCounterpartyReview(w.deps);
-
-    expect(w.reports[0].findings.map((f) => f.reason).join('\n')).toContain('with account 99');
   });
 
   it('does not warn again, or file again, when nothing new happened', async () => {
@@ -265,20 +254,22 @@ describe('counterpartyPairsSql', () => {
   // Pinned whole: a wrong join key or a dropped filter still returns plausible pairs.
   it('pairs bankable Buzz a creator received from a user with what the creator sent that user', () => {
     const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
-    const since = "'2026-11-01 00:00:00'";
+    const since = "toDateTime('2026-11-01 00:00:00', 'UTC')";
+    const earnedSince = `date >= ${since} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
     expect(squash(counterpartyPairsSql({ since: BANKABLE_CUTOVER, min: 1234.9 }))).toBe(
       squash(`
         SELECT received.recipient AS userId, received.payer AS counterpartyId,
           received.amount AS received, sent.amount AS sent
-        FROM (${receivedFromUsersSql(
-          `date >= ${since} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`,
-          []
-        )}) AS received
+        FROM (${receivedFromUsersSql(earnedSince)}) AS received
         INNER JOIN (
-          SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
-            toInt64(sum(amount)) AS amount
-          FROM buzzTransactions
-          WHERE date >= ${since} AND ${SENT_TO_USER_SQL}
+          SELECT sender, payee, sum(amount) AS amount FROM (
+            SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+              toInt64(amount) AS amount
+            FROM buzzTransactions
+            WHERE date >= ${since} AND ${SENT_TO_USER_SQL}
+            UNION ALL
+            SELECT payer, recipient, amount FROM (${platformPaidFromUsersSql(earnedSince)})
+          )
           GROUP BY sender, payee
         ) AS sent ON sent.sender = received.recipient AND sent.payee = received.payer
         WHERE received.payer != received.recipient

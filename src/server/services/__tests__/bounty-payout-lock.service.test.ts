@@ -424,6 +424,16 @@ describe('awardBountyEntry', () => {
     });
   });
 
+  // Bankable netting reads who funded an award from the award row, which outlives the bounty.
+  it('names the supporters who funded the award, and what each put in, on the award', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        details: { entityId: 4, entityType: 'Bounty', supporterIds: [5], supporterAmounts: [100] },
+      }),
+    ]);
+  });
+
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();

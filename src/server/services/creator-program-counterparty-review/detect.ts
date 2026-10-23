@@ -2,12 +2,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  awardedBountiesSql,
   clickhouseDateTime,
-  getBountyFunders,
+  platformPaidFromUsersSql,
   receivedFromUsersSql,
   SENT_TO_USER_SQL,
-  type BountyFunder,
 } from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 
@@ -47,24 +45,20 @@ const earnedSince = (since: Date) =>
     since
   )} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
 
-export function counterpartyPairsSql({
-  since,
-  min,
-  funders = [],
-}: {
-  since: Date;
-  min: number;
-  funders?: BountyFunder[];
-}) {
+export function counterpartyPairsSql({ since, min }: { since: Date; min: number }) {
   return `
     SELECT received.recipient AS userId, received.payer AS counterpartyId,
       received.amount AS received, sent.amount AS sent
-    FROM (${receivedFromUsersSql(earnedSince(since), funders)}) AS received
+    FROM (${receivedFromUsersSql(earnedSince(since))}) AS received
     INNER JOIN (
-      SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
-        toInt64(sum(amount)) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
+      SELECT sender, payee, sum(amount) AS amount FROM (
+        SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
+        UNION ALL
+        SELECT payer, recipient, amount FROM (${platformPaidFromUsersSql(earnedSince(since))})
+      )
       GROUP BY sender, payee
     ) AS sent ON sent.sender = received.recipient AND sent.payee = received.payer
     WHERE received.payer != received.recipient
@@ -76,28 +70,14 @@ export function counterpartyPairsSql({
 
 export async function findCounterpartyPairs(
   ch: ReviewClickhouse,
-  {
-    since,
-    min,
-    findBountyFunders = getBountyFunders,
-  }: {
-    since: Date;
-    min: number;
-    findBountyFunders?: (bountyIds: number[]) => Promise<BountyFunder[]>;
-  }
+  { since, min }: { since: Date; min: number }
 ): Promise<CounterpartyPair[]> {
-  const awarded = await ch.$query<{ bountyId: string | number }>(
-    awardedBountiesSql(earnedSince(since))
-  );
-  const funders = await findBountyFunders(
-    awarded.map((r) => Number(r.bountyId)).filter((id) => Number.isInteger(id) && id > 0)
-  );
   const rows = await ch.$query<{
     userId: string | number;
     counterpartyId: string | number;
     received: string | number;
     sent: string | number;
-  }>(counterpartyPairsSql({ since, min, funders }));
+  }>(counterpartyPairsSql({ since, min }));
 
   return rows.map((r) => ({
     userId: Number(r.userId),

@@ -1,6 +1,5 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
-import { dbRead } from '~/server/db/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
@@ -80,68 +79,53 @@ export const SENT_TO_USER_SQL = `(fromAccountType IN (${userAccountTypesSql}) AN
 /** A sale the platform pays out to the seller after charging the buyer, named in `details`. */
 export const PLATFORM_PAID_SALE_SQL = `(type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0)`;
 
-/** A bounty award, paid by the platform out of what the bounty's supporters put in. */
+/**
+ * A bounty award, paid by the platform out of what the bounty's supporters put in. The award
+ * names them and what each put in (`supporterIds`, `supporterAmounts`), so it is split between
+ * them by that.
+ */
 export const BOUNTY_AWARD_SQL = `(type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')`;
 
-/** A supporter's part of an awarded bounty: `unitAmount` of the bounty's `total`. */
-export type BountyFunder = { bountyId: number; userId: number; unitAmount: number; total: number };
+/** A bounty award's supporters and what each put in, as `ids` and `amts`. */
+const bountyAwardsSql = (where: string) => `
+  SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
+    JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
+    JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
+  FROM buzzTransactions
+  WHERE ${where} AND ${BOUNTY_AWARD_SQL} AND length(ids) = length(amts) AND arraySum(amts) > 0
+`;
 
+/** Read as UTC whatever the server's time zone. */
 export const clickhouseDateTime = (at: Date) =>
-  `'${at.toISOString().slice(0, 19).replace('T', ' ')}'`;
-
-/** Bounties awarded by the rows `where` selects. */
-export function awardedBountiesSql(where: string) {
-  return `
-    SELECT DISTINCT JSONExtractInt(details, 'entityId') AS bountyId FROM buzzTransactions
-    WHERE ${where} AND ${BOUNTY_AWARD_SQL}
-  `;
-}
-
-export async function getBountyFunders(bountyIds: number[]): Promise<BountyFunder[]> {
-  if (!bountyIds.length) return [];
-  const rows = await dbRead.$queryRaw<{ bountyId: number; userId: number; unitAmount: number }[]>`
-    SELECT "bountyId", "userId", "unitAmount" FROM "BountyBenefactor"
-    WHERE "bountyId" = ANY(${bountyIds}::int[])
-      AND "awardedAt" IS NOT NULL
-      AND currency = 'BUZZ'
-      AND "unitAmount" > 0
-  `;
-  const totals = new Map<number, number>();
-  for (const r of rows) totals.set(r.bountyId, (totals.get(r.bountyId) ?? 0) + r.unitAmount);
-  return rows.map((r) => ({ ...r, total: totals.get(r.bountyId) ?? r.unitAmount }));
-}
+  `toDateTime('${at.toISOString().slice(0, 19).replace('T', ' ')}', 'UTC')`;
 
 /**
- * Bankable earnings in the rows `where` selects, per recipient and the user who paid them:
- * paid straight from a user's account, a platform-paid sale by its buyer, and a bounty award
- * split between its supporters by what each put in.
+ * Bankable Buzz the platform paid out of what a user spent, per recipient and the user who paid
+ * it: a sale by its buyer, and a bounty award split between its supporters.
  */
-export function receivedFromUsersSql(where: string, funders: BountyFunder[]) {
-  const arms = [
-    `SELECT toInt64(toAccountId) AS recipient,
-      toInt64(if(fromAccountId = 0, JSONExtractInt(details, 'purchasedBy'), fromAccountId)) AS payer,
+export function platformPaidFromUsersSql(where: string) {
+  return `
+    SELECT toInt64(toAccountId) AS recipient, toInt64(JSONExtractInt(details, 'purchasedBy')) AS payer,
       toInt64(amount) AS amount
     FROM buzzTransactions
-    WHERE ${where} AND ${BANKABLE_EARNING_PREDICATE_SQL}
-      AND (${RECEIVED_FROM_USER_SQL} OR ${PLATFORM_PAID_SALE_SQL})`,
-  ];
-  if (funders.length)
-    arms.push(`SELECT award.recipient, funder.userId,
-      intDiv(award.amount * funder.unitAmount, funder.total)
-    FROM (
-      SELECT toInt64(toAccountId) AS recipient, JSONExtractInt(details, 'entityId') AS bountyId,
+    WHERE ${where} AND ${PLATFORM_PAID_SALE_SQL}
+    UNION ALL
+    SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
+    FROM (${bountyAwardsSql(where)}) ARRAY JOIN arrayZip(ids, amts) AS s
+  `;
+}
+
+/** Bankable earnings in the rows `where` selects, per recipient and the user who paid them. */
+export function receivedFromUsersSql(where: string) {
+  return `
+    SELECT recipient, payer, sum(amount) AS amount FROM (
+      SELECT toInt64(toAccountId) AS recipient, toInt64(fromAccountId) AS payer,
         toInt64(amount) AS amount
       FROM buzzTransactions
-      WHERE ${where} AND ${BOUNTY_AWARD_SQL}
-    ) AS award
-    INNER JOIN (
-      SELECT * FROM values('bountyId Int64, userId Int64, unitAmount Int64, total Int64', ${funders
-        .map((f) => `(${f.bountyId}, ${f.userId}, ${f.unitAmount}, ${f.total})`)
-        .join(', ')})
-    ) AS funder ON funder.bountyId = award.bountyId`);
-
-  return `
-    SELECT recipient, payer, sum(amount) AS amount FROM (${arms.join(' UNION ALL ')})
+      WHERE ${where} AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+      UNION ALL
+      ${platformPaidFromUsersSql(where)}
+    )
     GROUP BY recipient, payer
   `;
 }
@@ -208,54 +192,33 @@ async function getCutoverSnapshot(userId: number, now: Date) {
   return snapshot;
 }
 
-/** Awarded bounties `userId` helped fund, with their part of each. */
-async function getBountiesFundedBy(userId: number) {
-  const funded = await dbRead.$queryRaw<{ bountyId: number }[]>`
-    SELECT "bountyId" FROM "BountyBenefactor"
-    WHERE "userId" = ${userId}
-      AND "awardedAt" IS NOT NULL
-      AND currency = 'BUZZ'
-      AND "unitAmount" > 0
-  `;
-  const funders = await getBountyFunders(funded.map((r) => r.bountyId));
-  return funders.filter((f) => f.userId === userId);
-}
-
 /**
  * What `userId` paid other users in a window, counted where it became bankable for them:
  * paid from their own account, a platform-paid sale they bought, and their part of a bounty they
  * helped fund.
  */
-export function paidToUsersSql(
-  userId: number,
-  funded: BountyFunder[],
-  { from, to }: { from: Date; to?: Date }
-) {
+export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: Date }) {
   const paidTo = `toAccountId > 0 AND toAccountId != ${userId} AND toAccountType IN (${buzzBankTypesSql})
     AND date >= ${clickhouseDateTime(from)}${to ? ` AND date < ${clickhouseDateTime(to)}` : ''}`;
-  const arms = [
-    `SELECT toInt64(amount) AS amount FROM buzzTransactions
-    WHERE fromAccountId = ${userId} AND ${paidTo}
-      AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}`,
-    `SELECT toInt64(amount) AS amount FROM buzzTransactions
-    WHERE ${PLATFORM_PAID_SALE_SQL} AND ${paidTo}
-      AND JSONExtractInt(details, 'purchasedBy') = ${userId}`,
-  ];
-  if (funded.length)
-    arms.push(`SELECT intDiv(award.amount * funder.unitAmount, funder.total) AS amount
-    FROM (
-      SELECT JSONExtractInt(details, 'entityId') AS bountyId, toInt64(amount) AS amount
-      FROM buzzTransactions
-      WHERE ${BOUNTY_AWARD_SQL} AND ${paidTo}
-    ) AS award
-    INNER JOIN (
-      SELECT * FROM values('bountyId Int64, unitAmount Int64, total Int64', ${funded
-        .map((f) => `(${f.bountyId}, ${f.unitAmount}, ${f.total})`)
-        .join(', ')})
-    ) AS funder ON funder.bountyId = award.bountyId`);
-
-  return `SELECT sum(amount) AS spent FROM (${arms.join(' UNION ALL ')})`;
+  return `
+    SELECT sum(amount) AS spent FROM (
+      SELECT toInt64(amount) AS amount FROM buzzTransactions
+      WHERE fromAccountId = ${userId} AND ${paidTo}
+        AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+      UNION ALL
+      SELECT toInt64(amount) AS amount FROM buzzTransactions
+      WHERE ${PLATFORM_PAID_SALE_SQL} AND ${paidTo}
+        AND JSONExtractInt(details, 'purchasedBy') = ${userId}
+      UNION ALL
+      SELECT intDiv(amount * amts[indexOf(ids, ${userId})], arraySum(amts)) AS amount
+      FROM (${bountyAwardsSql(paidTo)})
+      WHERE has(ids, ${userId})
+    )
+  `;
 }
+
+/** A day past what is stored: a row landing later than that would be left out of it for good. */
+const SPENT_SETTLE_MS = 24 * 60 * 60 * 1000;
 
 type SpentThrough = { through: string; spent: number };
 
@@ -281,17 +244,16 @@ async function getSpent(userId: number, now: Date) {
   if (!clickhouse) return 0;
   const ch = clickhouse;
   const settled = dayjs
-    .utc(now.getTime() - SNAPSHOT_SETTLE_MS)
+    .utc(now.getTime() - SPENT_SETTLE_MS)
     .startOf('day')
     .toDate();
   const through = settled > BANKABLE_CUTOVER ? settled : BANKABLE_CUTOVER;
 
-  const [stored, funded] = await Promise.all([
-    sysRedis
-      .hGet(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT, String(userId))
-      .then((raw) => readSpentThrough(decodeRedisString(raw))),
-    getBountiesFundedBy(userId),
-  ]);
+  const stored = readSpentThrough(
+    decodeRedisString(
+      await sysRedis.hGet(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT, String(userId))
+    )
+  );
   const closed =
     stored && new Date(stored.through) <= through
       ? stored
@@ -299,7 +261,7 @@ async function getSpent(userId: number, now: Date) {
   const closedThrough = new Date(closed.through);
 
   const spentIn = async (window: { from: Date; to?: Date }) => {
-    const [row] = await ch.$query<{ spent: number }>(paidToUsersSql(userId, funded, window));
+    const [row] = await ch.$query<{ spent: number }>(paidToUsersSql(userId, window));
     return Number(row?.spent ?? 0);
   };
   const [added, live] = await Promise.all([
@@ -309,7 +271,7 @@ async function getSpent(userId: number, now: Date) {
 
   if (
     closedThrough < through &&
-    (await hasIngestSettled(now, new Date(through.getTime() + SNAPSHOT_SETTLE_MS)))
+    (await hasIngestSettled(now, new Date(through.getTime() + SPENT_SETTLE_MS)))
   )
     await sysRedis.hSet(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,

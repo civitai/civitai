@@ -1148,7 +1148,7 @@ async function payBountyAward(bountyId: number, winnerUserId: number | null) {
   }
   const awarded = await dbWrite.bountyBenefactor.findMany({
     where: { bountyId, awardedAt: { not: null } },
-    select: { unitAmount: true, currency: true, buzzTransactionId: true },
+    select: { userId: true, unitAmount: true, currency: true, buzzTransactionId: true },
   });
   if (!awarded.length) {
     logBountyPayoutError({
@@ -1170,7 +1170,15 @@ async function payBountyAward(bountyId: number, winnerUserId: number | null) {
       amount: amount ?? 0,
       type: TransactionType.Bounty,
       description: 'Reason: Bounty entry has been awarded!',
-      details: { entityId: bountyId, entityType: 'Bounty' },
+      // Who funded the award, on the ledger row itself: it outlives the bounty, and bankable
+      // netting reads it (`BOUNTY_AWARD_SQL`).
+      details: {
+        entityId: bountyId,
+        entityType: 'Bounty',
+        // Flat number arrays, the shape tips already store (`targetUserIds`).
+        supporterIds: funds.map((f) => f.userId),
+        supporterAmounts: funds.map((f) => f.unitAmount),
+      },
       externalTransactionId: bountyAwardTransactionId(bountyId, accountType),
     })
   );

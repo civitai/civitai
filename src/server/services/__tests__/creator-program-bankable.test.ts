@@ -6,20 +6,14 @@ import { GENERATION_TIP_TRANSACTION_START } from '~/server/jobs/deliver-creator-
 import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { mockClickhouse, mockDbRead } = vi.hoisted(() => ({
+const { mockClickhouse } = vi.hoisted(() => ({
   mockClickhouse: { $query: vi.fn() },
-  mockDbRead: { $queryRaw: vi.fn() },
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  dbRead: mockDbRead,
-}));
 
 import {
   BANKABLE_EARNING_PREDICATE_SQL,
   getBankableAmount,
-  getBountyFunders,
   paidToUsersSql,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
@@ -86,7 +80,6 @@ function issuedSql(marker: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   sysRedis.hGet.mockResolvedValue(null);
-  mockDbRead.$queryRaw.mockResolvedValue([]);
 });
 afterEach(() => {
   mockClickhouse.$query.mockReset();
@@ -294,20 +287,6 @@ describe('getBankableAmount', () => {
     );
   });
 
-  it("counts the creator's part of each awarded bounty they helped fund as paid", async () => {
-    mockDbRead.$queryRaw.mockResolvedValueOnce([{ bountyId: 7 }]).mockResolvedValueOnce([
-      { bountyId: 7, userId, unitAmount: 60_000 },
-      { bountyId: 7, userId: 99, unitAmount: 40_000 },
-    ]);
-    mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
-
-    await getBankableAmount(userId, 0, afterSettle);
-
-    const spentSql = issuedSql('AS spent');
-    expect(spentSql).toContain('(7, 60000, 100000)');
-    expect(spentSql).not.toContain('(7, 40000, 100000)');
-  });
-
   it('reads only the days after the stored total of what was paid, then stores the new total', async () => {
     sysRedis.hGet.mockImplementation(async (key: string) =>
       key === REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT
@@ -317,13 +296,13 @@ describe('getBankableAmount', () => {
     mockLedger({ earned: 10_000, spent: 300, spentToday: 200, consumed: 0 });
 
     expect((await getBankableAmount(userId, 0, afterSettle))?.spent).toBe(1_000);
-    expect(issuedSql("AND date < '2026-12-15 00:00:00'")).toContain(
-      "date >= '2026-12-10 00:00:00'"
+    expect(issuedSql("AND date < toDateTime('2026-12-14 00:00:00', 'UTC')")).toContain(
+      "date >= toDateTime('2026-12-10 00:00:00', 'UTC')"
     );
     expect(sysRedis.hSet).toHaveBeenCalledWith(
       REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SPENT,
       String(userId),
-      JSON.stringify({ through: '2026-12-15T00:00:00.000Z', spent: 800 })
+      JSON.stringify({ through: '2026-12-14T00:00:00.000Z', spent: 800 })
     );
   });
 
@@ -424,49 +403,30 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
   });
 });
 
-describe('getBountyFunders', () => {
-  it('gives each supporter of a bounty their part of what all its supporters put in', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([
-      { bountyId: 7, userId: 1, unitAmount: 60 },
-      { bountyId: 7, userId: 2, unitAmount: 40 },
-      { bountyId: 8, userId: 3, unitAmount: 5 },
-    ]);
-
-    expect(await getBountyFunders([7, 8])).toEqual([
-      { bountyId: 7, userId: 1, unitAmount: 60, total: 100 },
-      { bountyId: 7, userId: 2, unitAmount: 40, total: 100 },
-      { bountyId: 8, userId: 3, unitAmount: 5, total: 5 },
-    ]);
-  });
-});
-
 describe('paidToUsersSql', () => {
   // Pinned whole: a wrong account column still returns a plausible number.
   it('counts payments from the creator, sales they bought and their part of bounties they funded', () => {
-    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= '2026-11-01 00:00:00' AND date < '2026-12-01 00:00:00'`;
+    const paidTo = `toAccountId > 0 AND toAccountId != 42 AND toAccountType IN (${buzzBankTypesSql}) AND date >= toDateTime('2026-11-01 00:00:00', 'UTC') AND date < toDateTime('2026-12-01 00:00:00', 'UTC')`;
     expect(
-      squash(
-        paidToUsersSql(42, [{ bountyId: 7, userId: 42, unitAmount: 60, total: 100 }], {
-          from: BANKABLE_CUTOVER,
-          to: new Date('2026-12-01T00:00:00Z'),
-        })
-      )
+      squash(paidToUsersSql(42, { from: BANKABLE_CUTOVER, to: new Date('2026-12-01T00:00:00Z') }))
     ).toBe(
-      squash(`SELECT sum(amount) AS spent FROM (SELECT toInt64(amount) AS amount FROM buzzTransactions
+      squash(`SELECT sum(amount) AS spent FROM (
+        SELECT toInt64(amount) AS amount FROM buzzTransactions
         WHERE fromAccountId = 42 AND ${paidTo}
           AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-        UNION ALL SELECT toInt64(amount) AS amount FROM buzzTransactions
+        UNION ALL
+        SELECT toInt64(amount) AS amount FROM buzzTransactions
         WHERE (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0) AND ${paidTo}
           AND JSONExtractInt(details, 'purchasedBy') = 42
-        UNION ALL SELECT intDiv(award.amount * funder.unitAmount, funder.total) AS amount
-        FROM (
-          SELECT JSONExtractInt(details, 'entityId') AS bountyId, toInt64(amount) AS amount
+        UNION ALL
+        SELECT intDiv(amount * amts[indexOf(ids, 42)], arraySum(amts)) AS amount
+        FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
+            JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
           FROM buzzTransactions
-          WHERE (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty') AND ${paidTo}
-        ) AS award
-        INNER JOIN (
-          SELECT * FROM values('bountyId Int64, unitAmount Int64, total Int64', (7, 60, 100))
-        ) AS funder ON funder.bountyId = award.bountyId)`)
+          WHERE ${paidTo} AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
+            AND length(ids) = length(amts) AND arraySum(amts) > 0 )
+        WHERE has(ids, 42) )`)
     );
   });
 });
@@ -474,32 +434,27 @@ describe('paidToUsersSql', () => {
 describe('receivedFromUsersSql', () => {
   // Pinned whole: a wrong payer column or split still returns plausible pairs.
   it('attributes user payments, platform-paid sales to their buyer and bounty awards to their supporters', () => {
-    const sql = receivedFromUsersSql('toAccountId = 1', [
-      { bountyId: 7, userId: 2, unitAmount: 60, total: 100 },
-    ]);
-    expect(squash(sql)).toBe(
-      squash(`SELECT recipient, payer, sum(amount) AS amount FROM (SELECT toInt64(toAccountId) AS recipient,
-          toInt64(if(fromAccountId = 0, JSONExtractInt(details, 'purchasedBy'), fromAccountId)) AS payer,
+    expect(squash(receivedFromUsersSql('toAccountId = 1'))).toBe(
+      squash(`SELECT recipient, payer, sum(amount) AS amount FROM (
+        SELECT toInt64(toAccountId) AS recipient, toInt64(fromAccountId) AS payer,
           toInt64(amount) AS amount
         FROM buzzTransactions
-        WHERE toAccountId = 1 AND ${BANKABLE_EARNING_PREDICATE_SQL}
-          AND (${RECEIVED_FROM_USER_SQL} OR (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0))
+        WHERE toAccountId = 1 AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
         UNION ALL
-        SELECT award.recipient, funder.userId, intDiv(award.amount * funder.unitAmount, funder.total)
-        FROM (
-          SELECT toInt64(toAccountId) AS recipient, JSONExtractInt(details, 'entityId') AS bountyId,
-            toInt64(amount) AS amount
+        SELECT toInt64(toAccountId) AS recipient, toInt64(JSONExtractInt(details, 'purchasedBy')) AS payer,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE toAccountId = 1 AND (type = 'sell' AND fromAccountId = 0 AND JSONExtractInt(details, 'purchasedBy') > 0)
+        UNION ALL
+        SELECT recipient, s.1 AS payer, intDiv(amount * s.2, arraySum(amts)) AS amount
+        FROM ( SELECT toInt64(toAccountId) AS recipient, toInt64(amount) AS amount,
+            JSONExtract(details, 'supporterIds', 'Array(Int64)') AS ids,
+            JSONExtract(details, 'supporterAmounts', 'Array(Int64)') AS amts
           FROM buzzTransactions
           WHERE toAccountId = 1 AND (type = 'bounty' AND fromAccountId = 0 AND JSONExtractString(details, 'entityType') = 'Bounty')
-        ) AS award
-        INNER JOIN (
-          SELECT * FROM values('bountyId Int64, userId Int64, unitAmount Int64, total Int64', (7, 2, 60, 100))
-        ) AS funder ON funder.bountyId = award.bountyId) GROUP BY recipient, payer`)
+            AND length(ids) = length(amts) AND arraySum(amts) > 0 ) ARRAY JOIN arrayZip(ids, amts) AS s
+      ) GROUP BY recipient, payer`)
     );
-  });
-
-  it('leaves the bounty arm out when no supporter is known, as ClickHouse rejects an empty values()', () => {
-    expect(receivedFromUsersSql('toAccountId = 1', [])).not.toContain('UNION ALL');
   });
 });
 
