@@ -81,6 +81,11 @@ import {
   readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
+// Fork opt-in + provenance: no-type (stripped) columns, read through raw SQL only.
+import {
+  readListingForkProvenanceForRender,
+  resolveForkAttribution,
+} from '~/server/services/blocks/app-fork.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 // The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
 // that must `await import()` this service cannot name a constant exported from it
@@ -864,6 +869,12 @@ export function projectListingDetail(
     sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: gallery.screenshots,
     kindData: detailKindData(row),
+    // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
+    // this projection carries the "nothing to say" values and `getListingDetail` overrides them
+    // from `app-fork.service`. Every other caller (the moderator review preview) shows no fork
+    // facts, which is the safe default for both: no Fork action, no attribution.
+    forkable: false,
+    forkOf: null,
     // Pre-launch permission disclosure. IDENTICAL projection to the one
     // `BlockRegistry.getAppDetail` already ships for the same purpose — the
     // approved scope ids, string-filtered, `[]` when the column is NULL.
@@ -1768,15 +1779,24 @@ export async function getListingDetail(
   // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
   // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red] = await Promise.all([
+  const [collaborators, sourceRepo, beta, red, forkProvenance] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),
     readListingBetaForRender(row.id, dbRead),
     redCapable
       ? readListingRedMediaManyForRender(dbRead, [row.id])
       : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+    // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
+    readListingForkProvenanceForRender(row.id, dbRead),
   ]);
-  return projectListingDetail(
+  // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
+  // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
+  // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
+  // reaches the DTO. One extra round trip, and only for a fork.
+  const forkOf = await resolveForkAttribution(forkProvenance, (parentId) =>
+    getStoreVisibleListingSummary({ id: parentId }, { redCapable, scope: opts.scope, floor })
+  );
+  const detail = projectListingDetail(
     row,
     collaborators,
     sourceRepo.value,
@@ -1793,6 +1813,28 @@ export async function getListingDetail(
       red: red.get(row.id) ?? null,
     }
   );
+  // The opt-in is only meaningful for an app whose source is hosted here; an off-site listing
+  // never offers a Fork action whatever its column says.
+  return { ...detail, forkable: row.kind === 'onsite' && forkProvenance.forkable, forkOf };
+}
+
+/**
+ * The `{ id, slug, name }` of one listing IF this request may open its public store page, else
+ * `null` — exactly the gates of {@link getListingDetail} (one shared loader), so "visible" can
+ * never mean something different here. For the fork surfaces: resolving a fork's parent for the
+ * "Forked from …" line, and refusing to list the forks of a listing the viewer cannot see.
+ */
+export async function getStoreVisibleListingSummary(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+): Promise<{ id: string; slug: string; name: string } | null> {
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable: opts.redCapable,
+    scope: opts.scope,
+    floor: opts.floor ?? 'public',
+  });
+  if (!gated) return null;
+  return { id: gated.row.id, slug: gated.row.slug, name: gated.row.name };
 }
 
 /**

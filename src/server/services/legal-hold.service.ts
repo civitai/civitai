@@ -68,8 +68,9 @@ const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 function holdLegsSql(id: Prisma.Sql) {
   return {
     report: userNamedOnHoldingReportSql(id),
+    // Aliased, so `id` may be a column of an outer unaliased "Image" without being captured here.
     'image-review': Prisma.sql`EXISTS (
-      SELECT 1 FROM "Image" WHERE "userId" = ${id} AND "needsReview" = 'csam'
+      SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
     // A blocked image counts as reported only when a sent report naming them lists it.
     'image-blocked': Prisma.sql`EXISTS (
@@ -127,6 +128,14 @@ export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql 
 export async function holdMarkerViewExists(): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
     SELECT to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS present
+  `;
+  return row?.present === true;
+}
+
+/** Whether the marker table exists. Without its view, `accountHoldSql` holds every account. */
+export async function holdMarkerTableExists(): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ present: unknown }[]>`
+    SELECT to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS present
   `;
   return row?.present === true;
 }

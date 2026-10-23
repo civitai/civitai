@@ -87,7 +87,8 @@ beforeAll(async () => {
       "userId" int,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]'
     );
   `);
   await holder.db.exec(
@@ -200,6 +201,24 @@ describe('remove-deleted-user-images under a legal hold', () => {
     expect(await imagesOf(UNHELD)).toBe(0);
   });
 
+  it('keeps every image of an account when one is flagged for CSAM review after they were read', async () => {
+    let flagged = false;
+    hooks.beforeDelete = async (ids) => {
+      // On the first batch, flag an image of a later one: no report exists yet, so no hold.
+      if (!flagged && ids.every((id) => id <= MANY)) {
+        await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${MANY}`);
+        flagged = true;
+      }
+    };
+
+    await run();
+
+    expect(flagged).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
+  });
+
   it('keeps the posts when the hold lands after the images are gone', async () => {
     const deleteRows = mockDeleteImages.getMockImplementation()!;
     let held = false;
@@ -236,5 +255,128 @@ describe('remove-deleted-user-images under a legal hold', () => {
     // The control: the unheld account in the same run is drained.
     expect(await imagesOf(UNHELD)).toBe(0);
     expect(await postsOf(UNHELD)).toBe(0);
+  });
+});
+
+describe('remove-deleted-user-images under any account hold', () => {
+  const holdsByImage = {
+    'an image flagged for CSAM review': `
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${MANY};
+    `,
+    'a CSAM-blocked image on no sent report': `
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${MANY};
+    `,
+    'an image listed on a holding report that names someone else': `
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${REPORT_SUBJECT}, '[{"id": ${MANY}}]');
+    `,
+  };
+
+  it.each(Object.entries(holdsByImage))(
+    'keeps an account held by %s, and drains everyone else',
+    async (_, hold) => {
+      await holder.db.exec(hold);
+
+      await run();
+
+      expect(await imagesOf(HELD)).toBe(MANY);
+      expect(await postsOf(HELD)).toBe(1);
+      expect(await imagesOf(UNHELD)).toBe(0);
+      expect(await postsOf(UNHELD)).toBe(0);
+    }
+  );
+
+  it.each([
+    [
+      'a review flag other than CSAM',
+      `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = ${MANY}`,
+    ],
+    [
+      'an image blocked for another reason',
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = ${MANY}`,
+    ],
+    [
+      'a CSAM-blocked image a sent report naming them lists, past the hold',
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = ${MANY};
+       INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${HELD}, now() - interval '2 years', now(), '[{"id": ${MANY}}]');`,
+    ],
+    [
+      'an image listed on a report that no longer holds',
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images)
+       VALUES (${REPORT_SUBJECT}, now() - interval '2 years', now(), '[{"id": ${MANY}}]');`,
+    ],
+  ])('drains an account with only %s', async (_, state) => {
+    await holder.db.exec(state);
+
+    await run();
+
+    expect(await imagesOf(HELD)).toBe(0);
+    expect(await postsOf(HELD)).toBe(0);
+  });
+
+  it('keeps every image of an account when a hold lands on one after they were read', async () => {
+    let held = false;
+    hooks.beforeDelete = async (ids) => {
+      if (!held && ids.every((id) => id <= MANY)) {
+        await holder.db.exec(holdsByImage['a CSAM-blocked image on no sent report']);
+        held = true;
+      }
+    };
+
+    await run();
+
+    expect(held).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
+  });
+
+  // The marker objects come from the migration; these cases move them aside and always put them back.
+  const hideView = `ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUser_hidden";`;
+  const restoreView = `ALTER VIEW IF EXISTS "EvidenceHeldUser_hidden" RENAME TO "EvidenceHeldUser";`;
+  const hideTable = `ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_hidden";`;
+  const restoreTable = `ALTER TABLE IF EXISTS "EvidenceHold_hidden" RENAME TO "EvidenceHold";`;
+  const restoreMarker = () => holder.db.exec(restoreView + restoreTable);
+
+  it('holds every account while the marker table has no view', async () => {
+    await holder.db.exec(hideView);
+    try {
+      await run();
+    } finally {
+      await restoreMarker();
+    }
+
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await imagesOf(UNHELD)).toBe(5);
+  });
+
+  it('holds an account once the marker objects appear mid-run', async () => {
+    await holder.db.exec(hideView + hideTable);
+    let appeared = false;
+    hooks.beforeDelete = async (ids) => {
+      if (!appeared && ids.every((id) => id <= MANY)) {
+        await restoreMarker();
+        appeared = true;
+      }
+    };
+    try {
+      await run();
+    } finally {
+      await restoreMarker();
+    }
+
+    expect(appeared).toBe(true);
+    expect(await imagesOf(HELD)).toBe(MANY);
+  });
+
+  it('keeps the images of the placeholder owner', async () => {
+    await holder.db.exec(`
+      INSERT INTO "User" (id, "deletedAt", meta) VALUES (-1, now() - interval '1 day', '{}');
+      INSERT INTO "Image" (id, "userId") VALUES (5000, -1);
+    `);
+
+    await run();
+
+    expect(await imagesOf(-1)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
   });
 });

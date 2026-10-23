@@ -17,6 +17,7 @@ import { siteAppealCountKey } from '$lib/site-appeals';
 import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
+import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getFlaggedCount,
@@ -81,6 +82,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     strikeReview,
     csamTextHolds,
     siteAppeals,
+    evidenceHoldsEnding,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -128,6 +130,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
     // only these badges.
     bounded(countSiteAppeals),
+    // Bounded: the view aggregates every hold row, so no index serves it.
+    bounded(() => countEvidenceHoldsEnding(dbRead)),
   ]);
   return {
     ...modes,
@@ -151,6 +155,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
       : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
     ...(csamTextHolds != null ? { csamTextHolds } : {}),
+    ...(evidenceHoldsEnding != null ? { evidenceHoldsEnding: evidenceHoldsEnding.owners } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
