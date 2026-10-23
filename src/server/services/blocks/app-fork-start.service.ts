@@ -98,13 +98,32 @@ const BUILD_OUTPUT_DIRS = new Set([
 ]);
 
 const SSH_KEY_RE = /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/;
-const KEY_FILE_RE = /\.(pem|key|p12|pfx)$/i;
-const CREDENTIAL_FILES = new Set(['.npmrc', '.netrc', '.pypirc', '.git-credentials']);
+const KEY_FILE_RE = /\.(pem|key|p12|pfx|p8|ppk|jks|keystore)$/i;
+/** Files that commonly hold a registry token, a password or a cloud credential. */
+const CREDENTIAL_FILES = new Set([
+  '.npmrc',
+  '.yarnrc',
+  '.yarnrc.yml',
+  '.netrc',
+  '.pypirc',
+  '.git-credentials',
+  '.dev.vars',
+  '.pgpass',
+  '.htpasswd',
+  'credentials.json',
+]);
+/** Directories that hold credentials wholesale. */
+const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.docker', '.gnupg', '.kube']);
 
 /**
  * Why `path` is left out of a fork's seed, or `null` to keep it. Secrets (`.env*`, keys,
- * credential files), git metadata, dependencies (`node_modules` at any depth) and top-level build
- * output. A superset of what the sandbox service itself skips.
+ * the common credential files and directories), git metadata, dependencies (`node_modules` at any
+ * depth) and top-level build output. A superset of what the sandbox service itself skips.
+ *
+ * ⚠ A DENYLIST, SO NOT A GUARANTEE: a secret in a file with an ordinary name (a hard-coded token
+ * in `src/config.ts`) is copied like any other source. What the fork receives is the parent's
+ * APPROVED source, which a moderator has reviewed; this list only removes the usual places a
+ * credential sits beside it.
  */
 export function forkSeedExclusionReason(path: string): string | null {
   const segments = path.split('/').filter(Boolean);
@@ -114,7 +133,8 @@ export function forkSeedExclusionReason(path: string): string | null {
   if (segments.some((s) => s === 'node_modules')) return 'dependencies';
   if (segments.length > 1 && BUILD_OUTPUT_DIRS.has(segments[0])) return 'build-output';
   if (KEY_FILE_RE.test(base) || SSH_KEY_RE.test(base)) return 'key';
-  if (CREDENTIAL_FILES.has(base)) return 'credentials';
+  if (CREDENTIAL_FILES.has(base) || segments.some((s) => CREDENTIAL_DIRS.has(s)))
+    return 'credentials';
   return null;
 }
 
@@ -160,6 +180,9 @@ export async function buildForkSeedZip(
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
   manifest.blockId = forkSlug;
+  // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
+  // page would show the parent author's repository as its "Source".
+  delete manifest.repository;
   kept[manifestIndex] = {
     path: MANIFEST_PATH,
     content: Buffer.from(JSON.stringify(manifest, null, 2) + '\n', 'utf8'),
@@ -358,7 +381,8 @@ export type StartAppForkInput = {
  *   - the `app-blocks-fork` rollout flag off → FORBIDDEN;
  *   - no seed store in this environment → PRECONDITION_FAILED;
  *   - a parent that is not PUBLICLY visible in the store (missing, unapproved, moderator-removed,
- *     restricted to a cohort, private, mature on this host) → NOT_FOUND, indistinguishable from a
+ *     restricted to a cohort, private, mature on this host), or whose app is not running approved
+ *     (a suspended block behind a still-approved listing) → NOT_FOUND, indistinguishable from a
  *     missing one;
  *   - a parent whose author has not opted in → FORBIDDEN;
  *   - an off-site parent (no source here) → PRECONDITION_FAILED;
@@ -383,6 +407,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     forkSeedStoreConfig,
     forkSeedKey,
     stageForkSeed,
+    deleteForkSeed,
     isAcceptableSeedUrl,
     FORK_SEED_PRESIGN_TTL_SECONDS,
   } = await import('~/utils/fork-seed-s3');
@@ -413,11 +438,17 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
 
   const listing = await dbRead.appListing.findFirst({
     where: { id: parent.id },
-    select: { kind: true, appBlock: { select: { id: true, blockId: true } } },
+    select: { kind: true, appBlock: { select: { id: true, blockId: true, status: true } } },
   });
   const parentBlock = listing?.appBlock ?? null;
   if (listing?.kind !== 'onsite' || !parentBlock) {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORKABLE_OFFSITE_MESSAGE });
+  }
+  // A listing can stay approved while its block is not (a suspended app: "store-visible but
+  // dead"). Only a running, approved app is publicly available to fork; anything else reads like
+  // a hidden parent.
+  if (parentBlock.status !== 'approved') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: FORK_PARENT_UNAVAILABLE_MESSAGE });
   }
 
   // The latest APPROVED commit — the sha the platform wrote on approve. Never a branch HEAD.
@@ -461,6 +492,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
   }
 
+  let uploadedKey: string | null = null;
   try {
     const { reconstructBundleFromForgejo } = await import('./publish-request.service');
     const bundle = await reconstructBundleFromForgejo(parentBlock.blockId, parentCommitSha);
@@ -469,7 +501,9 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_TOO_LARGE_MESSAGE });
     }
 
-    const url = await stageForkSeed(forkSeedKey(forkSlug, seedZip.sha256), seedZip.buffer);
+    const key = forkSeedKey(forkSlug, seedZip.sha256);
+    uploadedKey = key;
+    const url = await stageForkSeed(key, seedZip.buffer);
     if (!isAcceptableSeedUrl(url, store.endpoint)) {
       // A misconfigured store (http, a port, another host) would be refused by the sandbox
       // service anyway; refusing here keeps the reason in our logs, not the user's error.
@@ -489,8 +523,10 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     );
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
-    // Release the reservation: nothing will ever be created under it.
+    // Release the reservation: nothing will ever be created under it. And the seed object, if it
+    // was uploaded: nothing will ever download it.
     await withSysReadDeadline(sysRedis.del(forkSessionKey(forkSlug))).catch(() => undefined);
+    if (uploadedKey) await deleteForkSeed(uploadedKey);
     if (err instanceof TRPCError) throw err;
     logToAxiom({
       name: 'app-fork-start-failed',

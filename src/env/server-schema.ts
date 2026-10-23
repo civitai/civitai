@@ -1197,8 +1197,10 @@ export const serverSchema = z
     // the sandbox service can reach, with no port in the URL: the service fetches only from
     // the exact hostnames in its SEED_URL_HOSTS, which must list this endpoint's hostname and
     // nothing that serves anything else. Path-style addressing, so the presigned URL's host is
-    // the endpoint's host. All optional: unset, `appListings.startFork` refuses
-    // ("Forking isn’t available on this site yet.").
+    // the endpoint's host. All optional: unset (or an endpoint that is not https, or has a
+    // port), `appListings.startFork` refuses ("Forking isn’t available on this site yet.").
+    // 🔴 The bucket needs a lifecycle rule expiring `fork-seeds/` objects (a day is ample):
+    // a successful start cannot know when the sandbox service has downloaded its seed.
     APP_FORK_SEED_S3_ENDPOINT: z.string().url().optional(),
     APP_FORK_SEED_S3_BUCKET: z.string().optional(),
     APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),

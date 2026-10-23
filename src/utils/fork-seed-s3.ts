@@ -1,4 +1,9 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
 
@@ -16,7 +21,15 @@ import { env } from '~/env/server';
 /** How long a presigned seed URL is valid. The sandbox service downloads it within seconds. */
 export const FORK_SEED_PRESIGN_TTL_SECONDS = 600;
 
-/** The seed store's settings, or `null` when this environment has none. */
+/**
+ * The seed store's settings, or `null` when this environment has none — and also when the endpoint
+ * is one the sandbox service would refuse (not https, or with a port), so a misconfiguration
+ * refuses every fork up front instead of uploading a seed nothing can download.
+ *
+ * 🔴 SEEDS ARE NOT DELETED AFTER A SUCCESSFUL START: the sandbox service downloads the object once,
+ * at some point inside the presign window, and nothing tells civitai when. The bucket MUST carry a
+ * lifecycle rule expiring `fork-seeds/` objects (a day is ample); a failed start deletes its own.
+ */
 export function forkSeedStoreConfig(): {
   endpoint: string;
   bucket: string;
@@ -28,6 +41,12 @@ export function forkSeedStoreConfig(): {
   const accessKeyId = env.APP_FORK_SEED_S3_ACCESS_KEY_ID;
   const secretAccessKey = env.APP_FORK_SEED_S3_SECRET_ACCESS_KEY;
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
+  try {
+    const u = new URL(endpoint);
+    if (u.protocol !== 'https:' || u.port !== '') return null;
+  } catch {
+    return null;
+  }
   return { endpoint, bucket, accessKeyId, secretAccessKey };
 }
 
@@ -80,4 +99,15 @@ export async function stageForkSeed(key: string, buffer: Buffer): Promise<string
   return getSignedUrl(s3, new GetObjectCommand({ Bucket: config.bucket, Key: key }), {
     expiresIn: FORK_SEED_PRESIGN_TTL_SECONDS,
   });
+}
+
+/** Best-effort delete of a staged seed (a start that failed after uploading). Never throws. */
+export async function deleteForkSeed(key: string): Promise<void> {
+  const config = forkSeedStoreConfig();
+  if (!config) return;
+  try {
+    await client(config).send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+  } catch {
+    // The bucket's lifecycle rule on `fork-seeds/` is the backstop.
+  }
 }

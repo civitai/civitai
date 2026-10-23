@@ -616,13 +616,16 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
+  // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
+  // commit with the pre-fork `activeName`, would otherwise open the recent app over it.
+  const forkClaimsActiveApp = fork.claimsActiveApp;
   useEffect(() => {
     if (pickedOnLoad.current || !sandboxes.list.data) return;
     pickedOnLoad.current = true;
-    if (activeName) return;
+    if (activeName || forkClaimsActiveApp) return;
     const recent = mostRecentApp(sandboxes.list.data);
     if (recent) setActiveName(recent.name);
-  }, [sandboxes.list.data, activeName]);
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;

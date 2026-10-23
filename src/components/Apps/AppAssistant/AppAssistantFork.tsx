@@ -200,6 +200,8 @@ export function useAppFork({ sandboxes, active, onOpened }: AppForkOptions) {
       : null;
 
   return {
+    /** The address names a fork this page has not handled yet: nothing else may pick the app. */
+    claimsActiveApp: !!forkSlug && !handled.current.has(forkSlug),
     creating,
     problem: shown,
     /** Try again, when a fresh fork can help and the parent is known. */
