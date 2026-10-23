@@ -35,7 +35,21 @@ const countSchema = z.object({
     .max(1000, 'Keep the reason under 1000 characters.'),
 });
 // Typed in by hand from the count step, never carried over from it: a number nobody read is no check.
-const releaseSchema = countSchema.extend({ expectedCount: z.coerce.number().int().positive() });
+// Separators are dropped, so a count typed as "3,771" still reads.
+const releaseSchema = countSchema.extend({
+  expectedCount: z
+    .string()
+    .transform((v) => v.replace(/[\s,]/g, ''))
+    .pipe(
+      z
+        .string()
+        .regex(
+          /^[1-9]\d{0,8}$/,
+          'Type the count as a whole number, e.g. 3771. Nothing was released.'
+        )
+    )
+    .transform(Number),
+});
 
 function refusal(userId: number, result: Extract<ReleaseHeldFlagsResult, { ok: false }>) {
   switch (result.reason) {

@@ -2,7 +2,6 @@
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { num } from '$lib/format';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
@@ -15,8 +14,8 @@
   <h1>Release held CSAM review flags</h1>
   <p>
     Clears the review flag from one user's removed images when the only hold on them is
-    {data.releasableLegs.join(', ')}, under an approval. Any other hold refuses. Count first, then
-    type the count you were given to release.
+    {data.releasableLegs.join(', ')}, under an approval. Any other hold refuses. Count first; the
+    release form appears with the number to type.
   </p>
 </header>
 
@@ -45,20 +44,34 @@
       Reason
       <Input name="reason" required value={counted?.reason ?? ''} />
     </label>
-    <label class="grid gap-1 text-sm">
-      Expected count (needed to release)
-      <Input name="expectedCount" inputmode="numeric" />
-    </label>
-    <div class="flex flex-wrap gap-2">
+    <div>
       <Button type="submit" variant="outline">Count</Button>
-      <Button type="submit" formaction="?/release" variant="destructive">Release</Button>
     </div>
   </form>
 
+  <!-- Its own form, so Enter in the count field submits Release and never Count. -->
   {#if counted}
-    <p class="mt-4 text-sm" role="status">
-      User #{counted.userId}: {num(counted.count)} removed image{counted.count === 1 ? '' : 's'} would
-      be released. Held by: {counted.legs.join(', ')}. Nothing was changed.
-    </p>
+    <form
+      method="POST"
+      action="?/release"
+      use:enhance
+      class="mt-4 grid max-w-xl gap-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3"
+    >
+      <p class="text-sm font-semibold text-yellow-200" role="status">
+        Count only, NOTHING RELEASED YET. User #{counted.userId}: {counted.count} removed
+        {counted.count === 1 ? 'image' : 'images'} would be released. Held by:
+        {counted.legs.join(', ')}. To release, type {counted.count} below and press Release.
+      </p>
+      <input type="hidden" name="userId" value={counted.userId} />
+      <input type="hidden" name="approvalRef" value={counted.approvalRef} />
+      <input type="hidden" name="reason" value={counted.reason} />
+      <label class="grid gap-1 text-sm">
+        Count to release
+        <Input name="expectedCount" inputmode="numeric" autocomplete="off" required />
+      </label>
+      <div>
+        <Button type="submit" variant="destructive">Release</Button>
+      </div>
+    </form>
   {/if}
 </section>

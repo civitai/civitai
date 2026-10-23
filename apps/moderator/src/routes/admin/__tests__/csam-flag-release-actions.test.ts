@@ -107,7 +107,21 @@ describe('the release page', () => {
   });
 
   it.each([
+    ['3,771', 3771],
+    [' 3 771 ', 3771],
+    ['128', 128],
+  ])('reads the typed count %j as %i, separators and all', async (typed, expected) => {
+    await run('release', ADMIN, { ...FIELDS, expectedCount: typed });
+    expect(releaseHeldUserCsamFlags).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedCount: expected })
+    );
+  });
+
+  it.each([
     ['no expected count', { expectedCount: '' }],
+    ['a decimal count', { expectedCount: '3.771' }],
+    ['a count that is not a number', { expectedCount: 'abc' }],
+    ['a zero count', { expectedCount: '0' }],
     ['a malformed approval reference', { approvalRef: 'hub:request:x' }],
     ['no reason', { reason: '  ' }],
     ['an id past int range', { userId: '99999999999' }],
