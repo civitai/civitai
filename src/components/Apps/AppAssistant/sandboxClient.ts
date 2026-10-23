@@ -2,6 +2,7 @@
 // imports too.
 export {
   SandboxApiError,
+  appExportPath,
   createSandboxClient,
   isRunningLimit,
   isSandboxServiceUrl,

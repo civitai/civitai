@@ -62,6 +62,15 @@ export function isRunningLimit(error: unknown): boolean {
   );
 }
 
+/**
+ * Where the sandbox gateway serves an app as a zip, relative to the sandbox service's base URL: the app
+ * folder only, without node_modules, build output, caches, `.git` or `.env*` files. Answers 413 when the
+ * app is too large and 409 when the sandbox is not running. The one place this contract is written.
+ */
+export function appExportPath(sandboxName: string, app: string): string {
+  return `/s/${sandboxName}/export?app=${encodeURIComponent(app)}`;
+}
+
 /** Whether `url` is served by the sandbox service at `baseUrl`, so it may receive the user's token. */
 export function isSandboxServiceUrl(url: string, baseUrl: string): boolean {
   try {
@@ -78,6 +87,8 @@ export interface SandboxClient {
   open(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
   suspend(name: string): Promise<Sandbox>;
   remove(name: string): Promise<void>;
+  /** The app `app` in sandbox `name`, as a zip (`appExportPath`). */
+  exportApp(name: string, app: string): Promise<Blob>;
 }
 
 export interface SandboxClientOptions {
@@ -94,7 +105,13 @@ export function createSandboxClient({
 }: SandboxClientOptions): SandboxClient {
   const base = baseUrl.replace(/\/+$/, '');
 
-  async function send(method: string, path: string, body?: unknown, refresh = false) {
+  /** The response, asked again once with a fresh token after a 401. */
+  async function request(
+    method: string,
+    path: string,
+    body?: unknown,
+    refresh = false
+  ): Promise<Response> {
     const token = await getToken({ refresh });
     const res = await fetchImpl(`${base}${path}`, {
       method,
@@ -104,19 +121,31 @@ export function createSandboxClient({
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 401 && !refresh) return send(method, path, body, true);
+    if (res.status === 401 && !refresh) return request(method, path, body, true);
+    return res;
+  }
+
+  async function failure(res: Response): Promise<SandboxApiError> {
     const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!res.ok) {
-      const message =
-        typeof data?.error === 'string' ? data.error : `Sandbox service error (${res.status})`;
-      throw new SandboxApiError(message, res.status, errorKind(res.status, message));
-    }
+    const message =
+      typeof data?.error === 'string' ? data.error : `Sandbox service error (${res.status})`;
+    return new SandboxApiError(message, res.status, errorKind(res.status, message));
+  }
+
+  async function send(method: string, path: string, body?: unknown) {
+    const res = await request(method, path, body);
+    if (!res.ok) throw await failure(res);
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     return { status: res.status, data };
   }
 
-  function itemPath(name: string, suffix = '') {
+  function checkName(name: string) {
     if (!SANDBOX_NAME.test(name))
       throw new SandboxApiError('Invalid sandbox name', 400, 'bad_request');
+  }
+
+  function itemPath(name: string, suffix = '') {
+    checkName(name);
     return `/v1/sandboxes/${name}${suffix}`;
   }
 
@@ -137,6 +166,12 @@ export function createSandboxClient({
     },
     async remove(name) {
       await send('DELETE', itemPath(name));
+    },
+    async exportApp(name, app) {
+      checkName(name);
+      const res = await request('GET', appExportPath(name, app));
+      if (!res.ok) throw await failure(res);
+      return res.blob();
     },
   };
 }

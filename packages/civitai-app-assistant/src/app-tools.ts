@@ -26,6 +26,26 @@ export function appOpenFailure(error: unknown): string {
   return APPS_UNREACHABLE;
 }
 
+/**
+ * Whether a finished tool call, as the page is told of it (the browser's `tool-result`, or the server
+ * runner's `tool-reported`), is `create_app` refused at the cap on apps kept: thrown by the tool, or
+ * refused by the gate for the rest of that reply. Never the running-app cap, which `openApp` handles by
+ * pausing. The one place the page tells it.
+ */
+export function isKeepLimitResult(result: {
+  name: string;
+  output: unknown;
+  isError: boolean;
+}): boolean {
+  if (result.name !== CREATE_APP || !result.isError) return false;
+  const output = result.output;
+  return (
+    output !== null &&
+    typeof output === 'object' &&
+    (output as { error?: unknown }).error === KEEP_LIMIT
+  );
+}
+
 export interface AppToolsOptions {
   /** The user's apps as last listed; undefined until the list has loaded. */
   apps: () => Sandbox[] | undefined;
