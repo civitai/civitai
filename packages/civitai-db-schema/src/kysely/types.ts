@@ -2677,6 +2677,7 @@ export type CosmeticShopItem = {
   rejectionReason: string | null;
   listed: Generated<boolean>;
   itemDefinitionId: number | null;
+  eventTags: Generated<string[]>;
 };
 export type CosmeticShopItemCosmetic = {
   shopItemId: number;

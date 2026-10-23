@@ -3442,6 +3442,7 @@ export interface CosmeticShopItem {
   listed: boolean;
   itemDefinitionId: number | null;
   itemDefinition?: ItemDefinition | null;
+  eventTags: string[];
   purchases?: UserCosmeticShopPurchases[];
   sections?: CosmeticShopSectionItem[];
   wishlists?: UserCosmeticShopItemWishlist[];
