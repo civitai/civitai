@@ -437,7 +437,9 @@ describe('model page server render — modelPageDesignSystemMarkup ON', () => {
   it('renders the Details rows, trigger words, hash and AIR without Mantine', () => {
     const root = parse(renderPage(DS_ON).html);
     const badges = new Map(
-      [...root.querySelectorAll('[data-civitai-ui="badge"]')].map((b) => [text(b), dsAttrs(b)])
+      [...root.querySelectorAll('[data-civitai-ui="badge"]')].map(
+        (b) => [text(b), dsAttrs(b)] as const
+      )
     );
     const sm = (variant: string) => ({ ui: 'badge', size: 'sm', variant });
     expect(badges.get('LoRA')).toEqual(sm('filled'));

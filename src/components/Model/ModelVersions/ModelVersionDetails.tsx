@@ -2047,7 +2047,15 @@ const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(function A
     return (
       <ShellButton
         ref={ref}
-        variant={`${light ? 'light' : 'filled'}-${color}`}
+        variant={
+          light
+            ? color === 'green'
+              ? 'light-green'
+              : 'light-gray'
+            : color === 'green'
+            ? 'filled-green'
+            : 'filled-gray'
+        }
         fullWidth
         style={{ paddingLeft: 0, paddingRight: 0 }}
         {...rest}

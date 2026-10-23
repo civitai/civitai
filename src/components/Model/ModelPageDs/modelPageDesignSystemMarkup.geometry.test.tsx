@@ -222,7 +222,7 @@ function Page() {
   ];
   const page = layers.reduceRight<ReactNode>(
     (child, [Component, props]) => createElement(Component as never, props, child),
-    <ModelPage {...({ id: F.MODEL_ID } as never)} />
+    createElement(ModelPage as never, { id: F.MODEL_ID })
   );
   return (
     <>

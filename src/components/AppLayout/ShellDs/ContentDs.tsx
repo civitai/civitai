@@ -85,15 +85,18 @@ export const DsBadge = forwardRef<HTMLElement, DsBadgeProps>(function DsBadge(
   { color, variant, size, radius, leftSection, className, children, component = 'span', ...rest },
   ref
 ) {
-  const Tag = component;
+  const attrs = badgeAttributes({ color, variant, size, radius, leftSection, className });
+  const content = <BadgeContent leftSection={leftSection}>{children}</BadgeContent>;
+  if (component === 'button')
+    return (
+      <button ref={ref as React.Ref<HTMLButtonElement>} {...rest} {...attrs}>
+        {content}
+      </button>
+    );
   return (
-    <Tag
-      ref={ref as never}
-      {...rest}
-      {...badgeAttributes({ color, variant, size, radius, leftSection, className })}
-    >
-      <BadgeContent leftSection={leftSection}>{children}</BadgeContent>
-    </Tag>
+    <span ref={ref as React.Ref<HTMLSpanElement>} {...rest} {...attrs}>
+      {content}
+    </span>
   );
 });
 
