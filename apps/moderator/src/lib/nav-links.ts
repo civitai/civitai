@@ -55,6 +55,16 @@ export function navPartial(link: NavLink, isUnavailable: (key: string) => boolea
   return link.children.some((child) => !child.informational && navPartial(child, isUnavailable));
 }
 
+/** A badge's text: the count, with "+" when it leaves out a count that could not be read ("?+" when
+ *  it has none it could). Null when there is nothing to show. */
+export function navBadge(
+  count: number | null,
+  partial: boolean
+): { text: string; partial: boolean } | null {
+  if (partial) return { text: `${count ?? '?'}+`, partial };
+  return count === null ? null : { text: String(count), partial };
+}
+
 export type SwitcherEntry = { label: string; href: string; external: boolean };
 
 /** Every page the sidebar can open, as "Group › Page"; a `tabs` group is one entry, as in the sidebar. */

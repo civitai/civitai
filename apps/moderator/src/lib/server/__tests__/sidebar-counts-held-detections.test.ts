@@ -205,4 +205,33 @@ describe('Needs review badge when a part does not answer', () => {
     getHeldDetectionModelCount.mockReturnValue(hang());
     expect((await slowLoad()).unavailable).toContain('modelFlagsNeedsReview');
   });
+
+  it('keeps a fill that lands after its wait, for the next load', async () => {
+    let land!: (c: { pending: number; pendingWithDetection: number }) => void;
+    getMinorQueueCounts.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    expect((await slowLoad()).unavailable).toContain('modelFlagsNeedsReview');
+    land({ pending: 10, pendingWithDetection: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    getMinorQueueCounts.mockReturnValue(hang());
+    const { counts, unavailable } = await slowLoad();
+    expect(counts).toMatchObject({ modelFlagsNeedsReview: 12 });
+    expect(unavailable).not.toContain('modelFlagsNeedsReview');
+  });
+
+  it('keeps each last count for the limit', async () => {
+    await getSidebarCounts();
+    for (const part of ['held-detections', 'minor-queue'])
+      expect(redis.set).toHaveBeenCalledWith(expect.stringContaining(part), expect.any(String), {
+        EX: LAST_GOOD_MS / 1000,
+      });
+  });
+
+  it('still answers when Redis does not', async () => {
+    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
+    redis.get.mockRejectedValueOnce(new Error('redis down'));
+    getHeldDetectionModelCount.mockReturnValue(hang());
+    expect((await slowLoad()).unavailable).toContain('modelFlagsNeedsReview');
+  });
 });
