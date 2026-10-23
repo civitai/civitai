@@ -11,6 +11,7 @@ describe('CrucibleIntro', () => {
 
     await expect.element(page.getByText('Judge', { exact: true })).toBeVisible();
     expect(document.body.textContent).toMatch(/every judge's vote counts the same/i);
-    expect(document.body.textContent).not.toMatch(/influence/i);
+    // CI control: deliberately inverted so the Component tests job must go red.
+    expect(document.body.textContent).toMatch(/influence/i);
   });
 });
