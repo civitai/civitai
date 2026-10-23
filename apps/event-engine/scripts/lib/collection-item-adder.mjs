@@ -20,6 +20,18 @@ const ENTITY_METRICS = [
   ['articleId', 'Article', 'collectedCount'],
 ];
 
+// One entity per run, so each can be scoped and sized on its own; a bookmark row carries one of these.
+const ENTITY_COLUMNS = { Article: 'articleId', Model: 'modelId', Post: 'postId' };
+
+export function entityScope(entity) {
+  const column = ENTITY_COLUMNS[entity];
+  if (!column)
+    throw new Error(
+      `--entity must be one of ${Object.keys(ENTITY_COLUMNS).join(', ')}, not ${entity}`
+    );
+  return `ci."${column}" IS NOT NULL`;
+}
+
 export const METRIC_PAIRS = ENTITY_METRICS.map(([, entityType, metricType]) => [
   entityType,
   metricType,
@@ -66,7 +78,10 @@ export function nextStampMs(prevStampMs, nowMs) {
 //
 // A torn final line is dropped: every line is written before the step it records, so losing the
 // last one only loses a claim the resume check re-derives from Postgres and ClickHouse.
-export function readLedger(lines) {
+//
+// A ledger belongs to one entity: resuming it under another would skip that entity's rows in every
+// range the first run finished.
+export function readLedger(lines, entity) {
   const batches = new Map();
   let lastStampMs = null;
   const entries = lines.filter((line) => line.trim());
@@ -79,6 +94,10 @@ export function readLedger(lines) {
       throw err;
     }
     if (entry.phase === 'pending') {
+      if (entry.entity !== entity)
+        throw new Error(
+          `ledger: written for ${entry.entity}, this run is ${entity}; use a new ledger`
+        );
       batches.set(entry.lo, { ...entry });
     } else {
       const batch = batches.get(entry.lo);

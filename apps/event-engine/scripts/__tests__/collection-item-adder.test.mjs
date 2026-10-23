@@ -4,6 +4,7 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   buildEvents,
+  entityScope,
   landedState,
   nextStampMs,
   openLedger,
@@ -11,6 +12,7 @@ import {
 } from '../lib/collection-item-adder.mjs';
 
 const T = 1_761_000_000;
+const read = (lines) => readLedger(lines, 'Article');
 
 describe('buildEvents', () => {
   it('emits what the CDC handler would, one event per key valued at its row count', () => {
@@ -60,14 +62,23 @@ describe('nextStampMs', () => {
   });
 });
 
+describe('entityScope', () => {
+  it('limits a run to one entity column and rejects anything else', () => {
+    expect(entityScope('Article')).toBe('ci."articleId" IS NOT NULL');
+    expect(entityScope('Model')).toBe('ci."modelId" IS NOT NULL');
+    expect(() => entityScope('Image')).toThrow(/--entity must be one of/);
+    expect(() => entityScope(undefined)).toThrow();
+  });
+});
+
 describe('readLedger', () => {
   const line = (o) => JSON.stringify(o);
 
   const pending = (lo, hi, stampMs) =>
-    line({ lo, hi, phase: 'pending', xid: String(lo), stampMs, events: [] });
+    line({ lo, hi, phase: 'pending', entity: 'Article', xid: String(lo), stampMs, events: [] });
 
   it('returns the one unfinished batch and where finished work ends', () => {
-    const state = readLedger([
+    const state = read([
       pending(0, 100, 1000),
       line({ lo: 0, phase: 'committed' }),
       line({ lo: 0, phase: 'inserted' }),
@@ -81,7 +92,7 @@ describe('readLedger', () => {
   });
 
   it('does not count an abandoned batch as done, so its range is redone', () => {
-    const state = readLedger([
+    const state = read([
       pending(0, 100, 1000),
       line({ lo: 0, phase: 'inserted' }),
       pending(100, 200, 2000),
@@ -93,7 +104,7 @@ describe('readLedger', () => {
 
   it('resumes a restamped batch with its new stamp and events', () => {
     const events = [{ entityType: 'Model', entityId: 1, createdAt: 9 }];
-    const state = readLedger([
+    const state = read([
       pending(0, 100, 1000),
       line({ lo: 0, phase: 'committed' }),
       line({ lo: 0, phase: 'restamped', stampMs: 9000, events }),
@@ -103,14 +114,19 @@ describe('readLedger', () => {
   });
 
   it('drops a torn final line but not a torn line in the middle', () => {
-    expect(readLedger([pending(0, 100, 1000), '{"lo":0,"pha']).open).toMatchObject({
+    expect(read([pending(0, 100, 1000), '{"lo":0,"pha']).open).toMatchObject({
       phase: 'pending',
+      entity: 'Article',
     });
-    expect(() => readLedger(['{"lo":0,"pha', pending(0, 100, 1000)])).toThrow();
+    expect(() => read(['{"lo":0,"pha', pending(0, 100, 1000)])).toThrow();
+  });
+
+  it('refuses a ledger written for another entity', () => {
+    expect(() => readLedger([pending(0, 100, 1000)], 'Model')).toThrow(/written for Article/);
   });
 
   it('refuses a ledger with two unfinished batches', () => {
-    expect(() => readLedger([pending(0, 100, 1000), pending(100, 200, 2000)])).toThrow(
+    expect(() => read([pending(0, 100, 1000), pending(100, 200, 2000)])).toThrow(
       /2 unfinished batches/
     );
   });
@@ -121,12 +137,20 @@ describe('openLedger', () => {
     // Otherwise a restamp line glued onto the fragment is dropped as torn, the next resume checks
     // the old stamp, finds nothing, and inserts the batch a second time.
     const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
-    const pending = { lo: 0, hi: 100, phase: 'pending', xid: '1', stampMs: 1000, events: [] };
+    const pending = {
+      lo: 0,
+      hi: 100,
+      phase: 'pending',
+      entity: 'Article',
+      xid: '1',
+      stampMs: 1000,
+      events: [],
+    };
     writeFileSync(path, `${JSON.stringify(pending)}\n{"lo":0,"pha`);
     const ledger = openLedger(path);
     ledger.write({ lo: 0, phase: 'restamped', stampMs: 9000, events: [] });
     ledger.close();
-    expect(readLedger(readFileSync(path, 'utf-8').split('\n')).open).toMatchObject({
+    expect(read(readFileSync(path, 'utf-8').split('\n')).open).toMatchObject({
       phase: 'restamped',
       stampMs: 9000,
     });
@@ -134,7 +158,15 @@ describe('openLedger', () => {
 
   it('keeps a complete final line that only lacks its newline', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'ledger-')), 'ledger.jsonl');
-    const pending = { lo: 0, hi: 100, phase: 'pending', xid: '1', stampMs: 1000, events: [] };
+    const pending = {
+      lo: 0,
+      hi: 100,
+      phase: 'pending',
+      entity: 'Article',
+      xid: '1',
+      stampMs: 1000,
+      events: [],
+    };
     writeFileSync(
       path,
       `${JSON.stringify(pending)}\n${JSON.stringify({ lo: 0, phase: 'committed' })}`

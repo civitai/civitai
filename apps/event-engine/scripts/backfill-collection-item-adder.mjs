@@ -47,6 +47,8 @@
  *   --to <id>          Stop before this id (default max(id) + 1).
  *   --range <n>        Ids per batch (default 20000).
  *   --pause-ms <n>     Pause between batches that wrote something (default 1000).
+ *   --entity <type>    Article (default), Model or Post: which bookmarked rows this run repairs.
+ *                      A ledger belongs to one entity; the run refuses a ledger from another.
  *   --events-table <t> Raw events table (default entityMetricEvents_month). The run refuses a
  *                      table that does not feed entityMetricSum_v3.
  */
@@ -60,6 +62,7 @@ import {
   METRIC_PAIRS,
   buildEvents,
   landedState,
+  entityScope,
   nextStampMs,
   openLedger,
   readLedger,
@@ -91,13 +94,14 @@ const RANGE = Number(arg('--range') ?? 20000);
 const PAUSE_MS = Number(arg('--pause-ms') ?? 1000);
 const FROM = arg('--from') != null ? Number(arg('--from')) : null;
 const TO = arg('--to') != null ? Number(arg('--to')) : null;
+const ENTITY = arg('--entity') ?? 'Article';
 
 const SCOPE = `
   ci."collectionId" = c.id
   AND ci.id >= $1 AND ci.id < $2
   AND ci."addedById" IS NULL
   AND ci."imageId" IS NULL
-  AND (ci."articleId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL)
+  AND ${entityScope(ENTITY)}
   AND c."userId" > 0`;
 
 const COUNT_SQL = `SELECT count(*)::int AS n FROM "CollectionItem" ci, "Collection" c WHERE ${SCOPE}`;
@@ -219,7 +223,7 @@ async function main() {
   lockClient.on('error', (err) => fail(`Error: lost the lock connection: ${err.message}`));
 
   const ledgerState = existsSync(LEDGER)
-    ? readLedger(readFileSync(LEDGER, 'utf-8').split('\n'))
+    ? readLedger(readFileSync(LEDGER, 'utf-8').split('\n'), ENTITY)
     : { open: null, resumeFrom: null, lastStampMs: null };
   const ledger = openLedger(LEDGER);
   let lastStampMs = ledgerState.lastStampMs;
@@ -307,7 +311,7 @@ async function main() {
       // Epoch seconds: a DateTime string would be read in the server's timezone.
       events = buildEvents(rows, stampMs / 1000);
       const { rows: txid } = await client.query('SELECT txid_current()::text AS xid');
-      ledger.write({ lo, hi, phase: 'pending', xid: txid[0].xid, stampMs, events });
+      ledger.write({ lo, hi, phase: 'pending', entity: ENTITY, xid: txid[0].xid, stampMs, events });
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
