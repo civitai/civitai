@@ -16,6 +16,7 @@ export const HISTORY_FIELD_LABELS: Record<string, string> = {
   sellerShare: 'Reseller share (%)',
   cover: 'Cover',
   members: 'Contents (cosmetic ids)',
+  paidToUserIds: 'Paid to (user ids)',
 };
 
 const adverseActions = ['reject', 'request-changes', 'revert'] as const;

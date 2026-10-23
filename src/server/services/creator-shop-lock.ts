@@ -11,7 +11,16 @@ export const lockShopItem = async (tx: Prisma.TransactionClient, id: number) => 
   await tx.$queryRaw`SELECT id FROM "CosmeticShopItem" WHERE id = ${id} FOR NO KEY UPDATE`;
   const item = await tx.cosmeticShopItem.findUnique({
     where: { id },
-    select: { status: true, meta: true, unitAmount: true, rejectionReason: true },
+    select: {
+      status: true,
+      meta: true,
+      unitAmount: true,
+      rejectionReason: true,
+      // Prior values, so an editor can record what it moved from.
+      title: true,
+      description: true,
+      availableQuantity: true,
+    },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   return item;
