@@ -280,6 +280,9 @@ describe('the browsing level a storyline thread is held to', () => {
     await expect(getCommentsInfiniteHandler({ ctx: ctx(), input })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue(storylineRow());
+    await getCommentsInfiniteHandler({ ctx: ctx(), input });
+    expect(getCommentsInfinite).toHaveBeenCalledTimes(1);
   });
 });
 

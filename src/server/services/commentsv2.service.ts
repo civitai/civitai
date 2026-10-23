@@ -695,30 +695,35 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
 
 /**
  * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
- * or on `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted comment breaks the
- * chain, so either alone can miss a storyline and let a reply skip its gate.
+ * or on any chain thread's `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted
+ * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
  */
-export const storylineOfThreadSql = (seed: string) => Prisma.sql`
+const storylineAboveSql = (seed: string) => Prisma.sql`
   ${Prisma.raw(muteableThreadsCte(seed))}
   SELECT th."storylineId"
   FROM (
     SELECT mt."id" FROM muteable_threads mt
     UNION ALL
-    SELECT t."rootThreadId" FROM "Thread" t WHERE t.id = ${Prisma.raw(seed)}
+    SELECT t."rootThreadId" FROM muteable_threads mt JOIN "Thread" t ON t.id = mt."id"
   ) chain
   JOIN "Thread" th ON th.id = chain."id"
   WHERE th."storylineId" IS NOT NULL
   LIMIT 1`;
 
-const firstStorylineId = async (seed: string) =>
-  (await dbRead.$queryRaw<{ storylineId: number }[]>(storylineOfThreadSql(seed)))[0]?.storylineId ??
-  null;
+export const storylineOfThreadSql = (threadId: number) =>
+  storylineAboveSql(String(Number(threadId)));
+
+export const storylineOfCommentSql = (commentId: number) =>
+  storylineAboveSql(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+
+const firstStorylineId = async (sql: Prisma.Sql) =>
+  (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
 
 export const getCommentThreadStorylineId = (threadId: number) =>
-  firstStorylineId(String(Number(threadId)));
+  firstStorylineId(storylineOfThreadSql(threadId));
 
 export const getCommentStorylineId = (commentId: number) =>
-  firstStorylineId(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+  firstStorylineId(storylineOfCommentSql(commentId));
 
 export const deleteComment = async ({ id }: { id: number }) => {
   const deleted = await dbWrite.commentV2.delete({ where: { id } });
