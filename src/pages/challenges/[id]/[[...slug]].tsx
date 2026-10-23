@@ -480,9 +480,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   return (
     <Gated
-      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
-      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
-      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      // Gate on the challenge's allowed rating combined with the cover image's real level. On the
+      // green site the server already omits a cover above the site's ceiling.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
       // Yellow user challenges live on civitai.red regardless of rating — the server returns
       // them on green so this renders the redirect card instead of a 404 (inert on red).

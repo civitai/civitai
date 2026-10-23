@@ -898,12 +898,18 @@ async function buildChallengeDetail(
   const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
-  const coverImage = challenge.coverImageId
+  const fetchedCover = challenge.coverImageId
     ? await dbRead.image.findUnique({
         where: { id: challenge.coverImageId },
         select: imageSelect,
       })
     : null;
+  const coverImage =
+    fetchedCover &&
+    green?.isGreen &&
+    isImageHiddenFromGreenViewer(fetchedCover.nsfwLevel, green.viewerId)
+      ? null
+      : fetchedCover;
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -1093,8 +1099,9 @@ export async function getChallengeDetail(
   // POI + cover-scan gate: a cover depicting a real person (Image.poi, set by the image scanner),
   // or one that hasn't finished moderation scanning yet, keeps the challenge out of public view —
   // direct-URL parity with the feed filter. Mod/creator exempt; skip the lookup entirely for trusted
-  // System challenges. NSFW-on-green gating is handled client-side by <Gated> (MatureContentRedirect)
-  // on the detail page, matching how model/image detail pages gate mature content on the safe site.
+  // System challenges. NSFW-on-green page gating is handled client-side by <Gated> (MatureContentRedirect),
+  // matching model/image detail pages; buildChallengeDetail applies the site's ceiling to the cover
+  // and winner images.
   if (
     !canPreviewUnpublished &&
     challenge.source === ChallengeSource.User &&
