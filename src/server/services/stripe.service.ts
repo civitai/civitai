@@ -502,6 +502,9 @@ export const createSubscribeSession = async ({
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
+    // A bank debit takes days to clear, but the membership goes active on checkout, so a
+    // bounced first payment has already granted the tier. Link is left out: it can pay from a bank.
+    payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
