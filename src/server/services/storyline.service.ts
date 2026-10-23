@@ -248,12 +248,12 @@ const storyLevelSql = Prisma.sql`(SELECT ${Prisma.raw(raiseNsfwLevelText('lv.l',
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
 
 /** `storylineCeiling` in SQL, for a storyline aliased `st`. */
-const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
+export const storylineCeilingSql = Prisma.sql`(CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE st."maxNsfwLevel" END)`;
 
 /**
  * Shared by every path that adds a chapter, so the rules cannot drift between them.
  */
-async function assertPostCanBeChapter(
+export async function assertPostCanBeChapter(
   db: Db,
   {
     postId,
@@ -467,7 +467,7 @@ export async function isOpenStorylineChapter(postId: number, placerId: number) {
   );
 }
 
-const isUniqueViolation = (error: unknown) =>
+export const isUniqueViolation = (error: unknown) =>
   typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
 
 /**
@@ -575,6 +575,16 @@ export async function getPendingChapterForPost({
   };
 }
 
+/** Chapter 1's row, once `assertPostCanBeChapter` has passed the post. */
+export const createRootChapter = (
+  db: Db,
+  { storylineId, postId, userId }: { storylineId: number; postId: number; userId: number }
+) =>
+  db.storylineChapter.create({
+    data: { storylineId, postId, userId, depth: 0 },
+    select: { id: true },
+  });
+
 /**
  * Without `postId` the storyline starts empty: its chapter 1 is a post written afterwards (see
  * `linkPendingChapter`), and until that is written only its owner and moderators see it.
@@ -612,10 +622,7 @@ export async function createStoryline({
         select: { id: true },
       });
       const root = postId
-        ? await tx.storylineChapter.create({
-            data: { storylineId: storyline.id, postId, userId, depth: 0 },
-            select: { id: true },
-          })
+        ? await createRootChapter(tx, { storylineId: storyline.id, postId, userId })
         : null;
       // Checked once chapter 1 exists, by the same rule as later picks: at this point that means
       // an image of the post the storyline starts from, and with no post any pick is refused.
@@ -1004,46 +1011,48 @@ function firstChapterFloor(post: { nsfwLevel: number; tosViolation: boolean } | 
 }
 
 /** The owner continuing their own story directly; everyone else continues through a placement. */
-export async function addOwnerChapter({
-  parentChapterId,
-  postId,
-  userId,
-}: {
+export async function addOwnerChapter(input: {
   parentChapterId: number;
   postId: number;
   userId: number;
 }) {
-  return dbWrite.$transaction(async (tx) => {
-    const parent = await tx.storylineChapter.findUnique({
-      where: { id: parentChapterId },
-      select: {
-        id: true,
-        storylineId: true,
-        depth: true,
-        removedAt: true,
-        storyline: {
-          select: { userId: true, maxNsfwLevel: true, minorByScan: true, tosViolation: true },
-        },
-      },
-    });
-    if (!parent) throw throwNotFoundError('Chapter not found');
-    if (parent.storyline.userId !== userId) throw throwAuthorizationError();
-    if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-    if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
+  return dbWrite.$transaction((tx) => writeOwnerChapter(tx, input));
+}
 
-    await assertPostCanBeChapter(tx, {
-      postId,
-      authorId: userId,
-      maxNsfwLevel: storylineCeiling(parent.storyline),
-    });
-    const chapterId = await insertChildChapter(tx, {
-      parent,
-      ownerId: parent.storyline.userId,
-      postId,
-      authorId: userId,
-    });
-    return { chapterId };
+/** `addOwnerChapter` inside the caller's transaction. */
+export async function writeOwnerChapter(
+  tx: Prisma.TransactionClient,
+  { parentChapterId, postId, userId }: { parentChapterId: number; postId: number; userId: number }
+) {
+  const parent = await tx.storylineChapter.findUnique({
+    where: { id: parentChapterId },
+    select: {
+      id: true,
+      storylineId: true,
+      depth: true,
+      removedAt: true,
+      storyline: {
+        select: { userId: true, maxNsfwLevel: true, minorByScan: true, tosViolation: true },
+      },
+    },
   });
+  if (!parent) throw throwNotFoundError('Chapter not found');
+  if (parent.storyline.userId !== userId) throw throwAuthorizationError();
+  if (parent.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+  if (parent.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
+
+  await assertPostCanBeChapter(tx, {
+    postId,
+    authorId: userId,
+    maxNsfwLevel: storylineCeiling(parent.storyline),
+  });
+  const chapterId = await insertChildChapter(tx, {
+    parent,
+    ownerId: parent.storyline.userId,
+    postId,
+    authorId: userId,
+  });
+  return { chapterId };
 }
 
 /**

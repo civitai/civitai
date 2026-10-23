@@ -78,6 +78,11 @@ export type CreateStorylinePlacement = {
    * row made before the column existed.
    */
   spendType: BuzzSpendType;
+  /**
+   * The post was written as a draft of this continuation (`StorylinePendingChapter`) and is
+   * submitted as it is published. The link is dropped in the transaction that writes the row.
+   */
+  fromPendingLink?: boolean;
 };
 
 /** What a storyline placement carries. Storyline and parent come from the target. */
@@ -90,7 +95,7 @@ export type StorylinePlacementData = {
 };
 
 /** What the refusals and the readiness check read off a continuation post. */
-const continuationPostSelect = {
+export const continuationPostSelect = {
   userId: true,
   publishedAt: true,
   nsfwLevel: true,
@@ -156,41 +161,16 @@ export async function createStorylinePlacement({
   postId,
   expectedPrice,
   spendType,
+  fromPendingLink,
 }: CreateStorylinePlacement) {
   if (postId === parentPostId)
     throw throwBadRequestError('storyline: a chapter cannot continue itself');
 
-  const space = await resolvePlacementSpaceFor({
-    surface: SURFACE,
-    targetType: TARGET_TYPE,
-    targetId: parentPostId,
+  const { space, price, access, parent } = await storylineContinuationTerms({
+    placerId,
+    parentPostId,
   });
-
-  const allowedModes = PLACEMENT_SURFACES[SURFACE].allowedModes as readonly PlacementSpaceMode[];
-  if (space.mode === 'off' || !allowedModes.includes(space.mode))
-    throw throwBadRequestError(STORYLINE_REFUSALS.notOpen);
-
-  if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
-
-  const { isCollaborator, parent } = await assertCanContinueStoryline({ parentPostId, placerId });
-  const access = storylineContinuationAccess({
-    mode: space.mode,
-    isCollaborator,
-    whoCanContinue: parent.storyline.whoCanContinue,
-  });
-  // `closed` was refused above, before the assert, so a stranger on a closed
-  // storyline hears that it is closed rather than that it is collaborators-only.
-  if (access === 'collaboratorsOnly')
-    throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
-
-  // `setPlacementSpace` never writes an open space without a price, and the
-  // surface default is 0 rather than null, so this is a hand-edited row.
-  if (space.price == null)
-    throw throwBadRequestError('storyline: this creator has not set a price yet');
-
-  // Refused rather than charged: a price the placer never saw is a spend without consent.
-  if (expectedPrice !== space.price)
-    throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${space.price} Buzz`);
+  assertPriceSeen(price, expectedPrice);
 
   // Only your own post can be offered as a chapter: a continuation credits its
   // post's author, so offering someone else's would put your name on their work.
@@ -222,7 +202,7 @@ export async function createStorylinePlacement({
   // Outside the transaction: I/O, and read from the primary.
   await assertCanPlace({ ownerId: space.ownerId, placerId });
 
-  const amount = space.price;
+  const amount = price;
   // Stamped by the insert, so there is no window with a NULL deadline: the
   // expiry sweep selects `expiresAt <= now()`, which NULL never satisfies, and a
   // pending row without one would sit in the owner's queue and the placer's cap
@@ -252,6 +232,12 @@ export async function createStorylinePlacement({
       select: { id: true },
     });
     if (live) throw throwBadRequestError(STORYLINE_REFUSALS.alreadySubmitted);
+
+    // A second publish step racing this one finds the link gone and writes nothing.
+    if (fromPendingLink) {
+      const dropped = await tx.storylinePendingChapter.deleteMany({ where: { postId } });
+      if (!dropped.count) throw throwBadRequestError(STORYLINE_REFUSALS.alreadySubmitted);
+    }
 
     return tx.placement.create({
       data: {
@@ -284,6 +270,80 @@ export async function createStorylinePlacement({
   if (access === 'autoApprove' && !awaitingReadiness) await autoApproveContinuation(placement.id);
 
   return placement;
+}
+
+/**
+ * Whether `placerId` may continue the chapter that is `parentPostId` here, and at what price:
+ * every refusal a submission has before it looks at the post or the price the placer was shown.
+ */
+async function storylineContinuationTerms({
+  placerId,
+  parentPostId,
+}: {
+  placerId: number;
+  parentPostId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: parentPostId,
+  });
+
+  const allowedModes = PLACEMENT_SURFACES[SURFACE].allowedModes as readonly PlacementSpaceMode[];
+  if (space.mode === 'off' || !allowedModes.includes(space.mode))
+    throw throwBadRequestError(STORYLINE_REFUSALS.notOpen);
+
+  if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
+
+  const { isCollaborator, parent } = await assertCanContinueStoryline({ parentPostId, placerId });
+  const access = storylineContinuationAccess({
+    mode: space.mode,
+    isCollaborator,
+    whoCanContinue: parent.storyline.whoCanContinue,
+  });
+  // `closed` was refused above, before the assert, so a stranger on a closed
+  // storyline hears that it is closed rather than that it is collaborators-only.
+  if (access === 'collaboratorsOnly')
+    throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
+
+  // `setPlacementSpace` never writes an open space without a price, and the
+  // surface default is 0 rather than null, so this is a hand-edited row.
+  if (space.price == null)
+    throw throwBadRequestError('storyline: this creator has not set a price yet');
+
+  return { space, price: space.price, access, parent };
+}
+
+/** Refused rather than charged: a price the placer never saw is a spend without consent. */
+function assertPriceSeen(price: number, expectedPrice: number | undefined) {
+  if (expectedPrice !== price)
+    throw throwBadRequestError(`${STORYLINE_REFUSALS.priceChanged}: now ${price} Buzz`);
+}
+
+/**
+ * The publish of a post drafted as a continuation, before anything is written: a price the
+ * contributor was not shown refuses the publish, so they can read the new one and publish again.
+ * Terms that no longer let them continue do not: the post publishes on its own and the refusal is
+ * returned as `closedReason`. Otherwise returns the price, which is the one they were shown.
+ */
+export async function checkStorylineContinuationAtPublish({
+  placerId,
+  parentPostId,
+  expectedPrice,
+}: {
+  placerId: number;
+  parentPostId: number;
+  expectedPrice: number | undefined;
+}): Promise<{ closedReason: string } | { price: number }> {
+  const terms = await storylineContinuationTerms({ placerId, parentPostId }).catch(
+    (error: unknown) => {
+      if (isRefusal(error)) return { closedReason: (error as TRPCError).message };
+      throw error;
+    }
+  );
+  if ('closedReason' in terms) return terms;
+  assertPriceSeen(terms.price, expectedPrice);
+  return { price: terms.price };
 }
 
 /**
