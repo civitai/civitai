@@ -15,6 +15,7 @@
   // Editing a field after the count would leave the release acting on the values counted, not shown.
   let edited = $state(false);
   let releasing = $state(false);
+  let counting = $state(false);
 </script>
 
 <header class="page-header">
@@ -41,11 +42,18 @@
   <form
     method="POST"
     action="?/count"
-    use:enhance={() =>
-      async ({ update }) => {
-        await update({ reset: false });
-        edited = false;
-      }}
+    use:enhance={() => {
+      // Cleared as the count goes out, so a keystroke during it keeps the release hidden.
+      edited = false;
+      counting = true;
+      return async ({ update }) => {
+        try {
+          await update({ reset: false });
+        } finally {
+          counting = false;
+        }
+      };
+    }}
     oninput={() => (edited = true)}
     class="grid max-w-xl gap-3"
   >
@@ -67,7 +75,7 @@
   </form>
 
   <!-- Its own form, so Enter in the count field submits Release and never Count. -->
-  {#if counted && !edited}
+  {#if counted && !edited && !counting}
     <form
       method="POST"
       action="?/release"
@@ -75,8 +83,11 @@
         if (releasing) return cancel();
         releasing = true;
         return async ({ update }) => {
-          await update();
-          releasing = false;
+          try {
+            await update();
+          } finally {
+            releasing = false;
+          }
         };
       }}
       class="mt-4 grid max-w-xl gap-3 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3"
