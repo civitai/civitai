@@ -1,12 +1,12 @@
 -- MANUAL APPLY ONLY, in each environment. Run it with psql in autocommit mode, one statement at a time,
 -- NOT inside a transaction: `ADD VALUE` and `CREATE INDEX CONCURRENTLY` refuse to run in a transaction
--- block. Every statement is idempotent, so re-running the file is safe, and a statement that fails on
--- the lock timeout below can simply be run again.
+-- block. Every statement is idempotent, so re-running the file is safe. The lock timeout below covers
+-- the statements before the index build; one that fails on it can simply be run again.
 --
--- If the CONCURRENTLY index build is interrupted it leaves an INVALID index behind, which
--- `IF NOT EXISTS` then skips. Check with
+-- The CONCURRENTLY index build runs without that timeout. If it fails or is interrupted it leaves an
+-- INVALID index behind, which `IF NOT EXISTS` then skips, so re-running it does nothing. Check with
 --   SELECT indisvalid FROM pg_index WHERE indexrelid = '"ApiKey_workerDeviceId_idx"'::regclass;
--- and if it is false, run `DROP INDEX CONCURRENTLY "ApiKey_workerDeviceId_idx";` and re-run the CREATE.
+-- and if it is false, run `DROP INDEX CONCURRENTLY "ApiKey_workerDeviceId_idx";`, then the CREATE again.
 --
 -- Worker identity at the auth hub: workload OAuth clients whose workers trade a device credential for a
 -- 15-minute `Worker` token through the token-exchange grant (RFC 8693).
@@ -73,6 +73,10 @@ END $$;
 
 ALTER TABLE "ApiKey" VALIDATE CONSTRAINT "ApiKey_workerDeviceId_fkey";
 
+-- A concurrent build waits out every older transaction in the database; under the lock timeout that wait
+-- aborts it and leaves an INVALID index.
+RESET lock_timeout;
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "ApiKey_workerDeviceId_idx" ON "ApiKey" ("workerDeviceId");
 
 INSERT INTO "Role" ("id", "description")
@@ -89,5 +93,3 @@ WITH created AS (
 )
 INSERT INTO "UserRole" ("userId", "role", "note")
 SELECT "id", 'system:workload', 'Owns workload OAuth clients' FROM created;
-
-RESET lock_timeout;

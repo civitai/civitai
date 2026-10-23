@@ -83,7 +83,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const oauthReq = toOAuthRequest({ method: 'POST', headers: oauthHeaders, body });
   const workerGrant: WorkerGrantRequestContext = { clientIp };
   Object.assign(oauthReq, { workerGrant });
-  const respHeaders = new Headers();
+  const respHeaders = new Headers({ 'Cache-Control': 'no-store', Pragma: 'no-cache' }); // RFC 6749 §5.1
 
   try {
     const token = await oauthServer.token(oauthReq, newOAuthResponse());

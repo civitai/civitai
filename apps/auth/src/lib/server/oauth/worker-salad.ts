@@ -22,6 +22,8 @@ const TOKEN_ERRORS = [
   errors.JOSENotSupported,
 ];
 
+const MAX_TOKEN_LIFETIME_SECONDS = 600;
+
 type SaladConfig = { jwksUrl: string; issuer: string; audience: string; algorithms: string[] };
 
 function saladConfig(): SaladConfig | null {
@@ -69,6 +71,10 @@ export async function verifySaladJwt(token: string): Promise<SaladIdentity> {
       throw new SaladTokenError((err as Error).message);
     }
     throw err;
+  }
+  // Not jose's maxTokenAge: that needs an `iat` claim and does not bound `exp`.
+  if ((payload.exp as number) - Math.floor(Date.now() / 1000) > MAX_TOKEN_LIFETIME_SECONDS) {
+    throw new SaladTokenError('token expires too far in the future');
   }
   const machineId = payload.salad_machine_id;
   const containerGroupId = payload.salad_container_group_id;

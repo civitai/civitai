@@ -134,7 +134,11 @@ async function exchange(
       ...over,
     }),
   } as never);
-  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  return {
+    status: res.status,
+    headers: res.headers,
+    body: (await res.json()) as Record<string, unknown>,
+  };
 }
 
 async function introspect(token: string, caller = ORCHESTRATOR) {
@@ -164,10 +168,10 @@ function saladJwt(
   claims: Record<string, unknown> = {},
   key: CryptoKey = saladKey,
   {
-    expires = true,
+    expires = '5m',
     issuer = SALAD_ISSUER,
     audience = SALAD_AUDIENCE,
-  }: { expires?: boolean; issuer?: string; audience?: string } = {}
+  }: { expires?: string | false; issuer?: string; audience?: string } = {}
 ): Promise<string> {
   const jwt = new SignJWT({
     salad_machine_id: 'salad-machine-7',
@@ -178,7 +182,7 @@ function saladJwt(
     .setIssuer(issuer)
     .setAudience(audience)
     .setIssuedAt();
-  return (expires ? jwt.setExpirationTime('5m') : jwt).sign(key);
+  return (expires ? jwt.setExpirationTime(expires) : jwt).sign(key);
 }
 
 const rows = (table: string) => h.tables[table] ?? [];
@@ -255,6 +259,8 @@ describe('worker token exchange', () => {
       expires_in: 900,
       scope: String(WORKER),
     });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('pragma')).toBe('no-cache');
     const [device] = rows('WorkerDevice');
     expect(device).toMatchObject({
       clientId: POOL,
@@ -451,6 +457,17 @@ describe('worker token exchange — Salad IMDS JWT', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_grant');
     expect(workerKeys()).toHaveLength(0);
+  });
+
+  it('refuses a token that expires more than 10 minutes out', async () => {
+    const res = await saladExchange(await saladJwt({}, saladKey, { expires: '365d' }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_grant');
+    expect(workerKeys()).toHaveLength(0);
+
+    expect((await saladExchange(await saladJwt({}, saladKey, { expires: '10m' }))).status).toBe(
+      200
+    );
   });
 
   it('answers a server error, not invalid_grant, when the JWKS cannot be fetched', async () => {

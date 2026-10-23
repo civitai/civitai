@@ -25,6 +25,11 @@ export type CreateWorkerClientInput = {
 export function workerClientInputError(input: CreateWorkerClientInput): string | null {
   const types = input.subjectTokenTypes;
   const groups = input.saladContainerGroupIds ?? [];
+  // Basic credentials are decoded differently across the token, revoke and introspect routes for any
+  // character that form-encoding changes, such as `+`.
+  if (!/^[A-Za-z0-9._-]+$/.test(input.id)) {
+    return 'a client id may contain only letters, digits, ".", "_" and "-"';
+  }
   if (types.length === 0) return 'at least one subject token type is required';
   const unknown = types.find((t) => t !== DEVICE_ID_TOKEN_TYPE && t !== JWT_TOKEN_TYPE);
   if (unknown) return `unknown subject token type ${unknown}`;

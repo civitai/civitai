@@ -71,6 +71,12 @@ describe('createWorkerClient', () => {
   });
 
   it.each([
+    ['a client id with "+"', { id: 'workers+salad', subjectTokenTypes: [DEVICE_ID] }, /client id/],
+    [
+      'a client id with "%"',
+      { id: 'workers%2Bsalad', subjectTokenTypes: [DEVICE_ID] },
+      /client id/,
+    ],
     ['no accepted types', { subjectTokenTypes: [] }, /at least one/],
     ['an unknown type', { subjectTokenTypes: ['urn:other'] }, /unknown subject token type/],
     [
