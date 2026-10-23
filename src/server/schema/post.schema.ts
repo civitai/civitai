@@ -331,6 +331,8 @@ export const postEditQuerySchema = z.object({
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
   model3dId: z.coerce.number().optional(),
+  /** The empty storyline this post is chapter 1 of, set by the storyline start flow. */
+  storyline: z.coerce.number().int().positive().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

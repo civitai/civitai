@@ -55,7 +55,9 @@ section).
 
 ## For creators
 
-- **Starting one.** A published post becomes the first chapter of a new storyline.
+- **Starting one.** "Start a storyline" on /storylines names it and sets its terms, then opens the post
+  editor with the storyline already attached. The post that is published from there becomes chapter 1.
+  Until then the storyline is empty and only its creator sees it.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
