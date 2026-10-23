@@ -126,6 +126,7 @@ import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-sched
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
@@ -273,6 +274,7 @@ export const jobs: Job[] = [
   dummyJob,
   retroactiveHashBlocking,
   minorHashSweep,
+  poiHashSweep,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,

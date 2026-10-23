@@ -2844,6 +2844,51 @@ export async function setModelSfwOnly({
   return result;
 }
 
+export type ModelPoiActivity = 'setPoi' | 'unsetPoi' | 'setPoiAutoHash' | 'revertPoiAutoHash';
+
+export const POI_FLAG_SNAPSHOT_KEY = 'poiFlagSnapshot';
+export const POI_HASH_MATCH_KEY = 'poiHashMatch';
+export const POI_HASH_CLEARED_KEY = 'poiHashCleared';
+
+/** A human said "not a real person": the match no longer applies to files already uploaded. */
+export async function clearPoiHashMeta(modelId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = (${asJsonbObjectSql(
+      'm.meta'
+    )} - ${POI_FLAG_SNAPSHOT_KEY}::text - ${POI_HASH_MATCH_KEY}::text)
+      || jsonb_build_object(${POI_HASH_CLEARED_KEY}::text, jsonb_build_object('at', now()))
+    WHERE m.id = ${modelId}
+  `;
+}
+
+// Best-effort, like the minor snapshot: a lost snapshot must block a later revert, not the flag.
+async function capturePoiFlagSnapshot(modelId: number) {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+        ${POI_FLAG_SNAPSHOT_KEY}::text, jsonb_build_object(
+          'at', now(),
+          'source', 'auto',
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[]))
+        )
+      )
+      WHERE m.id = ${modelId} AND NOT m.poi
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'poi-flag-snapshot',
+      message: error instanceof Error ? error.message : String(error),
+      modelId,
+    }).catch(() => null);
+  }
+}
+
 /**
  * Set or lift a model's "depicts a real person" flag, as a moderator — what the model edit form's POI
  * checkbox does, without the form. Setting it applies the restrictions a POI model always carries
@@ -2854,6 +2899,8 @@ export async function setModelSfwOnly({
  * Lifting mirrors `setModelMinor`'s unset: the ruling is stamped BEFORE the write, so a text scan
  * landing mid-lift sees it and does not re-flag; sfwOnly/nsfw are left as they are; and the owner's
  * now-moot appeal is closed.
+ *
+ * Any lift also stamps `poiHashCleared`, so the hash match does not re-flag files that predate it.
  */
 export async function setModelPoi({
   id,
@@ -2861,7 +2908,16 @@ export async function setModelPoi({
   userId,
   tracker,
   isModerator,
-}: SetModelPoiInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
+  activity,
+  fromAppeal,
+}: SetModelPoiInput & {
+  userId: number;
+  tracker?: Tracker;
+  isModerator?: boolean;
+  activity?: ModelPoiActivity;
+  /** The appeal resolver stamps its own grant and closes the appeal itself afterwards. */
+  fromAppeal?: boolean;
+}) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2878,7 +2934,7 @@ export async function setModelPoi({
 
   const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
   const lifting = !poi && before.poi;
-  if (lifting) {
+  if (lifting && !fromAppeal) {
     const { stampModeratorTextScanRuling } = await loadAppealTextHash();
     const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'poi' });
     if (!stamped)
@@ -2913,6 +2969,9 @@ export async function setModelPoi({
         lockedProperties,
       };
 
+  // Before the write, or the snapshot records the flagged state.
+  if (poi && !before.poi && activity === 'setPoiAutoHash') await capturePoiFlagSnapshot(id);
+
   const result = await dbWrite.model.update({
     where: { id },
     data,
@@ -2929,8 +2988,15 @@ export async function setModelPoi({
     },
   });
 
+  if (poi)
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text
+      WHERE m.id = ${id}
+    `;
+  else if (lifting) await clearPoiHashMeta(id);
+
   await preventReplicationLag('model', id);
-  const modActivity = poi ? 'setPoi' : 'unsetPoi';
+  const modActivity = activity ?? (poi ? 'setPoi' : 'unsetPoi');
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
@@ -2963,7 +3029,7 @@ export async function setModelPoi({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
-  if (lifting) {
+  if (lifting && !fromAppeal) {
     const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
     await settleFlagAppealsAfterModeratorLift({
       modelId: id,

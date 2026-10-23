@@ -338,6 +338,35 @@ describe('resolvePoiFlagged', () => {
     expect(resolvePoiFlagged({ isOwner: true, poi: false, meta })).toBe(false);
     expect(resolvePoiFlagged({ isOwner: true, poi: true, meta: {} })).toBe(false);
   });
+
+  // The hash match applies the flag with no text-scan entry; without this the owner has no appeal.
+  it('is true for the owner of a model the hash match flagged', () => {
+    const hashed = { poiFlagSnapshot: { at: 'x', source: 'auto' } } as ModelMeta;
+    expect(resolvePoiFlagged({ isOwner: true, poi: true, meta: hashed })).toBe(true);
+    expect(resolvePoiFlagged({ isOwner: false, poi: true, meta: hashed })).toBe(false);
+    expect(resolvePoiFlagged({ isOwner: true, poi: false, meta: hashed })).toBe(false);
+  });
+});
+
+describe('real-person hash keys never reach a client', () => {
+  const meta = {
+    hideBuzz: true,
+    poiFlagSnapshot: { at: 'x', source: 'auto', prevNsfw: true },
+    poiHashMatch: { at: 'x', hash: 'ABC' },
+    poiHashCleared: { at: 'x' },
+  } as ModelMeta;
+  const keys = ['poiFlagSnapshot', 'poiHashMatch', 'poiHashCleared'];
+
+  it('a non-moderator model read has none of them', () => {
+    const out = filterModelMetaForClient(meta, false);
+    for (const key of keys) expect(out).not.toHaveProperty(key);
+    expect(out.hideBuzz).toBe(true);
+  });
+
+  it('an owner cannot write them through model.upsert', () => {
+    const out = stripModerationOwnedMeta(meta, false)!;
+    for (const key of keys) expect(out).not.toHaveProperty(key);
+  });
 });
 
 describe('resolveMinorFlagged — text-scan minor', () => {
