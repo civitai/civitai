@@ -115,7 +115,8 @@ the metrics watcher and never configures the Debezium connector.
   that the connector streams `public.Image` and is running, or while the collection has no
   recorded model. It is checked at startup and every minute, and resumes when it passes again,
   so a Connect blip only pauses it. Images that needed embedding meanwhile are kept (in memory,
-  up to 100k) and embedded on resume; a restart loses that list, and the reconciler finds them.
+  up to 100k) and embedded on resume, at most 512 per flush so that deletes keep flowing; a
+  restart loses that list, and the reconciler finds them.
   The health response shows `embedPaused` and `deferred`.
 - It writes to Qdrant even with embedding off: it creates the collection, payload indexes and
   alias on startup, and applies deletes and payload updates. Deploy it only once its Qdrant is
@@ -171,7 +172,9 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
   `reset` clears it. SIGTERM finishes in-flight pages and stops.
 - A run holds a lease (`...:lease` beside the cursor, renewed every 30 s, lapsing 2 minutes
   after the run dies), so a second copy of the same backfill refuses to start instead of
-  paying for every page twice.
+  paying for every page twice. A run that loses its lease stops and no longer writes the cursor.
+- It re-checks the connector every 5 minutes; while it does not stream Image, no new page
+  starts.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
   so that live sync is already removing blocked images. Kafka Connect must also confirm the
   connector streams Image and is running. `--without-image-cdc` lifts the Image conditions for

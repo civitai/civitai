@@ -544,6 +544,63 @@ describe('backfill', () => {
   });
 });
 
+describe('review round 5', () => {
+  test('a resume takes deferred ids a few hundred at a time, so deletes are not held behind them', async () => {
+    const pg = new FakePg();
+    for (let id = 1; id <= 2000; id++) pg.put(imageRow(id));
+    const store = new FakeStore();
+    const embedder = new FakeEmbedder();
+    const queue = new VectorSyncQueue(deps(pg, store, embedder), async () => undefined);
+    queue.setGate('paused');
+    for (let id = 1; id <= 2000; id++)
+      queue.add(id, { topic: 'postgres.Image', partition: 0, offset: String(id) });
+    await queue.flush();
+    expect(queue.deferred.size).toBe(2000);
+
+    queue.setGate(null);
+    queue.add(null, { topic: 'postgres.Image', partition: 0, offset: '2001' });
+    await queue.flush();
+    expect(embedder.calls.flat()).toHaveLength(512);
+    expect(queue.deferred.size).toBe(2000 - 512);
+  });
+
+  test('a backfill waits while the connector check fails and resumes when it passes', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 10 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    let checks = 0;
+    let cursor: number | null = null;
+    const state: RunState = {
+      getCursor: async () => cursor,
+      setCursor: async (id) => void (cursor = id),
+      isPaused: async () => false,
+      setPaused: async () => undefined,
+      reset: async () => undefined,
+      close: async () => undefined,
+      ...memoryLease(),
+    };
+    const pointsWhileBlocked: number[] = [];
+    await runBackfill(
+      { watermark: 10, floor: 0, span: 5, pages: 1 },
+      {
+        ...deps(pg, store),
+        state,
+        sleep: async () => undefined,
+        gateEveryMs: 0,
+        gateCheck: async () => {
+          checks++;
+          if (checks <= 3) {
+            pointsWhileBlocked.push(store.points.size);
+            return 'the connector does not stream public.Image';
+          }
+          return null;
+        },
+      }
+    );
+    expect(pointsWhileBlocked).toEqual([0, 0, 0]);
+    expect(store.points.size).toBe(10);
+  });
+});
+
 describe('backfill lease', () => {
   test('a second run of the same backfill refuses to start while the first holds the lease', async () => {
     const pg = new FakePg().put(...Array.from({ length: 20 }, (_, i) => imageRow(i + 1)));

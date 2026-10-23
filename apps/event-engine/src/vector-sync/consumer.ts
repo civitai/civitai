@@ -32,6 +32,11 @@ const IMAGE_TOPIC = 'postgres.Image';
 const MAX_PENDING = 5_000;
 /** Deferred ids beyond this are dropped (logged); the reconciler finds them. */
 const MAX_DEFERRED = 100_000;
+/**
+ * Deferred ids taken into one flush. Flushes are serial, so one huge catch-up flush would hold
+ * back every block's delete behind it, and a pause would not take effect until it ended.
+ */
+const DEFERRED_PER_FLUSH = 512;
 
 type Offset = { topic: string; partition: number; offset: string };
 
@@ -89,6 +94,7 @@ export class VectorSyncQueue {
     }
     const progressAtStart = this.progressCount;
     const ids = [...this.pending];
+    const pendingCount = ids.length;
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
     this.offsets = new Map();
@@ -101,9 +107,12 @@ export class VectorSyncQueue {
       if (this.deps.embedder && !this.gateBlocked && !stamped) {
         logger.warn('vector-sync: collection has no recorded model yet; deferring embeds');
       }
-      if (stamped && this.deferred.size) {
-        for (const id of this.deferred) ids.push(id);
-        this.deferred.clear();
+      if (stamped) {
+        for (const id of this.deferred) {
+          if (ids.length >= pendingCount + DEFERRED_PER_FLUSH) break;
+          ids.push(id);
+          this.deferred.delete(id);
+        }
       }
       const stats = await syncImageIds(ids, stamped ? this.deps : { ...this.deps, embedder: null });
       const { deferredIds = [], ...counts } = stats;
@@ -142,10 +151,10 @@ export class VectorSyncQueue {
   }
 
   private defer(ids: number[]) {
-    for (const id of ids) {
+    for (const [i, id] of ids.entries()) {
       if (this.deferred.size >= MAX_DEFERRED) {
         logger.warn(
-          { dropped: ids.length },
+          { dropped: ids.length - i },
           'vector-sync: deferred set full; reconcile will find the rest'
         );
         return;

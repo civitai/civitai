@@ -20,7 +20,14 @@ import { fileRunState, redisRunState, type RunState } from './cursor';
 import { Embedder } from './embedder';
 import { VectorStore } from './qdrant';
 import { getImageRowsInRange } from './source';
-import { addStats, embedBlockedReason, emptyStats, syncRows, type SyncDeps } from './sync';
+import {
+  addStats,
+  connectorBlock,
+  embedBlockedReason,
+  emptyStats,
+  syncRows,
+  type SyncDeps,
+} from './sync';
 
 export type BackfillOptions = {
   watermark: number;
@@ -42,6 +49,11 @@ type BackfillDeps = SyncDeps & {
   state: RunState;
   shouldStop?: () => boolean;
   sleep?: (ms: number) => Promise<void>;
+  /** Why embedding should pause right now (the connector stopped streaming Image), if it should. */
+  gateCheck?: () => Promise<string | null>;
+  gateEveryMs?: number;
+  /** True once another run may own the cursor; this one then stops writing it. */
+  leaseLost?: () => boolean;
 };
 
 const LEASE_MS = 120_000;
@@ -69,6 +81,7 @@ export async function runBackfill(
     const result = await runPages(opts, {
       ...deps,
       shouldStop: () => lost || !!deps.shouldStop?.(),
+      leaseLost: () => lost,
     });
     if (lost) throw new Error('lost the backfill lease; stopped so two runs do not overlap');
     return result;
@@ -109,7 +122,7 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
     while (finished.has(committed)) {
       finished.delete(committed);
       committed = Math.max(opts.floor, committed - opts.span);
-      if (!deps.dryRun) await deps.state.setCursor(committed);
+      if (!deps.dryRun && !deps.leaseLost?.()) await deps.state.setCursor(committed);
     }
   };
 
@@ -132,12 +145,33 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
     }
   };
 
+  // Re-checked during the run, which lasts days: if the connector stops streaming Image, blocks
+  // stop reaching the index, so new pages wait until it streams again.
+  let gateBlocked: string | null = null;
+  let gateCheckedAt = -Infinity;
+  const checkGate = async () => {
+    const every = deps.gateEveryMs ?? (gateBlocked ? 30_000 : 5 * 60_000);
+    if (!deps.gateCheck || Date.now() - gateCheckedAt < every) return;
+    gateCheckedAt = Date.now();
+    const reason = await deps
+      .gateCheck()
+      .catch((err) => `gate check failed: ${(err as Error).message}`);
+    if (reason !== gateBlocked) {
+      logger.warn(
+        { reason },
+        reason ? 'vector-backfill: paused by gate' : 'vector-backfill: gate passes'
+      );
+    }
+    gateBlocked = reason;
+  };
+
   while (!failure) {
+    await checkGate();
     const stop =
       next <= opts.floor ||
       (opts.limit !== undefined && total.eligible >= opts.limit) ||
       deps.shouldStop?.();
-    if (!stop && !(await deps.state.isPaused()) && inFlight.size < opts.pages) {
+    if (!stop && !gateBlocked && !(await deps.state.isPaused()) && inFlight.size < opts.pages) {
       const hi = next;
       next = Math.max(opts.floor, hi - opts.span);
       inFlight.set(
@@ -232,6 +266,7 @@ async function main() {
     const watermark = int('watermark');
     if (watermark === undefined) throw new Error('--watermark <id> is required');
     const dryRun = flags['dry-run'] === true;
+    let gateCheck: (() => Promise<string | null>) | undefined;
     if (!dryRun) {
       if (flags.confirm !== true) throw new Error('Writing needs --confirm (or pass --dry-run)');
       const withoutImageCdc = flags['without-image-cdc'] === true;
@@ -241,6 +276,7 @@ async function main() {
       }
       const blocked = await embedBlockedReason({ withoutImageCdc });
       if (blocked) throw new Error(`Not embedding: ${blocked}`);
+      if (!withoutImageCdc) gateCheck = () => connectorBlock();
     }
 
     const pg = createGuardedPgPool(
@@ -276,6 +312,7 @@ async function main() {
           embedder: dryRun ? null : Embedder.fromConfig('low'),
           dryRun,
           state,
+          gateCheck,
           shouldStop: () => stopping,
         }
       );
