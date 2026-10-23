@@ -779,6 +779,20 @@ function orchestratorErrorMessage(error: unknown) {
 }
 
 /**
+ * Seconds from a 429's `Retry-After` (delta-seconds or an HTTP date), clamped to [1, 3600];
+ * undefined when absent or unparseable.
+ */
+export function getRetryAfterSeconds(response: Pick<Response, 'headers'> | undefined) {
+  const value = response?.headers?.get?.('retry-after')?.trim();
+  if (!value) return undefined;
+  const seconds = /^\d+$/.test(value)
+    ? Number(value)
+    : Math.ceil((Date.parse(value) - Date.now()) / 1000);
+  if (!Number.isFinite(seconds)) return undefined;
+  return Math.min(3600, Math.max(1, seconds));
+}
+
+/**
  * Maps a failed orchestrator call onto the app's errors. 403 means insufficient funds — a caller
  * where it does not must handle 403 first.
  */
@@ -809,11 +823,21 @@ export function throwOrchestratorFailure({
       throw throwAuthorizationError(message);
     case 403:
       throw throwInsufficientFundsError(message);
-    case 429:
+    case 429: {
       // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
       // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
       // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
-      throw throwRateLimitError(message);
+      // Not "too many jobs" for every 429: a free-tier quota 429 carries its own detail.
+      const retryAfter = getRetryAfterSeconds(response);
+      const reason = message || 'Too many requests right now.';
+      throw throwRateLimitError(
+        retryAfter
+          ? `${reason}${
+              /[.!?]$/.test(reason) ? '' : '.'
+            } Please try again in about ${retryAfter} seconds.`
+          : reason
+      );
+    }
     default:
       // An unhandled 4xx from the orchestrator is a client/validation fault
       // (e.g. "<resource> is not enabled for generation. Please contact …"),

@@ -88,6 +88,8 @@ type IngestImageRow = IngestImageInput & {
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
+  /** Its last submit was answered 429. A successful submit clears `scanJobs.error`. */
+  rateLimited: boolean;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -151,6 +153,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error'->>'responseStatus' = '429', false) as "rateLimited",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -210,10 +213,17 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Pending image is flipped to Error (below, in the prod block), which routes it
   // into the EXISTING capped Error-retry machinery — it gets a bounded number of
   // real retries and then terminalizes, instead of being Pending forever.
+  //
+  // A rate-limited upload is exempt: it is old because the orchestrator told us to wait,
+  // not because a scan went missing, and it keeps being re-sent as Pending.
   const pendingTimeoutDate = decreaseDate(now, env.IMAGE_SCANNING_PENDING_TIMEOUT, 'minutes');
   const agedOutPendingIds = images
     .filter(
-      (img) => img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
+      (img) =>
+        img.ingestion === 'Pending' &&
+        !img.isBackfill &&
+        !img.rateLimited &&
+        img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);
   const agedOutPendingSet = new Set(agedOutPendingIds);
@@ -245,8 +255,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Error retries use a reason-aware ceiling: transient infra churn (Siglip
   // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
   // bounded cap; permanent (unscannable media) gives up almost immediately;
-  // unknown keeps the historical 9-cap. retryCount always increments, so the cap
-  // is a hard backstop against re-flooding the scanner.
+  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt
+  // (not on a 429), so the cap is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&

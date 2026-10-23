@@ -1397,18 +1397,26 @@ async function markImageScanSubmitFailure({
   imageId,
   status,
   error,
+  retryAfter,
 }: {
   dbClient: { $executeRaw: typeof dbWrite.$executeRaw };
   imageId: number;
   status?: number;
   error: unknown;
+  /** Seconds from a 429's Retry-After. */
+  retryAfter?: number;
 }) {
   const reason = extractSubmitErrorMessage(error);
-  const failureClass =
-    !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
-      ? ImageScanFailureClass.Permanent
-      : classifyImageScanFailure({ reason, failureType: 'send-fail' });
+  // A 429 is the orchestrator asking us to wait, not a failed attempt: it must not spend the
+  // retry ceilings, and the cron's cooldown starts after the wait it asked for.
+  const rateLimited = status === 429;
+  const failureClass = rateLimited
+    ? ImageScanFailureClass.Transient
+    : !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
+    ? ImageScanFailureClass.Permanent
+    : classifyImageScanFailure({ reason, failureType: 'send-fail' });
   const isPermanent = failureClass === ImageScanFailureClass.Permanent;
+  const scanRequestedAt = new Date(Date.now() + (rateLimited ? retryAfter ?? 0 : 0) * 1000);
 
   const errorJson = JSON.stringify({
     failureType: 'send-fail',
@@ -1426,12 +1434,12 @@ async function markImageScanSubmitFailure({
         WHEN ${isPermanent}::boolean THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
         ELSE "ingestion"
       END,
-      "scanRequestedAt" = ${new Date()},
+      "scanRequestedAt" = ${scanRequestedAt},
       "scanJobs" = jsonb_set(
         jsonb_set(
           COALESCE("scanJobs", '{}'),
           '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${rateLimited ? 0 : 1})
         ),
         '{error}',
         ${errorJson}::jsonb
@@ -1501,6 +1509,7 @@ export const ingestImage = async ({
     data: workflowResponse,
     error: submitError,
     status: submitStatus,
+    retryAfter,
     useImageScanning,
   } = await createImageIngestionRequest({
     imageId: id,
@@ -1517,6 +1526,7 @@ export const ingestImage = async ({
       imageId: id,
       status: submitStatus,
       error: submitError,
+      retryAfter,
     });
     // createImageIngestionRequest's own log carries neither mediaType nor failureClass.
     logToAxiom({

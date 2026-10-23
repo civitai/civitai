@@ -76,6 +76,7 @@ function mkRow(overrides: {
   scanRequestedAt: Date | null;
   retryCount?: number;
   failureClass?: string | null;
+  rateLimited?: boolean;
 }) {
   return {
     url: `img-${overrides.id}`,
@@ -85,6 +86,7 @@ function mkRow(overrides: {
     prompt: null,
     retryCount: 0,
     failureClass: null,
+    rateLimited: false,
     ...overrides,
   };
 }
@@ -217,5 +219,54 @@ describe('ingest-images pending age-out', () => {
     // so the retry loop is bounded, never infinite.
     expect(sentIds()).not.toContain(5);
     expect(targetIds(del)).toContain(5);
+  });
+});
+
+// A run of orchestrator 429s must not age an upload out to Error: it is old because we were
+// told to wait, and the Error lane's retry ceilings would then drop the scan.
+describe('ingest-images pending age-out — rate-limited uploads', () => {
+  const COOLED = new Date(Date.now() - 10 * 60 * 1000); // past the 5-min retry delay
+  function runWith(rows: ReturnType<typeof mkRow>[]) {
+    mockDbRead.jobQueue.findMany.mockImplementationOnce(async () =>
+      rows.map(({ id }) => ({ entityId: id }))
+    );
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => rows);
+    return runJob(ingestImages) as Promise<{ agedOutPending: number }>;
+  }
+
+  it('an old Pending upload whose last submit was a 429 stays Pending and is re-sent', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 6,
+        ingestion: 'Pending',
+        createdAt: OLD,
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'transient',
+        rateLimited: true,
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(0);
+    expect(ageOutUpdate()).toBeUndefined();
+    expect(sentIds()).toEqual([6]);
+  });
+
+  it('control: the same upload with an unknown-class failure still ages out', async () => {
+    const result = await runWith([
+      mkRow({
+        id: 7,
+        ingestion: 'Pending',
+        createdAt: OLD,
+        isBackfill: false,
+        scanRequestedAt: COOLED,
+        failureClass: 'unknown',
+        retryCount: 3,
+      }),
+    ]);
+
+    expect(result.agedOutPending).toBe(1);
+    expect(targetIds(ageOutUpdate())).toEqual([7]);
+    expect(sentIds()).not.toContain(7);
   });
 });
