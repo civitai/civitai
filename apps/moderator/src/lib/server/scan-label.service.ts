@@ -72,6 +72,15 @@ const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
     .executeTakeFirstOrThrow()
     .then((r) => Number(r.n));
 
+const hasVoted = (db: Db, itemId: number, userId: number) =>
+  db
+    .selectFrom('ScanLabelVote')
+    .select('itemId')
+    .where('itemId', '=', itemId)
+    .where('userId', '=', userId)
+    .executeTakeFirst()
+    .then((r) => !!r);
+
 async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<ScanLabelCard | null> {
   const row = await db
     .selectFrom('ScanLabelItem as i')
@@ -199,16 +208,21 @@ export async function claimNext(
           .executeTakeFirst();
         if (!candidate) break;
 
-        // 🔴 Re-count AFTER taking the row lock, in a new statement. The candidate query's lease count
-        // came from a snapshot that can predate a rival claimer's commit; every claimer and voter takes
-        // this lock first, so only a count read under it is current.
+        // 🔴 Re-count, and re-check this moderator's own vote, AFTER taking the row lock, in new
+        // statements. The candidate query came from a snapshot that can predate a rival claimer's or
+        // another tab's commit; every claimer and voter takes this lock first, so only a read under it
+        // is current.
         const fresh = await trx
           .selectFrom('ScanLabelItem')
           .select(['votes', 'status'])
           .where('id', '=', candidate.id)
           .executeTakeFirstOrThrow();
         const leases = await otherLiveLeases(trx, candidate.id, userId, now);
-        if (fresh.status !== 'open' || fresh.votes + leases >= VOTES_PER_ITEM) {
+        if (
+          fresh.status !== 'open' ||
+          fresh.votes + leases >= VOTES_PER_ITEM ||
+          (await hasVoted(trx, candidate.id, userId))
+        ) {
           tried.push(candidate.id);
           continue;
         }
@@ -249,7 +263,10 @@ export async function castVote(
       .where('id', '=', itemId)
       .forUpdate()
       .executeTakeFirst();
-    if (!item || item.status !== 'open' || item.votes >= VOTES_PER_ITEM)
+    if (!item) return { ok: false, reason: 'not-open' };
+    // Before the other refusals, so a repeat vote from a second tab is told it already landed.
+    if (await hasVoted(trx, itemId, userId)) return { ok: false, reason: 'already-voted' };
+    if (item.status !== 'open' || item.votes >= VOTES_PER_ITEM)
       return { ok: false, reason: 'not-open' };
 
     const mine = await trx
