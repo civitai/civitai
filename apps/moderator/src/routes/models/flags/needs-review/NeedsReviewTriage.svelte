@@ -111,9 +111,10 @@
 
   const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index);
 
-  // A held detection is timed by when the scan held it; a match-only row by its file's upload.
+  // A held detection is timed by when the scan held it; a minor match by its file's upload; a
+  // real-person match by when it was matched.
   const rowMeta = (row: NeedsReviewRow) => {
-    const verb = row.flags.length ? 'detected' : 'uploaded';
+    const verb = row.flags.length ? 'detected' : row.match ? 'uploaded' : 'matched';
     return row.flaggedAt ? `${verb} ${shortAge(row.flaggedAt)}` : verb;
   };
 </script>
@@ -189,6 +190,15 @@
           <MetaChip truncate>
             shares file with {row.match.minorModelName ?? `model #${row.match.minorModelId}`}
           </MetaChip>
+        {/if}
+        {#if row.poiMatch}
+          {#if !row.match}<MetaChip tone="blue">hash</MetaChip>{/if}
+          {#if !row.flags.some((f) => f.label === 'poi')}<FlagBadge label="poi" />{/if}
+          {#if row.poiMatch.seedModelId}
+            <MetaChip truncate>
+              shares file with {row.poiMatch.seedModelName ?? `model #${row.poiMatch.seedModelId}`}
+            </MetaChip>
+          {/if}
         {/if}
         <CrossTabChips
           chips={crossTabChips(

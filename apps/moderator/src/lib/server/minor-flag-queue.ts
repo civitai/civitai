@@ -28,7 +28,7 @@ import {
   getFlaggedSourceCounts,
   getModelAppealState,
   getModelFlagDetail,
-  getModelMinor,
+  getModelFlagState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   type MinorSearch,
@@ -50,7 +50,7 @@ import { denied, type PermissionSet } from '$lib/permissions';
 import { canAccess } from '$lib/server/access';
 import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
 import { appealVerdict } from '$lib/minor-flags/appeal-split';
-import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
+import type { FlaggedLabel, FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
   APPEAL_SORTS,
@@ -70,13 +70,17 @@ import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
 import {
   confirmMinorFlag,
+  confirmPoiFlag,
   dismissMinorHashMatch,
+  dismissPoiHashMatch,
   resolveMinorFlagAppeal,
   resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
+  revertPoiFlag,
   ruleTextScanFlag,
   setModelMinorFlag,
+  setModelPoiFlag,
 } from '$lib/server/minor-flag.service';
 
 const querySchema = z.object({
@@ -267,10 +271,20 @@ const modelSubject = (modelId: number) => `Model #${modelId}`;
 
 type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
 
+/** The keep and lift of each label's hash flag and file match (no reason yet). */
+const hashRulings = (source: 'hash' | 'file-match', label: FlaggedLabel) =>
+  source === 'hash'
+    ? label === 'poi'
+      ? [confirmPoiFlag, revertPoiFlag]
+      : [confirmMinorFlag, revertMinorFlag]
+    : label === 'poi'
+    ? [setModelPoiFlag, dismissPoiHashMatch]
+    : [setModelMinorFlag, dismissMinorHashMatch];
+
 /** Rules one flag through the path its source owns: hash flags through the main app's confirm and
- *  revert endpoints (no reason yet), text-scan flags through `ruleTextScanFlag`, re-detections through
- *  `resolveRedetection`, file matches through set-minor and dismiss (no reason yet). The caller has
- *  checked the label, text hash and reason. */
+ *  revert endpoints, text-scan flags through `ruleTextScanFlag`, re-detections through
+ *  `resolveRedetection`, file matches through the label's set and dismiss (`hashRulings`). The caller
+ *  has checked the label, text hash and reason. */
 async function ruleFlag(
   modelId: number,
   flag: FlagRef,
@@ -278,10 +292,7 @@ async function ruleFlag(
   reason: RulingReason | null
 ): Promise<{ ok: true; resolved: string } | { ok: false; error: string }> {
   if (flag.source === 'hash' || flag.source === 'file-match') {
-    const [onKeep, onLift] =
-      flag.source === 'hash'
-        ? [confirmMinorFlag, revertMinorFlag]
-        : [setModelMinorFlag, dismissMinorHashMatch];
+    const [onKeep, onLift] = hashRulings(flag.source, flag.label);
     const result = await (keep ? onKeep : onLift)(modelId);
     return result.ok
       ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
@@ -317,18 +328,18 @@ const flaggedAction =
       fail(400, { error, modelId, subject: modelSubject(modelId) });
 
     if (source.data === 'hash') {
-      // Hash flags are minor flags; a poi label here would still lift or keep the minor flag.
-      if (posted !== null && !(label.success && label.data === 'minor'))
-        return refusal('A hash flag can only be ruled as minor.');
+      // An older form posts no label: it could only mean the minor flag.
+      const hashLabel = posted === null ? 'minor' : label.success ? label.data : null;
+      if (!hashLabel) return fail(400, { error: 'Missing model id, label or source.' });
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
       const result = await ruleFlag(
         modelId,
-        { label: 'minor', source: 'hash', textHash: null },
+        { label: hashLabel, source: 'hash', textHash: null },
         keep,
         null
       );
       if (!result.ok) return refusal(result.error);
-      return { success: true, modelId, label: 'minor', resolved: result.resolved };
+      return { success: true, modelId, label: hashLabel, resolved: result.resolved };
     }
 
     if (!label.success) return fail(400, { error: 'Missing model id, label or source.' });
@@ -403,12 +414,9 @@ const decideAction =
     }
     const keep = parseKeptIds(form.get('keep'), flags);
     if (!keep) return refusal('Pick a decision.');
-    for (const flag of flags) {
-      if ((flag.source === 'hash' || flag.source === 'file-match') && flag.label !== 'minor')
-        return refusal(`A ${SOURCE_NAMES[flag.source]} can only be ruled as minor.`);
+    for (const flag of flags)
       if ((flag.source === 'text-scan' || flag.source === 'redetected') && !flag.textHash)
         return refusal('Missing text hash.');
-    }
 
     const plan = planDecision(flags, keep);
     const input = parseForm(z.object(resolutionReasonFields), form);
@@ -445,11 +453,11 @@ const decideAction =
     // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
     // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
     // it escape would hide the flags already ruled. A Needs review row lists its held detections before
-    // its file match, so a kept minor detection lands first and settles the match (`flagFileMatch`).
+    // its file matches, so a kept detection lands first and settles its label's match (`flagFileMatch`).
     const outcomes: { flag: PlannedFlagRef; result: RuleResult }[] = [];
     for (const [i, flag] of plan.entries()) {
       const result = await (flag.source === 'file-match' && flag.keep
-        ? flagFileMatch(modelId, outcomes)
+        ? flagFileMatch(modelId, flag.label, outcomes)
         : ruleFlag(modelId, flag, flag.keep, reasons[i])
       ).catch((err: unknown): { ok: false; error: string } => {
         console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
@@ -547,29 +555,27 @@ const doneVerb = (flag: PlannedFlagRef) =>
 
 type PlannedFlagRef = FlagRef & { keep: boolean };
 type RuleResult = { ok: true; resolved: string } | { ok: false; error: string };
-const MATCH_KEPT: FlagRef = { label: 'minor', source: 'file-match', textHash: null };
-
 /**
- * Flags a file match as minor, unless the model is minor already. A minor detection kept earlier in this
- * decision applied the flag (and its snapshot) itself, so it settles the match, which leaves the queue
- * with it (the queue lists only models that are not minor); set-minor again would not rewrite the
- * snapshot but would re-run its side effects as a second, moderator-sourced flag. A model minor for any
- * other reason is refused.
+ * Flags a file match with its label, unless the model carries that flag already. A detection of the
+ * label kept earlier in this decision applied the flag itself, so it settles the match, which leaves the
+ * queue with it (the queue lists only models without the flag); setting it again would re-run its side
+ * effects as a second, moderator-sourced flag. A model flagged for any other reason is refused.
  */
 async function flagFileMatch(
   modelId: number,
+  label: FlaggedLabel,
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
-  if (!(await getModelMinor(modelId))) return ruleFlag(modelId, MATCH_KEPT, true, null);
+  if (!(await getModelFlagState(modelId))[label])
+    return ruleFlag(modelId, { label, source: 'file-match', textHash: null }, true, null);
   const appliedHere = earlier.some(
-    (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === 'minor'
+    (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === label
   );
   return appliedHere
     ? { ok: true, resolved: 'kept' }
     : {
         ok: false,
-        error:
-          'This model is already flagged minor, so the match needs no flag. Dismiss it or reload the queue.',
+        error: `This model is already flagged as ${FLAG_LABEL_NAMES[label]}, so the match needs no flag. Dismiss it or reload the queue.`,
       };
 }
 

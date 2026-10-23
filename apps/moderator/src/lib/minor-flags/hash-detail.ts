@@ -30,11 +30,16 @@ export type HashDetail = {
   } | null;
 };
 
+/** `minorModelId` and the `minor*` fields name the seed, whichever label it carries. */
 export async function fetchHashDetail(
   modelId: number,
-  minorModelId: number | null = null
+  minorModelId: number | null = null,
+  label: 'minor' | 'poi' = 'minor'
 ): Promise<HashDetail> {
-  const query = minorModelId ? `?minorModelId=${minorModelId}` : '';
+  const params = new URLSearchParams();
+  if (minorModelId) params.set('minorModelId', String(minorModelId));
+  if (label === 'poi') params.set('label', label);
+  const query = params.size ? `?${params}` : '';
   const res = await fetch(`/api/minor-hash-detail/${modelId}${query}`);
   if (!res.ok) throw new Error(String(res.status));
   return res.json();
@@ -57,7 +62,10 @@ const SITE_SWEEP_REASONS = new Set(['no-posts', 'no-versions', 'no-files']);
  * `status` alone misleads: a taken-down model can still read Published, and `Unpublished` is not always
  * the owner's, because the site's sweep writes it, with a reason, once a model loses its images.
  */
-export function seedOutcome(d: NonNullable<HashDetail['detail']>): SeedOutcome {
+export function seedOutcome(
+  d: NonNullable<HashDetail['detail']>,
+  flagged = 'flagged minor'
+): SeedOutcome {
   const at = d.minorModelUnpublishedAt;
   const reason = d.minorModelUnpublishedReason;
   if (d.minorModelStatus === 'Deleted' || d.minorModelDeletedAt)
@@ -75,7 +83,7 @@ export function seedOutcome(d: NonNullable<HashDetail['detail']>): SeedOutcome {
     case 'Draft':
       return { tone: 'down', text: 'moved back to draft', at: null, reason: null };
     case 'Published':
-      return { tone: 'live', text: 'still published, flagged minor', at: null, reason: null };
+      return { tone: 'live', text: `still published, ${flagged}`, at: null, reason: null };
     default:
       return {
         tone: 'live',

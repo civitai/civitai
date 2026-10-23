@@ -562,6 +562,83 @@ describe('Auto-flagged: hash auto-flags', () => {
   });
 });
 
+describe('Auto-flagged: real-person hash flags', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const poiSnapshot = (source: string, at: string, extra: object = {}) => ({
+    poiFlagSnapshot: { source, at, prevNsfw: false, prevGalleryLevel: 2, ...extra },
+  });
+  const seed = (id: number, meta: object, { poi = true, minor = false } = {}) =>
+    pg.query(
+      `INSERT INTO "Model" (id, name, "userId", poi, minor, meta) VALUES ($1, $2, 1, $3, $4, $5)`,
+      [id, `model ${id}`, poi, minor, JSON.stringify(meta)]
+    );
+  const keys = async (filters?: Parameters<typeof getFlaggedModels>[0]['filters']) =>
+    flagKeys((await getFlaggedModels({ limit: 20, filters })).items);
+
+  beforeEach(async () => {
+    await seed(30, poiSnapshot('auto', daysAgo(3)));
+    // Out of the queue: past the window, confirmed, set by hand since, and lifted.
+    await seed(31, poiSnapshot('auto', daysAgo(31)));
+    await seed(32, poiSnapshot('manual', daysAgo(3), { confirmedFrom: 'auto' }));
+    await seed(33, poiSnapshot('auto', daysAgo(5)));
+    await pg.query(
+      `INSERT INTO "ModActivity" ("entityType", "entityId", activity, "createdAt")
+       VALUES ('model', 33, 'setPoi', $1)`,
+      [daysAgo(1)]
+    );
+    await seed(34, poiSnapshot('auto', daysAgo(3)), { poi: false });
+  });
+
+  it('lists the hash flag the main app applied, under the real-person label', async () => {
+    expect(await keys()).toEqual(['30:poi:hash']);
+    const [row] = (await getFlaggedModels({ limit: 20 })).items;
+    expect(row.flags[0]).toMatchObject({ daysLeft: 27, prevNsfw: false, prevGalleryLevel: 2 });
+  });
+
+  it('follows the label filter: real person keeps it, minor drops it', async () => {
+    expect(await keys({ source: 'hash', flag: 'poi', sort: 'oldest' })).toEqual(['30:poi:hash']);
+    expect(await keys({ source: 'all', flag: 'minor', sort: 'oldest' })).toEqual([]);
+    expect(await keys({ source: 'text-scan', flag: 'all', sort: 'oldest' })).toEqual([]);
+  });
+
+  it('a minor setMinor does not count as signing off the real-person flag', async () => {
+    await pg.query(
+      `INSERT INTO "ModActivity" ("entityType", "entityId", activity, "createdAt")
+       VALUES ('model', 30, 'setMinor', $1)`,
+      [daysAgo(1)]
+    );
+    expect(await keys()).toEqual(['30:poi:hash']);
+  });
+
+  it('carries both labels on one row when both were hash-flagged', async () => {
+    await seed(
+      35,
+      {
+        ...poiSnapshot('auto', daysAgo(2)),
+        minorFlagSnapshot: { source: 'auto', at: daysAgo(4) },
+      },
+      { minor: true }
+    );
+    // Oldest flag first: 35's minor flag (4 d) is older than 30's.
+    expect(await keys()).toEqual(['35:minor:hash', '35:poi:hash', '30:poi:hash']);
+    expect(await getFlaggedCount()).toBe(2);
+    expect(await getFlaggedSourceCounts()).toEqual({ all: 2, hash: 2, 'text-scan': 0 });
+  });
+
+  it('finds an aged-out flag when searched by its model id', async () => {
+    expect(await keys()).not.toContain('31:poi:hash');
+    expect(
+      flagKeys((await getFlaggedModels({ limit: 20, search: { modelOrUserId: 31 } })).items)
+    ).toEqual(['31:poi:hash']);
+  });
+
+  it('counts the hash flag as a real-person flag in force, as the appeal resolver does', async () => {
+    expect(await getModelAppealState(30)).toMatchObject({ poi: true });
+    expect(await getModelAppealState(32)).toMatchObject({ poi: true });
+    expect(await getModelAppealState(34)).toMatchObject({ poi: false });
+  });
+});
+
 describe('text-scan auto-flags', () => {
   const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
   const entry = (at: string, extra: object = {}) => ({
