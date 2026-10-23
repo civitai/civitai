@@ -141,8 +141,20 @@ See [Not built yet](#not-built-yet).
     4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
        (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
        and idles out at civitai.
-    A later reply (or Continue after the app was paused) starts the dev server and calls
-    `start_preview` again; civitai replaces the user's tunnel for that block. The instructions tell
+    5. **It opens by itself.** When a `sandbox__dev_server_start` call succeeds (its status says
+       the server runs) and the preview is set up here, the runner runs the steps above for the
+       open app, once per app per run, with no decision of the assistant's: the block id, scopes
+       and auth come from the project's `block.manifest.json` (the directory the start command
+       `cd`s into, else the app's own key). The page is told by the same `tool-reported`
+       `start_preview` result, and the assistant reads, after the dev server's own answer, that the
+       user now sees the preview, or why it could not open (a refusal never fails the dev
+       server's start, and is not tried again in the run). A `start_preview` for the same app and
+       block then answers the same preview without asking civitai again. In production a model
+       had started the dev server, checked the app and reported it ready without ever calling
+       `start_preview`.
+    A later reply (or Continue after the app was paused) starts the dev server again, which opens
+    the preview again; civitai replaces the user's tunnel for that block. The instructions say the
+    preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell
     the assistant to start the dev server first and to use `sandbox__preview_check` (with
     `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
     model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
@@ -322,8 +334,9 @@ create and drop databases on; without it they skip. CI's `App unit tests` job pr
 Known gaps:
 
 - The page learns of a runner's preview only from the live `tool-reported` event, which a reload
-  or another device does not replay: the pane then shows nothing until the assistant calls
-  `start_preview` again (the instructions say to when the preview is gone). Asking civitai's
+  or another device does not replay: the pane then shows nothing until the dev server is started
+  again in a later reply, or the user asks to reopen it and the assistant calls `start_preview`
+  (the instructions keep it for that). Asking civitai's
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.

@@ -42,9 +42,24 @@ export interface RunnerPreviewDeps {
 /** The tunnel this run opened: kept in this process's memory only, never in a result. */
 interface OpenTunnel {
   sessionId: string;
+  /** The sandbox it serves: another app opened by `create_app` is another preview. */
+  app: string;
   blockId: string;
   host: string;
+  /** What the start that opened it answered: a start of the same preview answers it again. */
+  result: StartedPreview;
 }
+
+/** What a start answers (and the page reads `blockId` and `host` of): never the tunnel's id. */
+export interface StartedPreview {
+  shown: true;
+  blockId: string;
+  host: string;
+  next_step: string;
+}
+
+/** How the automatic start after a dev server came up went: shown, or why not. */
+export type AutoPreview = { shown: StartedPreview } | { error: string };
 
 /**
  * The live preview on the server runner: `start_preview` and `stop_preview`, named and described for
@@ -69,6 +84,8 @@ export class RunnerPreview {
    * once would each make a key (the second stopping the first's tunnel) and fail one another.
    */
   #queue: Promise<unknown> = Promise.resolve();
+  /** The apps (sandbox names) this run already opened the preview for by itself: once each. */
+  readonly #autoTried = new Set<string>();
 
   constructor(deps: RunnerPreviewDeps) {
     this.#deps = deps;
@@ -88,8 +105,8 @@ export class RunnerPreview {
   #startTool(): ChatTool {
     return {
       description:
-        'Show the running dev server to the user as a live preview beside the chat. Start the dev server first (sandbox__dev_server_start) and leave it running. ' +
-        'Then use sandbox__preview_check to see what the user sees.',
+        'Reopen the live preview of the running dev server beside the chat. It opens by itself when sandbox__dev_server_start starts the dev server: call this only when the user asks to reopen it. ' +
+        'Use sandbox__preview_check to see what the user sees.',
       activity: 'Starting the preview…',
       inputSchema: {
         properties: {
@@ -124,13 +141,60 @@ export class RunnerPreview {
     };
   }
 
+  /**
+   * After `sandbox__dev_server_start` started the dev server: opens the preview for the open app,
+   * once per app in this run, with no decision of the assistant's (it was seen building, checking
+   * and reporting ready without ever opening it). The block id, scopes and auth come from the
+   * project's `block.manifest.json` (the directory the start command `cd`s into, else the app's
+   * own key), as the assistant would pass them. `null` when there is nothing to say: this run
+   * already tried for this app, or a preview of it is already open. A refusal is reported, never
+   * thrown: the dev server did start.
+   */
+  openAfterDevServer(input: unknown, signal?: AbortSignal): Promise<AutoPreview | null> {
+    return this.#serial(async () => {
+      const app = this.#deps.sandbox.active;
+      if (this.#closed || !app || app.state !== 'running') return null;
+      if (this.#autoTried.has(app.name)) return null;
+      this.#autoTried.add(app.name);
+      if (this.#open?.app === app.name) return null;
+      try {
+        const manifest = await this.#manifest(projectDirOf(input) ?? app.app, signal);
+        return { shown: await this.#start(manifest, signal) };
+      } catch (error) {
+        return { error: (error as Error)?.message ?? 'The preview could not start.' };
+      }
+    });
+  }
+
+  /** What the start needs from the project's manifest; `{}` (the app's own key) when unreadable. */
+  async #manifest(dir: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    let read: { text: string; isError: boolean };
+    try {
+      read = await this.#deps.sandbox.call(
+        'read_file',
+        { path: `${dir}/block.manifest.json` },
+        signal
+      );
+    } catch {
+      return {};
+    }
+    if (read.isError) return {};
+    const manifest = manifestOf(read.text);
+    if (!manifest) return {};
+    return {
+      ...(typeof manifest.blockId === 'string' ? { block_id: manifest.blockId } : {}),
+      ...(Array.isArray(manifest.scopes) ? { declared_scopes: manifest.scopes } : {}),
+      ...(typeof manifest.auth === 'string' ? { declared_auth: manifest.auth } : {}),
+    };
+  }
+
   #serial<T>(task: () => Promise<T>): Promise<T> {
     const run = this.#queue.then(task, task);
     this.#queue = run.catch(() => undefined);
     return run;
   }
 
-  async #start(input: Record<string, unknown>, signal?: AbortSignal) {
+  async #start(input: Record<string, unknown>, signal?: AbortSignal): Promise<StartedPreview> {
     const { sandbox, tunnels } = this.#deps;
     if (this.#closed) throw new Error('This reply has ended.');
     const app = sandbox.active;
@@ -138,6 +202,15 @@ export class RunnerPreview {
       throw new Error(
         'Your app is not running, so there is nothing to preview. Its tools arrive with your next reply.'
       );
+    // Already open for this app in this run (by itself after the dev server started, or by an
+    // earlier call): the same answer, and nothing is opened twice. Another block id is a new start.
+    const open = this.#open;
+    if (
+      open &&
+      open.app === app.name &&
+      (typeof input.block_id !== 'string' || input.block_id === open.blockId)
+    )
+      return open.result;
     const blockId = typeof input.block_id === 'string' ? input.block_id : app.app;
     if (!isAppBlockId(blockId))
       throw new Error(
@@ -207,15 +280,22 @@ export class RunnerPreview {
     // A preview of another block this run opened goes; one of the same block civitai already replaced.
     const previous = this.#open;
     if (previous && previous.blockId !== blockId) await close(previous.sessionId);
-    this.#open = { sessionId: started.sessionId, blockId, host: started.host };
-    this.#keepAlive();
-    return {
+    const result: StartedPreview = {
       shown: true,
       blockId,
       host: started.host,
       next_step:
         'The user sees the preview now. To see what they see, call sandbox__preview_check.',
     };
+    this.#open = {
+      sessionId: started.sessionId,
+      app: app.name,
+      blockId,
+      host: started.host,
+      result,
+    };
+    this.#keepAlive();
+    return result;
   }
 
   async #stop(signal?: AbortSignal) {
@@ -279,6 +359,31 @@ export class RunnerPreview {
       { runId: this.#deps.runId, err: (error as Error)?.name, status, code },
       message
     );
+  }
+}
+
+/**
+ * The project directory a `sandbox__dev_server_start` command runs in (`cd <dir> && …`, as the
+ * instructions give it), else `null`.
+ */
+export function projectDirOf(input: unknown): string | null {
+  const command = (input as { command?: unknown } | null)?.command;
+  if (typeof command !== 'string') return null;
+  const dir = /^\s*cd\s+([A-Za-z0-9._-]+)\s*(?:&&|;)/.exec(command)?.[1];
+  return dir && dir !== '.' && dir !== '..' ? dir : null;
+}
+
+/** A `block.manifest.json` as `sandbox__read_file` answers it (its text, or `{ content }`). */
+function manifestOf(text: string): Record<string, unknown> | null {
+  try {
+    let value: unknown = JSON.parse(text);
+    const content = (value as { content?: unknown } | null)?.content;
+    if (typeof content === 'string') value = JSON.parse(content);
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
   }
 }
 
