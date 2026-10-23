@@ -221,6 +221,32 @@ describe('POST /api/internal/app-assistant/runner-token', () => {
     expect(mintMock).not.toHaveBeenCalled();
   });
 
+  it('mints only a sandbox token for a preview grant, never a chat token', async () => {
+    const preview = await grantFor({ conversationId: 'preview:my-shop', use: 'preview' });
+    const chat = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: preview, purpose: 'chat' },
+    });
+    expect(chat.status).toBe(403);
+    expect(chat.json).toEqual({
+      error: 'A preview grant mints sandbox tokens only',
+      code: 'refused',
+    });
+    expect(mintMock).not.toHaveBeenCalled();
+    // Control: the same grant gets a sandbox token, and a run grant still gets a chat token.
+    const sandbox = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: preview, purpose: 'sandbox' },
+    });
+    expect(sandbox.status).toBe(200);
+    expect(mintMock).toHaveBeenLastCalledWith(42, 'sandbox');
+    const run = await call(mintRoute, {
+      headers: asRunner,
+      body: { grant: await grantFor(), purpose: 'chat' },
+    });
+    expect(run.status).toBe(200);
+  });
+
   describe('the sandbox purpose, gated exactly as chat', () => {
     it.each(['chat', 'sandbox'] as const)(
       'mints a %s token for a user every gate lets through',

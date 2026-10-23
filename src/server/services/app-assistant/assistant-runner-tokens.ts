@@ -190,6 +190,7 @@ export async function verifyRunGrant(token: string): Promise<VerifiedRunGrant | 
       conversationId: payload.cid,
       idempotencyKey: payload.key,
       subagents: payload.subagents === true,
+      ...(payload.use === 'preview' ? { use: 'preview' as const } : {}),
       grantId: payload.jti,
       expiresAt: new Date(payload.exp * 1000),
     };
