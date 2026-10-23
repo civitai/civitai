@@ -23,6 +23,7 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -406,6 +407,7 @@ export function DumbModelFiltersDropdown({
           placeholder="All Base Models"
           searchable={!isMobileDevice()}
           clearable
+          renderOption={renderBaseModelOption}
           comboboxProps={{ withinPortal: false }}
         />
       </Stack>

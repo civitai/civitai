@@ -25,6 +25,8 @@ export const NSFW_RESTRICTED_BASE_MODELS = [
   'SD 3.5 Medium',
   'SD 3.5 Large',
   'SD 3.5 Large Turbo',
+  'Ideogram 4.0',
+  'Ideogram 4.5',
 ] as const;
 
 /**

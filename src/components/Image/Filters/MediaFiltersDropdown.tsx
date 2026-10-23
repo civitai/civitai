@@ -27,6 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
@@ -445,6 +446,7 @@ export function MediaFiltersDropdown({
               placeholder="All Base Models"
               searchable={!isMobileDevice()}
               clearable
+              renderOption={renderBaseModelOption}
               comboboxProps={{ withinPortal: false }}
             />
           </>
