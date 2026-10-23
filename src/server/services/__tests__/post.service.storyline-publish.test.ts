@@ -110,19 +110,25 @@ const NOW = new Date();
 const STORED = { id: POST_ID, userId: 5, publishedAt: null, title: 'Hello' };
 const PREPARED = { postId: POST_ID, storylineId: 3, userId: 5, kind: 'owner' };
 const OUTCOME = { storylineId: 3, status: 'chapterWritten', chapterId: 9 };
-const CONTEXT = { expectedPrice: 100, spendType: 'yellow' };
+const CONTEXT = { expectedPrice: 100, spendType: 'yellow', canSpend: true };
 
 /** `written` is what the anti-bump UPDATE returns: empty when the guard refused the write. */
 const publish = ({
   linked = true,
   written = [{ publishedAt: NOW }],
   data = { publishedAt: NOW } as Record<string, unknown>,
+  storyline = CONTEXT as typeof CONTEXT | null,
 } = {}) => {
   w.storylinePendingChapter.findUnique.mockResolvedValue(
     (linked ? { postId: POST_ID } : null) as never
   );
   tx.$queryRaw.mockResolvedValue(written);
-  return updatePost({ id: POST_ID, user: USER, storyline: CONTEXT, ...data } as never);
+  return updatePost({
+    id: POST_ID,
+    user: USER,
+    storyline: storyline ?? undefined,
+    ...data,
+  } as never);
 };
 
 beforeEach(() => {
@@ -147,8 +153,12 @@ describe('publishing a post with no storyline link', () => {
     expect(userPostCountCache.refresh).toHaveBeenCalledWith([5]);
   });
 
-  it('does not look for a link on an edit that publishes nothing', async () => {
-    await publish({ data: { title: 'New title' } });
+  it.each([
+    ['an edit that publishes nothing', { data: { title: 'New title' } }],
+    // The flag off, or the post planner: an owner's draft is the readiness pass's then.
+    ['a publish with no storyline request', { storyline: null }],
+  ])('does not look for a link on %s', async (_name, options) => {
+    await publish(options);
 
     expect(w.storylinePendingChapter.findUnique).not.toHaveBeenCalled();
     expect(prepareStorylinePublish).not.toHaveBeenCalled();
@@ -161,13 +171,15 @@ describe('publishing a post drafted from a storyline', () => {
     prepareStorylinePublish.mockImplementation(async () => (order.push('prepare'), PREPARED));
     w.$transaction.mockImplementation(async (fn: (t: typeof tx) => unknown) => {
       order.push('publish');
-      return fn(tx);
+      const result = await fn(tx);
+      order.push('commit');
+      return result;
     });
     finishStorylinePublish.mockImplementation(async () => (order.push('finish'), OUTCOME));
 
     const post = await publish();
 
-    expect(order).toEqual(['prepare', 'publish', 'finish']);
+    expect(order).toEqual(['prepare', 'publish', 'commit', 'finish']);
     expect(prepareStorylinePublish).toHaveBeenCalledWith({
       postId: POST_ID,
       actorId: 5,

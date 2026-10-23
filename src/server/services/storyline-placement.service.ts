@@ -337,7 +337,7 @@ export async function checkStorylineContinuationAtPublish({
 }): Promise<{ closedReason: string } | { price: number }> {
   const terms = await storylineContinuationTerms({ placerId, parentPostId }).catch(
     (error: unknown) => {
-      if (isRefusal(error)) return { closedReason: (error as TRPCError).message };
+      if (isRefusal(error)) return { closedReason: error.message };
       throw error;
     }
   );
@@ -578,7 +578,8 @@ export async function actOnStorylineContinuation({
 }
 
 /** True for a refusal (a 400), false for anything that might pass on a retry. */
-const isRefusal = (error: unknown) => error instanceof TRPCError && error.code === 'BAD_REQUEST';
+export const isRefusal = (error: unknown): error is TRPCError =>
+  error instanceof TRPCError && error.code === 'BAD_REQUEST';
 
 const isPositiveId = (id: number | null): id is number => id != null;
 

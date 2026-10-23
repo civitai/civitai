@@ -118,12 +118,17 @@ const chapterOf = (postId: number) => db.row('storylineChapter', { postId });
 
 const publish = async (
   actorId: number,
-  context: { expectedPrice?: number; submitRefusal?: string } | null = {}
+  context: {
+    expectedPrice?: number;
+    submitRefusal?: string;
+    canSpend?: boolean;
+    spendType?: 'yellow' | 'green';
+  } = {}
 ) => {
   const prepared = await prepareStorylinePublish({
     postId: DRAFT,
     actorId,
-    context: context ? { spendType: 'yellow', ...context } : undefined,
+    context: { spendType: 'yellow', canSpend: true, ...context },
   });
   return prepared ? finishStorylinePublish(prepared) : null;
 };
@@ -261,6 +266,43 @@ describe("the owner's chapter 1", () => {
     expect(link()).toBeDefined();
   });
 
+  it('raises the ceiling to the highest rating among a mixed post', async () => {
+    draft(OWNER, { storylineId: EMPTY_STORY }, { nsfwLevel: R | PG });
+
+    await expect(publish(OWNER)).resolves.toMatchObject({ ceilingRaisedTo: R });
+    expect(db.row('storyline', { id: EMPTY_STORY })).toMatchObject({ maxNsfwLevel: R });
+  });
+
+  it('reports the chapter written when the notice of the raise fails to send', async () => {
+    createNotification.mockRejectedValueOnce(new Error('notifications down'));
+    draft(OWNER, { storylineId: EMPTY_STORY }, { nsfwLevel: R });
+
+    await expect(publish(OWNER)).resolves.toMatchObject({
+      status: 'chapterWritten',
+      ceilingRaisedTo: R,
+    });
+    expect(chapterOf(DRAFT)).toBeDefined();
+  });
+
+  it('is dropped, with the reason, for an owner who may not add to a storyline', async () => {
+    draft(OWNER, { storylineId: EMPTY_STORY });
+
+    await expect(
+      publish(OWNER, { submitRefusal: 'Verify your email address to do this' })
+    ).resolves.toMatchObject({ status: 'dropped', reason: 'Verify your email address to do this' });
+    expect(chapterOf(DRAFT)).toBeUndefined();
+    expect(link()).toBeUndefined();
+  });
+
+  it('keeps the link, for the readiness pass, when the write fails for a reason that may pass', async () => {
+    draft(OWNER, { storylineId: EMPTY_STORY });
+    dbMock.dbWrite.storyline.findUnique.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(publish(OWNER)).resolves.toMatchObject({ status: 'waiting', reason: 'notReady' });
+    expect(chapterOf(DRAFT)).toBeUndefined();
+    expect(link()).toBeDefined();
+  });
+
   it('raises a minor-flagged title only as far as safe for work', async () => {
     db.update('storyline', { id: EMPTY_STORY }, { minorByScan: true });
     draft(OWNER, { storylineId: EMPTY_STORY }, { nsfwLevel: PG13 });
@@ -360,7 +402,11 @@ describe('writing the chapter once', () => {
 
   it('reports the chapter the other writer wrote to the editor', async () => {
     draft(OWNER, { storylineId: EMPTY_STORY });
-    const prepared = await prepareStorylinePublish({ postId: DRAFT, actorId: OWNER });
+    const prepared = await prepareStorylinePublish({
+      postId: DRAFT,
+      actorId: OWNER,
+      context: { spendType: 'yellow', canSpend: true },
+    });
     await promotePendingChapter(DRAFT);
 
     await expect(finishStorylinePublish(prepared!)).resolves.toEqual({
@@ -415,6 +461,51 @@ describe("a contributor's continuation", () => {
     await expect(publish(STRANGER, { expectedPrice: 100 })).resolves.toMatchObject({
       status: 'submitted',
     });
+  });
+
+  it("holds the Buzz in the request's own currency", async () => {
+    charge(100);
+    draft(STRANGER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
+
+    await publish(STRANGER, { expectedPrice: 100, spendType: 'green' });
+
+    expect(db.rows('placement')[0]).toMatchObject({ spendType: 'green' });
+    expect(createMultiAccountBuzzTransaction.mock.calls.map((c) => c[0].fromAccountTypes)).toEqual([
+      ['green'],
+      ['green'],
+    ]);
+  });
+
+  it('publishes as a post of its own, with a generic reason, when the hold fails', async () => {
+    charge(100);
+    draft(STRANGER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
+    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz service down'));
+
+    await expect(publish(STRANGER, { expectedPrice: 100 })).resolves.toEqual({
+      storylineId: STORY,
+      status: 'dropped',
+      reason:
+        'Your post was published, but it could not be sent to the storyline. Submit it from the storyline instead',
+    });
+    expect(db.rows('placement')[0]).toMatchObject({ status: 'expired' });
+    expect(link()).toBeUndefined();
+  });
+
+  it('writes no placement when the link went before the submit landed', async () => {
+    draft(STRANGER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
+    const prepared = await prepareStorylinePublish({
+      postId: DRAFT,
+      actorId: STRANGER,
+      context: { expectedPrice: 0, spendType: 'yellow', canSpend: true },
+    });
+    // Detached by its author, or taken by another publish step, in between.
+    await dbMock.dbWrite.storylinePendingChapter.deleteMany({ where: { postId: DRAFT } });
+
+    await expect(finishStorylinePublish(prepared!)).resolves.toMatchObject({
+      status: 'dropped',
+      reason: STORYLINE_REFUSALS.alreadySubmitted,
+    });
+    expect(db.rows('placement')).toEqual([]);
   });
 
   it('waits for an unfinished post as a placement, as "Use a post you made" does', async () => {
@@ -494,12 +585,12 @@ describe("a contributor's continuation", () => {
     const first = await prepareStorylinePublish({
       postId: DRAFT,
       actorId: STRANGER,
-      context: { expectedPrice: 0, spendType: 'yellow' },
+      context: { expectedPrice: 0, spendType: 'yellow', canSpend: true },
     });
     const second = await prepareStorylinePublish({
       postId: DRAFT,
       actorId: STRANGER,
-      context: { expectedPrice: 0, spendType: 'yellow' },
+      context: { expectedPrice: 0, spendType: 'yellow', canSpend: true },
     });
 
     await expect(finishStorylinePublish(first!)).resolves.toMatchObject({ status: 'submitted' });
@@ -509,7 +600,8 @@ describe("a contributor's continuation", () => {
 
   it.each([
     ['a moderator publishes it', MODERATOR, { expectedPrice: 0 }],
-    ['no request came with the publish', STRANGER, null],
+    // `post.update` takes a MediaWrite token; a continuation spends Buzz.
+    ['the credential may not spend Buzz', STRANGER, { expectedPrice: 0, canSpend: false }],
   ])('is left alone, and nothing is charged, when %s', async (_name, actorId, context) => {
     draft(STRANGER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
 
@@ -553,18 +645,41 @@ describe('the readiness pass', () => {
     expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('drops a draft it is refused for, and goes on to the next', async () => {
+  it('drops a draft it is refused for, keeps one that failed otherwise, and goes on', async () => {
+    // Refused: the chapter's author blocked the owner after the draft was linked.
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER });
-    // The chapter's author blocked the owner after the draft was linked.
     db.update('storylineChapter', { id: ROOT_CHAPTER }, { userId: COLLABORATOR });
     db.block(COLLABORATOR, OWNER);
+    // Ready, behind it.
+    const NEXT = DRAFT + 1;
+    post(NEXT, OWNER, { publishedAt: new Date(Date.now() - 1_000) });
+    db.insert('storylinePendingChapter', {
+      postId: NEXT,
+      storylineId: EMPTY_STORY,
+      userId: OWNER,
+      parentChapterId: null,
+    });
+    selected([DRAFT, NEXT]);
+
+    await expect(promoteReadyPendingChapters()).resolves.toEqual({
+      considered: 2,
+      promoted: 1,
+      dropped: 1,
+    });
+    expect(link()).toBeUndefined();
+    expect(chapterOf(NEXT)).toMatchObject({ storylineId: EMPTY_STORY, depth: 0 });
+  });
+
+  it('keeps the link of a draft whose write failed for a reason that may pass', async () => {
+    draft(OWNER, { storylineId: EMPTY_STORY });
+    dbMock.dbWrite.storyline.findUnique.mockRejectedValueOnce(new Error('connection reset'));
     selected([DRAFT]);
 
     await expect(promoteReadyPendingChapters()).resolves.toEqual({
       considered: 1,
       promoted: 0,
-      dropped: 1,
+      dropped: 0,
     });
-    expect(link()).toBeUndefined();
+    expect(link()).toBeDefined();
   });
 });

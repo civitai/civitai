@@ -36,7 +36,8 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
-import { requiresEmailVerification } from '~/server/common/email-verification-gate';
+import { contentRestriction } from '~/server/common/content-restriction';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -360,17 +361,16 @@ export const updatePostHandler = async ({
     const updatedPost = await updatePost({
       ...input,
       user: ctx.user,
-      // The checks `placement.submitStorylineContinuation` makes on its procedure, for the
-      // continuation a storyline draft submits as it is published.
+      // The guards `storyline.addChapter` and `placement.submitStorylineContinuation` have on their
+      // procedures, for the chapter or continuation a storyline draft becomes as it is published.
+      // (The submit rate limit is on `post.update` itself.)
       storyline: ctx.features.storylines
         ? {
             expectedPrice,
             spendType: domainSpendType(ctx.features),
-            submitRefusal: ctx.user.muted
-              ? 'You cannot perform this action because your account has been restricted'
-              : requiresEmailVerification(ctx.user)
-              ? 'Verify your email address to do this'
-              : undefined,
+            submitRefusal: contentRestriction(ctx.user),
+            // `post.update` asks a token only for MediaWrite, and a continuation spends Buzz.
+            canSpend: isSessionOrFullUserKey(ctx),
           }
         : undefined,
     });

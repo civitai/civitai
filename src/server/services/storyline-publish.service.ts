@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -8,17 +7,18 @@ import {
   continuationPostSelect,
   continuationReadiness,
   createStorylinePlacement,
+  isRefusal,
 } from '~/server/services/storyline-placement.service';
 import {
   assertCanContinueStoryline,
   assertPostCanBeChapter,
   createRootChapter,
+  firstChapterFloor,
   isUniqueViolation,
   storylineCeilingSql,
   writeOwnerChapter,
 } from '~/server/services/storyline.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   isStorylineCeilingLevel,
@@ -40,8 +40,10 @@ export type StorylinePublishContext = {
   /** The continuation price the contributor was shown. */
   expectedPrice?: number;
   spendType: BuzzSpendType;
-  /** Why this account may not submit a continuation (muted, email not verified), if it may not. */
+  /** Why this account may not add to a storyline (muted, email not verified), if it may not. */
   submitRefusal?: string;
+  /** The request may spend Buzz: a session or a full-scope key, not a narrower token. */
+  canSpend: boolean;
 };
 
 /** What publishing did with the draft's storyline, for the editor. */
@@ -62,9 +64,6 @@ export type PreparedStorylinePublish = { postId: number; storylineId: number; us
   | { kind: 'contributor'; parentPostId: number; expectedPrice: number; spendType: BuzzSpendType }
 );
 
-const isRefusal = (error: unknown): error is TRPCError =>
-  error instanceof TRPCError && error.code === 'BAD_REQUEST';
-
 const refusalReason = (error: unknown) => {
   if (isRefusal(error)) return error.message;
   throw error;
@@ -75,9 +74,9 @@ const dropPendingChapter = (postId: number) =>
 
 /**
  * Before the publish is written. Null when there is nothing for the storyline step to do: no link,
- * or a contributor's draft published by someone else or by a path with no request (the post
- * planner), whose click is not the contributor's consent to pay. Throws only for a continuation
- * price the contributor was not shown, which refuses the publish with nothing written.
+ * or a contributor's draft published by someone else or with a credential that may not spend,
+ * whose click is not the contributor's consent to pay. Throws only for a continuation price the
+ * contributor was not shown, which refuses the publish with nothing written.
  */
 export async function prepareStorylinePublish({
   postId,
@@ -86,7 +85,7 @@ export async function prepareStorylinePublish({
 }: {
   postId: number;
   actorId: number;
-  context?: StorylinePublishContext;
+  context: StorylinePublishContext;
 }): Promise<PreparedStorylinePublish | null> {
   const link = await dbWrite.storylinePendingChapter.findUnique({
     where: { postId },
@@ -101,9 +100,10 @@ export async function prepareStorylinePublish({
   if (!link) return null;
   const base = { postId, storylineId: link.storylineId, userId: link.userId };
   const isOwner = link.userId === link.storyline.userId;
-  if (!isOwner && (!context || actorId !== link.userId)) return null;
+  if (!isOwner && (!context.canSpend || actorId !== link.userId)) return null;
 
   const closed = (reason: string) => ({ ...base, kind: 'closed' as const, reason });
+  if (context.submitRefusal) return closed(context.submitRefusal);
   if (link.parentChapterId == null)
     return link.storyline.tosViolation
       ? closed('This storyline was taken down')
@@ -119,8 +119,6 @@ export async function prepareStorylinePublish({
     return reason ? closed(reason) : { ...base, kind: 'owner' };
   }
 
-  if (!context) return null;
-  if (context.submitRefusal) return closed(context.submitRefusal);
   const terms = await checkStorylineContinuationAtPublish({
     placerId: link.userId,
     parentPostId,
@@ -155,7 +153,7 @@ export async function finishStorylinePublish(
     try {
       const result = await promotePendingChapter(postId);
       if (result.status === 'written') {
-        await tellCeilingRaised(result);
+        await tellCeilingRaised(result, postId);
         return {
           storylineId,
           status: 'chapterWritten',
@@ -278,8 +276,9 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
             maxNsfwLevel: storylineCeiling(storyline),
           })
         ) {
-          const needed = getHighestBrowsingLevelBit(post.nsfwLevel);
+          const needed = firstChapterFloor(post);
           const fits =
+            needed !== null &&
             isStorylineCeilingLevel(needed) &&
             storylineLevelAllowed({
               postLevel: post.nsfwLevel,
@@ -342,19 +341,27 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
   }
 }
 
-async function tellCeilingRaised(result: Extract<PendingChapterPromotion, { status: 'written' }>) {
+/** Never throws: the chapter is already written. */
+async function tellCeilingRaised(
+  result: Extract<PendingChapterPromotion, { status: 'written' }>,
+  postId: number
+) {
   if (!result.ceilingRaisedTo) return;
-  await createNotification({
-    userId: result.userId,
-    type: 'storyline-ceiling-raised',
-    category: NotificationCategory.Creator,
-    key: `storyline-ceiling-raised:${result.storylineId}`,
-    details: {
-      storylineId: result.storylineId,
-      storylineTitle: result.storylineTitle,
-      maxNsfwLevel: result.ceilingRaisedTo,
-    },
-  });
+  try {
+    await createNotification({
+      userId: result.userId,
+      type: 'storyline-ceiling-raised',
+      category: NotificationCategory.Creator,
+      key: `storyline-ceiling-raised:${result.storylineId}`,
+      details: {
+        storylineId: result.storylineId,
+        storylineTitle: result.storylineTitle,
+        maxNsfwLevel: result.ceilingRaisedTo,
+      },
+    });
+  } catch (error) {
+    await logFailure('ceiling raise not announced', postId)(error);
+  }
 }
 
 /**
@@ -375,7 +382,7 @@ export async function promoteReadyPendingChapters({ limit = 200 }: { limit?: num
       const result = await promotePendingChapter(postId);
       if (result.status !== 'written') continue;
       promoted++;
-      await tellCeilingRaised(result);
+      await tellCeilingRaised(result, postId);
     } catch (error) {
       // Caught per row, so one failure does not wedge the batch behind it. A refusal (a block with
       // the parent's author, the post taken into another storyline) does not pass by waiting.
@@ -400,8 +407,12 @@ export function selectReadyPendingChapters(limit: number) {
     FROM "StorylinePendingChapter" pc
     JOIN "Storyline" st ON st.id = pc."storylineId"
     JOIN "Post" p ON p.id = pc."postId"
+    JOIN "User" u ON u.id = pc."userId"
     LEFT JOIN "StorylineChapter" parent ON parent.id = pc."parentChapterId"
     WHERE pc."userId" = st."userId"
+      AND p."userId" = pc."userId"
+      -- Held while the owner is muted, as storyline.addChapter refuses them.
+      AND NOT u.muted
       AND NOT st."tosViolation"
       AND p."publishedAt" <= now()
       AND NOT p."tosViolation"

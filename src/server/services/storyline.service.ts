@@ -1004,7 +1004,9 @@ async function assertCeilingKeepsFirstChapter(storylineId: number, maxNsfwLevel:
  * keep, because the post is gone, taken down, not yet rated or rated Blocked. Shared by the floor
  * and the owner's settings read, so the two cannot disagree.
  */
-function firstChapterFloor(post: { nsfwLevel: number; tosViolation: boolean } | null | undefined) {
+export function firstChapterFloor(
+  post: { nsfwLevel: number; tosViolation: boolean } | null | undefined
+) {
   if (!post || post.tosViolation || !post.nsfwLevel) return null;
   const highest = getHighestBrowsingLevelBit(post.nsfwLevel);
   return highest === NsfwLevel.Blocked ? null : highest;

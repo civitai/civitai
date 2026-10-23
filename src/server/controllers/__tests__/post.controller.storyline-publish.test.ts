@@ -29,13 +29,15 @@ import type * as PostService from '~/server/services/post.service';
 import type * as CollaboratorService from '~/server/services/entity-collaborator.service';
 import type { ProtectedContext } from '~/server/createContext';
 import { updatePostHandler } from '~/server/controllers/post.controller';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const OUTCOME = { storylineId: 3, status: 'submitted', placementId: 9 };
 
 const publishWith = (
   user: Record<string, unknown>,
   features: Record<string, unknown>,
-  input: Record<string, unknown> = {}
+  input: Record<string, unknown> = {},
+  credential: Record<string, unknown> = {}
 ) =>
   updatePostHandler({
     input: { id: 1, publishedAt: new Date(), ...input },
@@ -44,6 +46,7 @@ const publishWith = (
       ip: '127.0.0.1',
       track: { post: vi.fn() },
       features,
+      ...credential,
     } as unknown as ProtectedContext,
   } as unknown as Parameters<typeof updatePostHandler>[0]);
 
@@ -79,7 +82,24 @@ describe('updatePostHandler :: a storyline draft', () => {
       expectedPrice: 100,
       spendType: 'yellow',
       submitRefusal: undefined,
+      canSpend: true,
     });
+  });
+
+  it.each([
+    [
+      'a MediaWrite token',
+      { apiKeyId: 3, apiKeyType: 'Access', tokenScope: TokenScope.MediaWrite },
+      false,
+    ],
+    [
+      'a full-scope personal key',
+      { apiKeyId: 3, apiKeyType: 'User', tokenScope: TokenScope.Full, subject: { type: 'apiKey' } },
+      true,
+    ],
+  ])('lets %s spend on a continuation: %s', async (_name, credential, canSpend) => {
+    await publishWith({}, { storylines: true }, { expectedPrice: 0 }, credential);
+    expect(sentToUpdatePost().storyline.canSpend).toBe(canSpend);
   });
 
   it('pays in green on the green domain', async () => {

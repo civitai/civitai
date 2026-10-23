@@ -37,7 +37,7 @@ beforeAll(async () => {
   db.pg = new PGlite();
   await db.pg.exec(`
     CREATE TABLE "User" ("id" integer PRIMARY KEY, username text, "bannedAt" timestamp(3),
-      "deletedAt" timestamp(3));
+      "deletedAt" timestamp(3), muted boolean NOT NULL DEFAULT false);
     CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer, "nsfwLevel" integer NOT NULL DEFAULT 0,
       "publishedAt" timestamp(3), "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Report" ("id" integer PRIMARY KEY);
@@ -70,6 +70,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(`
+    UPDATE "User" SET muted = false;
     DELETE FROM "StorylinePendingChapter";
     DELETE FROM "StorylineChapterEdge";
     DELETE FROM "StorylineChapter";
@@ -126,7 +127,7 @@ const post = async ({
   return id;
 };
 
-const chapter = async (storylineId: number, postId: number, depth = 0, removed = false) => {
+const chapter = async (storylineId: number, postId: number | null, depth = 0, removed = false) => {
   const id = nextId++;
   await db.pg.query(
     `INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth, "removedAt")
@@ -177,6 +178,7 @@ describe("the readiness pass's selection", () => {
     ['without images', { images: [] }],
     ['refused by the scan', { images: [{ tosViolation: true }] }],
     ['flagged as a minor', { images: [{ minor: true }] }],
+    ['flagged as a real person', { images: [{ poi: true }] }],
     ['taken down', { tosViolation: true }],
   ])('leaves a chapter-1 draft %s', async (_name, options) => {
     await pending(await post(options), await storyline());
@@ -197,6 +199,31 @@ describe("the readiness pass's selection", () => {
     await continuation({}, {}, true);
 
     expect(await selected()).toEqual([]);
+  });
+
+  it("leaves a draft under a parent whose post is gone, and a muted owner's draft", async () => {
+    const storylineId = await storyline();
+    const root = await chapter(storylineId, null);
+    await pending(await post(), storylineId, root);
+    const ready = await post();
+    await pending(ready, await storyline());
+    expect(await selected()).toEqual([ready]);
+
+    await db.pg.exec(`UPDATE "User" SET muted = true WHERE id = ${OWNER}`);
+    expect(await selected()).toEqual([]);
+  });
+
+  it('takes at most a batch, lowest post first', async () => {
+    const posts = [];
+    for (let i = 0; i < 3; i++) {
+      const postId = await post();
+      await pending(postId, await storyline());
+      posts.push(postId);
+    }
+
+    expect((await selectReadyPendingChapters(2)).map((row) => row.postId)).toEqual(
+      posts.slice(0, 2)
+    );
   });
 
   it('leaves a draft whose post is already a chapter, or a storyline that has its chapter 1', async () => {

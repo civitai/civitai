@@ -103,7 +103,10 @@ import {
   setStorylineSpace,
 } from '~/server/services/storyline-placement.service';
 import { rateLimit } from '~/server/middleware.trpc';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  STORYLINE_REFUSALS,
+  STORYLINE_SUBMIT_RATE_LIMIT,
+} from '~/shared/utils/storyline-placement';
 import { isPromotionSurface } from '~/shared/utils/promotion';
 import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
@@ -175,7 +178,7 @@ function assertStorylinesEnabled(ctx: Context) {
   if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
 
-export const STORYLINE_SUBMIT_RATE_LIMIT = { limit: 30, period: 3600 } as const;
+export { STORYLINE_SUBMIT_RATE_LIMIT };
 
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
@@ -650,11 +653,15 @@ export const placementRouter = router({
    */
   submitStorylineContinuation: guardedProcedure
     .use(
-      rateLimit({
-        limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
-        period: STORYLINE_SUBMIT_RATE_LIMIT.period,
-        errorMessage: 'storyline: too many continuations, try again later',
-      })
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
     )
     .input(submitStorylineContinuationSchema)
     .mutation(({ input, ctx }) => {

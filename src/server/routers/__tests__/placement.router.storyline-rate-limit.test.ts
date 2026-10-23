@@ -41,8 +41,13 @@ const procedure = (name: string) =>
 
 describe('submitStorylineContinuation is rate-limited', () => {
   it('is built with the storyline submit limit', () => {
-    expect(STORYLINE_SUBMIT_RATE_LIMIT).toEqual({ limit: 30, period: 3600 });
-    expect(rateLimitCalls).toContainEqual([expect.objectContaining({ limit: 30, period: 3600 })]);
+    expect(STORYLINE_SUBMIT_RATE_LIMIT).toMatchObject({ limit: 30, period: 3600 });
+    // On the quota `post.update` shares for the continuations a publish submits.
+    expect(rateLimitCalls).toContainEqual([
+      expect.objectContaining({ limit: 30, period: 3600 }),
+      undefined,
+      { sharedKey: 'storyline:submitContinuation' },
+    ]);
   });
 
   it('carries that limiter in its own middleware chain', () => {

@@ -1008,22 +1008,29 @@ export const updatePost = async ({
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
   // A post drafted from a storyline becomes its chapter as it is published. Checked before the
-  // write, so a continuation price the contributor was not shown refuses the publish whole.
+  // write, so a continuation price the contributor was not shown refuses the publish whole. With
+  // no storyline request (the flag off, the post planner) an owner's draft is written by the
+  // readiness pass instead, and a contributor's is left as it is.
   // Imported on use: the storyline layer imports this module, through report.service.
   const storylineLink =
     publishedAt !== undefined &&
+    !!storyline &&
     (await dbWrite.storylinePendingChapter.findUnique({
       where: { postId: id },
       select: { postId: true },
     }));
-  const storylinePublish = storylineLink
-    ? await import('~/server/services/storyline-publish.service')
-    : undefined;
-  const storylineStep = await storylinePublish?.prepareStorylinePublish({
-    postId: id,
-    actorId: user.id,
-    context: storyline,
-  });
+  const storylinePublish =
+    storylineLink && storyline
+      ? await import('~/server/services/storyline-publish.service')
+      : undefined;
+  const storylineStep =
+    storylinePublish && storyline
+      ? await storylinePublish.prepareStorylinePublish({
+          postId: id,
+          actorId: user.id,
+          context: storyline,
+        })
+      : undefined;
 
   let publishedAtWritten = false;
   const post = await dbWrite.$transaction(async (tx) => {
