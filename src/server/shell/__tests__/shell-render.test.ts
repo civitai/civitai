@@ -12,12 +12,14 @@
  * Lives outside `src/pages`: Next treats every file there as a route.
  */
 import { renderToHTML } from 'next/dist/server/render';
+import type { ComponentType } from 'react';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type client from 'prom-client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as AuthSessionModule from '~/server/auth/get-server-auth-session';
 import type * as SearchApiKeyModule from '~/components/Search/search-api-key';
+import type * as TrpcModule from '~/utils/trpc';
 
 const SEEDS = vi.hoisted(() => ({
   tosMeta: { hash: 'tos-hash', baseline: 'tos-baseline', fieldKeys: { blue: 'tosBlue' } },
@@ -52,6 +54,28 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthSessionModule>()),
   getServerAuthSession: h.authSession,
 }));
+
+// The real `withTRPC` provides react-query from the copy Node resolves for `@trpc/next`, while the
+// app's own `useQueryClient` reads the copy this suite's optimizer bundled, so under Next's renderer
+// the two never meet (`No QueryClient set`). A production build has one copy. The shell's server
+// render reads no tRPC data, so the client is the inert proxy and the provider is the app's copy.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  const { createElement, useState } = await import('react');
+  const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+  const withTRPC = (AppComponent: ComponentType<object> & { getInitialProps?: unknown }) => {
+    const WithQueryClient = (props: object) => {
+      const [client] = useState(() => new QueryClient());
+      return createElement(QueryClientProvider, { client }, createElement(AppComponent, props));
+    };
+    WithQueryClient.getInitialProps = AppComponent.getInitialProps;
+    return WithQueryClient;
+  };
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({}, { withTRPC }),
+  };
+});
 
 // Next preloads every `dynamic()` module before rendering, and a few build a search client at module
 // scope from env this suite does not set.
