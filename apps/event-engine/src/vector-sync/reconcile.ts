@@ -82,6 +82,13 @@ export async function reconcile(
   return total;
 }
 
+async function reconcileEmbedder() {
+  const blocked = await embedBlockedReason();
+  if (!blocked) return Embedder.fromConfig('low');
+  logger.warn({ reason: blocked }, 'vector-reconcile: not embedding; missing ids are only counted');
+  return null;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const flag = (name: string) => {
@@ -111,7 +118,7 @@ async function main() {
         pg,
         store,
         // With embedding off, drift is still deleted and the missing ids are counted.
-        embedder: !dryRun && !embedBlockedReason() ? Embedder.fromConfig('low') : null,
+        embedder: dryRun ? null : await reconcileEmbedder(),
         dryRun,
       }
     );

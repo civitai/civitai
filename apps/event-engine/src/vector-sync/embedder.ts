@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import pLimit from 'p-limit';
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
@@ -190,20 +190,21 @@ export class Embedder {
       result: { vectors: new Map(), failed: [], stamp: null },
       acceptStamp,
     };
+    const run = async (batch: EmbedInput[]) => {
+      // After one systemic failure, batches still queued are not submitted.
+      if (call.result.error) return;
+      try {
+        await this.embedBisecting(batch, call, 0);
+      } catch (err) {
+        call.result.error ??= err;
+      }
+    };
+    const [first, ...rest] = chunkInputs(inputs);
+    // The first batch runs alone, so its model stamp is accepted (and, for a new collection,
+    // recorded) before any other batch can be compared against an empty stamp.
+    if (first) await this.limit(() => run(first));
     // allSettled, not all: one failing batch must not discard the vectors others paid for.
-    await Promise.allSettled(
-      chunkInputs(inputs).map((batch) =>
-        this.limit(async () => {
-          // After one systemic failure, batches still queued are not submitted.
-          if (call.result.error) return;
-          try {
-            await this.embedBisecting(batch, call, 0);
-          } catch (err) {
-            call.result.error ??= err;
-          }
-        })
-      )
-    );
+    await Promise.allSettled(rest.map((batch) => this.limit(() => run(batch))));
     return call.result;
   }
 
@@ -236,7 +237,13 @@ export class Embedder {
       dimensions: output.dimensions,
     };
     const first = call.result.stamp;
-    if (first && (first.modelRevision !== stamp.modelRevision || first.profile !== stamp.profile)) {
+    if (
+      first &&
+      (first.model !== stamp.model ||
+        first.dimensions !== stamp.dimensions ||
+        first.modelRevision !== stamp.modelRevision ||
+        first.profile !== stamp.profile)
+    ) {
       throw new MixedStampError(first, stamp);
     }
     await call.acceptStamp?.(stamp);
@@ -245,14 +252,11 @@ export class Embedder {
   }
 
   private async runWithRetry(batch: EmbedInput[]): Promise<EmbedOutput> {
-    // Derived from the inputs and the day, so retries of this batch, and the same batch after a
-    // restart, return the existing workflow instead of paying twice. The day lets a batch that
-    // failed be tried again tomorrow.
-    const day = new Date().toISOString().slice(0, 10);
-    const externalId = `vs-${createHash('sha256')
-      .update(`${day}:${this.opts.priority}:${batch.map((b) => b.id).join(',')}`)
-      .digest('hex')
-      .slice(0, 48)}`;
+    // One key per attempt at this batch, reused across its retries, so a submit that succeeded
+    // server-side but failed on our side returns the existing workflow instead of paying twice.
+    // Not derived from the inputs: the orchestrator returns a failed workflow for its key too,
+    // which would make a transient failure permanent.
+    const externalId = `vs-${randomUUID()}`;
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.run(batch, externalId);

@@ -121,7 +121,12 @@ class FakeEmbedder {
     { acceptStamp }: { acceptStamp?: (stamp: ModelStamp) => Promise<void> } = {}
   ) => {
     this.calls.push(inputs.map((i) => i.id));
-    await acceptStamp?.(STAMP);
+    // Same contract as Embedder: a rejected stamp is reported in `error`, with no vectors.
+    try {
+      await acceptStamp?.(STAMP);
+    } catch (error) {
+      return { vectors: new Map<number, number[]>(), failed: [], stamp: null, error };
+    }
     const kept = inputs.filter((i) => !this.dropIds.has(Number(i.id)));
     return {
       vectors: new Map(kept.map((i) => [Number(i.id), [Number(i.id)]])),
@@ -701,70 +706,167 @@ describe('review round: paid-path failure modes', () => {
 });
 
 describe('embedding gate', () => {
-  async function reason(
-    env: Record<string, string | undefined>,
-    opts?: { withoutImageCdc?: boolean }
-  ) {
+  const connector = (tables: string) =>
+    (async () =>
+      new Response(JSON.stringify({ 'table.include.list': tables }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+  const ON = {
+    VECTOR_SYNC_EMBED_ENABLED: 'true',
+    CDC_IMAGE_ENABLED: 'true',
+    DEBEZIUM_CONNECT_URL: 'http://connect',
+    ORCHESTRATOR_ENDPOINT: 'http://orch',
+    VECTOR_EMBED_TOKEN: 't',
+    VECTOR_IMAGE_LOCATION: 'https://cdn.example',
+  };
+
+  async function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>) {
     vi.resetModules();
     const saved = { ...process.env };
-    for (const [k, v] of Object.entries(env)) {
+    for (const [k, v] of Object.entries({ ...ON, ...env })) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
     try {
-      const { embedBlockedReason } = await import('@/vector-sync/sync');
-      return embedBlockedReason(opts);
+      return await run();
     } finally {
       process.env = saved;
     }
   }
-
-  test('the consumer builds no embedder unless both are on', async () => {
-    const env = {
-      VECTOR_SYNC_EMBED_ENABLED: 'true',
-      ORCHESTRATOR_ENDPOINT: 'http://orch',
-      VECTOR_EMBED_TOKEN: 't',
-      VECTOR_IMAGE_LOCATION: 'https://cdn.example',
-    };
-    const build = async (extra: Record<string, string | undefined>) => {
-      vi.resetModules();
-      const saved = { ...process.env };
-      Object.assign(process.env, env);
-      for (const [k, v] of Object.entries(extra)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-      try {
-        return (await import('@/vector-sync/consumer')).consumerEmbedder();
-      } finally {
-        process.env = saved;
-      }
-    };
-    expect(await build({ CDC_IMAGE_ENABLED: undefined })).toBeNull();
-    expect(
-      await build({ CDC_IMAGE_ENABLED: 'true', VECTOR_SYNC_EMBED_ENABLED: undefined })
-    ).toBeNull();
-    expect(await build({ CDC_IMAGE_ENABLED: 'true' })).not.toBeNull();
-    await expect(build({ CDC_IMAGE_ENABLED: 'true', VECTOR_IMAGE_LOCATION: '' })).rejects.toThrow(
-      /VECTOR_IMAGE_LOCATION/
+  const reason = (
+    env: Record<string, string | undefined>,
+    opts: { withoutImageCdc?: boolean; fetchImpl?: typeof fetch } = {}
+  ) =>
+    withEnv(env, async () =>
+      (await import('@/vector-sync/sync')).embedBlockedReason({
+        fetchImpl: connector('public.Comment,public.Image'),
+        ...opts,
+      })
     );
-  });
 
-  test('embedding needs both its switch and Image change events', async () => {
+  test("embedding needs its switch, this process's Image flag, and a connector that streams Image", async () => {
+    expect(await reason({})).toBeNull();
+    expect(await reason({ VECTOR_SYNC_EMBED_ENABLED: undefined })).toMatch(/EMBED/);
+    expect(await reason({ CDC_IMAGE_ENABLED: undefined })).toMatch(/CDC_IMAGE/);
+    expect(await reason({ DEBEZIUM_CONNECT_URL: undefined })).toMatch(/cannot be verified/);
+    // The flag set here but not on the watcher: the connector still lacks Image.
     expect(
-      await reason({ VECTOR_SYNC_EMBED_ENABLED: undefined, CDC_IMAGE_ENABLED: 'true' })
-    ).toMatch(/EMBED/);
-    expect(
-      await reason({ VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: undefined })
-    ).toMatch(/CDC_IMAGE/);
-    expect(
-      await reason({ VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: 'true' })
-    ).toBeNull();
+      await reason({}, { fetchImpl: connector('public.Comment,public.ImageResourceNew') })
+    ).toMatch(/does not stream public.Image/);
     expect(
       await reason(
-        { VECTOR_SYNC_EMBED_ENABLED: 'true', CDC_IMAGE_ENABLED: undefined },
-        { withoutImageCdc: true }
+        {},
+        { fetchImpl: (async () => new Response('', { status: 404 })) as unknown as typeof fetch }
       )
-    ).toBeNull();
+    ).toMatch(/could not be read/);
+    expect(await reason({ CDC_IMAGE_ENABLED: undefined }, { withoutImageCdc: true })).toBeNull();
+  });
+
+  test('the consumer builds no embedder unless the gate passes', async () => {
+    const build = (env: Record<string, string | undefined>, tables = 'public.Image') => {
+      vi.stubGlobal('fetch', connector(tables));
+      return withEnv(env, async () =>
+        (await import('@/vector-sync/consumer')).consumerEmbedder()
+      ).finally(() => vi.unstubAllGlobals());
+    };
+    expect(await build({})).not.toBeNull();
+    expect(await build({ CDC_IMAGE_ENABLED: undefined })).toBeNull();
+    expect(await build({}, 'public.Comment')).toBeNull();
+    expect(await build({ VECTOR_SYNC_EMBED_ENABLED: undefined })).toBeNull();
+    await expect(build({ VECTOR_IMAGE_LOCATION: '' })).rejects.toThrow(/VECTOR_IMAGE_LOCATION/);
+  });
+});
+
+describe('review round 2', () => {
+  const body = (ids: string[], modelRevision: string) =>
+    JSON.stringify({
+      id: 'wf',
+      status: 'succeeded',
+      steps: [
+        {
+          output: {
+            ...STAMP,
+            modelRevision,
+            data: ids.map((id, index) => ({ id, index, embedding: [index] })),
+          },
+        },
+      ],
+    });
+  const idsIn = (init?: RequestInit) =>
+    (JSON.parse(String(init?.body)).steps[0].input.inputs as { id: string }[]).map((i) => i.id);
+  const embedderWith = (fetchImpl: typeof fetch, maxInFlight: number) =>
+    new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight,
+      maxRetries: 0,
+      priority: 'low',
+      fetch: fetchImpl,
+      sleep: async () => undefined,
+    });
+  const inputs = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: String(i), imageUrl: 'u' }));
+
+  test('concurrent batches of a call cannot both claim an empty collection with different models', async () => {
+    let n = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const revision = ++n === 1 ? 'r1' : 'r2';
+      return new Response(body(idsIn(init), revision), { status: 200 });
+    }) as unknown as typeof fetch;
+    // A collection with no stamp yet, read-then-write with a gap, as Qdrant metadata is.
+    let stored: string | null = null;
+    const acceptStamp = async (stamp: ModelStamp) => {
+      const seen = stored;
+      await new Promise((r) => setTimeout(r, 5));
+      if (seen && seen !== stamp.modelRevision) throw new Error('mismatch');
+      stored ??= stamp.modelRevision;
+    };
+    const result = await embedderWith(fetchImpl, 4).embed(inputs(3 * 128), { acceptStamp });
+    expect(result.error).toBeInstanceOf(MixedStampError);
+    expect(result.vectors.size).toBe(128);
+  });
+
+  test('after a systemic failure, batches still queued are not submitted', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response('', { status: 401 })
+    ) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl, 1).embed(inputs(3 * 128));
+    expect(String(result.error)).toMatch(/401/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a flush retry loop is unhealthy even while a retry is in progress; one slow flush is not', () => {
+    const queue = new VectorSyncQueue(deps(new FakePg(), new FakeStore()), async () => undefined);
+    const t0 = 1_000_000_000;
+    queue.lastFlushOk = t0;
+    queue.flushStartedAt = t0 + 11 * 60_000;
+    expect(queue.isHealthy(t0 + 12 * 60_000)).toBe(true);
+    queue.lastFlushFailed = t0 + 10 * 60_000;
+    expect(queue.isHealthy(t0 + 12 * 60_000)).toBe(false);
+  });
+
+  test('a mixed-model error from the real embed contract also stops consumer embedding', async () => {
+    const pg = new FakePg().put(imageRow(1), imageRow(2));
+    const store = new FakeStore();
+    let n = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) =>
+      new Response(body(idsIn(init), ++n === 1 ? 'r1' : 'r2'), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    const real = embedderWith(fetchImpl, 1);
+    // Two batches: force a split at one input by using 129 rows.
+    for (let id = 3; id <= 129; id++) pg.put(imageRow(id));
+    const ids = Array.from({ length: 129 }, (_, i) => i + 1);
+    const queue = new VectorSyncQueue(
+      { pg: pg as unknown as Pool, store, embedder: real },
+      async () => undefined
+    );
+    for (const id of ids)
+      queue.add(id, { topic: 'postgres.Image', partition: 0, offset: String(id) });
+    await expect(queue.flush()).rejects.toThrow(MixedStampError);
+    expect(store.points.size).toBe(128);
+    expect(queue.embedStopped).toMatch(/two models/);
+    await queue.flush();
+    expect(n).toBe(2);
   });
 });

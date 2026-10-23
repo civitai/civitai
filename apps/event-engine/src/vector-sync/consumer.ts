@@ -8,7 +8,7 @@ import { Kafka, type Consumer } from 'kafkajs';
 import { config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
-import { Embedder } from './embedder';
+import { MixedStampError, Embedder } from './embedder';
 import { ModelMismatchError, VectorStore } from './qdrant';
 import { embedBlockedReason, syncImageIds, type SyncDeps } from './sync';
 
@@ -43,7 +43,10 @@ export class VectorSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
+  lastFlushFailed: number | null = null;
   flushStartedAt: number | null = null;
+  /** Why embedding stopped at runtime, if it did. */
+  embedStopped: string | null = null;
 
   constructor(
     private readonly deps: SyncDeps,
@@ -92,11 +95,16 @@ export class VectorSyncQueue {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
       }
-      if (err instanceof ModelMismatchError && this.deps.embedder) {
+      this.lastFlushFailed = Date.now();
+      if (
+        (err instanceof ModelMismatchError || err instanceof MixedStampError) &&
+        this.deps.embedder
+      ) {
         // Retrying would pay for the same rejected vectors every tick. Stop embedding until a
         // new collection is set up; deletes and payload updates carry on.
         logger.error({ err }, 'vector-sync: embedder model changed; embedding stopped');
         this.deps.embedder = null;
+        this.embedStopped = (err as Error).message;
       }
       throw err;
     }
@@ -108,11 +116,24 @@ export class VectorSyncQueue {
     }
     this.lastFlushOk = Date.now();
   }
+
+  /**
+   * Unhealthy when flushes have kept failing for 10 minutes. A flush still in progress counts as
+   * healthy only if none has failed since the last success, so one slow embed is not killed
+   * mid-way (it would redeliver and pay again) while a retry loop still is.
+   */
+  isHealthy(now = Date.now()) {
+    if (now - this.lastFlushOk < 10 * 60_000) return true;
+    const failedSinceOk = this.lastFlushFailed !== null && this.lastFlushFailed > this.lastFlushOk;
+    return (
+      !failedSinceOk && this.flushStartedAt !== null && now - this.flushStartedAt < 2 * 60 * 60_000
+    );
+  }
 }
 
 /** The live-sync embedder, or null when embedding may not run (see embedBlockedReason). */
-export function consumerEmbedder(): Embedder | null {
-  const blocked = embedBlockedReason();
+export async function consumerEmbedder(): Promise<Embedder | null> {
+  const blocked = await embedBlockedReason();
   if (blocked) {
     logger.warn(
       { reason: blocked },
@@ -132,7 +153,7 @@ async function main() {
   );
   const store = VectorStore.fromConfig();
   await store.bootstrap();
-  const embedder = consumerEmbedder();
+  const embedder = await consumerEmbedder();
 
   const topics = [
     ...VECTOR_SYNC_TOPICS,
@@ -155,16 +176,18 @@ async function main() {
       .catch((err) => logger.error({ err }, 'vector-sync: flush failed; retrying next tick'));
   }, vs.debounceMs);
 
-  // Unhealthy when flushes have kept failing for 10 minutes, not while one is slow: a flush
-  // killed mid-embed would redeliver and pay again.
   http
     .createServer((_req, res) => {
-      const now = Date.now();
-      const healthy =
-        now - queue.lastFlushOk < 10 * 60_000 ||
-        (queue.flushStartedAt !== null && now - queue.flushStartedAt < 2 * 60 * 60_000);
+      const healthy = queue.isHealthy();
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ healthy, pending: queue.size }));
+      res.end(
+        JSON.stringify({
+          healthy,
+          pending: queue.size,
+          embedding: !!embedder && !queue.embedStopped,
+          embedStopped: queue.embedStopped,
+        })
+      );
     })
     .listen(config.app.healthCheckPort);
 

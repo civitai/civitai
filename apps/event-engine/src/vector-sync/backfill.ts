@@ -89,8 +89,9 @@ export async function runBackfill(
         addStats(total, stats);
         return;
       } catch (err) {
-        // Transient (a Qdrant or Postgres blip); a mismatched model or a config error repeats.
-        if (attempt >= 3 || (err as Error).name === 'ModelMismatchError') throw err;
+        // Retry a blip (Qdrant, Postgres); a model mismatch repeats, and each retry pays.
+        const name = (err as Error).name;
+        if (attempt >= 3 || name === 'ModelMismatchError' || name === 'MixedStampError') throw err;
         logger.warn({ err, lo, hi, attempt }, 'vector-backfill: page failed; retrying');
         await sleep(5000 * (attempt + 1));
       }
@@ -166,6 +167,9 @@ function parseArgs(argv: string[]) {
 async function main() {
   const { command, flags, int } = parseArgs(process.argv.slice(2));
   const name = String(flags.name ?? 'images');
+  // Logged by every command: pause or status run with another VECTOR_COLLECTION addresses
+  // another run.
+  const run = { name, collection: config.vectorSync.collection };
   const state =
     typeof flags['cursor-file'] === 'string'
       ? fileRunState(flags['cursor-file'])
@@ -174,19 +178,19 @@ async function main() {
   try {
     if (command === 'pause' || command === 'resume') {
       await state.setPaused(command === 'pause');
-      logger.info({ name }, `vector-backfill: ${command}d`);
+      logger.info(run, `vector-backfill: ${command}d`);
       return;
     }
     if (command === 'status') {
       logger.info(
-        { name, cursor: await state.getCursor(), paused: await state.isPaused() },
+        { ...run, cursor: await state.getCursor(), paused: await state.isPaused() },
         'vector-backfill: status'
       );
       return;
     }
     if (command === 'reset') {
       await state.reset();
-      logger.info({ name }, 'vector-backfill: reset');
+      logger.info(run, 'vector-backfill: reset');
       return;
     }
     if (command !== 'run') throw new Error(`unknown command ${command}`);
@@ -196,7 +200,12 @@ async function main() {
     const dryRun = flags['dry-run'] === true;
     if (!dryRun) {
       if (flags.confirm !== true) throw new Error('Writing needs --confirm (or pass --dry-run)');
-      const blocked = embedBlockedReason({ withoutImageCdc: flags['without-image-cdc'] === true });
+      const withoutImageCdc = flags['without-image-cdc'] === true;
+      // Blocks are not streamed then, so keep such a run to a bounded canary.
+      if (withoutImageCdc && flags.limit === undefined) {
+        throw new Error('--without-image-cdc needs --limit');
+      }
+      const blocked = await embedBlockedReason({ withoutImageCdc });
       if (blocked) throw new Error(`Not embedding: ${blocked}`);
     }
 

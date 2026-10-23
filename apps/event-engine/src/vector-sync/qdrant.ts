@@ -97,10 +97,21 @@ export class VectorStore {
   /**
    * Refuses vectors from a model other than the one the collection was filled with. The first
    * successful embed records the revision and profiles. Read on every call rather than cached,
-   * because another process may have recorded them; after recording, read back so that of two
-   * writers claiming different revisions at once, the one that lost finds out.
+   * because another process may have recorded them. The read-back after recording catches some
+   * concurrent claims, not all: Qdrant metadata has no compare-and-set.
    */
-  async assertModel(got: ModelStamp) {
+  assertModel(got: ModelStamp): Promise<void> {
+    // Serialised within the process: concurrent first writers would otherwise both read an empty
+    // stamp. Across processes there is no compare-and-set, so a new collection's first fill
+    // should come from one process (see the doc).
+    const next = this.modelCheck.then(() => this.checkModel(got));
+    this.modelCheck = next.catch(() => undefined);
+    return next;
+  }
+
+  private modelCheck: Promise<unknown> = Promise.resolve();
+
+  private async checkModel(got: ModelStamp) {
     const stored = await this.readStamp();
     if (stampConflicts(stored, got)) throw new ModelMismatchError(stored, got);
 

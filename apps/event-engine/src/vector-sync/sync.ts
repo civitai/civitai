@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { config } from '@/config';
+import { CONNECTOR_NAME } from '@/services/debezium-manager';
 import { buildEmbedInput, type Embedder, type EmbedInput } from './embedder';
 import { isEligible, type ImageRow } from './eligibility';
 import type { VectorStore } from './qdrant';
@@ -44,10 +45,29 @@ export function addStats(into: SyncStats, from: SyncStats) {
  * create while Image changes stream: block, review and scan changes touch no other table this
  * consumer reads, so without them a blocked image would keep its vector until a reconcile.
  */
-export function embedBlockedReason({ withoutImageCdc = false } = {}): string | null {
+export async function embedBlockedReason({
+  withoutImageCdc = false,
+  fetchImpl = globalThis.fetch,
+}: { withoutImageCdc?: boolean; fetchImpl?: typeof fetch } = {}): Promise<string | null> {
   if (!config.vectorSync.embedEnabled) return 'VECTOR_SYNC_EMBED_ENABLED is off';
-  if (!withoutImageCdc && !config.kafka.cdcOnlyTables.includes('public.Image')) {
+  if (withoutImageCdc) return null;
+  if (!config.kafka.cdcOnlyTables.includes('public.Image')) {
     return 'CDC_IMAGE_ENABLED is off, so blocks would not reach the index';
+  }
+  // This process's flag says nothing about the connector, which the metrics watcher manages
+  // from its own env. Ask Kafka Connect what it actually streams.
+  const connectUrl = process.env.DEBEZIUM_CONNECT_URL;
+  if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the Image stream cannot be verified';
+  try {
+    const res = await fetchImpl(`${connectUrl}/connectors/${CONNECTOR_NAME}/config`);
+    if (!res.ok) return `the connector config could not be read (${res.status})`;
+    const tables = String(
+      ((await res.json()) as Record<string, unknown>)['table.include.list'] ?? ''
+    );
+    if (!tables.split(',').includes('public.Image'))
+      return 'the connector does not stream public.Image';
+  } catch (err) {
+    return `the connector config could not be read (${(err as Error).message})`;
   }
   return null;
 }

@@ -23,9 +23,11 @@ interface ConnectorStatus {
   type: string;
 }
 
+export const CONNECTOR_NAME = 'civitai-postgres-connector';
+
 export class DebeziumManager {
   private static instance: DebeziumManager;
-  private readonly connectorName = 'civitai-postgres-connector';
+  private readonly connectorName = CONNECTOR_NAME;
   private readonly debeziumUrl: string;
   private readonly kafka: Kafka;
   private isConfigured = false;
