@@ -13,6 +13,7 @@ import {
   getStorylineSchema,
   getStorylinesForPostsSchema,
   storylinePendingForPostSchema,
+  storylinePostImageCaptionsSchema,
   storylineChapterReadSchema,
   storylineCollaboratorSchema,
   storylineIdSchema,
@@ -48,7 +49,10 @@ import {
   setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
-import { setStorylineImageCaption } from '~/server/services/storyline-caption.service';
+import {
+  getPostImageCaptions,
+  setStorylineImageCaption,
+} from '~/server/services/storyline-caption.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -173,6 +177,16 @@ export const storylineRouter = router({
     .input(storylinePendingForPostSchema)
     .query(({ input, ctx }) =>
       getPendingChapterForPost({
+        postId: input.postId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
+
+  getPostImageCaptions: storylineMemberProcedure
+    .input(storylinePostImageCaptionsSchema)
+    .query(({ input, ctx }) =>
+      getPostImageCaptions({
         postId: input.postId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,

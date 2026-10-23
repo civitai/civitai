@@ -13,9 +13,12 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   scanEntityInBackground: vi.fn(),
 }));
 
-const { setStorylineImageCaption, getStorylineImageCaptions, isImageCaptionShown } = await import(
-  '~/server/services/storyline-caption.service'
-);
+const {
+  setStorylineImageCaption,
+  getStorylineImageCaptions,
+  getPostImageCaptions,
+  isImageCaptionShown,
+} = await import('~/server/services/storyline-caption.service');
 const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 
@@ -61,13 +64,39 @@ describe('setStorylineImageCaption', () => {
     expect(w.imageCaption.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('refuses an image whose post is not a live storyline chapter', async () => {
+  it('refuses an image whose post is neither a live storyline chapter nor a linked draft', async () => {
     w.storylineChapter.findFirst.mockResolvedValue(null as never);
+    w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
     await expect(set('A note')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(w.storylineChapter.findFirst).toHaveBeenCalledWith({
       where: { postId: 5, removedAt: null },
       select: { id: true },
     });
+    expect(w.imageCaption.upsert).not.toHaveBeenCalled();
+  });
+
+  it('captions a draft started from the storyline flow, scanning it as usual', async () => {
+    w.storylineChapter.findFirst.mockResolvedValue(null as never);
+    w.storylinePendingChapter.findUnique.mockImplementation((({
+      where,
+    }: {
+      where: { postId: number };
+    }) => Promise.resolve(where.postId === 5 ? { postId: 5 } : null)) as never);
+    await expect(set('Chapter one opens.')).resolves.toEqual({
+      imageId: IMAGE,
+      content: 'Chapter one opens.',
+    });
+    expect(w.imageCaption.upsert).toHaveBeenCalledTimes(1);
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'ImageCaption',
+      entityId: IMAGE,
+    });
+  });
+
+  it("refuses someone else's linked draft", async () => {
+    w.storylineChapter.findFirst.mockResolvedValue(null as never);
+    w.storylinePendingChapter.findUnique.mockResolvedValue({ postId: 5 } as never);
+    await expect(set('Mine now', 8)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(w.imageCaption.upsert).not.toHaveBeenCalled();
   });
 
@@ -168,5 +197,60 @@ describe('getStorylineImageCaptions', () => {
   it('reads nothing for no chapter posts', async () => {
     expect([...(await read({ postIds: [] }))]).toEqual([]);
     expect(r.imageCaption.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPostImageCaptions', () => {
+  const STORED = [
+    {
+      imageId: 41,
+      postId: 5,
+      content: 'kept',
+      refused: true,
+      nsfwLevel: NsfwLevel.R,
+      userId: AUTHOR,
+    },
+    { imageId: 40, postId: 5, content: 'first', refused: false, nsfwLevel: 0, userId: AUTHOR },
+    { imageId: 50, postId: 6, content: 'other post', refused: false, nsfwLevel: 0, userId: AUTHOR },
+  ];
+  type Args = {
+    where: { image: { postId: number }; refused?: boolean };
+    select: Record<string, boolean>;
+    orderBy?: { imageId: 'asc' };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    w.post.findUnique.mockImplementation((({ where }: { where: { id: number } }) =>
+      Promise.resolve(where.id === 5 ? { userId: AUTHOR } : null)) as never);
+    // Applies the query's own filter, select and order, so a wrong one returns the wrong rows.
+    w.imageCaption.findMany.mockImplementation((({ where, select, orderBy }: Args) => {
+      const rows = STORED.filter(
+        (row) =>
+          row.postId === where?.image?.postId &&
+          (where.refused === undefined || row.refused === where.refused)
+      );
+      if (orderBy?.imageId === 'asc') rows.sort((a, b) => a.imageId - b.imageId);
+      return Promise.resolve(
+        rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => select?.[key])))
+      );
+    }) as never);
+  });
+
+  it("gives the author that post's captions, content only, refused ones included", async () => {
+    await expect(getPostImageCaptions({ postId: 5, userId: AUTHOR })).resolves.toEqual([
+      { imageId: 40, content: 'first' },
+      { imageId: 41, content: 'kept' },
+    ]);
+    expect(r.imageCaption.findMany).not.toHaveBeenCalled();
+  });
+
+  it('gives a moderator the same, and anyone else an empty list', async () => {
+    await expect(
+      getPostImageCaptions({ postId: 5, userId: 8, isModerator: true })
+    ).resolves.toHaveLength(2);
+    await expect(getPostImageCaptions({ postId: 5, userId: 8 })).resolves.toEqual([]);
+    await expect(getPostImageCaptions({ postId: 999, userId: AUTHOR })).resolves.toEqual([]);
+    expect(w.imageCaption.findMany).toHaveBeenCalledTimes(1);
   });
 });
