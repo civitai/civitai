@@ -1,7 +1,7 @@
 import { Badge, Group, Tooltip } from '@mantine/core';
 import type { MultiSelectProps } from '@mantine/core';
 import { IconCheck, IconShield } from '@tabler/icons-react';
-import { useAppContext } from '~/providers/AppProvider';
+import { useMaybeAppContext } from '~/providers/AppProvider';
 import {
   isBaseModelSfwOnly,
   isEcosystemNsfwRestricted,
@@ -17,11 +17,12 @@ type SfwOnlyBadgeProps = {
 
 // civitai.red only: .com (green) is SFW everywhere, so the badge would say nothing there.
 export function SfwOnlyBadge({ baseModel, ecosystemIds, className }: SfwOnlyBadgeProps) {
-  const { domain } = useAppContext();
+  // No provider (an embed or a bare test mount): show nothing rather than crash the tree.
+  const domain = useMaybeAppContext()?.domain;
   const sfwOnly = ecosystemIds
     ? ecosystemIds.length > 0 && ecosystemIds.every(isEcosystemNsfwRestricted)
     : isBaseModelSfwOnly(baseModel);
-  if (domain.green || !sfwOnly) return null;
+  if (!domain || domain.green || !sfwOnly) return null;
 
   return (
     <Tooltip label={SFW_ONLY_TOOLTIP} withArrow multiline w={220}>

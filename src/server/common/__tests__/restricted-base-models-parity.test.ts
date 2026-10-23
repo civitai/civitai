@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { baseModelRecords, licenseById } from '~/shared/constants/basemodel.constants';
 import { NSFW_RESTRICTED_BASE_MODELS } from '../../../../apps/event-engine/src/common/constants/feed.constants';
+import { NSFW_RESTRICTED_BASE_MODELS as SUBMODULE_RESTRICTED_BASE_MODELS } from '../../../../event-engine-common/constants/feed.constants';
 
 // `nsfwRestrictedBaseModels` (derived from the licence flags in constants.ts) is the source. The
 // shared registry and the event-engine feed keep their own copies; a base missing from the
@@ -21,5 +22,12 @@ describe('restricted base models parity', () => {
 
   it('event-engine feed restricts the same bases', () => {
     expect([...NSFW_RESTRICTED_BASE_MODELS].sort()).toEqual(source);
+  });
+
+  // The image and model feeds this app serves import the submodule's copy, not the one above.
+  // `it.fails` until the pointer moves past civitai/event-engine-common#16 (adds Ideogram); that
+  // bump turns this red, which is the cue to make it a plain `it`.
+  it.fails('event-engine-common feed restricts the same bases', () => {
+    expect([...SUBMODULE_RESTRICTED_BASE_MODELS].sort()).toEqual(source);
   });
 });

@@ -1,4 +1,3 @@
-import { MultiSelect } from '@mantine/core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
@@ -6,21 +5,24 @@ import type * as InstantSearch from 'react-instantsearch';
 
 /**
  * The SFW-only badge on each surface that renders it through `SfwOnlyBadge`: the generator picker
- * (real `BaseModelListContent` over the real ecosystem display items), the base model filter (the
- * Models and Images dropdowns share `baseModelSelectData` + `renderBaseModelOption`) and the search
- * refinement list (real `SearchableMultiSelectRefinementList`, instantsearch stubbed). The model
+ * (real `BaseModelListContent` over the real ecosystem display items), the base model filter
+ * (`BaseModelFilterSelect`, which the Models and Images dropdowns both render) and the search
+ * refinement list (real `SearchableMultiSelectRefinementList`, instantsearch stubbed; the search
+ * pages pass it `renderBaseModelOption`, which nothing here checks). The model
  * page row has its own full-mount file; the resource card shield lives in
  * ResourceItemContent.browser.test.tsx.
  */
 
 const mocks = vi.hoisted(() => ({
-  domain: { green: false, blue: true, red: false },
+  domain: { green: false, blue: true, red: false } as Record<string, boolean> | null,
   refinementItems: [] as Array<{ label: string; value: string; isRefined: boolean; count: number }>,
 }));
 
 // .red is configured as both a blue and a red host, so its client context reads blue.
+// Other modules in this import graph read `useAppContext`; the badge reads `useMaybeAppContext`.
 vi.mock('~/providers/AppProvider', () => ({
-  useAppContext: () => ({ domain: mocks.domain }),
+  useAppContext: () => ({ domain: mocks.domain ?? { green: false, blue: true, red: false } }),
+  useMaybeAppContext: () => (mocks.domain ? { domain: mocks.domain } : null),
 }));
 
 vi.mock('react-instantsearch', async (importOriginal) => ({
@@ -33,6 +35,7 @@ vi.mock('react-instantsearch', async (importOriginal) => ({
 }));
 
 const { SfwOnlyBadge, renderBaseModelOption } = await import('./SfwOnlyBadge');
+const { BaseModelFilterSelect } = await import('./BaseModelFilterSelect');
 const { BaseModelListContent } = await import('~/components/generation_v2/inputs/BaseModelInput');
 const { SearchableMultiSelectRefinementList } = await import(
   '~/components/Search/CustomSearchComponents'
@@ -82,6 +85,18 @@ describe('SfwOnlyBadge', () => {
 
   test('shows nothing on .com (green), even for a restricted base', async () => {
     mocks.domain = GREEN;
+    renderWithProviders(
+      <>
+        <span>anchor</span>
+        <SfwOnlyBadge baseModel="Ideogram 4.5" />
+      </>
+    );
+    await expect.element(page.getByText('anchor')).toBeInTheDocument();
+    expect(badges()).toHaveLength(0);
+  });
+
+  test('shows nothing, and does not throw, outside an AppProvider', async () => {
+    mocks.domain = null;
     renderWithProviders(
       <>
         <span>anchor</span>
@@ -144,15 +159,7 @@ describe('generator base model picker', () => {
 
 describe('base model filter (Models and Images)', () => {
   const renderFilter = () =>
-    renderWithProviders(
-      <MultiSelect
-        data={baseModelSelectData}
-        placeholder="All Base Models"
-        renderOption={renderBaseModelOption}
-        comboboxProps={{ withinPortal: false }}
-        maxDropdownHeight={10000}
-      />
-    );
+    renderWithProviders(<BaseModelFilterSelect value={[]} onChange={vi.fn()} />);
   const optionHasBadge = (name: string) => {
     const option = Array.from(document.querySelectorAll('[role="option"]')).find((o) =>
       o.textContent?.startsWith(name)
