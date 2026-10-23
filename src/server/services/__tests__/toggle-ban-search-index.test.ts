@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
 /**
@@ -355,6 +356,30 @@ describe('toggleBan -> profile links', () => {
 
     expect(userUpdate).toHaveBeenCalled();
     expect(userLinkDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// The ban has committed by then: a sign-out failure must neither undo it nor skip what follows.
+describe('toggleBan with a failing session store', () => {
+  it('keeps a moderator ban and runs the rest of it, logging the user', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: 'someone@example.com',
+    });
+    mockInvalidateSession.mockRejectedValueOnce(new Error('session store unavailable'));
+
+    await expect(call()).resolves.toBeDefined();
+
+    expect(userUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bannedAt: expect.any(Date) }) })
+    );
+    expect(mockRemoveContent).toHaveBeenCalledTimes(1);
+    expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-invalidate-session', userId: USER_ID })
+    );
   });
 });
 

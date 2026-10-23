@@ -2436,6 +2436,7 @@ export const toggleBan = async ({
     logToAxiom({
       type: 'error',
       name: 'ban-user-invalidate-session',
+      userId: id,
       message: (error as Error).message,
       error,
     })
