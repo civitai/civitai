@@ -13,8 +13,7 @@ import {
 } from '../../../../event-engine-common/constants/feed.constants';
 
 // `nsfwRestrictedBaseModels` (derived from the licence flags in constants.ts) is the source. The
-// shared registry and the event-engine feed keep their own copies; a base missing from the
-// event-engine list has its R/X/XXX images served in feeds built there, and nothing alerts on it.
+// shared registry and both event-engine feed copies keep their own lists, which must match it.
 // The RestrictedBaseModels table is deliberately not checked here: it is guarded at runtime by
 // the reconcile-restricted-images divergence gauge, and a test must not read production rows.
 describe('restricted base models parity', () => {
@@ -33,9 +32,7 @@ describe('restricted base models parity', () => {
   });
 
   // The image and model feeds this app serves import the submodule's copy, not the one above.
-  // `it.fails` until the pointer moves past civitai/event-engine-common#16 (adds Ideogram); that
-  // bump turns this red, which is the cue to make it a plain `it`.
-  it.fails('event-engine-common feed restricts the same bases', () => {
+  it('event-engine-common feed restricts the same bases', () => {
     expect([...SUBMODULE_RESTRICTED_BASE_MODELS].sort()).toEqual(source);
   });
 
@@ -47,8 +44,7 @@ describe('restricted base models parity', () => {
     expect([...NSFW_RESTRICTED_LEVELS]).toEqual(nsfwBrowsingLevelsArray);
   });
 
-  // `it.fails` until the pointer moves past civitai/event-engine-common#16, like the case above.
-  it.fails('event-engine-common feed excludes an R image on a restricted base', () => {
+  it('event-engine-common feed excludes an R image on a restricted base', () => {
     expect(SUBMODULE_RESTRICTED_BASE_MODELS).toContain('SD 3.5 Large');
     expect(SUBMODULE_RESTRICTED_LEVELS).toContain(NsfwLevel.R);
     expect([...SUBMODULE_RESTRICTED_LEVELS]).toEqual(nsfwBrowsingLevelsArray);
