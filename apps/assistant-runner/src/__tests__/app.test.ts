@@ -161,7 +161,14 @@ describe('the run API', () => {
       body: JSON.stringify(startRequest),
     });
     expect(response.status).toBe(201);
-    expect(await response.json()).toEqual({ v: 1, runId: 'r1', conversationId: 'c1', seq: 1 });
+    // Every start's answer lists what the runner takes beyond v1's baseline: a page shows Edit only then.
+    expect(await response.json()).toEqual({
+      v: 1,
+      runId: 'r1',
+      conversationId: 'c1',
+      seq: 1,
+      features: ['edit'],
+    });
     expect(seen).toEqual([
       {
         method: 'start',
@@ -299,6 +306,33 @@ describe('the run API', () => {
       message: 'busy',
       runId: 'r0',
     });
+  });
+
+  it('hands the runner an edit’s start with `turn.edit`, and lists `edit` in a lookup’s answer', async () => {
+    const { service, seen } = fakeService();
+    const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+    const edit = {
+      ...startRequest,
+      turn: { seq: 1, user: { content: 'hi again', attachments: [] }, edit: true },
+    };
+    const response = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: await startHeaders(),
+      body: JSON.stringify(edit),
+    });
+    expect(response.status).toBe(201);
+    expect(seen[0]).toMatchObject({ method: 'start', userId: 'u1', args: [edit] });
+    expect(
+      await fetch(`${base}/runs?conversationId=c1`, { headers: user1 }).then((r) => r.json())
+    ).toEqual({ v: 1, run: null, features: ['edit'] });
+    // `edit` is a boolean or nothing.
+    const bad = await fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: await startHeaders(),
+      body: JSON.stringify({ ...edit, turn: { ...edit.turn, edit: 'yes' } }),
+    });
+    expect(bad.status).toBe(400);
+    expect(seen.filter((call) => call.method === 'start')).toHaveLength(1);
   });
 
   it('refuses a start it cannot read as bad-request, without calling the runner', async () => {

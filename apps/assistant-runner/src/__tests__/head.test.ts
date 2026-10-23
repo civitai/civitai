@@ -124,6 +124,62 @@ describe('the head the runner saves, read by the chat package', () => {
     expect(retried.turns[0]!.assistant).toMatchObject({ status: 'done' });
   });
 
+  it('an edit replaces the turn’s message, drops its reply, and keeps the turns before it', () => {
+    const second = { content: 'Water them on Sundays', attachments: [] };
+    const edited = { content: 'Water them on Mondays', attachments: [] };
+    let head = withEnd(
+      startTurn(null, { conversationId: 'c1', seq: 1, user, now }),
+      1,
+      { messages: stepOne, status: 'done' },
+      now
+    );
+    head = withEnd(
+      startTurn(head, { conversationId: 'c1', seq: 2, user: second, now }),
+      2,
+      { messages: stepOne, status: 'done' },
+      now
+    );
+    const next = startTurn(head, {
+      conversationId: 'c1',
+      seq: 2,
+      user: edited,
+      now: later,
+      edit: true,
+      runId: 'run-edit',
+    });
+    expect(next.turns).toEqual([
+      head.turns[0],
+      { seq: 2, createdAt: now.toISOString(), user: edited, runId: 'run-edit' },
+    ]);
+    expect(next).toMatchObject({ v: 2, title: user.content, updatedAt: later.toISOString() });
+    // Read as the chat reads it: the edited message, no reply yet (cut off at the turn's start).
+    expect(read(next)!.turns.map((turn) => turnFrom(turn).user.content)).toEqual([
+      user.content,
+      edited.content,
+    ]);
+    // Without `edit` the same start keeps the saved message (a retry): the flag is what replaces it.
+    expect(
+      startTurn(head, { conversationId: 'c1', seq: 2, user: edited, now: later }).turns[1]!.user
+    ).toEqual(second);
+  });
+
+  it('an edit of the first message renames a chat named after it, and only such a chat', () => {
+    const edited = { content: 'Make me an app that waters my cactus', attachments: [] };
+    const head = withEnd(
+      startTurn(null, { conversationId: 'c1', seq: 1, user, now }),
+      1,
+      { messages: stepOne, status: 'done' },
+      now
+    );
+    expect(
+      startTurn(head, { conversationId: 'c1', seq: 1, user: edited, now: later, edit: true })
+    ).toMatchObject({ title: edited.content, titleSource: 'first-message' });
+    const named = withPatch(head, { v: 1, title: 'Plants' }, now);
+    expect(
+      startTurn(named, { conversationId: 'c1', seq: 1, user: edited, now: later, edit: true })
+    ).toMatchObject({ title: 'Plants', titleSource: 'user' });
+  });
+
   it('applies a patch, and `model: null` clears the chat’s model', () => {
     const head = startTurn(null, { conversationId: 'c1', seq: 1, user, now });
     const titled = withPatch(head, { v: 1, title: 'Plants', model: 'm1' }, later);
@@ -142,6 +198,14 @@ describe('acceptsTurn', () => {
     expect(acceptsTurn(head, 1, true)).toBe(true);
     expect(acceptsTurn(head, 2, true)).toBe(true);
     expect(acceptsTurn(head, 3, true)).toBe(false);
+  });
+
+  it('takes an edit of the latest turn, or of the next when nothing saved it, and nothing else', () => {
+    expect(acceptsTurn(head, 1, false, true)).toBe(true);
+    expect(acceptsTurn(head, 2, false, true)).toBe(true);
+    expect(acceptsTurn(head, 3, false, true)).toBe(false);
+    expect(acceptsTurn(null, 1, false, true)).toBe(true);
+    expect(acceptsTurn(null, 2, false, true)).toBe(false);
   });
 });
 
