@@ -736,9 +736,10 @@ describe('IframeHost consent backstop — the surface', () => {
   });
 
   test('the model slot is NOT a local preview: a document-store REQUEST_CONSENT still toasts, as before', async () => {
-    // Only the dev-tunnel surface serves the document store locally. Here the same
-    // request the preview stops toasting about must keep both channels, so the
-    // surface condition cannot leak onto the model slot.
+    // INVARIANT GUARD, not regression coverage: this host passes the literal
+    // 'model-slot' and toasted here before the change too. Only the dev-tunnel
+    // surface serves the document store locally; the unit-test ledger over the
+    // whole surface record is the guard on the condition itself.
     renderWithProviders(
       <IframeHost
         {...baseProps}
