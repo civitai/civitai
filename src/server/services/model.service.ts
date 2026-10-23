@@ -2286,12 +2286,14 @@ export const permaDeleteModelById = async ({
           AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
         RETURNING m.id, m."userId", m."nsfwLevel"
       `.catch((e: unknown) => {
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: HOLD_UNCONFIRMED, cause: e });
+        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
       });
       if (!deletedModel) {
-        // Gone already, by a concurrent delete, is not a hold.
+        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
+        // transaction deleted passed a hold check, so it must not commit.
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
-        if (!stillThere) return { deletedModel: null, imagesToDelete: [] };
+        if (!stillThere)
+          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
         throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
       }
       return { deletedModel, imagesToDelete };

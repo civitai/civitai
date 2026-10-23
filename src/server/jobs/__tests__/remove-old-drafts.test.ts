@@ -377,6 +377,30 @@ describe('removeOldDrafts', () => {
 
       expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
     });
+
+    // The deletes have committed by then, so the batch must still be recorded and deregistered.
+    it('still records and deregisters what it deleted when the kept-models read fails', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([
+        { id: 1, userId: 11 },
+        { id: 2, userId: 22 },
+      ]);
+      write.versions = () => [
+        versionRow({ id: 100, modelId: 1 }),
+        versionRow({ id: 200, modelId: 2 }),
+      ];
+      write.deleteModels = async () => [{ id: 2 }];
+      write.stillThere = () => {
+        throw new Error('connection reset');
+      };
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Removed old draft models')).toEqual([
+        expect.objectContaining({ modelIds: [2] }),
+      ]);
+      expect(mockDeregisterBatch).toHaveBeenCalledWith([200]);
+      expect(axiomEvents('Failed to remove batch of old draft models')).toEqual([]);
+    });
   });
 
   describe('identifying what was destroyed', () => {

@@ -368,7 +368,7 @@ describe('permaDeleteModelById — legal hold', () => {
   afterAll(() => db.close());
 
   /** Runs the permanent delete of a model owned by `userId`; `exists: false` leaves no row to delete. */
-  async function permaDeleteOwnedBy(userId: number, { exists = true } = {}) {
+  async function permaDeleteOwnedBy(userId: number, { exists = true, deleteFails = false } = {}) {
     await db.exec(`DELETE FROM "Model";`);
     if (exists) await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL_ID}, ${userId})`);
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ url: 'models/held.safetensors' }]);
@@ -388,6 +388,7 @@ describe('permaDeleteModelById — legal hold', () => {
     ) => {
       const flat = Prisma.sql(strings, ...(values as never[]));
       if (!isModelDelete(flat.text)) return [];
+      if (deleteFails) throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(flat.text, flat.values as unknown[])).rows;
     }) as never);
     // A throw out of the callback is what rolls the transaction back.
@@ -434,7 +435,20 @@ describe('permaDeleteModelById — legal hold', () => {
     expect(vi.mocked(deleteModelFileObjects)).toHaveBeenCalledWith(['models/held.safetensors']);
   });
 
-  it('reports a model another delete removed first as not found, not as held', async () => {
-    expect((await permaDeleteOwnedBy(OWNER_ID, { exists: false })).result).toBe('not found');
+  // Its post and image deletes passed no hold check, so they must not commit either.
+  it('reports a model another delete removed first as not found, and rolls back', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { exists: false })).toEqual({
+      result: 'NOT_FOUND',
+      left: 0,
+      rolledBack: true,
+    });
+  });
+
+  it('refuses, and rolls back, when the hold cannot be checked', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { deleteFails: true })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
   });
 });
