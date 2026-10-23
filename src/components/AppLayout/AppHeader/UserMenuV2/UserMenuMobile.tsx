@@ -274,7 +274,7 @@ export function MobileHeaderRows({
         data-panel-row
       >
         {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
-        <div className="-mx-2 min-w-0 overflow-x-clip px-2">
+        <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
           <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
         </div>
       </MenuItemLink>

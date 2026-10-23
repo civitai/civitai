@@ -121,11 +121,33 @@ async function renderHeader() {
 
 describe('mobile menu header row', () => {
   test.each([
-    ['a short name', 'tester'],
-    ['the longest name allowed (25 characters)', 'abcdefghijklmnopqrstuvwxy'],
-  ])('keeps avatar, Buzz, Buy and the pin on one line for %s', async (_label, username) => {
+    ['a short name', 'tester', false],
+    ['the longest name allowed (25 characters)', 'abcdefghijklmnopqrstuvwxy', false],
+    ['a short name and an avatar frame', 'tester', true],
+    ['the longest name and an avatar frame', 'abcdefghijklmnopqrstuvwxy', true],
+  ])('keeps avatar, Buzz, Buy and the pin on one line for %s', async (_label, username, framed) => {
     mocks.username = username;
+    mocks.decorated = framed;
     const { row, profile, buzz, pin } = await renderHeader();
+
+    if (framed) {
+      const frame = row.querySelector('[data-frame]')!;
+      const rect = box(frame);
+      const avatar = box(frame.parentElement!);
+      // The frame reaches past the avatar's box on every side: the clip checks below mean nothing if not.
+      expect(rect.top).toBeLessThan(avatar.top);
+      expect(rect.bottom).toBeGreaterThan(avatar.bottom);
+      expect(rect.left).toBeLessThan(avatar.left);
+      // Hit-testing sees clipping where a bounding box does not: a clipped corner belongs to something else.
+      for (const [x, y] of [
+        [rect.left + 2, rect.top + 2],
+        [rect.right - 2, rect.top + 2],
+        [rect.left + 2, rect.bottom - 2],
+        [rect.right - 2, rect.bottom - 2],
+      ]) {
+        expect(document.elementFromPoint(x, y)).toBe(frame);
+      }
+    }
 
     const parts = [profile, buzz, pin].map(box);
     const centres = parts.map((b) => b.top + b.height / 2);
@@ -144,34 +166,6 @@ describe('mobile menu header row', () => {
     const buy = [...buzz.querySelectorAll('div')].find((d) => d.textContent === 'Buy')!;
     expect(box(buy).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
     expect(box(buy).right).toBeLessThanOrEqual(parts[2].left);
-  });
-
-  test('shows an avatar frame whole, top and bottom, beside a 25-character name', async () => {
-    mocks.username = 'abcdefghijklmnopqrstuvwxy';
-    mocks.decorated = true;
-    const { row, profile, buzz, pin } = await renderHeader();
-    const frame = row.querySelector('[data-frame]')!;
-    const rect = box(frame);
-    // The frame reaches past the avatar's 32px box: this fixture only means something if it does.
-    expect(rect.height).toBeGreaterThan(40);
-
-    // Hit-testing sees clipping where a bounding box does not: a clipped corner belongs to something else.
-    for (const [x, y] of [
-      [rect.left + 2, rect.top + 2],
-      [rect.right - 2, rect.top + 2],
-      [rect.left + 2, rect.bottom - 2],
-      [rect.right - 2, rect.bottom - 2],
-    ]) {
-      expect(document.elementFromPoint(x, y)).toBe(frame);
-    }
-
-    // Still one line and uncrowded with the frame and the longest name.
-    const parts = [profile, buzz, pin].map(box);
-    const centres = parts.map((b) => b.top + b.height / 2);
-    expect(Math.max(...centres) - Math.min(...centres)).toBeLessThanOrEqual(1);
-    expect(box(row).height).toBeLessThanOrEqual(64);
-    expect(parts[1].left - parts[0].right).toBeGreaterThanOrEqual(4);
-    expect(parts[2].right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
   });
 });
 
