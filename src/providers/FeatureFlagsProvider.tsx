@@ -34,19 +34,27 @@ export const useOptionalFeatureFlags = () => useContext(FeatureFlagsCtx);
  * doesn't flash against the anonymous SSR snapshot.
  */
 export const useFeatureFlagsReady = () => useContext(FeatureFlagsReadyCtx);
+
+/** The viewer's flags when they arrive after mount (a shell page's page data). */
+export type FeatureFlagsSeed = { flags: FeatureAccess };
+
 export const FeatureFlagsProvider = ({
   children,
   flags: initialFlags,
   userFlags,
+  seed,
 }: {
   children: React.ReactNode;
   flags: FeatureAccess;
   // SSR-computed per-user toggleable overlay. When present, seeds the
   // `user.getFeatureFlags` query so the client never fetches it on bootstrap.
   userFlags?: FeatureAccess;
+  /** `null` while the viewer's flags are on their way (not ready), then they replace `flags` once. */
+  seed?: FeatureFlagsSeed | null;
 }) => {
   const session = useSession();
-  const [flags] = useState(initialFlags);
+  const [frozenFlags] = useState(initialFlags);
+  const flags = seed ? seed.flags : frozenFlags;
 
   const {
     data: userFeatures = {} as FeatureAccess,
@@ -80,7 +88,7 @@ export const FeatureFlagsProvider = ({
   // present from frame 0). The `|| isError` arm preserves the no-seed error
   // path: a client fetch that fails through its retries still settles to ready,
   // exactly as `isFetched` did, so consumers don't hang forever on an outage.
-  const ready = !session.data || isSuccess || isError;
+  const ready = seed !== null && (!session.data || isSuccess || isError);
 
   const featureFlags = useMemo(
     () => ({

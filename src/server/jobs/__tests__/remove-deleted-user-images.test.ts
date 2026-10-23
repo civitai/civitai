@@ -214,7 +214,7 @@ const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fix
 
 /** The per-account review-flag hold, as the account hold carried in a statement spells it. */
 const REVIEW_FLAG_HOLD =
-  /SELECT 1 FROM "Image" WHERE "userId" = (?:\?(?:::int)?|u\.id) AND "needsReview" = 'csam'/;
+  /SELECT 1 FROM "Image" hr WHERE hr\."userId" = (?:\?(?:::int)?|u\.id) AND hr\."needsReview" = 'csam'/;
 const blockedByReviewFlag = (sql: string, values: unknown[], flagged: boolean | undefined) =>
   !!flagged &&
   [sql, ...values.filter(isLegalHold).map((v) => (v as { sql: string }).sql)].some((text) =>
