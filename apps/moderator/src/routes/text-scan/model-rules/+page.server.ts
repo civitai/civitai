@@ -28,6 +28,7 @@ import {
   saveSchema,
 } from '$lib/server/text-scan-lab/prompt-save';
 import { runTry } from '$lib/server/text-scan-lab/try';
+import { readerOf } from '$lib/server/chat-read-audit';
 import { loadPrompts, promptAuthors } from '$lib/server/text-scan-lab/version';
 import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { MAX_INT4 } from '$lib/server/users.service';
@@ -123,7 +124,8 @@ async function saveRule(
 }
 
 export const actions: Actions = {
-  try: async ({ request }) => runTry(await request.formData(), { only: WORKSPACE_ONLY.modelRules }),
+  try: async ({ request, locals }) =>
+    runTry(readerOf(locals.user), await request.formData(), { only: WORKSPACE_ONLY.modelRules }),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {
     const form = await request.formData();

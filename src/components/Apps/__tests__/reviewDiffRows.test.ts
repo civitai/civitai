@@ -12,7 +12,7 @@ import {
  *
  * 🔴 THIS IS THE PART THAT CAN BE SILENTLY WRONG. A renderer that paints the right colours
  * against the wrong numbers looks completely fine — a moderator reading "line 42" would be
- * reading line 43 — and the browser tier that renders it is report-only in CI. So the walk
+ * reading line 43. So the walk
  * is pinned here, against hunks shaped exactly like the ones `computeBundleLineDiff` emits
  * (jsdiff `structuredPatch`, `' '`/`'+'`/`'-'` prefixes, `context: 3`).
  */

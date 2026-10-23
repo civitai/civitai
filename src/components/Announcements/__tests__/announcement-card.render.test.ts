@@ -6,8 +6,8 @@ import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import type { AnnouncementCardAction } from '~/components/Announcements/AnnouncementCard';
 
-// The browser-mode twin (`AnnouncementCard.browser.test.tsx`) covers the clicks but runs in no
-// gating CI job, so the rendered shape both tickets turn on is pinned here, in `unit`.
+// The browser-mode twin (`AnnouncementCard.browser.test.tsx`) covers the clicks; the rendered
+// shape both tickets turn on is pinned here, in `unit`, too.
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),

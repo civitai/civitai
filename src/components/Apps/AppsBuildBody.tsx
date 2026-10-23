@@ -186,14 +186,14 @@ export function AppsBuildBody() {
   // and out of scope for it; see the retraction above for the mechanism.
   //
   // 🔴 THE PREDICATE IS `resolveAppsBuildSettled`, IN `./appsBuildState`, so its truth table
-  // can be pinned in the `unit` tier — the browser project that renders THIS file is
-  // report-only everywhere. ⚠️ That is catch-after-landing, NOT block-before-merge: nothing
-  // in this repo blocks a merge on a check (`unit` is `continue-on-error` on a pull request
-  // and `main` requires no status checks). An earlier version of this comment claimed `unit`
-  // was "the BLOCKING tier"; it is not. See `resolveAppsBuildSettled` for the measured detail.
-  // Do not re-inline this expression — and note that nothing ENFORCES that instruction: the
-  // sibling predicates here carry call-site ledger tests, this one deliberately does not,
-  // because a ledger would inherit exactly the same non-enforcement.
+  // can be pinned in the `unit` tier without rendering THIS file. ⚠️ That is catch-after-landing,
+  // NOT block-before-merge: nothing in this repo blocks a merge on a check (`unit` is
+  // `continue-on-error` on a pull request and `main` requires no status checks). An earlier version
+  // of this comment claimed `unit` was "the BLOCKING tier"; it is not. See
+  // `resolveAppsBuildSettled` for the measured detail. Do not re-inline this expression — and note
+  // that nothing ENFORCES that instruction: the sibling predicates here carry call-site ledger
+  // tests, this one deliberately does not, because a ledger would inherit exactly the same
+  // non-enforcement.
   const viewed = useRef(false);
   const settled = resolveAppsBuildSettled({ summaryEnabled, isClient, isFetched });
   useEffect(() => {

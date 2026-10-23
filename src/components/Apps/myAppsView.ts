@@ -13,7 +13,7 @@ import type {
  * Kept out of the component for the usual reason: the rules below are the ones a naive
  * re-merge gets wrong, and they are only provable without mounting a table if they are
  * functions. This module lives in the **`unit`** vitest project (`src/**\/*.test.ts`),
- * which is the tier that actually gates, unlike the browser-mode `component` project.
+ * which needs no browser.
  */
 
 /**

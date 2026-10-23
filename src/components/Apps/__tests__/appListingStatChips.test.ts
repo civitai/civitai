@@ -13,10 +13,9 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  *
  * 🔴 WHY HERE AND NOT IN THE BROWSER SUITE. The chips render inside a Mantine
  * `HoverCard`, so the obvious home for this is `AppListingDetailBody.browser.test.tsx`
- * — and that project is **not run by CI**, and may not run locally at all (the pinned
- * Chromium and the Playwright provider disagree on version). A guard there is invisible
- * to everyone. So the DECISION was extracted into a pure module and is pinned here; the
- * component is a renderer with no branch of its own left to get wrong.
+ * — and that project may not run on every workstation (the pinned Chromium and the
+ * Playwright provider disagree on version). So the DECISION was extracted into a pure module and is
+ * pinned here; the component is a renderer with no branch of its own left to get wrong.
  *
  * 🔴 REGRESSION COVERAGE, not an invariant guard — every `describe` below except the
  * two explicitly labelled otherwise was RED at `617f09c204` and is green at HEAD. The

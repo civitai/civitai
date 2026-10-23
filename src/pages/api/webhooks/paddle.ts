@@ -83,7 +83,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send('Webhook Error');
     }
 
     let customerId: string | null = null;
@@ -172,7 +172,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(200).json({ received: true });
       } catch (error: any) {
         return res.status(400).send({
-          error: error.message,
+          error: 'Webhook handler failed',
         });
       }
     }

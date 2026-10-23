@@ -40,20 +40,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       return res.status(400).send({
         error: 'Invalid Request. Signature or Secret not found',
-        sig,
       });
     }
 
-    const { isValid, ...data } = client.validateWebhookEvent(sig as string, req.body);
+    const { isValid } = client.validateWebhookEvent(sig as string, req.body);
     if (!isValid) {
-      log({
-        message: 'Invalid signature',
-        sig,
-        data,
-      });
+      log({ message: 'Invalid signature' });
       return res.status(400).send({
         error: 'Invalid Request. Could not validate Webhook signature',
-        data,
       });
     }
 
@@ -88,7 +82,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         outcome_amount: body.outcome_amount,
       },
     });
-    return res.status(400).send(`Webhook Error: ${error.message}`);
+    return res.status(400).send('Webhook Error');
   }
 
   return res.status(200).json({ received: true });

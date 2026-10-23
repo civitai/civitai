@@ -146,15 +146,39 @@ describe('claimNext order', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('releases a held lease that the new filter excludes', async () => {
+  it('keeps a held card across a filter change, then applies the filter', async () => {
     const d12 = await seedItem(1, { flaggedAt: '2026-10-12T10:00:00Z' });
-    const d13 = await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
-    expect((await claimNext(1, {}, NOW))!.itemId).toBe(d13);
-    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d12);
+    await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const d14 = await seedItem(3, { flaggedAt: '2026-10-14T10:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(d14);
+    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d14);
     const { rows } = await pg.query<{ itemId: number }>(
       `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = 1`
     );
-    expect(rows).toEqual([{ itemId: d12 }]);
+    expect(rows).toEqual([{ itemId: d14 }]);
+    await castVote({ itemId: d14, userId: 1, choice: KEEP, msOnItem: 1 }, later(2000));
+    // Unfiltered, the next card would be the 13th's.
+    expect((await claimNext(1, { day: '2026-10-12' }, later(3000)))!.itemId).toBe(d12);
+  });
+
+  it('moves on from a held card that is no longer open', async () => {
+    const a = await seedItem(1, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const b = await seedItem(2, { flaggedAt: '2026-10-13T09:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    await pg.query(`UPDATE "ScanLabelItem" SET status = 'void' WHERE id = $1`, [a]);
+    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
+  });
+
+  it('moves on from a held card the moderator already voted on', async () => {
+    const a = await seedItem(1, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const b = await seedItem(2, { flaggedAt: '2026-10-13T09:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    // A vote from another tab that committed while this tab was claiming, so the lease survived it.
+    await pg.query(
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, 1, false)`,
+      [a]
+    );
+    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
   });
 
   it('never serves an item the moderator already voted on', async () => {
@@ -201,6 +225,37 @@ describe('claimNext order', () => {
       // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
       expect(await isControlFlaggerVersion('scan@2')).toBe(false);
       expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+    });
+
+    it('keeps a held card across any filter, whatever its lane', async () => {
+      // In every filter below, so it is what a released lease would be replaced by.
+      const other = await seedItem(3, { version: 'scan@2', flaggedAt: '2026-10-12T08:00:00Z' });
+      const lanes = { flagged: () => 0.1, control: () => 0.95 };
+      const filters = [
+        { flaggerVersion: 'scan@2' },
+        { day: '2026-10-12' },
+        { day: '2026-10-12', flaggerVersion: 'scan@2' },
+      ];
+      let userId = 0;
+      for (const votes of [0, 1]) {
+        await pg.query(`UPDATE "ScanLabelItem" SET votes = $1 WHERE id <> $2`, [votes, other]);
+        for (const filter of filters)
+          for (const [lane, rng] of Object.entries(lanes)) {
+            userId++;
+            // Each moderator starts after the previous leases ran out.
+            const at = later(userId * 2 * LEASE_MS);
+            const held = (await claimNext(userId, {}, at, rng))!.itemId;
+            expect((await item(held)).lane).toBe(lane);
+            expect(held).not.toBe(other);
+            const kept = await claimNext(userId, filter, new Date(at.getTime() + 1000));
+            expect(kept!.itemId).toBe(held);
+            const { rows } = await pg.query<{ itemId: number }>(
+              `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = $1`,
+              [userId]
+            );
+            expect(rows).toEqual([{ itemId: held }]);
+          }
+      }
     });
 
     it('recognises the control version, and only it', async () => {

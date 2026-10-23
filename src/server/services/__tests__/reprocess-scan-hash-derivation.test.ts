@@ -47,9 +47,13 @@ vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: vi.fn(),
   MINOR_HASH_FILE_TYPE: 'Model',
 }));
+vi.mock('~/server/services/poi-hash.service', () => ({ checkPoiHashOnScan: vi.fn() }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(true),
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    POI_HASH_AUTO_FLAG: 'poi-hash-auto-flag',
+  },
 }));
 
 // ModEndpoint wraps the handler in a moderator session check. Unwrap it — this file is about the

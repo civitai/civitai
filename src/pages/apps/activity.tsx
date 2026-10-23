@@ -780,7 +780,7 @@ export default function AppActivityPage() {
   // 🔴 THE BAR IS DERIVED, NOT HAND-SPELLED. This used to be four `canSee… &&` guards
   // inline in the JSX below — four sites the node-env `unit` project could not see, so
   // deleting one of them (rendering a tab whose panel stayed gated) left that whole
-  // suite green and only the report-only `component` tier caught it. Mapping the
+  // suite green and only the `component` tier caught it. Mapping the
   // ledger's own output means the unit-tier guard on `SLOT_GATED_ACTIVITY_TABS` now
   // governs what actually renders.
   const visibleTabs = visibleActivityTabs(visibility);

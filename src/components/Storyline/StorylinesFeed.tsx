@@ -7,7 +7,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
 import {
@@ -123,24 +123,48 @@ export function StorylineFeedCard({ storyline }: { storyline: StorylineCard }) {
   const closed = closedLabel(storyline, currentUser?.id);
   const price = storyline.open ? storyline.continuePrice : null;
 
+  const thumb = (
+    <StorylineThumb image={storyline.coverImage} width={300} fluid className="!rounded-none">
+      <StorylineStatusChip status={storyline.status} onImage className="absolute left-2 top-2" />
+      {closed && <StorylineClosedChip label={closed} onImage className="absolute right-2 top-2" />}
+      <div className="absolute inset-x-0 bottom-0 flex h-[45%] flex-col justify-end bg-gradient-to-t from-black/80 to-transparent px-3 pb-2.5 [text-shadow:0_1px_2px_rgba(0,0,0,.6)]">
+        <Text fz={17} fw={800} lh={1.2} c="white" lineClamp={2}>
+          {storyline.title}
+        </Text>
+        {storyline.user.username && (
+          <Text size="xs" className="mt-1 text-white/85">
+            by {storyline.user.username}
+          </Text>
+        )}
+      </div>
+    </StorylineThumb>
+  );
+
+  // Only its owner is shown a storyline with no chapter 1 yet, and what they do next is write it.
+  if (storyline.chapterCount === 0 && storyline.user.id === currentUser?.id)
+    return (
+      <div className={cardClass}>
+        <Link href={storylineUrl(storyline.id)}>{thumb}</Link>
+        <div className="flex flex-1 flex-col gap-2 px-3 py-2.5">
+          <Text size="sm" c="dimmed">
+            No chapter 1 yet
+          </Text>
+          <Button
+            component={Link}
+            href={storylineWriteChapterUrl(storyline.id)}
+            color="violet"
+            size="xs"
+            fullWidth
+          >
+            Write chapter 1
+          </Button>
+        </div>
+      </div>
+    );
+
   return (
     <Link href={storylineUrl(storyline.id)} className={cardClass}>
-      <StorylineThumb image={storyline.coverImage} width={300} fluid className="!rounded-none">
-        <StorylineStatusChip status={storyline.status} onImage className="absolute left-2 top-2" />
-        {closed && (
-          <StorylineClosedChip label={closed} onImage className="absolute right-2 top-2" />
-        )}
-        <div className="absolute inset-x-0 bottom-0 flex h-[45%] flex-col justify-end bg-gradient-to-t from-black/80 to-transparent px-3 pb-2.5 [text-shadow:0_1px_2px_rgba(0,0,0,.6)]">
-          <Text fz={17} fw={800} lh={1.2} c="white" lineClamp={2}>
-            {storyline.title}
-          </Text>
-          {storyline.user.username && (
-            <Text size="xs" className="mt-1 text-white/85">
-              by {storyline.user.username}
-            </Text>
-          )}
-        </div>
-      </StorylineThumb>
+      {thumb}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
         <StorylineStat
           icon={IconBook2}

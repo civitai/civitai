@@ -24,9 +24,11 @@ vi.mock('~/server/services/text-scan/label-capture', async (importOriginal) => {
   };
 });
 // Hand-listed: the real model.service pulls the whole model graph (meili, prom, redis) at load.
+const { mockClearPoiHashMeta } = vi.hoisted(() => ({ mockClearPoiHashMeta: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   applyModelFlagSideEffects: mockSideEffects,
+  clearPoiHashMeta: mockClearPoiHashMeta,
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
@@ -471,6 +473,20 @@ describe('grantModelTextScanPoi', () => {
     expect(text).toMatch(
       /WHERE p = 'poi'\s+OR m\.minor\s+OR p NOT IN \('nsfw', 'sfwOnly'\)\s+OR p IN \(SELECT jsonb_array_elements_text\(m\.meta->\?->'poi'->'prev'->'lockedProperties'\)\)/
     );
+  });
+
+  // Without the stamp, the hash match re-flags the same file from a seed it shares.
+  it('marks the model cleared for the real-person hash match', async () => {
+    mockClearPoiHashMeta.mockClear();
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    expect(mockClearPoiHashMeta).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('marks nothing when nothing was lifted', async () => {
+    mockClearPoiHashMeta.mockClear();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    expect(mockClearPoiHashMeta).not.toHaveBeenCalled();
   });
 
   // A grant recorded apart from the lift would outlive a failed lift, and a recorded grant reads as

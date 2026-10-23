@@ -2193,6 +2193,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  caption                ImageCaption?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -7036,8 +7037,23 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+  edits              ChatMessageEdit[]
 
   @@index([chatId, id])
+}
+
+/// The text one edit replaced, written in the same statement that overwrites `ChatMessage.content`.
+/// The text it left behind is the next row's `previousContent`, or the message's current content.
+model ChatMessageEdit {
+  id              Int         @id @default(autoincrement())
+  messageId       Int
+  /// No relation: a deleted editor must neither block nor erase the history.
+  editorId        Int
+  previousContent String
+  createdAt       DateTime    @default(now())
+  message         ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, id])
 }
 
 model BuildGuide {
@@ -10224,6 +10240,22 @@ model StorylineChapterEdge {
   @@id([chapterId, parentChapterId])
   /// Children of a chapter, oldest first, without a sort.
   @@index([parentChapterId, createdAt])
+}
+
+/// The post author's note on one image of a storyline chapter, shown to readers under the
+/// image. No row means no caption: an empty caption deletes it.
+model ImageCaption {
+  imageId   Int      @id
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation: the image carries the owner.
+  userId    Int
+  content   String   @db.VarChar(500)
+  /// The text scan refused it: never shown to readers. Set and cleared only by the scan.
+  refused   Boolean  @default(false)
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned).
+  nsfwLevel Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
