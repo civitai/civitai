@@ -2494,6 +2494,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
+  SITE_ALERTS: {
+    // Hash of alert id → JSON alert. The alerts version is a field of CLIENT, not of this hash.
+    ALERTS: 'system:site-alerts',
+    SEQ: 'system:site-alerts:seq',
+  },
   SYSTEM: {
     FEATURES: 'system:features',
     PERMISSIONS: 'system:permissions',
