@@ -204,6 +204,11 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   collectionTagId: z.number().nullish(),
+  /**
+   * Publishing a post drafted as a continuation of someone else's storyline submits it: the price
+   * the contributor was shown, refused if it has changed (`createStorylinePlacement`).
+   */
+  expectedPrice: z.number().int().min(0).optional(),
 });
 
 // Composite create-with-images input for headless/agent (MCP) use. Each image
