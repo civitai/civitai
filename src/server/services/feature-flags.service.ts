@@ -611,7 +611,7 @@ const featureFlags = createFeatureFlags({
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
-  emerchantpayPayments: ['public'],
+  emerchantpayPayments: [],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   datapacketRead: ['public'],
@@ -763,6 +763,12 @@ const featureFlags = createFeatureFlags({
   // Off, the page runs replies in the browser as before, `/api/apps/assistant/run-grant` refuses to
   // start one on the runner, and the runner's token mints refuse (its kill switch).
   appAssistantRemoteRunner: { availability: [], fliptKey: 'app-assistant-remote-runner' },
+  // Forkable apps — the fork count/list on a parent's store page, the author's "Let others fork
+  // this app's source" setting, and (with `canAccessAppAssistant`) the Fork action. `[]`: dark for
+  // everyone, mods included, until the Flipt flag exists — the client twin of the server's
+  // fail-closed `isAppBlocksForkEnabled`, so the two agree while the flag is absent. "Forked from …"
+  // attribution is not behind it.
+  appBlocksFork: { availability: [], fliptKey: 'app-blocks-fork' },
   // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
   // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
   // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag

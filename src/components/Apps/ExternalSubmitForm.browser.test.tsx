@@ -9,7 +9,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 — /apps/submit external-app WIZARD (redesigned, MERGED external+connect model).
- * Browser-mode surface test (report-only in Tekton). New step order:
+ * Browser-mode surface test (`Component tests` in CI). New step order:
  *
  *   App URL (first, REQUIRED) → App & scopes → Details → Assets
  *

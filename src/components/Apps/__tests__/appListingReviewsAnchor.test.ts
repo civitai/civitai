@@ -40,9 +40,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  *
  * So the two tiers cover DIFFERENT HALVES and neither substitutes for the other: this
  * one pins the VALUE (both ends read one constant), the browser one pins the
- * PRESENCE (the element is really in the rendered document). The browser tier is
- * report-only in CI, so that half is currently unblocked — a real gap, named rather
- * than papered over. No shipped code path triggers it today.
+ * PRESENCE (the element is really in the rendered document). The browser tier runs in
+ * CI as `Component tests`; like every check here it does not block a merge.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');

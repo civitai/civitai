@@ -53,6 +53,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
+  isAppealBlockedByHoldMarker,
   voidOrphanedAppeals,
 } from '~/server/services/report.service';
 
@@ -91,6 +92,9 @@ beforeAll(async () => {
     CREATE TABLE "Model" (id int PRIMARY KEY, "deletedAt" timestamp(3), "deletedBy" int);
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
+    -- Stand in for the hold-marker view and its kept-image record, which the appeal checks read.
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY, "heldUntil" timestamp(3));
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
@@ -391,5 +395,28 @@ describe('closeAppealsOnDeletedModel against Postgres', () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
 
     await expect(closeAppealsOnDeletedModel({ modelId: 8001 })).resolves.toBeUndefined();
+  });
+});
+
+describe('isAppealBlockedByHoldMarker against Postgres', () => {
+  it('blocks an owner under a hold marker and an image a hold kept, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (61);
+      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (9001, 62);
+    `);
+    try {
+      expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 61 })).toBe(true);
+      expect(await isAppealBlockedByHoldMarker({ imageId: 9001, userId: 63 })).toBe(true);
+      // The control: neither the owner nor the image.
+      expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 63 })).toBe(false);
+    } finally {
+      await holder.db.exec(`TRUNCATE "EvidenceHeldUser", "EvidenceHoldImage"`);
+    }
+  });
+
+  it('blocks when the check cannot be read', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
+
+    expect(await isAppealBlockedByHoldMarker({ imageId: 9000, userId: 63 })).toBe(true);
   });
 });

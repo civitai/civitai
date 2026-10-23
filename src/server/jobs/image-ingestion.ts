@@ -16,6 +16,7 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -515,6 +516,34 @@ export async function sendImagesForScanBulk(
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
+ * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
+ * Blocked image.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT c."userId" FROM (
+      SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+      UNION
+      SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+      UNION
+      SELECT ri."userId"
+      FROM "CsamReport" rr
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+    ) c
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+  )
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
+`;
+
+/**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
@@ -523,8 +552,10 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -593,6 +624,20 @@ export const removeBlockedImages = createJob(
       return { skipped: 'legal-hold-lookup-failed' };
     }
 
+    // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
+    // its own. A failure costs only the sweep. Gated like the deletes below, and kept above every
+    // early return but the failed hold lookup: it is also what clears a copy made in a race with the
+    // release.
+    if (env.DATABASE_IS_PROD)
+      await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
+        logToAxiom({
+          type: 'error',
+          name: 'remove-blocked-images',
+          message: 'evidence hold sweep failed',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
     // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
     // strands the Appeal as Pending forever.
@@ -605,7 +650,37 @@ export const removeBlockedImages = createJob(
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
-    const held = [...heldActive, ...appealHeld, ...csamReviewHeld];
+    // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
+    // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
+    // planner misjudges how many owners match and scans every Blocked image instead of each owner's.
+    const evidenceHeldUserIds = (
+      await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
+    ).map((x) => x.userId);
+    const evidenceHeld = evidenceHeldUserIds.length
+      ? (
+          await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "userId" = ANY(${evidenceHeldUserIds}::int[])
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+        ).map((x) => x.id)
+      : [];
+
+    // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
+    // reason above.
+    const accountHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
+    ).map((x) => x.id);
+
+    const held = [
+      ...new Set([
+        ...heldActive,
+        ...appealHeld,
+        ...csamReviewHeld,
+        ...evidenceHeld,
+        ...accountHeld,
+      ]),
+    ];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -621,12 +696,16 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       });
       return {
         processed: 0,
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       };
     }
 
@@ -677,6 +756,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -823,6 +903,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod

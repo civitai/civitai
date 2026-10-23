@@ -3,10 +3,9 @@
  *
  * Sibling of `appListingDetailRows.ts`, and here for the same reason: the chips and
  * their hover-card copy are the only place the listing still renders the recommend
- * PERCENTAGE and the NOT-recommended count, and the browser `component` project that
- * renders them is **not run by CI**. A guard that lives only there is invisible to
- * everyone, so the decision itself is extracted and pinned in the blocking node `unit`
- * project. The component becomes a renderer of this list and decides nothing.
+ * PERCENTAGE and the NOT-recommended count, so the decision itself is extracted and
+ * pinned in the node `unit` project as well as the browser `component` project that
+ * renders them. The component becomes a renderer of this list and decides nothing.
  *
  * 🔴 WHY THIS MODULE EXISTS AT ALL — two defects it was extracted to fix, both of which
  * were live on the branch and both of which a browser-only test would still not gate:

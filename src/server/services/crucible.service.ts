@@ -165,12 +165,13 @@ const sendCrucibleNotification = (notification: Parameters<typeof createNotifica
   );
 };
 
-/** The host and every placed entrant get their own ending notification; this reaches the rest. */
-const notifyCrucibleFollowersOfResults = async ({
+const notifyCrucibleFollowers = async ({
+  type,
   crucible,
   crucibleName,
   excludeUserIds,
 }: {
+  type: 'crucible-results' | 'crucible-starting';
   crucible: { id: number; userId: number } & Parameters<typeof isCrucibleHiddenByScan>[0];
   crucibleName: string | null;
   excludeUserIds: Iterable<number>;
@@ -206,9 +207,9 @@ const notifyCrucibleFollowersOfResults = async ({
     const userIds = candidates.filter((id) => !blockedIds.has(id));
     if (!userIds.length) return;
     sendCrucibleNotification({
-      type: 'crucible-results',
+      type,
       category: NotificationCategory.Update,
-      key: `crucible-results:${crucibleId}`,
+      key: `${type}:${crucibleId}`,
       userIds,
       details: { crucibleId, crucibleName },
     });
@@ -217,11 +218,36 @@ const notifyCrucibleFollowersOfResults = async ({
       type: 'error',
       name: 'crucible-notification-failed',
       message: error instanceof Error ? error.message : String(error),
-      notificationType: 'crucible-results',
+      notificationType: type,
       crucibleId,
     });
   }
 };
+
+/** The host and every placed entrant get their own ending notification; this reaches the rest. */
+const notifyCrucibleFollowersOfResults = (
+  args: Omit<Parameters<typeof notifyCrucibleFollowers>[0], 'type'>
+) => notifyCrucibleFollowers({ type: 'crucible-results', ...args });
+
+const crucibleStartNotificationSelect = {
+  id: true,
+  userId: true,
+  name: true,
+  textNsfw: true,
+  ingestion: true,
+  image: { select: { ingestion: true } },
+} satisfies Prisma.CrucibleSelect;
+
+/** Call only from the write that moved the crucible out of Pending, so it is sent once. */
+const notifyCrucibleFollowersOfStart = (
+  crucible: Prisma.CrucibleGetPayload<{ select: typeof crucibleStartNotificationSelect }>
+) =>
+  notifyCrucibleFollowers({
+    type: 'crucible-starting',
+    crucible,
+    crucibleName: getCruciblePublishableName(crucible),
+    excludeUserIds: [crucible.userId],
+  });
 
 /**
  * Generate a unique transaction prefix for crucible setup fees
@@ -728,6 +754,8 @@ export const updateCrucible = async ({
       seededPrizePool: true,
       buzzTransactionId: true,
       seedTransactionId: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
     },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
@@ -888,12 +916,23 @@ export const updateCrucible = async ({
       const startAt =
         changes.startAt === undefined ? crucible.startAt ?? now : changes.startAt ?? now;
       const startsNow = startAt <= now;
+      // As activateScheduledCrucibles: it opens only once both scans pass, so one still under
+      // review stays Pending with its start passed and the job opens it then.
+      const coverIngestion =
+        imageId && imageId !== crucible.imageId
+          ? (await dbRead.image.findUnique({ where: { id: imageId }, select: { ingestion: true } }))
+              ?.ingestion
+          : crucible.image?.ingestion;
+      const reviewed =
+        !textChanged &&
+        crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+        coverIngestion === ImageIngestionStatus.Scanned;
       Object.assign(data, {
         startAt: startsNow ? now : startAt,
         endAt: dayjs(startsNow ? now : startAt)
           .add(next.duration, 'hours')
           .toDate(),
-        status: startsNow ? CrucibleStatus.Active : CrucibleStatus.Pending,
+        status: startsNow && reviewed ? CrucibleStatus.Active : CrucibleStatus.Pending,
       });
     }
 
@@ -924,18 +963,34 @@ export const updateCrucible = async ({
   }
 
   let updated: Omit<Awaited<ReturnType<typeof dbWrite.crucible.update>>, 'eventTags'>;
-  try {
-    // On the status read above: a cancel since then has already refunded the creator, and writing
-    // the status back would revive a crucible whose seed is gone.
-    // The row goes back to the creator, and event tags are moderator data.
-    updated = await dbWrite.crucible.update({
-      where: { id, status: crucible.status },
+  // On the status read above: a cancel since then has already refunded the creator, and writing
+  // the status back would revive a crucible whose seed is gone.
+  // The row goes back to the creator, and event tags are moderator data.
+  const write = (where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {}) =>
+    dbWrite.crucible.update({
+      where: { id, status: crucible.status, ...where },
       data,
       omit: { eventTags: true },
     });
+  const isNotFound = (error: unknown) =>
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+  try {
+    // The scans are re-checked in the write: an edit since the read may have reset one, and then
+    // it waits for the job like any other crucible still under review.
+    updated =
+      data.status === CrucibleStatus.Active
+        ? await write({
+            ingestion: CrucibleIngestionStatus.Scanned,
+            image: { ingestion: ImageIngestionStatus.Scanned },
+          }).catch((error) => {
+            if (!isNotFound(error)) throw error;
+            data.status = CrucibleStatus.Pending;
+            return write();
+          })
+        : await write();
   } catch (error) {
     await settlement?.rollback();
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+    if (isNotFound(error))
       throw throwBadRequestError(
         'This crucible changed while you were editing it. Reload the page and try again.'
       );
@@ -943,6 +998,25 @@ export const updateCrucible = async ({
   }
 
   if (textChanged) await scanCrucible(id);
+
+  // The update is conditional on the status read above, so only this edit made the crossing.
+  if (crucible.status === CrucibleStatus.Pending && updated.status === CrucibleStatus.Active) {
+    // The edit is saved, so a failed read must not fail it.
+    const started = await dbWrite.crucible
+      .findUnique({ where: { id }, select: crucibleStartNotificationSelect })
+      .catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'crucible-notification-failed',
+          message: error instanceof Error ? error.message : String(error),
+          notificationType: 'crucible-starting',
+          crucibleId: id,
+        });
+        return null;
+      });
+    if (started) await notifyCrucibleFollowersOfStart(started);
+  }
+
   return updated;
 };
 
@@ -1275,9 +1349,11 @@ export const getCrucibleEntries = async ({
     viewerId: userId,
     visibleImage: visibleEntryImageSql(crucible.nsfwLevel, viewerLevel),
   };
-  const rows = rankingsFinal
-    ? await getRankedEntries(page)
-    : await getShuffledEntries({ ...page, seed });
+  const [rows, visibleCount] = await Promise.all([
+    rankingsFinal ? getRankedEntries(page) : getShuffledEntries({ ...page, seed }),
+    // Once per list: the first page carries it, a later page has no use for it.
+    cursor ? undefined : countListedEntries(page),
+  ]);
 
   // The row fetched past the page opens the next one, so both page queries compare with `>=`.
   const nextCursor = rows.length > limit ? rows.pop()?.id : undefined;
@@ -1300,7 +1376,7 @@ export const getCrucibleEntries = async ({
         })
       : [];
 
-  return { items, nextCursor, podium };
+  return { items, nextCursor, podium, visibleCount };
 };
 
 const PODIUM_PLACES = 3;
@@ -1367,6 +1443,27 @@ type EntryPageArgs = {
   visibleImage: Prisma.Sql;
 };
 
+/** The entries the grid lists, as `ce`: the one place the list and its count decide what is hidden. */
+const listedEntriesSql = ({
+  crucibleId,
+  viewerId,
+  visibleImage,
+}: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>) => Prisma.sql`
+  FROM "CrucibleEntry" ce
+  JOIN "Image" i ON i.id = ce."imageId"
+  WHERE ce."crucibleId" = ${crucibleId}
+    AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+`;
+
+const countListedEntries = async (
+  args: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>
+) => {
+  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count ${listedEntriesSql(args)}
+  `;
+  return count;
+};
+
 const loadEntriesInOrder = async (ids: { id: number }[]) => {
   if (!ids.length) return [];
   const byId = new Map(
@@ -1402,10 +1499,7 @@ const getRankedEntries = async ({
 }: EntryPageArgs) => {
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (${rankKeySql('ce')}) >= (SELECT ${rankKeySql(
@@ -1434,10 +1528,7 @@ const getShuffledEntries = async ({
   const salt = `:${seed}`;
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (md5(ce.id::text || ${salt}), ce.id) >= (md5(${cursor}::int::text || ${salt}), ${cursor}::int)`
@@ -4007,16 +4098,31 @@ const refundUnawardedSeed = async (
  * Opens every scheduled crucible whose start time has passed.
  */
 export const activateScheduledCrucibles = async (): Promise<number> => {
-  const { count } = await dbWrite.crucible.updateMany({
-    where: {
-      status: CrucibleStatus.Pending,
-      startAt: { lte: new Date() },
-      ingestion: CrucibleIngestionStatus.Scanned,
-      image: { ingestion: ImageIngestionStatus.Scanned },
-    },
-    data: { status: CrucibleStatus.Active },
+  const ready = {
+    status: CrucibleStatus.Pending,
+    startAt: { lte: new Date() },
+    ingestion: CrucibleIngestionStatus.Scanned,
+    image: { ingestion: ImageIngestionStatus.Scanned },
+  } satisfies Prisma.CrucibleWhereInput;
+  const due = await dbWrite.crucible.findMany({
+    where: ready,
+    select: crucibleStartNotificationSelect,
+    // The job runs every minute, so any past this open on the next run.
+    take: 100,
   });
-  return count;
+  let activated = 0;
+  for (const crucible of due) {
+    // Re-checked per row: an edit since the read may have moved the start or reset a scan, and a
+    // retry or an overlapping run finds it no longer Pending, so it can't notify twice.
+    const { count } = await dbWrite.crucible.updateMany({
+      where: { id: crucible.id, ...ready },
+      data: { status: CrucibleStatus.Active },
+    });
+    if (count !== 1) continue;
+    activated++;
+    await notifyCrucibleFollowersOfStart(crucible);
+  }
+  return activated;
 };
 
 const UNSCANNED_VOID_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -4816,9 +4922,12 @@ function formatTimeRemaining(endAt: Date): string {
 export const getUserActiveCrucibles = async ({
   userId,
   blockedCreatorIds,
+  site,
 }: {
   userId: number;
   blockedCreatorIds?: number[];
+  /** Required so no caller can serve green without its ceiling. */
+  site: { isGreen: boolean; isModerator: boolean };
 }): Promise<
   Array<{
     id: number;
@@ -4850,9 +4959,14 @@ export const getUserActiveCrucibles = async ({
           entryFee: true,
           seededPrizePool: true,
           endAt: true,
+          nsfwLevel: true,
+          textNsfw: true,
+          ingestion: true,
           image: {
             select: {
               url: true,
+              nsfwLevel: true,
+              ingestion: true,
             },
           },
           _count: {
@@ -4893,7 +5007,12 @@ export const getUserActiveCrucibles = async ({
   >();
 
   for (const entry of entries) {
-    if (isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds })) continue;
+    if (
+      isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds }) ||
+      isCrucibleHiddenByScan(entry.crucible, { viewerId: userId }) ||
+      isCrucibleOffSite(entry.crucible, { viewerId: userId, ...site })
+    )
+      continue;
     const crucibleId = entry.crucibleId;
     const existing = crucibleMap.get(crucibleId);
 
@@ -4925,7 +5044,11 @@ export const getUserActiveCrucibles = async ({
         timeRemaining,
         endAt: entry.crucible.endAt,
         position: newBestPosition,
-        imageUrl: entry.crucible.image?.url ?? null,
+        // On green the ceiling holds for the host too, as on the crucible's own cards.
+        imageUrl:
+          site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image?.nsfwLevel, userId)
+            ? null
+            : entry.crucible.image?.url ?? null,
       });
     }
   }

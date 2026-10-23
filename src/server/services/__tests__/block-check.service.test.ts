@@ -128,6 +128,11 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(await getBlockCheckOwnerIds({ entityType: 'crucible', entityId: 1 })).toEqual([OWNER]);
   });
 
+  it('resolves the storyline owner', async () => {
+    mockDb.storyline.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'storyline', entityId: 1 })).toEqual([OWNER]);
+  });
+
   it('resolves the challenge creator', async () => {
     mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([OWNER]);
@@ -391,6 +396,7 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     challengeId: { table: 'challenge', ownerKey: 'createdById', whereKey: 'id' },
     appListingId: { table: 'appListing', ownerKey: 'userId', whereKey: 'serialId' },
     crucibleId: { table: 'crucible', ownerKey: 'userId', whereKey: 'id' },
+    storylineId: { table: 'storyline', ownerKey: 'userId', whereKey: 'id' },
   } as const;
   // Rooted, but with no owner lookup: the replies are allowed, with no content owner to check.
   const OWNERLESS_ROOT_COLUMN = 'clubPostId';

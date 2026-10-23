@@ -33,6 +33,7 @@ import {
 } from '$lib/text-scan-lab/types';
 import { LabError, refused } from './errors';
 import { FREE_TEXT_KEY, composeEntities, scanTexts, type LabRun } from './harness-client';
+import { recordChatMessageReads, type Reader } from '../chat-read-audit';
 
 /** A draft overrides its prompt, so a blank one would scan an empty prompt: refused, never dropped.
  *  Unknown keys are refused first, so a blank one is never named as a prompt it is not. */
@@ -95,6 +96,7 @@ const textPlan = (
 };
 
 async function entityPlan(
+  reader: Reader,
   entityType: LabEntityType,
   ids: number[],
   title: (id: number) => string
@@ -112,10 +114,19 @@ async function entityPlan(
       });
     else skipped.push({ entityId: c.entityId, error: c.error });
   }
+  if (entityType === 'ChatMessage')
+    await recordChatMessageReads(
+      reader,
+      subjects.flatMap((s) => (s.entityId === null ? [] : [s.entityId]))
+    );
   return { entityType, subjects, skipped, notice: null };
 }
 
-async function plan(input: TryInput, edited: readonly PromptKey[]): Promise<Plan | string> {
+async function plan(
+  reader: Reader,
+  input: TryInput,
+  edited: readonly PromptKey[]
+): Promise<Plan | string> {
   const parsed = parseCheckInput(input.input);
   if (parsed.kind === 'empty') return 'Paste a Civitai link, an id, or some text.';
   if (parsed.kind === 'too-many-ids')
@@ -128,11 +139,16 @@ async function plan(input: TryInput, edited: readonly PromptKey[]): Promise<Plan
   const named = (id: number) => `${ENTITY_TYPE_NAMES[judged]} ${id}`;
 
   if (parsed.kind === 'ids' || parsed.kind === 'entity')
-    return entityPlan(judged, parsed.ids, named);
+    return entityPlan(reader, judged, parsed.ids, named);
   if (parsed.kind === 'user') {
     const userId = await userIdByUsername(parsed.username);
     if (userId === null) return `No user called "${parsed.username}".`;
-    return entityPlan(judged, [userId], () => `${ENTITY_TYPE_NAMES[judged]} · ${parsed.username}`);
+    return entityPlan(
+      reader,
+      judged,
+      [userId],
+      () => `${ENTITY_TYPE_NAMES[judged]} · ${parsed.username}`
+    );
   }
   return textPlan(judged, parsed.text, parsed.kind === 'unknown-url' ? parsed.notice : null);
 }
@@ -183,6 +199,7 @@ async function scanSubjects(
 }
 
 export async function runTry(
+  reader: Reader,
   form: FormData
 ): Promise<TryResult | ActionFailure<{ error: string }>> {
   const input = parseForm(trySchema, form);
@@ -197,7 +214,7 @@ export async function runTry(
 
   let planned: Plan | string;
   try {
-    planned = await plan(input, editedPromptKeys(prompts));
+    planned = await plan(reader, input, editedPromptKeys(prompts));
   } catch (e) {
     return refused(e);
   }

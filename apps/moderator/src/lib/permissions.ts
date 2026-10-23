@@ -92,8 +92,8 @@ export const PERMISSIONS = [
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
   // Also checked by the main app's `/api/mod/text-scan/csam-hold/resolve` by this literal (`ModeratorGrantId`
-  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds page load refuses without it too,
-  // so rename the two together.
+  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds and /evidence-holds page
+  // loads refuse without it too, so rename them together.
   { id: 'csam.report.file', label: 'File a CSAM report' },
   // A removal that repeats the reason an approved appeal overturned is held until someone with this
   // confirms it on /images/re-removals; a holder's own such removals apply directly.
@@ -131,6 +131,8 @@ export const PERMISSIONS = [
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Submits a real scan with the site's system account; the page shows signals only.
+  { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
   // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
   // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
   // rename the two together. Reading the queue is the page grant.

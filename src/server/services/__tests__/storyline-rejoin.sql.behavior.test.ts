@@ -5,8 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { NsfwLevel } from '~/server/common/enums';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+// A signed-in reader's blocks and hidden users live outside these tables.
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  getBlockedPairIds: vi.fn().mockResolvedValue([]),
+  HiddenUsers: { getCached: vi.fn().mockResolvedValue([]) },
+}));
 
 /**
  * The reading path and the canon line through a chapter where two branches rejoin, run as written
@@ -307,7 +314,12 @@ describe('getStorylinePath marks the owner’s main route', () => {
   it('flags nothing for a storyline with no first chapter, rather than failing the read', async () => {
     const found = await r.storyline.findUnique({ where: { id: 1 } } as never);
     r.storyline.findUnique.mockResolvedValueOnce({ ...found, chapters: [] } as never);
-    const { chapters } = await read(3);
+    // Only its owner and moderators can read a storyline with no first chapter.
+    const { chapters } = await getStorylinePath({
+      chapterId: 3,
+      viewer: { id: 1 },
+      browsingLevel: NsfwLevel.PG,
+    });
     expect(chapters.map((c) => c.onMain)).toEqual([false, false, false]);
   });
 });

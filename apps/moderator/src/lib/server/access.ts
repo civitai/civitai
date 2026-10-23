@@ -99,8 +99,11 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
+      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
+      { path: '/images/scan-probe', label: 'Scan Probe' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -150,7 +153,10 @@ export const NAVIGATION: NavLink[] = [
   {
     label: 'Storylines',
     path: '/storylines',
-    children: [{ path: '/storylines/title-appeals', label: 'Title Appeals' }],
+    children: [
+      { path: '/storylines/title-appeals', label: 'Title Appeals' },
+      { path: '/storylines/early-access', label: 'Early Access Sign-ups' },
+    ],
   },
   {
     label: 'Articles',
@@ -213,6 +219,9 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/model-lookup', label: 'Model Lookup' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
+      // Its own grant, not Chat Audit's: it shows which moderator read whose conversations, which is
+      // oversight of the moderators themselves.
+      { path: '/retool/chat-audit-log', label: 'Chat Audit Log' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
       { path: '/retool/image-help', label: 'Image Help Requests' },
       { path: '/retool/queue-stats', label: 'Queue Stats' },

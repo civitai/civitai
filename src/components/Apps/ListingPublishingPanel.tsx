@@ -216,7 +216,7 @@ export function ListingPublishingPanel({
          * `moderators` goes LIVE VISIBLE TO MODERATORS ONLY, and without this line the
          * owner's only clue is that nobody ever uses their app. The wording and the
          * fire/stay-silent arms are in `visibilityPostApprovalPrompt`, under the blocking
-         * unit project, because this branch itself is only reachable in report-only tests.
+         * unit project, because this branch itself is only reachable in browser tests.
          */
         <Alert
           color="yellow"

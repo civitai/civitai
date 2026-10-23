@@ -215,8 +215,8 @@ export type AppsSection = {
  *   • `__tests__/appsBuildAccess.test.ts` and `__tests__/appsBuildGateCallSites.test.ts`
  *     cover the Build row behaviourally and structurally.
  * ⚠️ Invites, Revenue and Review are in NEITHER node-tier set. Their only per-row
- * behavioural pin is `AppsRailNav.browser.test.tsx`, which runs in the report-only
- * browser tier — so editing one of those three predicates is not blocked by anything.
+ * behavioural pin is `AppsRailNav.browser.test.tsx`, in the browser tier
+ * (`Component tests`).
  * If one gains a flag term, add it to `appsSectionRowsMatchPageGates.test.ts` rather
  * than relying on review.
  *

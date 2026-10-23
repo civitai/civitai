@@ -30,8 +30,15 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { claimNext, castVote, getCounters, getOpenFlaggerVersions, getVotedItemOwner, sourceOrder } =
-  await import('../scan-label.service');
+const {
+  claimNext,
+  castVote,
+  getCounters,
+  getOpenFlaggerVersions,
+  getVotedItemOwner,
+  isControlFlaggerVersion,
+  sourceOrder,
+} = await import('../scan-label.service');
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
 const KEEP = { block: false } as const;
@@ -139,15 +146,39 @@ describe('claimNext order', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('releases a held lease that the new filter excludes', async () => {
+  it('keeps a held card across a filter change, then applies the filter', async () => {
     const d12 = await seedItem(1, { flaggedAt: '2026-10-12T10:00:00Z' });
-    const d13 = await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
-    expect((await claimNext(1, {}, NOW))!.itemId).toBe(d13);
-    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d12);
+    await seedItem(2, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const d14 = await seedItem(3, { flaggedAt: '2026-10-14T10:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(d14);
+    expect((await claimNext(1, { day: '2026-10-12' }, later(1000)))!.itemId).toBe(d14);
     const { rows } = await pg.query<{ itemId: number }>(
       `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = 1`
     );
-    expect(rows).toEqual([{ itemId: d12 }]);
+    expect(rows).toEqual([{ itemId: d14 }]);
+    await castVote({ itemId: d14, userId: 1, choice: KEEP, msOnItem: 1 }, later(2000));
+    // Unfiltered, the next card would be the 13th's.
+    expect((await claimNext(1, { day: '2026-10-12' }, later(3000)))!.itemId).toBe(d12);
+  });
+
+  it('moves on from a held card that is no longer open', async () => {
+    const a = await seedItem(1, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const b = await seedItem(2, { flaggedAt: '2026-10-13T09:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    await pg.query(`UPDATE "ScanLabelItem" SET status = 'void' WHERE id = $1`, [a]);
+    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
+  });
+
+  it('moves on from a held card the moderator already voted on', async () => {
+    const a = await seedItem(1, { flaggedAt: '2026-10-13T10:00:00Z' });
+    const b = await seedItem(2, { flaggedAt: '2026-10-13T09:00:00Z' });
+    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    // A vote from another tab that committed while this tab was claiming, so the lease survived it.
+    await pg.query(
+      `INSERT INTO "ScanLabelVote" ("itemId", "userId", "block") VALUES ($1, 1, false)`,
+      [a]
+    );
+    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(b);
   });
 
   it('never serves an item the moderator already voted on', async () => {
@@ -164,6 +195,73 @@ describe('claimNext order', () => {
     expect((await claimNext(2, { flaggerVersion: 'scan@2' }, NOW))!.itemId).toBe(d13);
     expect(await claimNext(3, { day: '2026-10-12', flaggerVersion: 'scan@2' }, NOW)).toBeNull();
     expect(await getOpenFlaggerVersions()).toEqual(['scan@2', 'scan@1']);
+  });
+
+  describe('control samples stay blind', () => {
+    const CONTROL_VERSION = 'control-sample@2026-10-17';
+    beforeEach(async () => {
+      await seedItem(1, { version: 'scan@1' });
+      await seedItem(2, { version: CONTROL_VERSION, sources: ['control-sample'] });
+    });
+
+    it('never lists the control version as a filter', async () => {
+      expect(await getOpenFlaggerVersions()).toEqual(['scan@1']);
+    });
+
+    it('serves and counts no control item when the control version is the filter', async () => {
+      expect(await claimNext(1, { flaggerVersion: CONTROL_VERSION }, NOW)).toBeNull();
+      expect((await getCounters(1, { flaggerVersion: CONTROL_VERSION }, NOW)).openInFilter).toBe(0);
+    });
+
+    it('still reaches a control item by its scanner flag', async () => {
+      // A control item that a scan later flags too keeps its control lane.
+      await pg.query(
+        `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+         SELECT id, 'orchestrator-scan', 'scan@2', 'wf-2-scan', '2026-10-13T08:00:00Z'
+         FROM "ScanLabelItem" WHERE "imageId" = 2`
+      );
+      expect((await getOpenFlaggerVersions()).sort()).toEqual(['scan@1', 'scan@2']);
+      expect((await claimNext(1, { flaggerVersion: 'scan@2' }, NOW))!.imageId).toBe(2);
+      // The item is in the control lane, so only the flag's own source says scan@2 is a real version.
+      expect(await isControlFlaggerVersion('scan@2')).toBe(false);
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+    });
+
+    it('keeps a held card across any filter, whatever its lane', async () => {
+      // In every filter below, so it is what a released lease would be replaced by.
+      const other = await seedItem(3, { version: 'scan@2', flaggedAt: '2026-10-12T08:00:00Z' });
+      const lanes = { flagged: () => 0.1, control: () => 0.95 };
+      const filters = [
+        { flaggerVersion: 'scan@2' },
+        { day: '2026-10-12' },
+        { day: '2026-10-12', flaggerVersion: 'scan@2' },
+      ];
+      let userId = 0;
+      for (const votes of [0, 1]) {
+        await pg.query(`UPDATE "ScanLabelItem" SET votes = $1 WHERE id <> $2`, [votes, other]);
+        for (const filter of filters)
+          for (const [lane, rng] of Object.entries(lanes)) {
+            userId++;
+            // Each moderator starts after the previous leases ran out.
+            const at = later(userId * 2 * LEASE_MS);
+            const held = (await claimNext(userId, {}, at, rng))!.itemId;
+            expect((await item(held)).lane).toBe(lane);
+            expect(held).not.toBe(other);
+            const kept = await claimNext(userId, filter, new Date(at.getTime() + 1000));
+            expect(kept!.itemId).toBe(held);
+            const { rows } = await pg.query<{ itemId: number }>(
+              `SELECT "itemId" FROM "ScanLabelClaim" WHERE "userId" = $1`,
+              [userId]
+            );
+            expect(rows).toEqual([{ itemId: held }]);
+          }
+      }
+    });
+
+    it('recognises the control version, and only it', async () => {
+      expect(await isControlFlaggerVersion(CONTROL_VERSION)).toBe(true);
+      expect(await isControlFlaggerVersion('scan@1')).toBe(false);
+    });
   });
 });
 
@@ -312,6 +410,34 @@ describe('vote slots', () => {
     const last = await seedItem(1, { votes: 2 });
     await claimNext(1, {}, NOW);
     expect((await claimNext(2, {}, later(LEASE_MS + 1)))!.itemId).toBe(last);
+  });
+
+  it('does not hand an expired holder back a card someone else took the slot on', async () => {
+    const last = await seedItem(1, { votes: 2 });
+    await claimNext(1, {}, NOW);
+    expect((await claimNext(2, {}, later(LEASE_MS + 1)))!.itemId).toBe(last);
+    expect(await claimNext(1, {}, later(LEASE_MS + 2))).toBeNull();
+  });
+
+  it('tells a repeat vote it already landed, even once the item is full or decided', async () => {
+    const full = await seedItem(1);
+    await claimNext(1, {}, NOW);
+    await claimNext(2, {}, NOW);
+    await claimNext(3, {}, NOW);
+    await castVote({ itemId: full, userId: 1, choice: KEEP, msOnItem: 1 }, later(10));
+    expect(
+      await castVote({ itemId: full, userId: 4, choice: KEEP, msOnItem: 1 }, later(10))
+    ).toEqual({ ok: false, reason: 'full' });
+    const decided = await seedItem(2, { votes: 2 });
+    await castVote({ itemId: decided, userId: 1, choice: KEEP, msOnItem: 1 }, later(20));
+    expect(await item(decided)).toMatchObject({ status: 'decided' });
+    for (const itemId of [full, decided])
+      expect(await castVote({ itemId, userId: 1, choice: KEEP, msOnItem: 1 }, later(30))).toEqual({
+        ok: false,
+        reason: 'already-voted',
+      });
+    const { rows } = await pg.query(`SELECT * FROM "ScanLabelVote" WHERE "userId" = 1`);
+    expect(rows).toHaveLength(2);
   });
 
   it('refuses a vote on an expired lease when the others hold every slot', async () => {

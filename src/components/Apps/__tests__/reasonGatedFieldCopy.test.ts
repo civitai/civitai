@@ -10,8 +10,8 @@ import {
  *
  * 🔴 WHY THIS FILE IS IN THE BLOCKING `unit` PROJECT. These two strings used to be built
  * inline in `ReasonGatedField`'s JSX, where the only thing asserting them was
- * `MessageAppOwnerModal.browser.test.tsx` — the browser tier, which is REPORT-ONLY in
- * this repo's CI. Measured: deleting the ` (max N)` suffix from the counter left every
+ * `MessageAppOwnerModal.browser.test.tsx` — the browser tier, which was REPORT-ONLY in
+ * this repo's CI then. Measured: deleting the ` (max N)` suffix from the counter left every
  * blocking suite green, so the ceiling — the entire reason the `maxLength` prop was
  * added — was pinned by nothing that can stop a merge.
  *

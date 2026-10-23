@@ -33,6 +33,7 @@ export function ModerationNav() {
           href: '/moderator/service-status',
           hidden: !features.serviceStatus,
         },
+        { label: 'Site Alerts', href: '/moderator/site-alerts' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',

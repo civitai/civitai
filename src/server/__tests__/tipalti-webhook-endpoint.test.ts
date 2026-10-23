@@ -44,13 +44,18 @@ const run = async (eventData: Record<string, unknown>) => {
   };
 
   let statusCode = 0;
+  let sent: unknown;
   const res = {
     status(code: number) {
       statusCode = code;
       return res;
     },
     json: () => res,
-    send: () => res,
+    send: (body: unknown) => {
+      sent = body;
+      return res;
+    },
+    _sent: () => sent,
     setHeader: () => res,
     end: () => res,
     once: () => res,
@@ -62,6 +67,7 @@ const run = async (eventData: Record<string, unknown>) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  validateWebhookEvent.mockReset().mockReturnValue({ isValid: true });
   setEnv({ TIPALTI_WEBTOKEN_SECRET: 'secret' });
 });
 
@@ -85,5 +91,22 @@ describe('tipalti webhook endpoint: payeeDetailsChanged', () => {
 
     expect(bust).not.toHaveBeenCalled();
     expect(res._status()).toBe(400);
+  });
+});
+
+const EXTRA = 'cd'.repeat(32);
+
+describe('tipalti webhook endpoint: a request that fails validation', () => {
+  it('returns only an error message', async () => {
+    validateWebhookEvent.mockReturnValue({
+      isValid: false,
+      extra: EXTRA,
+    } as never);
+
+    const res = await run({});
+
+    expect(res._status()).toBe(400);
+    expect(Object.keys(res._sent() as object)).toEqual(['error']);
+    expect(JSON.stringify(res._sent())).not.toMatch(/[0-9a-f]{64}/);
   });
 });

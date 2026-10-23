@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
 import type * as UsersService from '$lib/server/users.service';
+import type { Reader } from '$lib/server/chat-read-audit';
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
@@ -17,13 +18,19 @@ vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
   ...harness,
 }));
 
+const reads = vi.hoisted(() => ({
+  recordChatMessageReads: vi.fn(async (_reader: number, _ids: number[]) => {}),
+}));
+vi.mock('$lib/server/chat-read-audit', () => reads);
+
 const { runTry } = await import('../try');
 const { LabHarnessError } = await import('$lib/server/text-scan-lab/harness-client');
 
+const READER = 77 as Reader;
 const tryWith = (fields: Record<string, string>) => {
   const data = new FormData();
   for (const [k, v] of Object.entries(fields)) data.append(k, v);
-  return runTry(data) as Promise<Record<string, unknown>>;
+  return runTry(READER, data) as Promise<Record<string, unknown>>;
 };
 
 const ok = (key: string, scam: boolean) => ({
@@ -192,6 +199,18 @@ describe('runTry — what gets scanned', () => {
     const res = await tryWith({ input: 'https://example.com/x' });
     expect(harness.scanTexts).toHaveBeenCalledWith('CommentV2', expect.any(Array));
     expect((res as { notice: string }).notice).toBeTruthy();
+  });
+
+  it('records looking chat messages up as a read of them, and nothing else as one', async () => {
+    composeAll();
+    harness.scanTexts.mockImplementation(echoScan);
+    reads.recordChatMessageReads.mockClear();
+    await tryWith({ input: '7, 8', lookupAs: 'ChatMessage' });
+    expect(reads.recordChatMessageReads).toHaveBeenCalledWith(READER, [7, 8]);
+
+    reads.recordChatMessageReads.mockClear();
+    await tryWith({ input: '7, 8', lookupAs: 'Article' });
+    expect(reads.recordChatMessageReads).not.toHaveBeenCalled();
   });
 
   it('looks bare ids up as the chosen type', async () => {

@@ -833,7 +833,9 @@ export async function resolveMinorFlagAppeal({
   const meta = (model?.meta ?? null) as ModelMeta | null;
   const flagged: AppealLabel[] = [];
   if (model?.minor) flagged.push('minor');
-  if (model?.poi && hasOpenTextScanFlag(meta, 'poi')) flagged.push('poi');
+  const poiTextScan = !!model?.poi && hasOpenTextScanFlag(meta, 'poi');
+  const poiHash = !!model?.poi && !!meta?.poiFlagSnapshot;
+  if (poiTextScan || poiHash) flagged.push('poi');
 
   for (const label of Object.keys(labels ?? {}) as AppealLabel[])
     if (!flagged.includes(label))
@@ -865,6 +867,8 @@ export async function resolveMinorFlagAppeal({
 
   const grantHashes: Record<string, string> = {};
   for (const label of overturned) {
+    // A hash-only real-person flag has no text verdict to grant against.
+    if (label === 'poi' && !poiTextScan) continue;
     const hash = await loadGrantTextHash('Model', modelId, label);
     if (!hash)
       throw throwBadRequestError(
@@ -876,6 +880,10 @@ export async function resolveMinorFlagAppeal({
   // The sign-off only: the appeal's own upheld stamp below is the ruling.
   if (upheld.includes('minor'))
     await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
+  // Call-site import: poi-hash.service imports this module.
+  const loadPoiHash = () => import('~/server/services/poi-hash.service');
+  if (upheld.includes('poi') && poiHash)
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({
@@ -902,8 +910,12 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi'))
+  // With both flags, the text-scan grant lifts the flag, restores its own pre-state and drops the
+  // hash snapshot.
+  if (overturned.includes('poi') && poiTextScan)
     await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
+  else if (overturned.includes('poi'))
+    await (await loadPoiHash()).revertPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
 
   await resolveEntityAppeal({
     ids: [modelId],

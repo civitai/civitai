@@ -21,6 +21,11 @@ import { CollectionUploadSettingsWrapper } from '~/components/Collections/compon
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import {
+  StorylineCreateGate,
+  useStorylineToStart,
+} from '~/components/Storyline/editor/StorylineCreateBanner';
+import { STORYLINES_URL } from '~/components/Storyline/storyline-routes';
 import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
 import {
   EditUserResourceReviewV2,
@@ -58,6 +63,7 @@ export default Page(
       modelId,
       modelVersionId,
       model3dId,
+      storyline: storylineId,
       tag: tagId,
       video: postingVideo,
       reviewing,
@@ -99,11 +105,14 @@ export default Page(
       : '/';
 
     if (model3dId) backButtonUrl = `/3d-models/${model3dId}`;
+    if (storylineId) backButtonUrl = STORYLINES_URL;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (collectionIds?.length)
       backButtonUrl =
         collectionIds.length > 1 ? `/collections` : `/collections/${collectionIds[0]}`;
     if (collectionId) backButtonUrl = `/collections/${collectionId}`;
+
+    const { chapterOneWritten } = useStorylineToStart(storylineId);
 
     const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
@@ -131,6 +140,10 @@ export default Page(
               <Title>
                 {displayReview
                   ? 'Create a Review'
+                  : storylineId
+                  ? chapterOneWritten
+                    ? 'Chapter 1 is written'
+                    : 'Write Chapter 1'
                   : (collectionIdsAggregate?.length ?? 0) > 0
                   ? 'Submit Entry'
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
@@ -215,34 +228,36 @@ export default Page(
               )}
             </UserResourceReviewComposite>
           )}
-          <AlertWithIcon icon={<IconAlertCircle />}>
-            There may be a short delay before your uploaded media appears in the Model Gallery and
-            Feeds. Please allow a few minutes for your media to become visible after posting.
-          </AlertWithIcon>
-          {!displayReview && (
-            <Text size="xs" c="dimmed">
-              Our site is mostly used for sharing AI generated content. You can start generating
-              content using our{' '}
-              <Link legacyBehavior href="/generate" passHref>
-                <Anchor>onsite generator</Anchor>
-              </Link>{' '}
-              or train your model using your own content by using our{' '}
-              <Link legacyBehavior href="/models/train" passHref>
-                <Anchor>onsite trainer</Anchor>
-              </Link>
-              .
-            </Text>
-          )}
+          <StorylineCreateGate storylineId={storylineId}>
+            <AlertWithIcon icon={<IconAlertCircle />}>
+              There may be a short delay before your uploaded media appears in the Model Gallery and
+              Feeds. Please allow a few minutes for your media to become visible after posting.
+            </AlertWithIcon>
+            {!displayReview && (
+              <Text size="xs" c="dimmed">
+                Our site is mostly used for sharing AI generated content. You can start generating
+                content using our{' '}
+                <Link legacyBehavior href="/generate" passHref>
+                  <Anchor>onsite generator</Anchor>
+                </Link>{' '}
+                or train your model using your own content by using our{' '}
+                <Link legacyBehavior href="/models/train" passHref>
+                  <Anchor>onsite trainer</Anchor>
+                </Link>
+                .
+              </Text>
+            )}
 
-          <PostImageDropzone
-            showProgress={false}
-            onCreatePost={async (post) => {
-              await router.replace({
-                pathname: `/posts/${post.id}/edit`,
-                query: { ...params },
-              });
-            }}
-          />
+            <PostImageDropzone
+              showProgress={false}
+              onCreatePost={async (post) => {
+                await router.replace({
+                  pathname: `/posts/${post.id}/edit`,
+                  query: { ...params },
+                });
+              }}
+            />
+          </StorylineCreateGate>
         </Container>
       </CollectionUploadSettingsWrapper>
     );

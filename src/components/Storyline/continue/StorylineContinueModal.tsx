@@ -34,12 +34,15 @@ export type StorylineContinueModalProps = {
    * the storyline, who adds the chapter directly instead of submitting it for review.
    */
   parentChapterId?: number;
+  /** Which way the owner's picker opens; they can switch. */
+  mode?: 'post' | 'join';
 };
 
 export default function StorylineContinueModal({
   parentPostId,
   postId: initialPostId,
   parentChapterId,
+  mode: initialMode = 'post',
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -47,7 +50,7 @@ export default function StorylineContinueModal({
   const enabled = !!currentUser && !!features.storylines;
   const [postId, setPostId] = useState<number | null>(initialPostId ?? null);
   const [outcome, setOutcome] = useState<StorylineSubmitOutcome | null>(null);
-  const [mode, setMode] = useState<'post' | 'join'>('post');
+  const [mode, setMode] = useState<'post' | 'join'>(initialMode);
 
   const { data: membership, isLoading: membershipLoading } = trpc.storyline.getForPosts.useQuery(
     { postIds: [parentPostId] },

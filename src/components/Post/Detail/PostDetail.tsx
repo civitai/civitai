@@ -31,6 +31,7 @@ import {
   BrowsingLevelProvider,
   useBrowsingLevelContext,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { viewerCollectionCap } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
@@ -108,9 +109,16 @@ export function PostDetailContent({ postId }: Props) {
   const collectionMetadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
   const requiresCollectionJudgment =
     collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
-  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
+  const collectionForcedLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
 
-  const { setForcedBrowsingLevel } = useBrowsingLevelContext();
+  const { setForcedBrowsingLevel, userBrowsingLevel } = useBrowsingLevelContext();
+  const forcedBrowsingLevel = viewerCollectionCap(
+    collectionForcedLevel,
+    userBrowsingLevel,
+    !!permissions?.manage ||
+      !!currentUser?.isModerator ||
+      (!!currentUser && currentUser.id === post?.user.id)
+  );
   // 🔴 Set unconditionally so the cap is CLEARED when a post has no collection.
   // Guarding on a truthy value latched the last contest ceiling into the ancestor
   // provider, and `resolvePageBrowsingLevel` puts `forced` AHEAD of the viewer's
@@ -135,7 +143,7 @@ export function PostDetailContent({ postId }: Props) {
       include: [],
     },
     {
-      applyHiddenPreferences: !requiresCollectionJudgment && !forcedBrowsingLevel,
+      applyHiddenPreferences: !requiresCollectionJudgment && !collectionForcedLevel,
       enabled: !!post && (!post.collectionId || !isLoadingPostCollection),
     }
   );
@@ -175,7 +183,7 @@ export function PostDetailContent({ postId }: Props) {
 
   return (
     <Gated
-      contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
+      contentNsfwLevel={collectionForcedLevel || post.nsfwLevel}
       nsfw={post.nsfw}
       bypassRating={isOwnerOrMod}
       suppressAds={!post.publishedAt}
@@ -467,7 +475,7 @@ export function PostDetailContent({ postId }: Props) {
                   isOwner={currentUser?.id === post.user.id}
                   isModerator={currentUser?.isModerator}
                 />
-                {hiddenExplained.hasHidden && !imagesLoading && !forcedBrowsingLevel && (
+                {hiddenExplained.hasHidden && !imagesLoading && !collectionForcedLevel && (
                   <Paper component={Center} p="xl" mih={300} withBorder>
                     <ExplainHiddenImages {...hiddenExplained} />
                   </Paper>

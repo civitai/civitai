@@ -8,9 +8,18 @@ import {
 } from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import {
+  accountHoldSql,
+  assertOwnersNotUnderLegalHold,
+  HOLD_UNCONFIRMED,
+  LegalHoldError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
+import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
+import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
@@ -457,6 +466,11 @@ export const getModelsRaw = async ({
   if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
+  const publishedError = publishedRangeError({
+    from: input.publishedFrom,
+    to: input.publishedTo,
+  });
+  if (publishedError) throw throwBadRequestError(publishedError);
 
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
@@ -485,6 +499,8 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
+    publishedFrom,
+    publishedTo,
     hidden,
     checkpointType,
     status,
@@ -816,6 +832,9 @@ export const getModelsRaw = async ({
       )})`
     );
   }
+  const published = publishedRangeBounds({ from: publishedFrom, to: publishedTo });
+  if (published.gte) AND.push(Prisma.sql`m."publishedAt" >= ${published.gte}`);
+  if (published.lt) AND.push(Prisma.sql`m."publishedAt" < ${published.lt}`);
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
     AND.push(Prisma.sql`${pSql}."status" = ${ModelStatus.Published}::"ModelStatus"`);
@@ -1058,7 +1077,26 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const queryWith = Prisma.sql``;
+  // A published range is at most a month, a few tens of thousands of models. Materializing them
+  // gives the planner a small driver; walking the ModelMetric feed index in lastVersionAt order
+  // until enough of them turn up costs up to a second and a half for a year-old range.
+  const rangedModels =
+    published.gte && published.lt
+      ? Prisma.sql`ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE ${
+          !sessionUser?.isModerator || !status?.length
+            ? Prisma.sql`"status" = ${ModelStatus.Published}::"ModelStatus" AND `
+            : Prisma.empty
+        }"publishedAt" >= ${published.gte} AND "publishedAt" < ${published.lt}${
+          types?.length
+            ? Prisma.sql` AND "type" = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`
+            : Prisma.empty
+        }
+      )`
+      : undefined;
+  const queryWith = rangedModels ? Prisma.sql`WITH ${rangedModels}` : Prisma.sql``;
+  const rangedJoin = rangedModels ? Prisma.sql`JOIN ranged ON ranged."id" = m."id"` : Prisma.empty;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -1154,6 +1192,7 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
   const fromAndJoin = Prisma.sql`${fromClause}
+      ${rangedJoin}
       ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
@@ -2202,6 +2241,9 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   return { id, userId: result.userId };
 };
 
+/** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
+export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+
 export const permaDeleteModelById = async ({
   id,
 }: GetByIdInput & {
@@ -2274,7 +2316,28 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      const deletedModel = await tx.model.delete({ where: { id } });
+      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
+      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
+      // account hold too: its image legs cover the images this deletes.
+      const owner = Prisma.raw('m."userId"');
+      const [deletedModel] = await tx.$queryRaw<
+        { id: number; userId: number; nsfwLevel: number }[]
+      >`
+        DELETE FROM "Model" m
+        WHERE m.id = ${id}
+          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+        RETURNING m.id, m."userId", m."nsfwLevel"
+      `.catch((e: unknown) => {
+        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+      });
+      if (!deletedModel) {
+        // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
+        // transaction deleted passed a hold check, so it must not commit.
+        const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
+        if (!stillThere)
+          throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
+        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+      }
       return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }
@@ -2853,6 +2916,56 @@ export async function setModelSfwOnly({
   return result;
 }
 
+export type ModelPoiActivity = 'setPoi' | 'unsetPoi' | 'setPoiAutoHash' | 'revertPoiAutoHash';
+
+export const POI_FLAG_SNAPSHOT_KEY = 'poiFlagSnapshot';
+export const POI_HASH_MATCH_KEY = 'poiHashMatch';
+export const POI_HASH_CLEARED_KEY = 'poiHashCleared';
+
+/** A human said "not a real person": the match no longer applies to files already uploaded. */
+export async function clearPoiHashMeta(modelId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = (${asJsonbObjectSql(
+      'm.meta'
+    )} - ${POI_FLAG_SNAPSHOT_KEY}::text - ${POI_HASH_MATCH_KEY}::text)
+      || jsonb_build_object(${POI_HASH_CLEARED_KEY}::text, jsonb_build_object('at', now()))
+    WHERE m.id = ${modelId}
+  `;
+}
+
+/** A flag set by hand takes the model off the match queue. On a model that was not flagged, any
+ *  snapshot is left by an automated attempt that never applied, and is not this flag's. */
+async function dropPoiHashLead(modelId: number, { staleSnapshot }: { staleSnapshot: boolean }) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text${
+    staleSnapshot ? Prisma.sql` - ${POI_FLAG_SNAPSHOT_KEY}::text` : Prisma.empty
+  }
+    WHERE m.id = ${modelId}
+  `;
+}
+
+// Unlike the minor snapshot this is not best-effort: without it the automated flag could neither be
+// reverted nor appealed, so the caller does not apply the flag.
+async function capturePoiFlagSnapshot(modelId: number) {
+  const captured = await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+        ${POI_FLAG_SNAPSHOT_KEY}::text, jsonb_build_object(
+          'at', now(),
+          'source', 'auto',
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[]))
+        )
+      )
+      WHERE m.id = ${modelId} AND NOT m.poi
+    `;
+  if (!captured) throw new Error(`No real-person flag snapshot recorded for model ${modelId}`);
+}
+
 /**
  * Set or lift a model's "depicts a real person" flag, as a moderator — what the model edit form's POI
  * checkbox does, without the form. Setting it applies the restrictions a POI model always carries
@@ -2863,6 +2976,8 @@ export async function setModelSfwOnly({
  * Lifting mirrors `setModelMinor`'s unset: the ruling is stamped BEFORE the write, so a text scan
  * landing mid-lift sees it and does not re-flag; sfwOnly/nsfw are left as they are; and the owner's
  * now-moot appeal is closed.
+ *
+ * Any lift also stamps `poiHashCleared`, so the hash match does not re-flag files that predate it.
  */
 export async function setModelPoi({
   id,
@@ -2870,7 +2985,16 @@ export async function setModelPoi({
   userId,
   tracker,
   isModerator,
-}: SetModelPoiInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
+  activity,
+  fromAppeal,
+}: SetModelPoiInput & {
+  userId: number;
+  tracker?: Tracker;
+  isModerator?: boolean;
+  activity?: ModelPoiActivity;
+  /** The appeal resolver stamps its own grant and closes the appeal itself afterwards. */
+  fromAppeal?: boolean;
+}) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2887,7 +3011,7 @@ export async function setModelPoi({
 
   const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
   const lifting = !poi && before.poi;
-  if (lifting) {
+  if (lifting && !fromAppeal) {
     const { stampModeratorTextScanRuling } = await loadAppealTextHash();
     const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'poi' });
     if (!stamped)
@@ -2922,6 +3046,9 @@ export async function setModelPoi({
         lockedProperties,
       };
 
+  // Before the write, or the snapshot records the flagged state.
+  if (poi && !before.poi && activity === 'setPoiAutoHash') await capturePoiFlagSnapshot(id);
+
   const result = await dbWrite.model.update({
     where: { id },
     data,
@@ -2938,8 +3065,12 @@ export async function setModelPoi({
     },
   });
 
+  if (poi)
+    await dropPoiHashLead(id, { staleSnapshot: !before.poi && activity !== 'setPoiAutoHash' });
+  else if (lifting) await clearPoiHashMeta(id);
+
   await preventReplicationLag('model', id);
-  const modActivity = poi ? 'setPoi' : 'unsetPoi';
+  const modActivity = activity ?? (poi ? 'setPoi' : 'unsetPoi');
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
@@ -2972,7 +3103,7 @@ export async function setModelPoi({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
-  if (lifting) {
+  if (lifting && !fromAppeal) {
     const { settleFlagAppealsAfterModeratorLift } = await loadAppealTextHash();
     await settleFlagAppealsAfterModeratorLift({
       modelId: id,
@@ -3604,6 +3735,11 @@ export const upsertModel = async (
     const liftedLabels = (['minor', 'poi'] as const).filter(
       (label) => beforeUpdate[label] && data[label] === false
     );
+    // A moderator's decision only: an owner toggling a self-declared flag off would otherwise clear
+    // the model for the hash match before its upload is scanned.
+    if (isModerator && liftedLabels.includes('poi')) await clearPoiHashMeta(result.id);
+    else if (isModerator && data.poi === true && !beforeUpdate.poi)
+      await dropPoiHashLead(result.id, { staleSnapshot: true });
     if (isModerator && liftedLabels.length) {
       const { settleFlagAppealsAfterModeratorLift } = await import(
         '~/server/services/text-scan/actions/appeal-text-hash'
@@ -6312,6 +6448,14 @@ export async function transferModelOwnership({
   const sourceUserIds = Array.from(new Set(models.map((m) => m.userId)));
   if (models.some((m) => m.userId === targetUserId))
     throw throwBadRequestError('One or more models already belong to the target user');
+
+  // Every hold is keyed on the owner, so moving a held owner's models, posts and images to another
+  // account would take them out of it. For a marker-held owner the database refuses the moves too.
+  await assertOwnersNotUnderLegalHold(sourceUserIds).catch((e: unknown) => {
+    if (e instanceof LegalHoldError)
+      throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
+    throw e;
+  });
 
   const affectedPosts = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT p.id

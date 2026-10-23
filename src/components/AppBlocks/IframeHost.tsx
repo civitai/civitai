@@ -490,8 +490,8 @@ export function AppBlockChrome({
   // Which of those entries this menu may offer. The rules (off-site exclusion,
   // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
   // `/apps/run/` links, self-exclusion, the cap) live in the pure
-  // `selectChromeRecentApps` so the node `unit` project covers them — the
-  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // `selectChromeRecentApps` so the node `unit` project covers them. The
+  // store's PER-KIND cap is what stops
   // off-site entries from evicting the on-site ones this menu needs.
   const recentApps = selectChromeRecentApps(recents, {
     canOpenPage,
@@ -2059,7 +2059,10 @@ export function IframeHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview,
+        // so `promptViewer` always equals `notify` here and is not read.
+        'model-slot'
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // Sent BEFORE the toast so the block's signal cannot be lost to a throwing

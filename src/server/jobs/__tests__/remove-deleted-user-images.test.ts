@@ -202,18 +202,24 @@ function blockedByLegalHold(
 /** The same, for a `deleteImages` `onlyWhere`, which arrives as one flattened fragment. */
 function keptByOnlyWhere(onlyWhere: { sql: string } | undefined, fixture: Fixture) {
   if (!onlyWhere || !isLegalHold(onlyWhere)) return false;
-  const held = !!fixture.heldAsSecondary || (reportsOnPrimary(fixture) ?? []).some(reportHolds);
+  const held =
+    !!fixture.heldAsSecondary ||
+    (reportsOnPrimary(fixture) ?? []).some(reportHolds) ||
+    blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
   return /^\s*NOT\b/.test(onlyWhere.sql) ? held : !held;
 }
 
 /** What the primary sees, which is what every gate on a write is answered from. */
 const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
 
-/** The per-account review-flag exclusion, as every statement that carries it spells it. */
+/** The per-account review-flag hold, as the account hold carried in a statement spells it. */
 const REVIEW_FLAG_HOLD =
-  /NOT EXISTS \(\s*SELECT 1 FROM "Image" f\s+WHERE f\."userId" = (?:\?|u\.id) AND f\."needsReview" = 'csam'\s*\)/;
-const blockedByReviewFlag = (sql: string, flagged: boolean | undefined) =>
-  !!flagged && REVIEW_FLAG_HOLD.test(sql);
+  /SELECT 1 FROM "Image" hr WHERE hr\."userId" = (?:\?(?:::int)?|u\.id) AND hr\."needsReview" = 'csam'/;
+const blockedByReviewFlag = (sql: string, values: unknown[], flagged: boolean | undefined) =>
+  !!flagged &&
+  [sql, ...values.filter(isLegalHold).map((v) => (v as { sql: string }).sql)].some((text) =>
+    REVIEW_FLAG_HOLD.test(text.replace(/\s+/g, ' '))
+  );
 const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
@@ -400,7 +406,7 @@ function seed(next: Record<number, Fixture>) {
           (id) =>
             !blockedByLegalHold(sql, values, fixtures[id].csamReports, fixtures[id].heldAsSecondary)
         )
-        .filter((id) => !blockedByReviewFlag(sql, fixtures[id].csamFlagged))
+        .filter((id) => !blockedByReviewFlag(sql, values, fixtures[id].csamFlagged))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -427,6 +433,7 @@ function seed(next: Record<number, Fixture>) {
       const sql = strings.join('?');
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
+      if (sql.includes('to_regclass')) return Promise.resolve([{ present: false }]);
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
@@ -458,7 +465,7 @@ function seed(next: Record<number, Fixture>) {
           return Promise.resolve([]);
         if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
           return Promise.resolve([]);
-        if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
+        if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -503,7 +510,7 @@ function seed(next: Record<number, Fixture>) {
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
       if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
         return Promise.resolve(0);
-      if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve(0);
+      if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
