@@ -516,35 +516,38 @@ export async function sendImagesForScanBulk(
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
+ * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
+ * Blocked image.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT c."userId" FROM (
+      SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+      UNION
+      SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+      UNION
+      SELECT ri."userId"
+      FROM "CsamReport" rr
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+    ) c
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+  )
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
+`;
+
+/**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
  */
-/**
- * The Blocked images of accounts under an account hold, read over the owners those holds can name:
- * one with a CSAM review flag, a CSAM block, or an image a report lists.
- */
-export const accountHeldBlockedImagesSql = Prisma.sql`
-  SELECT i.id FROM "Image" i
-  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
-    AND i."userId" IN (
-      SELECT c."userId" FROM (
-        SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
-        UNION
-        SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
-        UNION
-        SELECT ri."userId"
-        FROM "CsamReport" rr
-        CROSS JOIN LATERAL jsonb_array_elements(
-          CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
-        ) re
-        JOIN "Image" ri
-          ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      ) c
-      WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
-    )
-`;
-
 export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: boolean }) {
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
