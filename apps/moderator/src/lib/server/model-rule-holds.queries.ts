@@ -242,6 +242,8 @@ export type ModelRuleHoldHistoryEntry = {
   decidedByUsername: string | null;
   decisionNote: string | null;
   subjects: string[];
+  /** Its ruling cleared the matched rules for the text instead of restoring the model. */
+  clearsRules: boolean;
 };
 
 /** The other holds on the hold's model, newest first. */
@@ -254,6 +256,7 @@ export async function getModelRuleHoldHistory(
       join.onRef('self.entityId', '=', 'h.entityId').on('self.entityType', '=', 'Model')
     )
     .leftJoin('User as d', 'd.id', 'h.decidedById')
+    .leftJoin('Model as m', 'm.id', 'h.entityId')
     .select([
       'h.id',
       'h.status',
@@ -262,6 +265,9 @@ export async function getModelRuleHoldHistory(
       'd.username as decidedByUsername',
       'h.decisionNote',
       'h.meta',
+      sql<string | null>`m.status::text`.as('modelStatus'),
+      sql<string | null>`m.availability::text`.as('modelAvailability'),
+      sql<boolean>`m."deletedAt" is not null`.as('modelDeleted'),
     ])
     .where('self.id', '=', holdId)
     .where('h.entityType', '=', 'Model')
@@ -272,10 +278,16 @@ export async function getModelRuleHoldHistory(
     .orderBy('h.id', 'desc')
     .limit(20)
     .execute();
-  return rows.map(({ meta, ...row }) => {
+  return rows.map(({ meta, modelStatus, modelAvailability, modelDeleted, ...row }) => {
     const parsed = parseModelRulesHoldMeta(meta);
     return {
       ...row,
+      clearsRules: holdClearsRules({
+        source: parsed.source ?? null,
+        modelStatus,
+        modelAvailability,
+        modelDeleted,
+      }),
       decidedByUsername: row.decidedByUsername ?? null,
       decision: parsed.decision ?? null,
       mode: parsed.mode,

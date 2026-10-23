@@ -312,6 +312,20 @@ describe('history and owner holds', () => {
     });
   });
 
+  it('says per earlier hold whether its ruling cleared rules rather than restored the model', async () => {
+    await seed([
+      { id: 1, entityId: 7, status: 'Dismissed', meta: meta({ source: 'training' }) },
+      { id: 2, entityId: 7, status: 'Dismissed', meta: meta({ decision: 'dismiss_allowed' }) },
+      { id: 3, entityId: 7 },
+    ]);
+    await db.exec(
+      `INSERT INTO "Model" ("id","name","status") VALUES (7,'Taken down','UnpublishedViolation')`
+    );
+    const byId = new Map((await getModelRuleHoldHistory(3)).map((e) => [e.id, e]));
+    expect(byId.get(1)?.clearsRules).toBe(true);
+    expect(byId.get(2)?.clearsRules).toBe(false);
+  });
+
   it('lists the owner’s other pending holds with their hashes', async () => {
     await seed([
       { id: 1, entityId: 7, userId: 10 },
