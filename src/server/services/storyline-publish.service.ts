@@ -227,7 +227,8 @@ type PendingChapterPromotion =
  * scheduled for later), every image scanned and out of review, and rated: chapter 1 by
  * `createStoryline`'s rules, a continuation by `addOwnerChapter`'s. The link goes in the same
  * transaction, and is locked first, so the publish step and the readiness pass take turns: the
- * one that waits finds it gone. Refusals throw a 400 and leave the link.
+ * one that waits finds it gone. A refusal throws a 400 and writes nothing; the caller drops the
+ * link.
  *
  * Chapter 1 rated above the ceiling the owner picked before uploading raises the ceiling to fit
  * it, except past the safe-for-work cap of a minor-flagged title.
