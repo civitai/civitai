@@ -83,8 +83,14 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
 
     const [counts] = h.queries;
     // Per-branch joins back to Report seq-scanned it once per entity type; hence the CTE.
-    expect(counts.sql).toMatch(/with .*open_reports as materialized/i);
+    expect(counts.sql).toMatch(/with .*matched as materialized/i);
     expect(counts.sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
+  it('getReportLastActioned — the materialized CTE and every union branch', async () => {
+    await service.getReportLastActioned();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
     await plans();
   });
 

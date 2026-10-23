@@ -46,7 +46,13 @@
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
   import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
-  import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
+  import {
+    sidebarCounts,
+    sidebarLastActioned,
+    refreshSidebarCounts,
+  } from '$lib/sidebar-counts.svelte';
+  import { LAST_ACTIONED_WINDOW_DAYS, lastActionedBadge } from '$lib/queue-thresholds';
+  import ShortAge from '$lib/components/ShortAge.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
 
@@ -78,6 +84,19 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
+  const lastActioned = sidebarLastActioned();
+  // The badge states an age, so it has to keep ageing on a page left open; nothing else re-renders it.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // Nothing until the lookup lands: a missing timestamp reads as "no action in a week", and painting
+  // that before the answer arrives would flash every waiting queue red.
+  const actionedFor = (link: NavLink, count: number | null) =>
+    link.countKey && lastActioned.value
+      ? lastActionedBadge(lastActioned.value[link.countKey], count, now)
+      : null;
 
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
@@ -164,6 +183,7 @@
                         <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
                             {@const cnt = navCount(childLink, countFor)}
+                            {@const actioned = actionedFor(childLink, cnt)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -179,11 +199,28 @@
                                     {...props}
                                   >
                                     <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>
-                                    {#if cnt !== null}
-                                      <span
-                                        class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
-                                      >
-                                        {cnt}
+                                    {#if actioned || cnt !== null}
+                                      <span class="ml-auto flex items-center gap-1.5">
+                                        {#if actioned}
+                                          {@const badgeClass = `rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
+                                          {#if actioned.at}
+                                            <ShortAge
+                                              at={actioned.at}
+                                              {now}
+                                              title={actioned.title}
+                                              class={badgeClass}
+                                            />
+                                          {:else}
+                                            <span class={badgeClass} title={actioned.title}>
+                                              &gt;{LAST_ACTIONED_WINDOW_DAYS}d
+                                            </span>
+                                          {/if}
+                                        {/if}
+                                        {#if cnt !== null}
+                                          <span class="text-xs tabular-nums text-sidebar-foreground/50">
+                                            {cnt}
+                                          </span>
+                                        {/if}
                                       </span>
                                     {/if}
                                   </a>

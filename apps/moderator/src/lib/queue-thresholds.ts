@@ -1,3 +1,5 @@
+import { relativeTime } from './format';
+
 // Retool's `thresholds` and `colors` Functions from Moderation Status, recovered from the raw export.
 //
 // This is an OPERATING STANDARD, not a rendering detail: it encodes how big each queue is allowed to
@@ -104,11 +106,46 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
 export function queueSeverityClass(key: string, count: number | null): string | null {
   const steps = THRESHOLDS[COUNT_KEY_ALIASES[key] ?? key];
   if (!steps || count === null) return null;
-  const index = steps.findIndex((threshold) => count >= threshold);
-  return index === -1 ? null : SEVERITY[index] ?? null;
+  return severityAt(steps, count);
 }
 
+/** The first of `steps` (descending, worst first) that `value` reaches, as its class. */
+const severityAt = (steps: readonly number[], value: number): string | null => {
+  const index = steps.findIndex((threshold) => value >= threshold);
+  return index === -1 ? null : SEVERITY[index] ?? null;
+};
+
 export const hasQueueThreshold = (key: string) => (COUNT_KEY_ALIASES[key] ?? key) in THRESHOLDS;
+
+/** How far back the last-actioned lookup looks. Nothing inside it reads as the worst step. */
+export const LAST_ACTIONED_WINDOW_DAYS = 7;
+
+/** Hours since a moderator last actioned a queue, read like `THRESHOLDS`: descending, worst first. */
+const LAST_ACTIONED_HOURS = [72, 24, 6, 1, 0] as const;
+
+/**
+ * The nav's "last actioned" badge for a queue, coloured by the steps above. `at` is absent when nothing
+ * was actioned inside the window. `null` for a queue with no recent action and nothing waiting: an
+ * empty queue needs nobody, so a red badge there would only be noise.
+ */
+export function lastActionedBadge(
+  at: string | undefined,
+  count: number | null,
+  now = Date.now()
+): { at?: string; class: string; title: string } | null {
+  if (!at) {
+    return count
+      ? { class: SEVERITY[0], title: `No moderator action in ${LAST_ACTIONED_WINDOW_DAYS} days` }
+      : null;
+  }
+  // Clamped: a server clock ahead of the browser's would put a fresh action in the future.
+  const hours = Math.max(0, (now - new Date(at).getTime()) / 3_600_000);
+  return {
+    at,
+    class: severityAt(LAST_ACTIONED_HOURS, hours)!,
+    title: `Last actioned ${relativeTime(at)}`,
+  };
+}
 
 /**
  * What makes one piece of content urgent rather than merely reported: Retool's board carried an

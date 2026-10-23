@@ -9,7 +9,7 @@ import { countStuckIngestion, countIngestionErrorImages } from './ingestion.serv
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
-import { getReportCounts } from './reports.service';
+import { getReportCounts, getReportLastActioned } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countSiteAppeals } from './site-appeals.service';
@@ -58,6 +58,19 @@ async function minorQueueCounts(): Promise<MinorQueueCounts | null> {
 
 export function getSidebarCounts(): Promise<SidebarCounts> {
   return counts.get({});
+}
+
+/** `countKey` → ISO time a moderator last actioned that queue. Only report queues have one yet. */
+export type SidebarLastActioned = Record<string, string>;
+
+const lastActioned = createCache({
+  name: 'sidebar-last-actioned:v1',
+  fetch: getReportLastActioned,
+  ttlSeconds: 60,
+});
+
+export function getSidebarLastActioned(): Promise<SidebarLastActioned> {
+  return lastActioned.get({});
 }
 
 async function fetchCounts(): Promise<SidebarCounts> {

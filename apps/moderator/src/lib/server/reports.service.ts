@@ -1,6 +1,6 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
-import { URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
+import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thresholds';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
@@ -404,23 +404,51 @@ export async function getReportHistory(
 export async function getReportCounts(): Promise<Record<string, number>> {
   const statuses = sql.join(NEW_REPORT_STATUSES.map((s) => sql.lit(s)));
   const reasons = sql.join(DEFAULT_REPORT_REASONS.map((r) => sql.lit(r)));
-  // One pass over Report (rides Report_open_reason_id_idx), then each report table joins the result —
-  // per-branch joins back to Report seq-scanned it once per entity type.
+  // Rides Report_open_reason_id_idx.
   const open = sql`select "id" from "Report" where "status" in (${statuses}) and "reason" in (${reasons})`;
-  const branches = REPORT_ENTITIES.map(
-    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, count(*)::int as count
-      from ${sql.table(reportTable)} er
-      join open_reports o on o."id" = er."reportId"`
-  );
-  const { rows } = await sql<{
-    type: string;
-    count: number;
-  }>`with open_reports as materialized (${open})
-    ${sql.join(branches, sql` union all `)}`.execute(dbRead);
+  const rows = await perReportType(open, sql<number>`count(*)::int`);
+  return Object.fromEntries(rows.map(([key, count]) => [key, Number(count)]));
+}
 
+/** A moderator's review outcome: upheld or dismissed. Moving a report to Processing is not a review. */
+const REVIEWED_REPORT_STATUSES = [ReportStatus.Actioned, ReportStatus.Unactioned];
+
+/**
+ * When a moderator last reviewed a report of each type, keyed like `getReportCounts`, as ISO strings. Types with nothing inside the window are absent. The system user is excluded, as in
+ * `getReportHistory`: its expiry run is nobody working the queue. A writer that sets `status` without
+ * stamping `statusSetAt`/`statusSetBy` is invisible here, so every report status write must stamp both.
+ */
+export async function getReportLastActioned(): Promise<Record<string, string>> {
+  // Both predicates are literals to match `Report_human_statusSetAt_idx`, which hardcodes the system
+  // user's id; a bound parameter leaves the planner unable to prove the partial index applies. `<>`
+  // rather than getReportHistory's `is distinct from` for the same reason, so a null setter is dropped.
+  const recent = sql`select "id", "statusSetAt" from "Report"
+    where "statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+      and "statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
+      and "status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})`;
+  const rows = await perReportType(recent, sql<Date | null>`max(r."statusSetAt")`);
   return Object.fromEntries(
-    rows.map((row) => [reportCountKey(row.type as ReportEntity), Number(row.count)])
+    rows.flatMap(([key, at]) => (at ? [[key, new Date(at).toISOString()]] : []))
   );
+}
+
+/**
+ * `value`, an aggregate over `r`, for each report type's share of `reports` — keyed by
+ * `reportCountKey`. `reports` is read once into a materialized CTE that every report table joins:
+ * per-branch joins back to Report seq-scanned it once per entity type.
+ */
+async function perReportType<V>(
+  reports: RawBuilder<unknown>,
+  value: RawBuilder<V>
+): Promise<[string, V][]> {
+  const branches = REPORT_ENTITIES.map(
+    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, ${value} as value
+      from ${sql.table(reportTable)} er
+      join matched r on r."id" = er."reportId"`
+  );
+  const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
+    ${sql.join(branches, sql` union all `)}`.execute(dbRead);
+  return rows.map((row) => [reportCountKey(row.type as ReportEntity), row.value]);
 }
 
 export async function setReportStatus({

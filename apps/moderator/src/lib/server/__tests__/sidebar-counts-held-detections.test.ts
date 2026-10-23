@@ -37,7 +37,10 @@ vi.mock('../articles.service', () => ({ countModeratorArticles: async () => 0 })
 vi.mock('../rating-reviews.service', () => ({
   getRatingReviewCounts: async () => ({ Pending: 0 }),
 }));
-vi.mock('../reports.service', () => ({ getReportCounts: async () => ({}) }));
+vi.mock('../reports.service', () => ({
+  getReportCounts: async () => ({}),
+  getReportLastActioned: async () => ({}),
+}));
 vi.mock('../feedback.service', () => ({ countNewFeedback: async () => 0 }));
 vi.mock('../removed-appeals.service', () => ({ countRemovedAppeals: async () => 0 }));
 vi.mock('../minor-hash.service', () => ({
