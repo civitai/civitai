@@ -97,7 +97,7 @@ describe('updatePostHandler :: a storyline draft', () => {
       { apiKeyId: 3, apiKeyType: 'User', tokenScope: TokenScope.Full, subject: { type: 'apiKey' } },
       true,
     ],
-  ])('lets %s spend on a continuation: %s', async (_name, credential, canSpend) => {
+  ])('decides whether %s may spend on a continuation', async (_name, credential, canSpend) => {
     await publishWith({}, { storylines: true }, { expectedPrice: 0 }, credential);
     expect(sentToUpdatePost().storyline.canSpend).toBe(canSpend);
   });
