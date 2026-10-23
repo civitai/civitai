@@ -9,8 +9,8 @@ vi.mock('$lib/server/sidebar-counts.service', () => ({
 
 const { GET } = await import('../+server');
 
-const get = (user: unknown) =>
-  GET({ locals: { user } } as unknown as Parameters<typeof GET>[0]).then((r) => r.json());
+const get = async (user: unknown) =>
+  (await GET({ locals: { user } } as unknown as Parameters<typeof GET>[0])).json();
 
 describe('GET /api/sidebar-counts', () => {
   it('sends the counts flat, with the uncounted keys beside them', async () => {
