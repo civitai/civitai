@@ -184,8 +184,20 @@ describe('claimNext order', () => {
       expect(await getOpenFlaggerVersions()).toEqual(['scan@1']);
     });
 
-    it('serves no control item when the control version is the filter', async () => {
+    it('serves and counts no control item when the control version is the filter', async () => {
       expect(await claimNext(1, { flaggerVersion: CONTROL_VERSION }, NOW)).toBeNull();
+      expect((await getCounters(1, { flaggerVersion: CONTROL_VERSION }, NOW)).openInFilter).toBe(0);
+    });
+
+    it('still reaches a control item by its scanner flag', async () => {
+      // A control item that a scan later flags too keeps its control lane.
+      await pg.query(
+        `INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+         SELECT id, 'orchestrator-scan', 'scan@2', 'wf-2-scan', '2026-10-13T08:00:00Z'
+         FROM "ScanLabelItem" WHERE "imageId" = 2`
+      );
+      expect((await getOpenFlaggerVersions()).sort()).toEqual(['scan@1', 'scan@2']);
+      expect((await claimNext(1, { flaggerVersion: 'scan@2' }, NOW))!.imageId).toBe(2);
     });
 
     it('recognises the control version, and only it', async () => {

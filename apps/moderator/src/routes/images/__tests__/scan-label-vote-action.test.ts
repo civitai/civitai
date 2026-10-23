@@ -186,11 +186,11 @@ describe('load', () => {
   it('treats the control version in the URL as no version filter', async () => {
     isControlFlaggerVersion.mockResolvedValue(true);
 
-    const data = await open('?version=control-sample%402026-10-17');
+    const data = await open('?day=2026-10-12&version=control-sample%402026-10-17');
 
     expect(isControlFlaggerVersion).toHaveBeenCalledWith('control-sample@2026-10-17');
-    expect(claimNext).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: undefined });
-    expect(getCounters).toHaveBeenCalledWith(7, { day: undefined, flaggerVersion: undefined });
+    expect(claimNext).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
+    expect(getCounters).toHaveBeenCalledWith(7, { day: '2026-10-12', flaggerVersion: undefined });
     expect(data.version).toBe('');
   });
 

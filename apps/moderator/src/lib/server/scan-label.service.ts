@@ -385,7 +385,6 @@ export async function getCounters(
   };
 }
 
-/** Flagger versions that have at least one open item, newest flag first, for the filter. */
 /** A version from the URL that control flags carry. The page treats it as no version filter. */
 export async function isControlFlaggerVersion(
   version: string,
@@ -401,6 +400,7 @@ export async function isControlFlaggerVersion(
   return !!row;
 }
 
+/** Flagger versions that have at least one open item, newest flag first, for the filter. */
 export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<string[]> {
   const rows = await db
     .selectFrom('ScanLabelFlag as f')
