@@ -138,11 +138,12 @@ export async function runProbe(moderatorId: number, imageIds: number[]): Promise
     // An unknown outcome trips its own row, which the next image's `maySubmit` then sees.
     if (!(await settleSubmit(db, run.id, outcome)) && !('skipped' in outcome)) {
       console.error('[scan-probe] run row did not settle', { runId: run.id, outcome });
-      await tripRun(db, run.id);
+      await tripRun(db, run.id, 'workflowId' in outcome ? outcome.workflowId : null);
       stopped = true;
     }
     if (!('workflowId' in outcome)) {
       failed++;
+      if ('unknown' in outcome) stopped = true;
       continue;
     }
     submitted++;
@@ -163,7 +164,9 @@ export async function readProbe(runId: string, moderatorId: number): Promise<Pro
   if (run.status === 'pending') return { state: 'pending' };
   if (
     run.workflow_status === UNRESOLVED_OUTCOME.unknownSubmit ||
-    run.workflow_status === UNRESOLVED_OUTCOME.abandoned
+    run.workflow_status === UNRESOLVED_OUTCOME.abandoned ||
+    // Sent after its row was settled by something else: tripped by `tripRun`, never reconciled.
+    (run.status === 'submit-failed' && run.workflow_id)
   )
     return { state: 'unknown' };
   if (run.status !== 'submitted' || !run.workflow_id) return { state: 'submit-failed' };

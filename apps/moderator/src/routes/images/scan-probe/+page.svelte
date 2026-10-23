@@ -1,6 +1,7 @@
 <script lang="ts">
   import { applyAction, enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -13,6 +14,13 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   let submitting = $state(false);
+
+  // Every action here can change what the panels show, refusals included, and the default handling
+  // only reloads page data on success.
+  const applyAndReload: SubmitFunction = () => async ({ result }) => {
+    await applyAction(result);
+    await invalidateAll();
+  };
   const refused = $derived(form && 'refused' in form ? (form.refused ?? []) : []);
   const stopped = $derived(data.stopped === true);
 </script>
@@ -45,7 +53,7 @@
         </p>
       {/if}
       {#if data.canReset && data.tripped?.length}
-        <form method="POST" action="?/resetBreaker" use:enhance class="mt-3">
+        <form method="POST" action="?/resetBreaker" use:enhance={applyAndReload} class="mt-3">
           <input type="hidden" name="runIds" value={data.tripped.map((r) => r.id).join(',')} />
           <Button type="submit" variant="destructive">Reset the probe</Button>
         </form>
@@ -60,7 +68,11 @@
         {data.inFlight.map((r) => `${r.id} (image ${r.imageId}, ${new Date(r.createdAt).toLocaleString()})`).join(', ')}.
         No new batch runs until they finish.
       </p>
-      <form method="POST" action="?/abandonInFlight" use:enhance class="mt-3">
+      <p class="mt-2">
+        Only for runs whose result will not arrive. A run that is still scanning and comes back blocked
+        will not stop the probe once you stop waiting for it.
+      </p>
+      <form method="POST" action="?/abandonInFlight" use:enhance={applyAndReload} class="mt-3">
         <input type="hidden" name="runIds" value={data.inFlight.map((r) => r.id).join(',')} />
         <Button type="submit" variant="outline">Stop waiting for these runs</Button>
       </form>
@@ -106,8 +118,8 @@
     <p class="text-sm text-dark-2">
       Submitted {form.submitted}{form.failed ? `, ${form.failed} not submitted` : ''}.
       {#if form.stopped}
-        The batch stopped early: a submit's outcome is unknown, so the probe is stopped until an admin
-        resets it.
+        The batch stopped early: the probe tripped on a blocked, failed or unknown outcome, and stays
+        stopped until an admin resets it.
       {/if}
     </p>
   {:else if form && 'reset' in form}

@@ -163,11 +163,22 @@ export async function maySubmit(db: ScanProbeDb, runId: string): Promise<boolean
 /**
  * Trips a run whatever its row says. For a workflow the probe sent but could not record: the row
  * was settled by something else first, so the workflow will never be reconciled.
+ *
+ * `breaker_reset_by` is kept: on a row an admin abandoned it is the only record of who did, and a
+ * `breaker_reset_by` with a null `breaker_reset_at` reads as a reset superseded by this re-trip.
  */
-export async function tripRun(db: ScanProbeDb, runId: string): Promise<void> {
+export async function tripRun(
+  db: ScanProbeDb,
+  runId: string,
+  workflowId: string | null
+): Promise<void> {
   await db
     .updateTable('image_scan_probe_run')
-    .set({ tripped: true, breaker_reset_at: null, breaker_reset_by: null })
+    .set({
+      tripped: true,
+      breaker_reset_at: null,
+      workflow_id: sql<string | null>`coalesce(workflow_id, ${workflowId})`,
+    })
     .where('id', '=', runId)
     .execute();
 }
@@ -292,6 +303,8 @@ export async function abandonInFlight(
   const result = await db
     .updateTable('image_scan_probe_run')
     .set({
+      // A pending row is one a batch has not sent yet; the batch skips it once this lands.
+      status: sql<RunStatus>`CASE WHEN status = 'pending' THEN 'submit-failed' ELSE status END`,
       workflow_status: UNRESOLVED_OUTCOME.abandonedByAdmin,
       tripped: true,
       breaker_reset_at: sql<Date>`now()`,

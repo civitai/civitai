@@ -143,6 +143,13 @@ describe('resetBreaker action', () => {
     expect(await actions.abandonInFlight(adminEvent('9'))).toEqual({ abandoned: 1 });
     expect(abandonInFlight).toHaveBeenCalledWith(expect.anything(), 1, ['9']);
   });
+
+  it('reports a reset or abandon that changed nothing as a refusal, not a success', async () => {
+    resetBreaker.mockResolvedValueOnce(0);
+    abandonInFlight.mockResolvedValueOnce(0);
+    expect(await actions.resetBreaker(adminEvent('3'))).toMatchObject({ status: 409 });
+    expect(await actions.abandonInFlight(adminEvent('9'))).toMatchObject({ status: 409 });
+  });
 });
 
 describe('result read', () => {

@@ -380,23 +380,40 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
     expect(h.submits).toHaveLength(1);
   });
 
-  it('trips a run it sent but could not record, because its row was swept meanwhile', async () => {
+  it('trips a run it sent but could not record, keeping who abandoned it', async () => {
     h.nextIds = ['0-wf-1'];
     h.onSubmit = async () => {
-      await probePg.exec(
-        `UPDATE image_scan_probe_run SET status = 'submit-failed', workflow_status = 'abandoned'`
-      );
+      await probePg.exec(`UPDATE image_scan_probe_run SET status = 'submit-failed',
+        workflow_status = 'abandoned-by-admin', tripped = true, breaker_reset_at = now(), breaker_reset_by = 7`);
     };
-    await runProbe(MODERATOR, [777001]);
-    expect((await rows())[0]).toMatchObject({ tripped: true });
+    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ stopped: true });
+    const [row] = await probePg
+      .query<Record<string, unknown>>(
+        'SELECT tripped, breaker_reset_at, breaker_reset_by, workflow_id FROM image_scan_probe_run'
+      )
+      .then((r) => r.rows);
+    expect(row).toEqual({
+      tripped: true,
+      breaker_reset_at: null,
+      breaker_reset_by: 7,
+      workflow_id: '0-wf-1',
+    });
+    expect(await readProbe('1', MODERATOR)).toEqual({ state: 'unknown' });
   });
 
-  it('records a wrong-account trip in the same write as the id, so a reconcile cannot clear it', async () => {
+  it('reports the batch stopped when the unknown outcome is its last image', async () => {
+    h.nextIds = ['0-wf-1', null];
+    expect(await runProbe(MODERATOR, [777001, 777002])).toMatchObject({
+      submitted: 1,
+      failed: 1,
+      stopped: true,
+    });
+  });
+
+  // The race this guards (a reconcile recording a clean verdict between two writes) cannot be staged
+  // on PGlite's single connection; the mutant that splits the write is killed by the account tests.
+  it('records a wrong-account trip in the same write as the id', async () => {
     h.nextIds = ['7-wf-1'];
-    h.workflows.set(
-      '7-wf-1',
-      finished('succeeded', { nsfwLevel: 'pg', csam: false, blockedReason: null })
-    );
     await runProbe(MODERATOR, [777001]);
     expect((await rows())[0]).toMatchObject({
       status: 'submitted',
@@ -414,6 +431,22 @@ describe('admin recovery', () => {
       (1, 1, 'submit-failed', 'gone', true), (1, 2, 'submit-failed', 'gone', true)`);
     expect(await resetBreaker(h.probe as never, 7, ['1'])).toBe(1);
     expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
+  });
+
+  it('settles a pending row it abandons, so the batch skips it and it never reads as pending', async () => {
+    const { abandonInFlight } = await import('../scan-probe/runs');
+    h.nextIds = ['0-wf-1', '0-wf-2'];
+    h.onSubmit = async () => {
+      await abandonInFlight(h.probe as never, 7, ['2']);
+      h.onSubmit = null;
+    };
+    await runProbe(MODERATOR, [777001, 777002]);
+    expect(h.submits).toHaveLength(1);
+    expect((await rows())[1]).toMatchObject({
+      status: 'submit-failed',
+      workflow_status: 'abandoned-by-admin',
+    });
+    expect(await readProbe('2', MODERATOR)).toEqual({ state: 'submit-failed' });
   });
 
   it('releases runs whose verdict will never arrive, recording the admin', async () => {
