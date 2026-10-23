@@ -108,6 +108,18 @@ async function withEmails<T extends { userId: number }>(ctx: ToolContext, rows: 
   );
   return rows.map((r) => ({ ...r, ...fields(r.userId) }));
 }
+const ACCOUNT_FIELDS = [
+  'username',
+  'createdAt',
+  'bannedAt',
+  'banReason',
+  'deletedAt',
+  'muted',
+  'strikes',
+  'email',
+  'normalizedEmail',
+] as const;
+
 const EMAILS_NOTE =
   'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
@@ -377,13 +389,30 @@ export const TOOLS = [
 
   tool({
     name: 'get_accounts',
-    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced. ${EMAILS_NOTE}`,
-    input: z.object({ userIds: userIdList(MAX_ACCOUNTS) }),
+    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced. Pass \`fields\` to get only the columns the question needs (e.g. ["normalizedEmail"] to group a list by inbox): every column costs tokens on every later step. ${EMAILS_NOTE}`,
+    input: z.object({
+      userIds: userIdList(MAX_ACCOUNTS),
+      fields: z.array(z.enum(ACCOUNT_FIELDS)).min(1).optional(),
+    }),
     requires: [LOOKUP, USER_REPORTS],
-    run: async ({ userIds }, ctx) => {
+    run: async ({ userIds, fields }, ctx) => {
       const { accounts, missing } = await getAccounts(userIds);
+      const wanted = new Set<string>(fields ?? ACCOUNT_FIELDS);
+      // Not fetched at all unless asked for: a column nobody needs should not be read, least of all an
+      // address.
+      const rows =
+        wanted.has('email') || wanted.has('normalizedEmail')
+          ? await withEmails(ctx, accounts)
+          : accounts;
       return {
-        data: { accounts: await withEmails(ctx, accounts), missing },
+        data: {
+          accounts: rows.map((row) =>
+            Object.fromEntries(
+              Object.entries(row).filter(([key]) => key === 'userId' || wanted.has(key))
+            )
+          ),
+          missing,
+        },
         rows: accounts.length,
         truncated: false,
         sources: accounts.map((a) => userSource(a.userId, a.username)),

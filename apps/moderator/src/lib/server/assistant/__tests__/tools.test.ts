@@ -102,7 +102,7 @@ vi.mock('../store', () => ({
 
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
-const { DAILY_TOKEN_CAP } = await import('../loop');
+const { DAILY_TOKEN_CAP, MAX_TOOL_CHARS, fitJson } = await import('../loop');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -259,6 +259,76 @@ describe('registration emails', () => {
     const out = JSON.stringify(await run(name, args, [LOOKUP_PAGE], ['assistant.emails']));
     expect(out).toContain('"normalizedEmail":"sock9@gmail.com"');
     resolveUserId.mockImplementation(async () => null);
+  });
+
+  describe('get_accounts fields', () => {
+    const accounts = async (args: unknown, grants: string[] = ['assistant.emails']) =>
+      ((await run('get_accounts', args, [LOOKUP_PAGE], grants)).data as { accounts: object[] })
+        .accounts;
+
+    it('returns only the columns asked for, and always the id', async () => {
+      expect(await accounts({ userIds: [3, 4], fields: ['normalizedEmail'] })).toEqual([
+        { userId: 3, normalizedEmail: 'sock3@gmail.com' },
+        { userId: 4, normalizedEmail: 'sock4@gmail.com' },
+      ]);
+    });
+
+    it('returns every column when none are named, as before', async () => {
+      expect(await accounts({ userIds: [3] })).toEqual([
+        {
+          userId: 3,
+          username: 'u3',
+          email: 'Sock.3+x@GoogleMail.com',
+          normalizedEmail: 'sock3@gmail.com',
+        },
+      ]);
+    });
+
+    it('never gives an email to a moderator without assistant.emails, even when asked', async () => {
+      expect(await accounts({ userIds: [3], fields: ['email', 'normalizedEmail'] }, [])).toEqual([
+        { userId: 3 },
+      ]);
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('does not read emails unless they are asked for', async () => {
+      expect(await accounts({ userIds: [3], fields: ['username'] })).toEqual([
+        { userId: 3, username: 'u3' },
+      ]);
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('fits a full list of inboxes into one result, where every column does not', async () => {
+      // The model sees a result through `fitJson`; a trimmed one has silently lost accounts.
+      const ids = Array.from({ length: 200 }, (_, i) => 4_800_000 + i);
+      const address = (id: number) => `firstname.lastname${id % 1000}@outlook.com`;
+      getRegistrationEmails.mockImplementation(
+        async (list: number[]) => new Map(list.map((id) => [id, address(id)]))
+      );
+      const seen = async (fields?: string[]) => {
+        const result = await run(
+          'get_accounts',
+          { userIds: ids, fields },
+          [LOOKUP_PAGE],
+          ['assistant.emails']
+        );
+        return fitJson({ data: result.data, truncated: false }, MAX_TOOL_CHARS).trimmed;
+      };
+      try {
+        expect(await seen(['normalizedEmail'])).toBe(false);
+        expect(await seen()).toBe(true);
+      } finally {
+        getRegistrationEmails.mockImplementation(
+          async (list: number[]) => new Map(list.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+        );
+      }
+    });
+
+    it('refuses a column it does not have', () => {
+      const tool = TOOLS.find((t) => t.name === 'get_accounts')!;
+      expect(tool.input.safeParse({ userIds: [3], fields: ['passwordHash'] }).success).toBe(false);
+      expect(tool.input.safeParse({ userIds: [3], fields: [] }).success).toBe(false);
+    });
   });
 
   const EMAIL = 'b.o.t+1@gmail.com';
