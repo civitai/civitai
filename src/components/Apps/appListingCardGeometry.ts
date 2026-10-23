@@ -29,8 +29,9 @@
  * `unit` (line 405) and on `geometry` (line 830). The browser `component` project
  * runs as `Component tests` and, like every check here, blocks no merge.
  *
- * So on a PR the two tiers are **equally non-gating**, and both report on the next
- * `main` push — after the merge — where neither is `continue-on-error`. Three
+ * Neither tier blocks a merge, but they do not report the same way. On a PR, `Component
+ * tests` goes red when a browser test fails, while `unit` stays green as a job with a red
+ * step underneath; on a push to `main` both give a real verdict. Three
  * comments in this arc, and a severity call in the PR body, were written on the
  * premise that node gates a PR and browser does not. It does not. The guards built
  * on that premise are still worth having, but do not price them as merge gates. `lint.yml:377`
