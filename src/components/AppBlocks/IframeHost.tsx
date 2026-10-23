@@ -490,8 +490,8 @@ export function AppBlockChrome({
   // Which of those entries this menu may offer. The rules (off-site exclusion,
   // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
   // `/apps/run/` links, self-exclusion, the cap) live in the pure
-  // `selectChromeRecentApps` so the node `unit` project covers them — the
-  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // `selectChromeRecentApps` so the node `unit` project covers them. The
+  // store's PER-KIND cap is what stops
   // off-site entries from evicting the on-site ones this menu needs.
   const recentApps = selectChromeRecentApps(recents, {
     canOpenPage,

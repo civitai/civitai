@@ -30,8 +30,8 @@
  * iframe, so the import does not leak into the sibling suites.
  *
  * 🔴 NOTHING HERE IS A GATE — AND NEITHER IS THE OTHER TIER. The Vitest
- * browser-mode `component` project runs in CI as the REPORT-ONLY
- * `preview / component-tests` status. Its node-tier counterpart for this change
+ * browser-mode `component` project runs in CI as the `Component tests`
+ * check. Its node-tier counterpart for this change
  * is `__tests__/chromeGeometry.test.ts` (which is unit coverage of a new module,
  * not regression coverage — see its own header); that tier is report-only on a
  * pull request too (`continue-on-error`) and renders a real verdict on a push to

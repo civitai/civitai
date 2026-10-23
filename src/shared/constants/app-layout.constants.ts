@@ -20,8 +20,8 @@
  * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` is the guard
  * that proves they resolve. Measured there, with and without the injection:
  * `--header-height` `""` → `60px`, and `calc(100dvh - var(--header-height))`
- * `0px` → `viewport − 60`. ⚠️ That guard lives in `preview / component-tests`,
- * which is REPORT-ONLY and does not block a merge — so it tells you, it does not
+ * `0px` → `viewport − 60`. ⚠️ That guard runs in CI as `Component tests`, which,
+ * like every check here, does not block a merge — so it tells you, it does not
  * stop you. The CSS↔TS value binding it leans on is in the gating tier
  * (`pageRunScrollContract.test.ts`).
  *

@@ -42,8 +42,8 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * between routes.
  *
  * The RENDERED proof of the alignment lives in
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode, report-only). This
- * file pins the CONSTANTS and the route taxonomy in the tier that actually gates.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode). This
+ * file pins the CONSTANTS and the route taxonomy in the node tier.
  */
 
 /**

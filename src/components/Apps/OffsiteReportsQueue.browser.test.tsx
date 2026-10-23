@@ -11,7 +11,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * submit through the shared {@link ReasonGatedActionModal} (B3), so delist / relist /
  * claim / purge get the SAME live counter + inline error + disabled-with-Tooltip gate
  * the reject paths have (finding A). resolve / dismiss keep the OPTIONAL note (no gate).
- * Browser-mode (report-only in Tekton): the gate + the fired mutations.
+ * Browser-mode (`Component tests` in CI): the gate + the fired mutations.
  */
 
 const REPORT = {

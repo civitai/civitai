@@ -12,9 +12,8 @@ import {
 
 /**
  * Pure state logic for the App-manifest BlockScopeSelector. This is the
- * AUTHORITATIVE gate for the scope-editor behaviour (the browser test is
- * report-only). Deferred target slots are no longer edited here — the form OMITS
- * `targets` from the save patch so the server preserves `stored.targets` (asserted
+ * node-tier gate for the scope-editor behaviour. Deferred target slots are no longer edited here —
+ * the form OMITS `targets` from the save patch so the server preserves `stored.targets` (asserted
  * in ManifestEditForm.browser.test.tsx), so there is no pure helper to test.
  */
 

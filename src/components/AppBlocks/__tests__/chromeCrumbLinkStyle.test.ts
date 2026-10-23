@@ -21,9 +21,9 @@ import { describe, expect, it } from 'vitest';
  *
  * Together those are the claim. Neither half alone is.
  *
- * 🔴 AND IT IS IN THE TIER THAT EXECUTES, WHICH THE RENDERED ONE WOULD NOT HAVE BEEN.
- * The browser project runs in CI as the REPORT-ONLY `preview / component-tests` status;
- * the node `unit` project actually runs the assertion, report-only on a pull request
+ * 🔴 AND IT IS IN THE NODE TIER, which asserts this from the stylesheet text without a
+ * browser; the browser project runs in CI as the `Component tests` check. The node
+ * `unit` project is report-only on a pull request
  * (`continue-on-error`) and an honest verdict on a push to `main` or a
  * `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
  * all in this repo, so this is a signal a reviewer must read, not a door that stays

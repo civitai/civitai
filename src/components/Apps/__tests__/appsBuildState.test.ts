@@ -190,11 +190,9 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
  * paragraph explaining that these rows block nothing. A summary line is what a hurried reader
  * takes away, so it was the worst surviving copy of the claim. Nothing here blocks; see below.)
  *
- * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
- * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
- * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
- * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
- * `preview / component-tests`.
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF WAS OBSERVED NOWHERE. `/apps/build`'s
+ * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project, which CI
+ * did not run at the time.
  *
  * ⚠️ THESE ROWS DO NOT "BLOCK" ANYTHING EITHER, AND SAYING THEY DID WAS THIS FILE'S OWN
  * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a

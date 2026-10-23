@@ -95,9 +95,9 @@ function nameText() {
   return document.body.querySelector('li a p, li div > p') as HTMLElement;
 }
 
-// ⚠️ Nothing here gates `main`: `*.browser.test.tsx` runs in no blocking CI job
-// (lint.yml keeps the unit job Node-only), only in the preview pipeline's
-// report-only `component-tests`. A revert of either class below merges green.
+// ⚠️ Nothing here gates a merge: `*.browser.test.tsx` runs in CI as `Component tests`,
+// and `main` requires no status check, so a revert of either class below turns that
+// check red but can still merge.
 //
 // Reported 2026-08-17 (ClickUp 868ktabp0): in "Resources used" a strength of `1`
 // rendered whole while `0.8` rendered as `0.`, clipped at the panel edge — on

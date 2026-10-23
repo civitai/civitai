@@ -130,14 +130,14 @@ import type * as TrpcMod from '~/utils/trpc';
  * that cares about width has to state one.)
  *
  * NOTE ON REACH: the browser `component` project runs in CI as the
- * `preview / component-tests` status — REPORT-ONLY, so a break here is visible
+ * `Component tests` check, so a break here turns that check red
  * but does not block a merge. This file is the EMPIRICAL half; the source-guard
  * half is `__tests__/pageBlockHostMaxWidth.test.ts`, which is in the node `unit`
  * project — report-only on a pull request too (`continue-on-error`), and an
  * honest verdict on a push to `main` or a `workflow_dispatch`. NEITHER TIER
  * BLOCKS A MERGE: `main` requires no status check at all in this repo. Neither
  * can replace the other either: only a real layout can see a width, and only the
- * node tier stays honest on `main`.
+ * node tier reads the source text.
  *
  * 🔴 WHAT NEITHER TIER CAN SEE, STATED BECAUSE THE UNCAP MADE IT LOAD-BEARING. The
  * component harness does NOT load the app cascade — `test/component-setup.tsx` extracts

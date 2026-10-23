@@ -31,10 +31,7 @@
  * tiers differ on is whether a red is ever SEEN. `.github/workflows/lint.yml`'s
  * `geometry:` job runs `vitest run --project geometry` with a collected-count ledger and
  * is `continue-on-error` only for `pull_request` — report-only on a PR, a real red on a
- * push to `main`. The `component` tier matches NO project selector in that workflow
- * (`unit*`, `@civitai/*`, `app:*`), so its only home is the preview pipeline's
- * `preview / component-tests`. A new rendered-pixel claim is worth more in the tier
- * somebody will see go red.
+ * push to `main`. The `component` tier runs there too, as `Component tests`.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHERE THE REST OF THE RAIL'S VERTICAL GEOMETRY LIVES

@@ -7,8 +7,8 @@
  * `model.sidebar_top` slot and the full-page `/apps/run/<slug>` frame — and it
  * used to carry hard-coded pixel caps for both. Putting the decision in a pure
  * function keeps it testable in the node `unit` project, which is the tier that
- * EXECUTES such an assertion (the Vitest browser-mode `component` project runs in
- * CI as the REPORT-ONLY `preview / component-tests` status; the node tier is
+ * EXECUTES such an assertion without a browser (the Vitest browser-mode `component`
+ * project runs in CI as the `Component tests` check; the node tier is
  * report-only on a pull request too and renders a real verdict on a push to
  * `main` — neither blocks a merge, since `main` requires no status check at all
  * in this repo), exactly as `slotReservation.ts` and `selectChromeRecentApps`

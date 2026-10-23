@@ -58,11 +58,9 @@ export type AppsBuildState = (typeof APPS_BUILD_STATES)[number];
  * "FLIP TO BLOCKING once…" note at `:357-365`), and `main` carries branch protection with **no required status checks** at all
  * (`required_status_checks: null`, read live from the API, and stated at `lint.yml:600`).
  *
- * What the move DOES buy, and it is real: the `component` project is report-only
- * EVERYWHERE — no selector in that workflow matches it (`unit*`, `@civitai/*`, `app:*`) and
- * its only CI home is the preview pipeline's `preview / component-tests` — whereas `unit`
- * runs on `push: [main]`, where `continue-on-error` evaluates FALSE. So a regression in this
- * predicate reds the `main` build AFTER it lands, instead of being observed nowhere. That is
+ * What the move DOES buy: `unit` runs on `push: [main]`, where `continue-on-error`
+ * evaluates FALSE (the `component` project now runs there too, as `Component tests`). So a
+ * regression in this predicate reds the `main` build AFTER it lands. That is
  * catch-after-landing, not block-before-merge. Do not restate it as the latter.
  *
  * The browser spec stays as the rendered evidence that the SCREEN is right.
