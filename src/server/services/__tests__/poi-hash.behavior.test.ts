@@ -162,6 +162,32 @@ describe('findPoiHashSeeds', () => {
     ]);
   });
 
+  // An owner's save can race the snapshot away; who set the flag last still says it was automation.
+  it('a flag this feature applied does not seed even without its snapshot, until a moderator confirms', async () => {
+    await addModel(51, 6, `poi = true, "lockedProperties" = ${LOCKED}`);
+    await addFile(51, 'LOST', '30 days');
+    await pg.exec(
+      `INSERT INTO "ModActivity" (activity, "entityType", "entityId") VALUES ('setPoiAutoHash', 'model', 51)`
+    );
+    expect(await findPoiHashSeeds('LOST')).toEqual([]);
+    await pg.exec(
+      `INSERT INTO "ModActivity" (activity, "entityType", "entityId", "createdAt") VALUES ('setPoi', 'model', 51, now() + interval '1 second')`
+    );
+    expect(await findPoiHashSeeds('LOST')).toEqual([{ modelId: 51, userId: 6, human: true }]);
+  });
+
+  it('a moderator set from before the current text-scan verdict does not make it human', async () => {
+    await pg.exec(`
+      UPDATE "Model" SET meta = '{"textScanFlags":{"poi":{"workflowId":"w","at":"2026-06-01T00:00:00Z"}}}'
+      WHERE id = ${SCAN_SEED};
+      INSERT INTO "ModActivity" (activity, "entityType", "entityId", "createdAt")
+      VALUES ('setPoi', 'model', ${SCAN_SEED}, '2026-01-01');
+    `);
+    expect(await findPoiHashSeeds('SCAN')).toEqual([
+      { modelId: SCAN_SEED, userId: 2, human: false },
+    ]);
+  });
+
   it('a self-declared flag and an unconfirmed hash flag never seed', async () => {
     expect(await findPoiHashSeeds('SELF')).toEqual([]);
     expect(await findPoiHashSeeds('AUTO')).toEqual([]);
@@ -219,6 +245,20 @@ describe('checkPoiHashOnScan', () => {
     expect(await dismissPoiHashMatch({ modelId: 15, userId: 7 })).toEqual({ dismissed: 1 });
     expect(await meta(15)).not.toHaveProperty('poiHashMatch');
     expect(await scan(15, 99, file, 'MOD')).toBe('skipped');
+  });
+
+  it('reads a cutoff an operator wrote as a date, and fails closed on one it cannot read', async () => {
+    await pg.exec(
+      `UPDATE "KeyValue" SET value = to_jsonb(to_char((now() - interval '1 hour') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))`
+    );
+    await addModel(22, 1);
+    expect(await scan(22, 1, await addFile(22, 'MOD'), 'MOD')).toBe('flagged');
+
+    await pg.exec(`UPDATE "KeyValue" SET value = '"not a date"'`);
+    await addModel(23, 1);
+    expect(await scan(23, 1, await addFile(23, 'MOD'), 'MOD')).toBe('skipped');
+    // The job failure has to tell an operator which row to fix.
+    await expect(sweepPoiHashMatches({ limit: 50 })).rejects.toThrow('poi-hash-match-since');
   });
 
   it('stamps the cutoff on the first enabled scan when none is set', async () => {

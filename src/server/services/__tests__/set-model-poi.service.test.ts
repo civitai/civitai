@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 // Unit tests for setModelPoi — the moderator app's POI toggle. Same mock scaffold as
 // set-model-sfw-only.service.test.ts (model.service.ts has a very large import graph).
@@ -227,6 +228,61 @@ describe('setModelPoi — lift', () => {
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
     expect(mockStampRuling).not.toHaveBeenCalled();
     expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+});
+
+/** The values of every raw write, so a meta key the write sets or removes can be named. */
+const rawWriteValues = () =>
+  mockDbWrite.$executeRaw.mock.calls.map(
+    ([strings, ...values]) =>
+      Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).values
+  );
+const wroteKey = (key: string) => rawWriteValues().some((values) => values.includes(key));
+
+describe('setModelPoi — the real-person hash match', () => {
+  it('snapshots the pre-flag state before an automated flag', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockResolvedValue(1);
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' });
+
+    expect(wroteKey('poiFlagSnapshot')).toBe(true);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ activity: 'setPoiAutoHash' })
+    );
+  });
+
+  // Without a snapshot the flag could neither be reverted nor appealed.
+  it('applies no automated flag when the snapshot was not recorded', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockResolvedValue(0);
+    await expect(
+      setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' })
+    ).rejects.toThrow();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('a moderator set takes no snapshot', async () => {
+    mockBefore({});
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID });
+    expect(wroteKey('poiFlagSnapshot')).toBe(false);
+  });
+
+  it('a lift stamps the model cleared, so the hash match does not put the flag back', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(wroteKey('poiHashCleared')).toBe(true);
+  });
+
+  it('a lift for an appeal leaves the ruling and the appeal to the resolver', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, fromAppeal: true });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+    expect(wroteKey('poiHashCleared')).toBe(true);
   });
 });
 

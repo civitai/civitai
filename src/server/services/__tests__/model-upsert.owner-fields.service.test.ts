@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 import type * as ModelCoverService from '~/server/services/model-cover.service';
@@ -529,6 +530,34 @@ describe('flag appeals settled by a moderator save', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, poi: false });
 
     expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+});
+
+describe('real-person hash state on a save', () => {
+  const wroteKey = (key: string) =>
+    mockDbWrite.$executeRaw.mock.calls.some(([strings, ...values]) =>
+      Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).values.includes(key)
+    );
+
+  // Otherwise the nightly sweep puts back a flag the moderator just lifted in the edit form.
+  it('a moderator lifting poi stamps the model cleared', async () => {
+    mockStored({ poi: true });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: false });
+    expect(wroteKey('poiHashCleared')).toBe(true);
+  });
+
+  it('a moderator setting poi takes the model off the match queue', async () => {
+    mockStored({ poi: false });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, poi: true });
+    expect(wroteKey('poiHashMatch')).toBe(true);
+    expect(wroteKey('poiHashCleared')).toBe(false);
+  });
+
+  it('a save that leaves poi alone touches neither', async () => {
+    mockStored({ poi: true });
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
+    expect(wroteKey('poiHashCleared')).toBe(false);
+    expect(wroteKey('poiHashMatch')).toBe(false);
   });
 });
 

@@ -25,15 +25,24 @@ const SYSTEM_USER_ID = constants.system.user.id;
 export const POI_HASH_SINCE_KEY = 'poi-hash-match-since';
 
 /** A model whose locked real-person flag makes its weights a seed. The flag this service applies
- *  itself does not seed until a moderator confirms it. Needs `m`. */
+ *  itself does not seed until a moderator confirms it: checked on the snapshot and, in case an owner's
+ *  save raced the snapshot away, on who set the flag last. Needs `m`. */
 const poiSeedPredicate = Prisma.sql`
   m.poi
   AND 'poi' = ANY(m."lockedProperties")
   AND m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+  AND COALESCE((
+    SELECT ma.activity <> 'setPoiAutoHash'
+    FROM "ModActivity" ma
+    WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
+      AND ma.activity IN ('setPoi', 'setPoiAutoHash')
+    ORDER BY ma."createdAt" DESC, ma.id DESC
+    LIMIT 1
+  ), true)
 `;
 
-/** A text-scan verdict no moderator has ruled on and no moderator set by hand. COALESCE: with no
- *  text-scan entry `?` yields NULL, which would read as neither. Needs `m`. */
+/** A text-scan verdict no moderator has ruled on or set by hand since. COALESCE: with no text-scan
+ *  entry `?` yields NULL, which would read as neither. Needs `m`. */
 const machineOnlySeedSql = Prisma.sql`
   COALESCE(
     m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'workflowId'
@@ -41,6 +50,9 @@ const machineOnlySeedSql = Prisma.sql`
     AND NOT EXISTS (
       SELECT 1 FROM "ModActivity" ma
       WHERE ma."entityType" = 'model' AND ma."entityId" = m.id AND ma.activity = 'setPoi'
+        AND ma."createdAt" >= COALESCE(
+          (m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'at')::timestamptz, '-infinity'::timestamptz
+        )
     ),
     false
   )
@@ -91,7 +103,12 @@ export async function getPoiHashSince(): Promise<Date> {
     `;
     row = await read();
   }
-  return new Date(Number(row?.value));
+  // Epoch ms as stamped, or an ISO date an operator wrote by hand.
+  const value = row?.value;
+  const since = new Date(typeof value === 'string' ? value : Number(value));
+  if (Number.isNaN(since.getTime()))
+    throw new Error(`${POI_HASH_SINCE_KEY} is not a date: ${JSON.stringify(value)}`);
+  return since;
 }
 
 /** Whether this file on this model may be matched at all: the model is live and not already flagged

@@ -2862,10 +2862,10 @@ export async function clearPoiHashMeta(modelId: number) {
   `;
 }
 
-// Best-effort, like the minor snapshot: a lost snapshot must block a later revert, not the flag.
+// Unlike the minor snapshot this is not best-effort: without it the automated flag could neither be
+// reverted nor appealed, so the caller does not apply the flag.
 async function capturePoiFlagSnapshot(modelId: number) {
-  try {
-    await dbWrite.$executeRaw`
+  const captured = await dbWrite.$executeRaw`
       UPDATE "Model" m
       SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
         ${POI_FLAG_SNAPSHOT_KEY}::text, jsonb_build_object(
@@ -2879,14 +2879,7 @@ async function capturePoiFlagSnapshot(modelId: number) {
       )
       WHERE m.id = ${modelId} AND NOT m.poi
     `;
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'poi-flag-snapshot',
-      message: error instanceof Error ? error.message : String(error),
-      modelId,
-    }).catch(() => null);
-  }
+  if (!captured) throw new Error(`No real-person flag snapshot recorded for model ${modelId}`);
 }
 
 /**
@@ -3661,6 +3654,12 @@ export const upsertModel = async (
     const liftedLabels = (['minor', 'poi'] as const).filter(
       (label) => beforeUpdate[label] && data[label] === false
     );
+    if (liftedLabels.includes('poi')) await clearPoiHashMeta(result.id);
+    else if (data.poi === true && !beforeUpdate.poi)
+      await dbWrite.$executeRaw`
+        UPDATE "Model" m SET meta = ${asJsonbObjectSql('m.meta')} - ${POI_HASH_MATCH_KEY}::text
+        WHERE m.id = ${result.id}
+      `;
     if (isModerator && liftedLabels.length) {
       const { settleFlagAppealsAfterModeratorLift } = await import(
         '~/server/services/text-scan/actions/appeal-text-hash'
