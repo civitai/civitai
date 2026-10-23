@@ -97,6 +97,10 @@ describe('getChallengeDetail — winner images', () => {
     expect(await winnerUrl(NsfwLevel.PG, undefined, true)).toBe(WINNER_URL);
   });
 
+  it('keeps a PG-13 winner image for a signed-in viewer on the green site', async () => {
+    expect(await winnerUrl(NsfwLevel.PG13, VIEWER, true)).toBe(WINNER_URL);
+  });
+
   it('keeps an X winner image off the green site', async () => {
     expect(await winnerUrl(NsfwLevel.X, VIEWER, false)).toBe(WINNER_URL);
   });

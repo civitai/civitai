@@ -214,8 +214,8 @@ describe('a collection ceiling is a cap, not an override', () => {
 
   it('passes it as forcedBrowsingLevel, narrowed to the viewer', () => {
     expect(collection()).toContain('forcedBrowsingLevel={collectionCap}');
-    expect(collection()).toContain(
-      'viewerCollectionCap(\n    collection.metadata.forcedBrowsingLevel'
+    expect(collection()).toMatch(
+      /collectionCap = viewerCollectionCap\(\s*collection\.metadata\.forcedBrowsingLevel,\s*userBrowsingLevel,/
     );
   });
 
@@ -244,7 +244,12 @@ describe('a post ceiling is cleared when the post has none', () => {
   const postDetail = () => read('..', '..', 'Post', 'Detail', 'PostDetail.tsx');
 
   it('narrows the contest ceiling to the viewer before using it', () => {
-    expect(postDetail()).toContain('const forcedBrowsingLevel = viewerCollectionCap(');
+    expect(postDetail()).toMatch(
+      /const forcedBrowsingLevel = viewerCollectionCap\(\s*collectionForcedLevel,\s*userBrowsingLevel,/
+    );
+    // The images query must read the narrowed level too, not the collection's own.
+    expect(postDetail()).toContain('browsingLevel: forcedBrowsingLevel,');
+    expect(postDetail()).not.toContain('browsingLevel: collectionForcedLevel');
   });
 
   it('sets the cap unconditionally', () => {

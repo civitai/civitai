@@ -77,11 +77,11 @@ export const BROWSING_LEVEL_FALLBACK = NsfwLevel.PG;
 
 /**
  * A collection's ceiling as this viewer may use it: the levels both allow, so the ceiling can only
- * narrow what a viewer browses, never widen it. Moderators and owners judging the collection
- * (`bypass`) keep the full ceiling, as `Gated` lets them past it.
+ * narrow what a viewer browses, never widen it. `bypass` (the moderators, managers and owners each
+ * call site names) keeps the full ceiling.
  *
- * Never 0: a level of 0 reads as "no filter" on the server, so no overlap falls back to
- * `BROWSING_LEVEL_FALLBACK`, which a collection forced above it should hold nothing at.
+ * Never 0: some server paths read a level of 0 as "no filter", so no overlap falls back to
+ * `BROWSING_LEVEL_FALLBACK`, the tamest level.
  */
 export function viewerCollectionCap(
   forced: number | null | undefined,

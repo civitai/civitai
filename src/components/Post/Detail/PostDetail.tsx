@@ -115,7 +115,9 @@ export function PostDetailContent({ postId }: Props) {
   const forcedBrowsingLevel = viewerCollectionCap(
     collectionForcedLevel,
     userBrowsingLevel,
-    !!permissions?.manage || !!currentUser?.isModerator || currentUser?.id === post?.user.id
+    !!permissions?.manage ||
+      !!currentUser?.isModerator ||
+      (!!currentUser && currentUser.id === post?.user.id)
   );
   // 🔴 Set unconditionally so the cap is CLEARED when a post has no collection.
   // Guarding on a truthy value latched the last contest ceiling into the ancestor
