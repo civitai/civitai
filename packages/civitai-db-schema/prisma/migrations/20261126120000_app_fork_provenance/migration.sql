@@ -22,25 +22,28 @@
 -- `ADD COLUMN ... DEFAULT false NOT NULL` does not rewrite the table on PG 11+ (the default is
 -- stored in the catalog), so every ADD COLUMN is catalog-only.
 --
--- LOCKS. Each `ADD CONSTRAINT ... FOREIGN KEY` takes a SHARE ROW EXCLUSIVE lock on both tables
--- it names until COMMIT; writes to those tables wait, reads do not. The FKs are added
--- `NOT VALID` (no scan under that lock) and validated in a second statement, which takes only a
--- SHARE UPDATE EXCLUSIVE lock. Every new column is NULL on every existing row, so validation
--- has nothing to check. `lock_timeout` caps each lock wait at 3s: if a long write transaction
--- holds one of these tables, the statement aborts instead of stalling every writer queued
--- behind it.
---   1. Check for long-running write transactions first, e.g.
+-- LOCKS — APPLY IN AUTOCOMMIT (statement by statement, e.g. plain `psql -f`), NOT as one
+-- transaction (`psql -1` / BEGIN…COMMIT). Each `ADD COLUMN` takes an ACCESS EXCLUSIVE lock on its
+-- table, which blocks READS as well as writes; it is catalog-only and brief, but inside one
+-- transaction all three tables (`app_listings`, `app_blocks`, `app_block_publish_requests`) would
+-- stay locked against reads until COMMIT. In autocommit each lock is released as its statement
+-- ends. The FKs are added `NOT VALID` (SHARE ROW EXCLUSIVE on both tables: writes wait, reads do
+-- not) and validated in separate statements (SHARE UPDATE EXCLUSIVE); every new column is NULL on
+-- every existing row, so validation has nothing to check. `lock_timeout` caps each lock wait at 3s,
+-- so a statement queued behind a long transaction aborts instead of stalling everything queued
+-- behind it — note a queued ACCESS EXCLUSIVE request blocks new readers for up to those 3s.
+--   1. Check for long-running transactions first, e.g.
 --        SELECT pid, now() - xact_start AS age, state, left(query, 80)
 --          FROM pg_stat_activity
 --         WHERE xact_start < now() - interval '5 seconds' AND state <> 'idle'
 --         ORDER BY xact_start;
 --   2. Run it off-peak.
---   3. On `canceling statement due to lock timeout`, nothing in that transaction was applied;
---      wait and re-run (everything is idempotent).
+--   3. On `canceling statement due to lock timeout`, that statement was not applied; wait and
+--      re-run the whole file (everything is idempotent, so the statements that did apply are
+--      no-ops the second time).
 --
 -- The three indexes are PARTIAL on `IS NOT NULL`, so on apply they are empty and build
--- instantly. Plain `CREATE INDEX` (not CONCURRENTLY) for that reason, which also keeps the
--- whole file runnable inside one transaction.
+-- instantly; plain `CREATE INDEX` (not CONCURRENTLY) is fine for that reason.
 --
 -- ROLLBACK (forgets every fork link and every opt-in; the code does not need rolling back — it
 -- reads absent columns as "not forkable, not a fork"):
