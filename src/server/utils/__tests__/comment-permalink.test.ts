@@ -62,6 +62,7 @@ const NO_ENTITIES = {
   model3d: null,
   appListing: null,
   crucible: null,
+  storyline: null,
 } satisfies ThreadEntitySource;
 
 type ThreadFixture = PermalinkThread;
@@ -110,6 +111,7 @@ const HANDLED: Array<[string, Partial<ThreadEntitySource>, string]> = [
   ['image', { image: { id: PARENT_ID } }, `/images/${PARENT_ID}?${QUERY}`],
   ['model3d', { model3d: { id: PARENT_ID } }, `/3d-models/${PARENT_ID}?${QUERY}`],
   ['crucible', { crucible: { id: PARENT_ID } }, `/crucibles/${PARENT_ID}?${QUERY}`],
+  ['storyline', { storyline: { id: PARENT_ID } }, `/storylines/${PARENT_ID}?${QUERY}`],
 ];
 
 /**

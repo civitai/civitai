@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -3041,6 +3041,8 @@ export interface Thread {
   appListing?: AppListing | null;
   crucibleId: number | null;
   crucible?: Crucible | null;
+  storylineId: number | null;
+  storyline?: Storyline | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -6449,6 +6451,7 @@ export interface Storyline {
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
+  thread?: Thread | null;
 }
 
 export interface StorylineChapter {

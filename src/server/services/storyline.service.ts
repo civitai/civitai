@@ -1952,6 +1952,16 @@ async function getStorylineForRead(storylineId: number, viewer: Viewer, browsing
   };
 }
 
+/** Throws NotFound unless this viewer could open the storyline's page. */
+export async function assertStorylineVisible(
+  storylineId: number,
+  viewer: Viewer,
+  browsingLevel: number
+) {
+  const { storyline } = await getStorylineForRead(storylineId, viewer, browsingLevel);
+  return { userId: storyline.userId, tosViolation: storyline.tosViolation };
+}
+
 /**
  * The reading path ending at `chapterId`, in order. A chapter this reader may not see is a
  * tombstone carrying the reason, never an error, so the chapters after it stay reachable.

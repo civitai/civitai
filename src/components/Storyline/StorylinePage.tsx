@@ -10,8 +10,8 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
 import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
+import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { PostComments } from '~/components/Post/Detail/PostComments';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
 import {
@@ -44,9 +44,8 @@ export function StorylinePage({ id }: { id: number }) {
   const queryUtils = trpc.useUtils();
   const storyline = storylineQuery.data;
   const mainPath = storyline?.mainPath ?? [];
-  // Thread and Start reading come from the reading path, which tombstones chapter 1 where this
-  // reader may not see it; `rootPostId` does not.
-  const rootPost = mainPath[0]?.post ?? null;
+  // Start reading comes from the reading path, which tombstones chapter 1 where this reader may
+  // not see it; `rootPostId` does not.
   const startLink = mainPath[0] ? storylineChapterLink(mainPath[0], []) : null;
   // Continue adds the next chapter after the end of the main path. When that chapter is hidden
   // from this reader, Continue is not offered: continuing an earlier one would make a side branch.
@@ -99,10 +98,15 @@ export function StorylinePage({ id }: { id: number }) {
             <StorylineContributors contributors={storyline.contributors} />
             <StorylineAboutContinuing storyline={storyline} terms={shownTerms} />
           </div>
-          {rootPost && (
+          {/* A storyline with no chapter 1 yet is its owner's draft, with nothing to discuss. */}
+          {mainPath.length > 0 && (
             // The thread brings its own "Comments" heading; the card only names the region.
             <section aria-label="Discussion" className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
-              <PostComments postId={rootPost.id} userId={storyline.user.id} />
+              <EntityDiscussion
+                entityType="storyline"
+                entityId={storyline.id}
+                userId={storyline.user.id}
+              />
             </section>
           )}
         </div>

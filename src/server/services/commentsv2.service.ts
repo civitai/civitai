@@ -247,6 +247,10 @@ export async function getThreadEntityOwnerId({
       return findUserId(
         dbRead.crucible.findUnique({ where: { id: entityId }, select: { userId: true } })
       );
+    case 'storyline':
+      return findUserId(
+        dbRead.storyline.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
         where: { id: entityId },
@@ -687,6 +691,22 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
     select: { crucibleId: true, rootThread: { select: { crucibleId: true } } },
   });
   return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
+}
+
+export async function getCommentThreadStorylineId(threadId: number): Promise<number | null> {
+  const thread = await dbRead.thread.findUnique({
+    where: { id: threadId },
+    select: { storylineId: true, rootThread: { select: { storylineId: true } } },
+  });
+  return thread?.storylineId ?? thread?.rootThread?.storylineId ?? null;
+}
+
+export async function getCommentStorylineId(commentId: number): Promise<number | null> {
+  const comment = await dbRead.commentV2.findUnique({
+    where: { id: commentId },
+    select: { threadId: true },
+  });
+  return comment ? getCommentThreadStorylineId(comment.threadId) : null;
 }
 
 export const deleteComment = async ({ id }: { id: number }) => {

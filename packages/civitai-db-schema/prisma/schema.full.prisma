@@ -5005,6 +5005,8 @@ model Thread {
   appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: Cascade)
   crucibleId       Int?            @unique
   crucible         Crucible?       @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  storylineId      Int?            @unique
+  storyline        Storyline?      @relation(fields: [storylineId], references: [id], onDelete: Cascade)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -5053,6 +5055,7 @@ enum CommentEntityType {
   model3dReview
   appListing
   crucible
+  storyline
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -10065,6 +10068,8 @@ model Storyline {
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
+  /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
+  thread        Thread?
 
   @@index([userId])
   @@index([coverImageId])
