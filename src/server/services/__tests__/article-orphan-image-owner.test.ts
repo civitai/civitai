@@ -145,15 +145,18 @@ const matches = (row: Row, where: Record<string, any>) =>
     return !row.uses.includes(key) || (key === 'article' && row.id === deletedArticleCover);
   });
 
-/** What the owner's legal-hold read returns: `[{ held }]`, or no row when it cannot be read. */
-const hold = { rows: [{ held: false }] as { held: boolean }[] };
+/** What the owner's legal-hold read returns: `[{ held }]`, no row, or `null` to make it fail. */
+const hold = { rows: [{ held: false }] as { held: boolean }[] | null };
 
 beforeEach(() => {
   vi.clearAllMocks();
   deletedArticleCover = null;
   hold.rows = [{ held: false }];
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-    strings.join('?').includes(' AS held') ? hold.rows : undefined) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    if (!strings.join('?').includes(' AS held')) return undefined;
+    if (!hold.rows) throw new Error('relation "EvidenceHeldUser" does not exist');
+    return hold.rows;
+  }) as never);
   // The article's own connections, after the edit: every unlinked image.
   dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(
     UNLINKED.map((row) => ({ imageId: row.id })) as never
@@ -377,10 +380,12 @@ describe('an owner with a safety report on file', () => {
 // "CsamReport" row of their own, so only the shared hold read can see it.
 describe.each([
   ['under a legal hold with no report of their own', [{ held: true }]],
-  ['whose legal hold cannot be read', []],
+  ['whose legal hold read returns no row', []],
+  ['whose legal hold read fails', null],
 ])('an owner %s', (_, rows) => {
   beforeEach(() => {
     hold.rows = rows;
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   it('keeps every image the edit unlinks', async () => {
@@ -456,6 +461,7 @@ describe('ownerUnderSafetyReport over the real hold view', () => {
     );
 
   it.each([
+    ['being the placeholder owner', -1],
     ['a hold marker', MARKED],
     ["the secondary user on another's report", SECONDARY],
     ['an image awaiting CSAM review', REVIEWED],
