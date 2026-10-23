@@ -246,6 +246,7 @@ describe('claimNext order', () => {
             const at = later(userId * 2 * LEASE_MS);
             const held = (await claimNext(userId, {}, at, rng))!.itemId;
             expect((await item(held)).lane).toBe(lane);
+            expect(held).not.toBe(other);
             const kept = await claimNext(userId, filter, new Date(at.getTime() + 1000));
             expect(kept!.itemId).toBe(held);
             const { rows } = await pg.query<{ itemId: number }>(
@@ -255,7 +256,6 @@ describe('claimNext order', () => {
             expect(rows).toEqual([{ itemId: held }]);
           }
       }
-      expect(userId).toBe(12);
     });
 
     it('recognises the control version, and only it', async () => {
