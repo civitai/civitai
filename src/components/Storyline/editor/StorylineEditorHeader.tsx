@@ -1,8 +1,5 @@
 import { StorylineEditorBanner } from '~/components/Storyline/editor/StorylineEditorBanner';
-import { usePostStorylineDraft } from '~/components/Storyline/editor/usePostStorylineDraft';
-import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
-import { isPublished, useStorylineForPost } from '~/components/Storyline/storyline.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { usePostStorylineMode } from '~/components/Storyline/editor/usePostStorylineMode';
 
 type EditorPost = { id: number; user: { id: number }; publishedAt?: Date | null };
 
@@ -11,13 +8,7 @@ type EditorPost = { id: number; user: { id: number }; publishedAt?: Date | null 
  * storyline flow, or a post that is already a chapter. Any other post gets no storyline UI.
  */
 export function StorylineEditorHeader({ post }: { post: EditorPost }) {
-  const enabled = useStorylinesEnabled();
-  const currentUser = useCurrentUser();
-  const { pending, isLoading } = usePostStorylineDraft(post.id);
-  const isOwner = currentUser?.id === post.user.id;
-  const { storyline: chapter } = useStorylineForPost(post.id, {
-    enabled: enabled && isOwner && !pending && !isLoading && isPublished(post),
-  });
+  const { pending, chapter } = usePostStorylineMode(post);
 
   if (pending?.parentChapter)
     return (
