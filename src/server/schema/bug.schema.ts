@@ -59,6 +59,17 @@ export const getBugReportStatsInput = z.object({
 // for priority, and a union that rejected those would fail the WHOLE delivery —
 // dropping any status item beside them, and eventually tripping ClickUp's
 // consecutive-failure webhook disable. Narrowing happens in the service.
+// HQ's `task.closed` event (Standard Webhooks envelope). Other event types parse and are acked.
+export const hqWebhookSchema = z.object({
+  type: z.string(),
+  data: z
+    .object({
+      task_id: z.string().regex(/^[a-z0-9_-]+$/i),
+      status: z.string(),
+    })
+    .optional(),
+});
+
 export type ClickupWebhookPayload = z.infer<typeof clickupWebhookSchema>;
 export const clickupWebhookSchema = z.object({
   event: z.string(),
