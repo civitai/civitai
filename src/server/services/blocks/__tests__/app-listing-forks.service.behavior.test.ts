@@ -1,7 +1,8 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
+import type { ForkRawClient } from '~/server/services/blocks/app-fork.service';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -73,11 +74,10 @@ const OTHER_PARENT = 'apl_parent_0200';
  */
 const VISIBLE = ['apl_fork_v1_0301', 'apl_fork_v2_0302', 'apl_fork_v3_0303'];
 
-function rawClient(pg: PGlite) {
-  return {
-    $queryRaw: async (q: Prisma.Sql) => (await pg.query(q.text, q.values)).rows,
-    $executeRaw: async (q: Prisma.Sql) => (await pg.query(q.text, q.values)).affectedRows ?? 0,
-  };
+/** Prisma's tagged-template raw client over PGlite, as the service calls it. */
+function rawClient(pg: PGlite): ForkRawClient {
+  const raw = pgliteRaw(pg);
+  return { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
 }
 
 const sfwPublic = { scope: 'full', floor: 'public', redCapable: false } as const;

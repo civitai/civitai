@@ -152,6 +152,15 @@ describe('updateListing — the fork opt-in', () => {
     expect(err).toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('flag OFF still lets the author turn it OFF — consent is never stranded by a rollback', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(author) as never);
+    await caller.updateListing({ listingId: 'apl_router_7001', patch: { forkable: false } });
+    expect(mocks.isAppBlocksForkEnabled).not.toHaveBeenCalled();
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: { forkable: false }, userId: author.id })
+    );
+  });
+
   it('a patch WITHOUT the key never evaluates the fork flag', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(author) as never);
     await caller.updateListing({ listingId: 'apl_router_7001', patch: { tagline: 'hello' } });

@@ -877,11 +877,12 @@ export const appListingsRouter = router({
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      // FORK OPT-IN — behind the `app-blocks-fork` rollout flag (fail-closed), so the setting
-      // cannot be changed by a caller who cannot see the feature, CLI token included. Evaluated
-      // only when the patch names the key, so no other edit pays for a flag eval. Ownership is
-      // still the service's gate (`loadOwnedEditableListing`: owner or accepted collaborator).
-      if (input.patch.forkable !== undefined) {
+      // FORK OPT-IN — turning it ON is behind the `app-blocks-fork` rollout flag (fail-closed),
+      // CLI token included. Turning it OFF never is: an author who opted in while the flag was on
+      // must still be able to withdraw consent after a rollback. Evaluated only when the patch
+      // turns it on, so no other edit pays for a flag eval. Ownership is still the service's gate
+      // (`loadOwnedEditableListing`: owner or accepted collaborator).
+      if (input.patch.forkable === true) {
         const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
         if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) {
           throw new TRPCError({ code: 'FORBIDDEN', message: FORK_SETTING_DISABLED_MESSAGE });

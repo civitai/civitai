@@ -68,21 +68,17 @@ export async function listListingForks(
     });
     const where = Prisma.sql`al.fork_of_listing_id = ${args.parentListingId} AND ${eligible}`;
     const [countRows, pageRows] = await Promise.all([
-      db.$queryRaw(
-        Prisma.sql`SELECT count(*)::int AS "n"
+      db.$queryRaw`SELECT count(*)::int AS "n"
           FROM app_listings al
           LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
-          WHERE ${where}`
-      ) as Promise<Array<{ n: number }>>,
-      db.$queryRaw(
-        Prisma.sql`SELECT al.id, al.slug, al.name
+          WHERE ${where}` as Promise<Array<{ n: number }>>,
+      db.$queryRaw`SELECT al.id, al.slug, al.name
           FROM app_listings al
           LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
           WHERE ${where}
             AND (${cursor}::text IS NULL OR al.id < ${cursor}::text)
           ORDER BY al.id DESC
-          LIMIT ${args.limit + 1}`
-      ) as Promise<ListingForkItem[]>,
+          LIMIT ${args.limit + 1}` as Promise<ListingForkItem[]>,
     ]);
     const items = pageRows
       .slice(0, args.limit)

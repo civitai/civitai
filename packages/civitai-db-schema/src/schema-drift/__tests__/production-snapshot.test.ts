@@ -251,7 +251,17 @@ describe('production catalog snapshot (2026-10-20)', () => {
     // Exceptions: columns declared ahead of their hand-applied migrations. Remove each when the
     // catalog is recaptured after it:
     //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261123120000_csam_report_send_claim`
-    const inFlightColumns = new Set(['CsamReport.sendClaimId', 'CsamReport.sendClaimedAt']);
+    //   the six fork-provenance columns: `20261126120000_app_fork_provenance`
+    const inFlightColumns = new Set([
+      'CsamReport.sendClaimId',
+      'CsamReport.sendClaimedAt',
+      'app_blocks.fork_of_app_block_id',
+      'app_blocks.fork_of_commit_sha',
+      'app_block_publish_requests.fork_of_app_block_id',
+      'app_block_publish_requests.fork_of_commit_sha',
+      'app_listings.forkable',
+      'app_listings.fork_of_listing_id',
+    ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
     expect(found('missing-column').length).toBeGreaterThan(0);

@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ForkRawClient } from '~/server/services/blocks/app-fork.service';
@@ -70,12 +70,10 @@ const BASE_SCHEMA = `
   );
 `;
 
-/** Prisma's raw client over PGlite: one `Prisma.Sql` per call, as the service passes it. */
+/** Prisma's tagged-template raw client over PGlite, as the service calls it. */
 function rawClient(pg: PGlite): ForkRawClient {
-  return {
-    $queryRaw: async (q: Prisma.Sql) => (await pg.query(q.text, q.values)).rows,
-    $executeRaw: async (q: Prisma.Sql) => (await pg.query(q.text, q.values)).affectedRows ?? 0,
-  };
+  const raw = pgliteRaw(pg);
+  return { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
 }
 
 // Pairwise-distinct fixture ids — no two fixtures (and no constant the assertions name) share a

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { Prisma } from '@prisma/client';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
@@ -91,19 +92,24 @@ function onsiteListing(over: Record<string, unknown> = {}) {
   };
 }
 
+/** The statement text of a raw call: tagged-template form, or a single `Prisma.Sql`. */
+function sqlText(args: unknown[]): string {
+  const first = args[0];
+  if (Array.isArray(first)) return (first as readonly string[]).join('?');
+  return (first as Prisma.Sql | undefined)?.text ?? '';
+}
+
 /** The bound values of every `app_listings.forkable` write, in order. */
 function forkableWrites(): unknown[][] {
   return mockWrite.$executeRaw.mock.calls
-    .map((c: unknown[]) => c[0] as Prisma.Sql)
-    .filter((sql: Prisma.Sql) => sql?.text?.includes('"forkable"'))
-    .map((sql: Prisma.Sql) => sql.values);
+    .filter((c: unknown[]) => sqlText(c).includes('"forkable"'))
+    .map((c: unknown[]) => c.slice(1));
 }
 
 /** Make the opt-in column read as present (`available`) or absent (42703 via Prisma raw). */
 function forkableColumn(present: boolean) {
-  mockRead.$queryRaw.mockImplementation(async (q: unknown) => {
-    const text = (q as Prisma.Sql)?.text ?? '';
-    if (text.includes('"forkable"')) {
+  mockRead.$queryRaw.mockImplementation(async (...args: unknown[]) => {
+    if (sqlText(args).includes('"forkable"')) {
       if (!present)
         throw Object.assign(new Error('column does not exist'), {
           code: 'P2010',

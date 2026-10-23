@@ -78,6 +78,13 @@ function parentRow(over: Record<string, unknown> = {}) {
   });
 }
 
+/** The statement text of a raw call: tagged-template form, or a single `Prisma.Sql`. */
+function sqlText(args: unknown[]): string {
+  const first = args[0];
+  if (Array.isArray(first)) return (first as readonly string[]).join('?');
+  return (first as Prisma.Sql | undefined)?.text ?? '';
+}
+
 /** Answer `findFirst` by the id it asks for — the detail row, then the parent lookup. */
 function rows(byId: Record<string, unknown>) {
   mockDbRead.appListing.findFirst.mockImplementation(async (args: unknown) => {
@@ -91,8 +98,8 @@ function rows(byId: Record<string, unknown>) {
 function provenance(
   row: { forkable: boolean; forkOfListingId: string | null; isFork: boolean } | null
 ) {
-  mockDbRead.$queryRaw.mockImplementation(async (q: unknown) => {
-    const text = (q as Prisma.Sql)?.text ?? '';
+  mockDbRead.$queryRaw.mockImplementation(async (...args: unknown[]) => {
+    const text = sqlText(args);
     if (text.includes('fork_of_listing_id')) return row ? [row] : [];
     return [];
   });
@@ -175,8 +182,8 @@ describe('getListingDetail — forkOf', () => {
 
   it('a failing provenance read degrades to "not a fork" instead of failing the page', async () => {
     rows({ [FORK_ID]: listingRow() });
-    mockDbRead.$queryRaw.mockImplementation(async (q: unknown) => {
-      const text = (q as Prisma.Sql)?.text ?? '';
+    mockDbRead.$queryRaw.mockImplementation(async (...args: unknown[]) => {
+      const text = sqlText(args);
       if (text.includes('fork_of_listing_id')) throw new Error('statement timeout');
       return [];
     });

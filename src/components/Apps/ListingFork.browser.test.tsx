@@ -4,6 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as NotificationsModule from '~/utils/notifications';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 /**
@@ -38,7 +39,8 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.features,
 }));
 
-vi.mock('~/utils/notifications', () => ({
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showErrorNotification: vi.fn(),
   showSuccessNotification: vi.fn(),
 }));
@@ -196,6 +198,23 @@ describe('ListingForkSetting — the author opt-in', () => {
     );
     expect(page.getByTestId('apps-fork-setting').elements()).toHaveLength(0);
     expect(page.getByRole('checkbox').elements()).toHaveLength(0);
+  });
+});
+
+describe('ListingForkSetting — after a rollback (flag OFF)', () => {
+  test('an opted-in author can still withdraw: untick saves { forkable: false }, and cannot re-tick', async () => {
+    mocks.features = {};
+    await renderWithProviders(
+      <ListingForkSetting appListingId={LISTING_ID} forkable forkableAvailable />
+    );
+    const box = page.getByRole('checkbox', { name: "Let others fork this app's source" });
+    await expect.element(box).toBeChecked();
+    await userEvent.click(box);
+    expect(mocks.calls).toEqual([
+      ['updateListing', { listingId: LISTING_ID, patch: { forkable: false } }],
+    ]);
+    await expect.element(box).not.toBeChecked();
+    await expect.element(box).toBeDisabled();
   });
 });
 

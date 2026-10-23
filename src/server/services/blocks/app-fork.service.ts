@@ -41,7 +41,6 @@
  * `/apps` id page (`listAvailableListings`), so no write here busts the catalog cache.
  */
 
-import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { logToAxiom } from '~/server/logging/client';
@@ -51,7 +50,8 @@ import type { ListingForkOf } from '~/server/schema/blocks/app-listing-read.sche
 /**
  * The client surface this module needs: raw SQL and nothing else, structurally typed so a
  * replica client, a primary client, an interactive-transaction client and a test double over an
- * in-process Postgres all satisfy it. Every call passes ONE `Prisma.Sql` argument.
+ * in-process Postgres all satisfy it. Every call is the TAGGED-TEMPLATE form (`db.$queryRaw`…``), the
+ * shape the rest of this codebase uses and its tests decode.
  */
 export type ForkRawClient = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -96,9 +96,10 @@ export async function readListingForkable(
   db: ForkReadClient
 ): Promise<ListingForkableRead> {
   try {
-    const rows = (await db.$queryRaw(
-      Prisma.sql`SELECT "forkable" FROM "app_listings" WHERE "id" = ${listingId} LIMIT 1`
-    )) as Array<{ forkable: boolean | null }>;
+    const rows =
+      (await db.$queryRaw`SELECT "forkable" FROM "app_listings" WHERE "id" = ${listingId} LIMIT 1`) as Array<{
+        forkable: boolean | null;
+      }>;
     return { available: true, forkable: rows[0]?.forkable === true };
   } catch (err) {
     if (isMissingColumnError(err)) return FORKABLE_UNAVAILABLE;
@@ -147,11 +148,9 @@ export async function writeListingForkable(
   forkable: boolean
 ): Promise<number> {
   return Number(
-    await db.$executeRaw(
-      Prisma.sql`UPDATE "app_listings"
+    await db.$executeRaw`UPDATE "app_listings"
         SET "forkable" = ${forkable}, "updated_at" = now()
         WHERE "id" = ${listingId} AND "revision_of_id" IS NULL`
-    )
   );
 }
 
@@ -188,8 +187,7 @@ export async function readListingForkProvenance(
   db: ForkReadClient
 ): Promise<ListingForkProvenance> {
   try {
-    const rows = (await db.$queryRaw(
-      Prisma.sql`SELECT
+    const rows = (await db.$queryRaw`SELECT
           al."forkable" AS "forkable",
           al."fork_of_listing_id" AS "forkOfListingId",
           (al."fork_of_listing_id" IS NOT NULL
@@ -198,8 +196,7 @@ export async function readListingForkProvenance(
         FROM "app_listings" al
         LEFT JOIN "app_blocks" ab ON ab."id" = al."app_block_id"
         WHERE al."id" = ${listingId}
-        LIMIT 1`
-    )) as Array<{
+        LIMIT 1`) as Array<{
       forkable: boolean | null;
       forkOfListingId: string | null;
       isFork: boolean | null;
@@ -332,15 +329,13 @@ export async function setAppBlockForkProvenance(
 ): Promise<boolean> {
   assertProvenanceArgs({ selfId: args.appBlockId, ...args });
   const count = Number(
-    await db.$executeRaw(
-      Prisma.sql`UPDATE "app_blocks"
+    await db.$executeRaw`UPDATE "app_blocks"
         SET "fork_of_app_block_id" = ${args.forkOfAppBlockId},
             "fork_of_commit_sha" = ${args.forkOfCommitSha}
         WHERE "id" = ${args.appBlockId}
           AND "fork_of_app_block_id" IS NULL
           AND "fork_of_commit_sha" IS NULL
           AND EXISTS (SELECT 1 FROM "app_blocks" p WHERE p."id" = ${args.forkOfAppBlockId})`
-    )
   );
   return count > 0;
 }
@@ -362,8 +357,7 @@ export async function setPublishRequestForkProvenance(
 ): Promise<boolean> {
   assertProvenanceArgs({ selfId: '', ...args });
   const count = Number(
-    await db.$executeRaw(
-      Prisma.sql`UPDATE "app_block_publish_requests"
+    await db.$executeRaw`UPDATE "app_block_publish_requests"
         SET "fork_of_app_block_id" = ${args.forkOfAppBlockId},
             "fork_of_commit_sha" = ${args.forkOfCommitSha}
         WHERE "id" = ${args.publishRequestId}
@@ -372,7 +366,6 @@ export async function setPublishRequestForkProvenance(
           AND "fork_of_commit_sha" IS NULL
           AND ("app_block_id" IS NULL OR "app_block_id" <> ${args.forkOfAppBlockId})
           AND EXISTS (SELECT 1 FROM "app_blocks" p WHERE p."id" = ${args.forkOfAppBlockId})`
-    )
   );
   return count > 0;
 }
@@ -395,8 +388,7 @@ export async function carryForkProvenanceToPublishRequest(
 ): Promise<boolean> {
   try {
     const count = Number(
-      await db.$executeRaw(
-        Prisma.sql`UPDATE "app_block_publish_requests" pr
+      await db.$executeRaw`UPDATE "app_block_publish_requests" pr
           SET "fork_of_app_block_id" = ab."fork_of_app_block_id",
               "fork_of_commit_sha" = ab."fork_of_commit_sha"
           FROM "app_blocks" ab
@@ -405,7 +397,6 @@ export async function carryForkProvenanceToPublishRequest(
             AND (ab."fork_of_app_block_id" IS NOT NULL OR ab."fork_of_commit_sha" IS NOT NULL)
             AND pr."fork_of_app_block_id" IS NULL
             AND pr."fork_of_commit_sha" IS NULL`
-      )
     );
     return count > 0;
   } catch (err) {
@@ -453,13 +444,11 @@ export async function applyForkProvenanceOnApprove(
 ): Promise<ForkApproveOutcome> {
   let request: { forkOfAppBlockId: string | null; forkOfCommitSha: string | null } | undefined;
   try {
-    const rows = (await db.$queryRaw(
-      Prisma.sql`SELECT "fork_of_app_block_id" AS "forkOfAppBlockId",
+    const rows = (await db.$queryRaw`SELECT "fork_of_app_block_id" AS "forkOfAppBlockId",
           "fork_of_commit_sha" AS "forkOfCommitSha"
         FROM "app_block_publish_requests"
         WHERE "id" = ${args.publishRequestId}
-        LIMIT 1`
-    )) as Array<{ forkOfAppBlockId: string | null; forkOfCommitSha: string | null }>;
+        LIMIT 1`) as Array<{ forkOfAppBlockId: string | null; forkOfCommitSha: string | null }>;
     request = rows[0];
   } catch (err) {
     if (isMissingColumnError(err)) return 'unavailable';
@@ -471,19 +460,16 @@ export async function applyForkProvenanceOnApprove(
   // A request naming its own block as the parent is not a fork of anything.
   if (parentBlockId === args.appBlockId) return 'not-a-fork';
 
-  await db.$executeRaw(
-    Prisma.sql`UPDATE "app_blocks"
+  await db.$executeRaw`UPDATE "app_blocks"
       SET "fork_of_app_block_id" = ${parentBlockId},
           "fork_of_commit_sha" = ${commitSha}
       WHERE "id" = ${args.appBlockId}
         AND "fork_of_app_block_id" IS NULL
-        AND "fork_of_commit_sha" IS NULL`
-  );
+        AND "fork_of_commit_sha" IS NULL`;
 
   if (parentBlockId === null) return 'no-listing-link';
   const linked = Number(
-    await db.$executeRaw(
-      Prisma.sql`UPDATE "app_listings" fork
+    await db.$executeRaw`UPDATE "app_listings" fork
         SET "fork_of_listing_id" = parent."id"
         FROM "app_listings" parent
         WHERE fork."app_block_id" = ${args.appBlockId}
@@ -492,7 +478,6 @@ export async function applyForkProvenanceOnApprove(
           AND parent."app_block_id" = ${parentBlockId}
           AND parent."revision_of_id" IS NULL
           AND parent."id" <> fork."id"`
-    )
   );
   return linked > 0 ? 'linked' : 'no-listing-link';
 }

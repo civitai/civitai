@@ -22,8 +22,10 @@ export const FORK_SETTING_SAVED_OFF = 'New forks of this app are turned off.';
  * never staged: `updateRevisionDraft` refuses the key. `updateListing` applies a trivial patch to
  * the live listing in place, with no review, for owners and accepted collaborators alike.
  *
- * Shown only while the `app-blocks-fork` rollout flag is on for the viewer (the server refuses the
- * write otherwise). `forkableAvailable: false` means the database migration has not been applied
+ * Shown while the `app-blocks-fork` rollout flag is on for the viewer — and ALSO, with the flag off,
+ * on a listing that is already forkable, so an author can withdraw consent after a rollback (the
+ * server refuses only turning it ON with the flag off). In that state the box can be unticked but
+ * not ticked again. `forkableAvailable: false` means the database migration has not been applied
  * in this environment, so the panel says so instead of offering a write the server would refuse.
  */
 type ListingForkSettingProps = {
@@ -34,16 +36,18 @@ type ListingForkSettingProps = {
 
 export function ListingForkSetting(props: ListingForkSettingProps) {
   const features = useFeatureFlags();
-  // Flag off ⇒ nothing below mounts, so no mutation hook is created on the Details tab.
-  if (!features.appBlocksFork) return null;
-  return <ListingForkSettingCard {...props} />;
+  const canEnable = !!features.appBlocksFork;
+  // Flag off and nothing to withdraw ⇒ nothing below mounts, so no mutation hook is created.
+  if (!canEnable && !props.forkable) return null;
+  return <ListingForkSettingCard {...props} canEnable={canEnable} />;
 }
 
 function ListingForkSettingCard({
   appListingId,
   forkable,
   forkableAvailable,
-}: ListingForkSettingProps) {
+  canEnable,
+}: ListingForkSettingProps & { canEnable: boolean }) {
   const utils = trpc.useUtils();
   // Local so the box moves on click; re-synced whenever the server value changes.
   const [checked, setChecked] = useState(forkable);
@@ -74,7 +78,7 @@ function ListingForkSettingCard({
           label={FORK_OPT_IN_LABEL}
           description={FORK_OPT_IN_DESCRIPTION}
           checked={checked}
-          disabled={save.isPending}
+          disabled={save.isPending || (!canEnable && !checked)}
           onChange={(e) => {
             const next = e.currentTarget.checked;
             setChecked(next);
