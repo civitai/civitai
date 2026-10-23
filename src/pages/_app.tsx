@@ -88,6 +88,10 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
+import {
+  ShellBootstrapProvider,
+  useShellBootstrap,
+} from '~/components/Shell/ShellBootstrapProvider';
 
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
@@ -153,6 +157,8 @@ type CustomAppProps = {
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   adsGated?: boolean;
+  /** Set by a static-shell render: the viewer's data comes from page data after hydration. */
+  shell?: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -161,7 +167,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: {
       session,
       colorScheme,
-      cookies = parseCookies(getCookies()),
+      cookies: pageCookies,
       flags,
       userFeatureFlags,
       tosMeta,
@@ -173,7 +179,7 @@ function MyApp(props: CustomAppProps) {
       following,
       seed = Date.now(),
       canIndex,
-      hasAuthCookie,
+      hasAuthCookie: pageHasAuthCookie,
       settings,
       browsingSettingsAddons,
       liveNow = false,
@@ -184,12 +190,31 @@ function MyApp(props: CustomAppProps) {
       serverDomains,
       availableOAuthProviders,
       verifiedBot = null,
-      adsGated = false,
+      adsGated: pageAdsGated = false,
+      shell,
       ...pageProps
     },
   } = props;
 
   const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
+  // Fixed for the tab: the shell machinery stays mounted after navigating off the shell page, so
+  // the tree above the page never remounts.
+  const [bootedShell] = useState(() => shell === true);
+  const {
+    cookies,
+    hasAuthCookie,
+    adsGated,
+    sessionSeed,
+    flagsSeed,
+    appShell,
+    referralsPending,
+    status: shellStatus,
+  } = useShellBootstrap(bootedShell, {
+    onShellPage: shell === true,
+    cookies: pageCookies,
+    hasAuthCookie: pageHasAuthCookie,
+    adsGated: pageAdsGated,
+  });
 
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
@@ -226,7 +251,7 @@ function MyApp(props: CustomAppProps) {
       </FeatureLayout>
     );
 
-  return (
+  const app = (
     <AppProvider
       seed={seed}
       canIndex={canIndex}
@@ -247,6 +272,7 @@ function MyApp(props: CustomAppProps) {
       availableOAuthProviders={availableOAuthProviders}
       verifiedBot={verifiedBot}
       isAuthed={!!session || hasAuthCookie}
+      shell={appShell}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -271,6 +297,7 @@ function MyApp(props: CustomAppProps) {
           {/* <ErrorBoundary> */}
           <SessionProvider
             session={session ? session : !hasAuthCookie ? null : undefined}
+            seed={sessionSeed}
             refetchOnWindowFocus={false}
             refetchWhenOffline={false}
           >
@@ -292,7 +319,7 @@ function MyApp(props: CustomAppProps) {
                   <RegisterCatchNavigation />
                   <RouterTransition />
                   {/* <ChadGPT isAuthed={!!session} /> */}
-                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags} seed={flagsSeed}>
                     {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
                         `region` is the SAME SSR-derived country code AppProvider is seeded with
                         above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded in as a
@@ -327,7 +354,10 @@ function MyApp(props: CustomAppProps) {
                               <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
                                 <SignalsProviderStack>
                                   <ActivityReportingProvider>
-                                    <ReferralsProvider {...cookies.referrals}>
+                                    <ReferralsProvider
+                                      {...cookies.referrals}
+                                      pending={referralsPending}
+                                    >
                                       <FiltersProvider>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
@@ -373,6 +403,12 @@ function MyApp(props: CustomAppProps) {
 
       {isDev && <ReactQueryDevtools buttonPosition="bottom-right" />}
     </AppProvider>
+  );
+
+  return shellStatus ? (
+    <ShellBootstrapProvider status={shellStatus}>{app}</ShellBootstrapProvider>
+  ) : (
+    app
   );
 }
 
