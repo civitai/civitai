@@ -3,6 +3,8 @@ import { usePostStorylineDraft } from '~/components/Storyline/editor/usePostStor
 import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
 import { isPublished, useStorylineForPost } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type EditorPost = { id: number; user: { id: number }; publishedAt?: Date | null };
 
@@ -18,6 +20,21 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
   const { storyline: chapter } = useStorylineForPost(post.id, {
     enabled: enabled && isOwner && !pending && !isLoading && isPublished(post),
   });
+  const utils = trpc.useUtils();
+  const removePending = trpc.storyline.removePending.useMutation({
+    onSuccess: () => utils.storyline.getPendingForPost.invalidate({ postId: post.id }),
+    onError: (error) =>
+      showErrorNotification({ title: 'Could not remove the post from the storyline', error }),
+  });
+  // A moderator also sees the link, but only the author may remove it; a scheduled post counts
+  // as published here, as it does on the server.
+  const removal =
+    isOwner && !post.publishedAt
+      ? {
+          onRemove: () => removePending.mutate({ postId: post.id }),
+          removing: removePending.isPending,
+        }
+      : {};
 
   if (pending?.parentChapter)
     return (
@@ -25,6 +42,7 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
         variant="continue"
         storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
         chapterNumber={pending.parentChapter.depth + 2}
+        {...removal}
       />
     );
   if (pending)
@@ -32,6 +50,7 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
       <StorylineEditorBanner
         variant="start"
         storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
+        {...removal}
       />
     );
   if (!pending && chapter)

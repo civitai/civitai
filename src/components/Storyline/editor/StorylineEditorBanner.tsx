@@ -6,18 +6,17 @@ import { storylineCardClass } from '~/components/Storyline/StorylineChips';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 
 type BannerStoryline = { id: number; title: string };
+type DraftRemoval = {
+  /** The menu is not drawn without it. */
+  onRemove?: () => void;
+  removing?: boolean;
+};
 
 export type StorylineEditorBannerProps =
-  | {
-      variant: 'start';
-      storyline: BannerStoryline;
-      /** Draft only. The menu is not drawn without it. */
-      onRemove?: () => void;
-      removing?: boolean;
-    }
+  | ({ variant: 'start'; storyline: BannerStoryline } & DraftRemoval)
   | { variant: 'chapter'; storyline: BannerStoryline; chapterNumber: number }
   /** A draft that continues a chapter of the storyline. */
-  | { variant: 'continue'; storyline: BannerStoryline; chapterNumber: number };
+  | ({ variant: 'continue'; storyline: BannerStoryline; chapterNumber: number } & DraftRemoval);
 
 /** What the post editor says about the storyline its post belongs to. */
 export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
@@ -55,7 +54,7 @@ export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
           </Text>
         )}
       </div>
-      {props.variant === 'start' && props.onRemove && (
+      {props.variant !== 'chapter' && props.onRemove && (
         <Menu position="bottom-end" withinPortal>
           <Menu.Target>
             <ActionIcon variant="subtle" color="gray" aria-label="Storyline options">

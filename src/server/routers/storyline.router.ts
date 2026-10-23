@@ -43,6 +43,7 @@ import {
   moderateStorylineTitle,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
+  removePendingChapter,
   removeStorylineCollaborator,
   setCanonChapter,
   setStorylineTakedown,
@@ -190,6 +191,12 @@ export const storylineRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  removePending: storylineMemberProcedure
+    .input(storylinePendingForPostSchema)
+    .mutation(({ input, ctx }) =>
+      removePendingChapter({ postId: input.postId, userId: ctx.user.id })
     ),
 
   getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>
