@@ -8,6 +8,9 @@ import {
   applyRemoteRunner,
   createAppAssistantRemoteRunner,
   createRunnerCredentials,
+  restartRunnerPreview,
+  RunnerCredentialError,
+  RunnerPreviewError,
   type RunnerCredentials,
 } from '~/components/Apps/AppAssistant/remoteRunner';
 
@@ -207,5 +210,106 @@ describe('the flag decides where replies run', () => {
     applyRemoteRunner(chat, runner);
     expect(Object.keys(chat).sort()).toEqual(['remoteRunner', 'runner']);
     expect(chat).not.toHaveProperty('backend');
+  });
+});
+
+describe('restartRunnerPreview', () => {
+  const HOST = 'dev-00112233445566aa.civit.ai';
+  function restart(answer: () => Response, credentials: Partial<RunnerCredentials> = {}) {
+    const sent: { url: string; method: string; headers: Headers; body: unknown }[] = [];
+    const grant = vi.fn(async (conversationId: string, key: string, purpose?: string) =>
+      grantOf(`${conversationId}|${purpose ?? 'run'}`, key)
+    );
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body ?? 'null')),
+      });
+      return answer();
+    });
+    const run = () =>
+      restartRunnerPreview('my-shop', {
+        credentials: { viewerToken: async () => VIEWER, grant, ...credentials },
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+    return { run, sent, grant };
+  }
+
+  it('asks the runner for the app’s preview with the viewer token and a preview grant for that app', async () => {
+    const { run, sent, grant } = restart(() =>
+      Response.json({ v: 1, blockId: 'my-shop', host: HOST })
+    );
+    expect(await run()).toEqual({ blockId: 'my-shop', host: HOST });
+    expect(grant).toHaveBeenCalledTimes(1);
+    expect(grant.mock.calls[0]![0]).toBe('preview:my-shop');
+    expect(grant.mock.calls[0]![2]).toBe('preview');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.url).toBe(`${ASSISTANT_RUNNER_BASE_PATH}/apps/my-shop/preview`);
+    expect(sent[0]!.method).toBe('POST');
+    expect(sent[0]!.body).toEqual({ v: 1 });
+    expect(sent[0]!.headers.get('authorization')).toBe(`Bearer ${VIEWER}`);
+    expect(sent[0]!.headers.get('x-run-grant')).toBe(
+      grantOf('preview:my-shop|preview', grant.mock.calls[0]![1])
+    );
+  });
+
+  it('shows the runner’s own words for a refusal, with its status and code', async () => {
+    const message =
+      'Too many previews were started in the last hour. Wait a few minutes, then try again.';
+    const { run } = restart(() =>
+      Response.json({ v: 1, error: 'rate-limited', message }, { status: 429 })
+    );
+    const error = await run().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RunnerPreviewError);
+    expect(error).toMatchObject({ message, status: 429, code: 'rate-limited' });
+  });
+
+  it('reads only the block and host of an answer, and refuses an answer that is not one', async () => {
+    const leaky = restart(() =>
+      Response.json({ v: 1, blockId: 'my-shop', host: HOST, sessionId: 'bki_x' })
+    );
+    expect(await leaky.run()).toEqual({ blockId: 'my-shop', host: HOST });
+    const odd = restart(() => Response.json({ v: 1, blockId: 'my-shop', host: 'not a host' }));
+    await expect(odd.run()).rejects.toMatchObject({
+      message: 'The preview could not start just now. Try again in a moment.',
+    });
+  });
+
+  it('says why civitai would not sign the grant, and asks the runner nothing', async () => {
+    const { run, sent } = restart(() => Response.json({}), {
+      grant: async () => {
+        throw new RunnerCredentialError(
+          'Replies on the server are not available on this account',
+          403,
+          'runner_off'
+        );
+      },
+    });
+    await expect(run()).rejects.toMatchObject({
+      message: 'Replies on the server are not available on this account',
+      status: 403,
+      code: 'runner_off',
+    });
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('createRunnerCredentials preview grants', () => {
+  it('asks civitai for a preview grant with purpose=preview', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ grant: 'g', expiresAt: new Date(Date.now() + 120_000).toISOString() })
+    );
+    const credentials = createRunnerCredentials({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await credentials.grant('preview:my-shop', 'k-1', 'preview');
+    await credentials.grant('c-1', 'k-2');
+    const urls = fetchImpl.mock.calls.map((call) => String((call as unknown[])[0]));
+    expect(urls).toEqual([
+      `${RUN_GRANT_ROUTE}?conversationId=preview%3Amy-shop&idempotencyKey=k-1&purpose=preview`,
+      `${RUN_GRANT_ROUTE}?conversationId=c-1&idempotencyKey=k-2`,
+    ]);
   });
 });

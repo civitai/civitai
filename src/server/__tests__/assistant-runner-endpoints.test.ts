@@ -383,6 +383,61 @@ describe('GET /api/apps/assistant/run-grant', () => {
     expect(consentMock).not.toHaveBeenCalled();
   });
 
+  it('signs a two-minute preview grant for purpose=preview, never with subagents', async () => {
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true, appAssistantSubagents: true });
+    const preview = {
+      conversationId: 'preview:my-shop',
+      idempotencyKey: 'pk-1',
+      purpose: 'preview',
+    };
+    const { status, json } = await call(grantRoute, { method: 'GET', query: preview });
+    expect(status).toBe(200);
+    const token = json!.grant as string;
+    const [, payload] = token.split('.');
+    const claims = JSON.parse(Buffer.from(payload!, 'base64url').toString()) as Record<
+      string,
+      unknown
+    >;
+    expect(claims).toMatchObject({
+      sub: '42',
+      cid: 'preview:my-shop',
+      key: 'pk-1',
+      use: 'preview',
+    });
+    expect(claims).not.toHaveProperty('subagents');
+    expect((claims.exp as number) - (claims.iat as number)).toBe(120);
+    // The runner's internal endpoints read it as any run grant (the runner decides what it is for).
+    expect(await verifyRunGrant(token)).toMatchObject({
+      userId: 42,
+      conversationId: 'preview:my-shop',
+    });
+    // Control: without purpose, the same request signs a run grant, with no `use`.
+    const run = await call(grantRoute, { method: 'GET', query });
+    const [, runPayload] = (run.json!.grant as string).split('.');
+    expect(JSON.parse(Buffer.from(runPayload!, 'base64url').toString())).not.toHaveProperty('use');
+  });
+
+  it('holds a preview grant to the same gates: refused while the server runner is off', async () => {
+    featuresMock.mockResolvedValue({ appAssistantRemoteRunner: false });
+    const preview = {
+      conversationId: 'preview:my-shop',
+      idempotencyKey: 'pk-1',
+      purpose: 'preview',
+    };
+    const { status, json } = await call(grantRoute, { method: 'GET', query: preview });
+    expect(status).toBe(403);
+    expect(json).not.toHaveProperty('grant');
+  });
+
+  it('answers 400 to a purpose it does not know', async () => {
+    const { status, json } = await call(grantRoute, {
+      method: 'GET',
+      query: { ...query, purpose: 'admin' },
+    });
+    expect(status).toBe(400);
+    expect(json).not.toHaveProperty('grant');
+  });
+
   it('answers 400 without a chat and a start, and 503 without a signing key', async () => {
     expect((await call(grantRoute, { method: 'GET', query: { conversationId: 'c' } })).status).toBe(
       400
