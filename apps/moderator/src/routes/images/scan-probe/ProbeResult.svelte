@@ -21,7 +21,11 @@
 
   const r = $derived(result.value);
   const settled = $derived(
-    r !== null && (r.state === 'done' || r.state === 'submit-failed' || r.state === 'unavailable')
+    r !== null &&
+      (r.state === 'done' ||
+        r.state === 'submit-failed' ||
+        r.state === 'unavailable' ||
+        r.state === 'unknown')
   );
 
   // The next poll is scheduled only once the last answered: a read slower than the interval would
@@ -47,9 +51,15 @@
       {result.failed || polls >= MAX_POLLS ? 'Could not load this result.' : 'Checking…'}
     </p>
   {:else if r.state === 'pending'}
-    <p class="mt-2 text-sm text-dark-2">Submit outcome not recorded yet.</p>
+    <p class="mt-2 text-sm text-dark-2">
+      {polls >= MAX_POLLS ? 'Submit outcome still not recorded — reload to check again.' : 'Submit outcome not recorded yet.'}
+    </p>
+  {:else if r.state === 'unknown'}
+    <p class="mt-2 text-sm text-red-300">
+      Sent, but whether the scan was accepted is unknown. Its result cannot be read.
+    </p>
   {:else if r.state === 'submit-failed'}
-    <p class="mt-2 text-sm text-red-300">The scan could not be submitted.</p>
+    <p class="mt-2 text-sm text-dark-2">Not submitted.</p>
   {:else if r.state === 'unavailable'}
     <p class="mt-2 text-sm text-red-300">The orchestrator has no result for this run.</p>
   {:else if r.state === 'running'}

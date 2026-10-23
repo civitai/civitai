@@ -3,18 +3,25 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { isSuper, requiresGrant } from '$lib/server/access';
 import { checkboxField, parseForm, parseIdPaste } from '$lib/server/query';
-import { recentOwnRuns, resetBreaker, trippedRuns } from '$lib/server/scan-probe/runs';
+import {
+  abandonInFlight,
+  inFlightRuns,
+  recentOwnRuns,
+  resetBreaker,
+  trippedRuns,
+} from '$lib/server/scan-probe/runs';
 import { probeDb, runProbe, type RunProbeResult } from '$lib/server/scan-probe/service';
 import { NOT_AVAILABLE, SCAN_PROBE_LIMITS } from '$lib/scan-probe';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const db = probeDb();
-  const [runs, tripped] = await Promise.all([
+  const [runs, tripped, inFlight] = await Promise.all([
     recentOwnRuns(db, locals.user.id),
     trippedRuns(db),
+    inFlightRuns(db),
   ]).catch((e) => {
     console.error('[scan-probe] load failed', e);
-    return [null, null] as const;
+    return [null, null, null] as const;
   });
   const admin = isSuper(locals.user);
   return {
@@ -22,6 +29,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     stopped: tripped === null ? null : tripped.length > 0,
     // Which images tripped it says which images a scan blocked: admins only.
     tripped: admin ? tripped : null,
+    inFlight: admin ? inFlight : null,
     canReset: admin,
     limits: SCAN_PROBE_LIMITS,
   };
@@ -33,6 +41,13 @@ const runSchema = z.object({
     Boolean,
     'Confirm that you understand a hit acts on the real image.'
   ),
+});
+
+const runIdsSchema = z.object({
+  runIds: z
+    .string()
+    .transform((v) => v.split(',').filter((id) => /^[1-9][0-9]{0,18}$/.test(id)))
+    .refine((ids) => ids.length > 0, 'No runs named.'),
 });
 
 const REFUSAL: Record<Exclude<RunProbeResult, { ok: true }>['reason'], string> = {
@@ -65,13 +80,29 @@ export const actions: Actions = {
         error: REFUSAL[result.reason],
         refused: result.refused,
       });
-    return { submitted: result.submitted, failed: result.failed, refused: result.refused };
+    return {
+      submitted: result.submitted,
+      failed: result.failed,
+      stopped: result.stopped,
+      refused: result.refused,
+    };
   }),
 
-  resetBreaker: async ({ locals }) => {
+  resetBreaker: async ({ request, locals }) => {
     if (!isSuper(locals.user)) return fail(403, { error: 'Only an admin can reset the probe.' });
-    const reset = await resetBreaker(probeDb(), locals.user.id);
-    if (!reset) return fail(409, { error: 'The probe was not stopped; nothing to reset.' });
+    const input = parseForm(runIdsSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const reset = await resetBreaker(probeDb(), locals.user.id, input.runIds);
+    if (!reset) return fail(409, { error: 'Those runs were already reset. Reload.' });
     return { reset };
+  },
+
+  abandonInFlight: async ({ request, locals }) => {
+    if (!isSuper(locals.user)) return fail(403, { error: 'Only an admin can abandon runs.' });
+    const input = parseForm(runIdsSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const abandoned = await abandonInFlight(probeDb(), locals.user.id, input.runIds);
+    if (!abandoned) return fail(409, { error: 'Those runs already finished. Reload.' });
+    return { abandoned };
   },
 };

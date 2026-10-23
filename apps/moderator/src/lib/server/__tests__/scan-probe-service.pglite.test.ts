@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
   gone: new Set<string>(),
   /** When true, every workflow read throws, as an outage does. */
   readThrows: false,
+  /** Runs after each submit, inside it: how a test changes the database mid-batch. */
+  onSubmit: null as null | (() => Promise<void>),
   held: new Map<number, string[]>(),
 }));
 
@@ -55,6 +57,7 @@ vi.mock('../csam-flag-clear', async (importOriginal) => ({
 vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: async (args: Record<string, unknown>) => {
     h.submits.push(args);
+    await h.onSubmit?.();
     const id = h.nextIds.shift() ?? null;
     if (id === 'THROW') throw new Error('timeout');
     return { data: id ? { id } : undefined };
@@ -107,6 +110,7 @@ beforeEach(async () => {
   h.workflows.clear();
   h.gone.clear();
   h.readThrows = false;
+  h.onSubmit = null;
   h.held.clear();
   await mainPg.exec(`INSERT INTO "Image" (id, "userId", url, type, "needsReview", "blockedFor") VALUES
     (777001, 10, 'clean-key-1', 'image', NULL, NULL),
@@ -144,7 +148,7 @@ describe('runProbe: what reaches the orchestrator', () => {
   it('submits with the system client, and nothing in the request names the moderator or the image', async () => {
     h.nextIds = ['0-wf-1'];
     const result = await runProbe(MODERATOR, [777001]);
-    expect(result).toEqual({ ok: true, submitted: 1, failed: 0, refused: [] });
+    expect(result).toEqual({ ok: true, submitted: 1, failed: 0, stopped: false, refused: [] });
     expect(h.submits).toHaveLength(1);
     const [args] = h.submits;
     expect(args.client).toBe(SYSTEM_CLIENT);
@@ -219,7 +223,8 @@ describe('runProbe: images it refuses, with no reason given', () => {
     });
   });
 
-  it('submits a clean image whose owner holds nothing', async () => {
+  it('control: submits an image whose owner holds nothing while another owner is held', async () => {
+    h.held.set(4242, ['evidenceHold']);
     h.nextIds = ['0-wf-1'];
     expect(await runProbe(MODERATOR, [777005])).toMatchObject({
       ok: true,
@@ -252,7 +257,7 @@ describe('runProbe: the breaker', () => {
     expect(h.submits).toHaveLength(1);
 
     const { resetBreaker } = await import('../scan-probe/runs');
-    expect(await resetBreaker(h.probe as never, 1)).toBe(1);
+    expect(await resetBreaker(h.probe as never, 1, ['1'])).toBe(1);
     expect(await runProbe(OTHER_MODERATOR, [777002])).toMatchObject({ ok: true, submitted: 1 });
   });
 
@@ -309,6 +314,7 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
       ok: true,
       submitted: 0,
       failed: 2,
+      stopped: true,
       refused: [],
     });
     expect(h.submits).toHaveLength(1);
@@ -351,7 +357,79 @@ describe('runProbe: outcomes it cannot read hold or trip the probe', () => {
       `UPDATE image_scan_probe_run SET created_at = now() - interval '11 minutes'`
     );
     expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
-    expect((await rows())[0]).toMatchObject({ workflow_status: 'abandoned', tripped: true });
+    expect((await rows())[0]).toMatchObject({
+      status: 'submit-failed',
+      workflow_status: 'abandoned',
+      tripped: true,
+    });
+  });
+
+  it('stops mid-batch when the breaker trips after the batch began', async () => {
+    h.nextIds = ['0-wf-1', '0-wf-2'];
+    h.onSubmit = async () => {
+      await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_status, tripped)
+        VALUES (1, 1, 'submit-failed', 'gone', true)`);
+      h.onSubmit = null;
+    };
+    expect(await runProbe(MODERATOR, [777001, 777002])).toMatchObject({
+      ok: true,
+      submitted: 1,
+      failed: 1,
+      stopped: true,
+    });
+    expect(h.submits).toHaveLength(1);
+  });
+
+  it('trips a run it sent but could not record, because its row was swept meanwhile', async () => {
+    h.nextIds = ['0-wf-1'];
+    h.onSubmit = async () => {
+      await probePg.exec(
+        `UPDATE image_scan_probe_run SET status = 'submit-failed', workflow_status = 'abandoned'`
+      );
+    };
+    await runProbe(MODERATOR, [777001]);
+    expect((await rows())[0]).toMatchObject({ tripped: true });
+  });
+
+  it('records a wrong-account trip in the same write as the id, so a reconcile cannot clear it', async () => {
+    h.nextIds = ['7-wf-1'];
+    h.workflows.set(
+      '7-wf-1',
+      finished('succeeded', { nsfwLevel: 'pg', csam: false, blockedReason: null })
+    );
+    await runProbe(MODERATOR, [777001]);
+    expect((await rows())[0]).toMatchObject({
+      status: 'submitted',
+      workflow_id: '7-wf-1',
+      workflow_status: 'wrong-account',
+      tripped: true,
+    });
+  });
+});
+
+describe('admin recovery', () => {
+  it('resets only the trips it was shown; one that landed later still holds', async () => {
+    const { resetBreaker } = await import('../scan-probe/runs');
+    await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_status, tripped) VALUES
+      (1, 1, 'submit-failed', 'gone', true), (1, 2, 'submit-failed', 'gone', true)`);
+    expect(await resetBreaker(h.probe as never, 7, ['1'])).toBe(1);
+    expect(await runProbe(MODERATOR, [777001])).toMatchObject({ ok: false, reason: 'breaker' });
+  });
+
+  it('releases runs whose verdict will never arrive, recording the admin', async () => {
+    const { abandonInFlight } = await import('../scan-probe/runs');
+    h.nextIds = ['0-wf-1'];
+    await runProbe(MODERATOR, [777001]);
+    h.readThrows = true;
+    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: false, reason: 'in-flight' });
+    expect(await abandonInFlight(h.probe as never, 7, ['1'])).toBe(1);
+    expect((await rows())[0]).toMatchObject({
+      workflow_status: 'abandoned-by-admin',
+      tripped: true,
+    });
+    h.readThrows = false;
+    h.nextIds = ['0-wf-2'];
+    expect(await runProbe(MODERATOR, [777002])).toMatchObject({ ok: true, submitted: 1 });
   });
 });
 
@@ -430,6 +508,34 @@ describe('readProbe', () => {
       state: 'running',
       workflowStatus: 'unknown',
     });
+  });
+
+  it('trips a run the orchestrator says is gone, and reports it unavailable', async () => {
+    await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_id)
+      VALUES (${MODERATOR}, 1, 'submitted', '0-run')`);
+    h.gone.add('0-run');
+    expect(await readProbe('1', MODERATOR)).toEqual({ state: 'unavailable' });
+    expect((await rows())[0]).toMatchObject({ workflow_status: 'gone', tripped: true });
+  });
+
+  it('records and trips a blocked verdict when the page is the first to read it', async () => {
+    await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_id)
+      VALUES (${MODERATOR}, 1, 'submitted', '0-run')`);
+    h.workflows.set(
+      '0-run',
+      finished('succeeded', { nsfwLevel: 'x', csam: true, blockedReason: null })
+    );
+    expect(await readProbe('1', MODERATOR)).toMatchObject({
+      state: 'done',
+      signals: { csam: true },
+    });
+    expect((await rows())[0]).toMatchObject({ csam: true, tripped: true });
+  });
+
+  it('says a sent submit with no answer is unknown, not failed', async () => {
+    await probePg.exec(`INSERT INTO image_scan_probe_run (moderator_id, image_id, status, workflow_status, tripped)
+      VALUES (${MODERATOR}, 1, 'submit-failed', 'unknown-submit', true)`);
+    expect(await readProbe('1', MODERATOR)).toEqual({ state: 'unknown' });
   });
 
   it('serves a recorded verdict once the orchestrator has purged the workflow', async () => {

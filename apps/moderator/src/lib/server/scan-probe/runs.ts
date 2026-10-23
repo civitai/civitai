@@ -39,6 +39,8 @@ export const UNRESOLVED_OUTCOME = {
   abandoned: 'abandoned',
   /** The id came back under an account other than the system account. */
   wrongAccount: 'wrong-account',
+  /** An admin gave up waiting for the verdict. */
+  abandonedByAdmin: 'abandoned-by-admin',
 } as const;
 
 /** A `pending` row older than this was abandoned; a submit is bounded well below it. */
@@ -100,7 +102,9 @@ export async function reserveRuns(
 }
 
 export type SubmitOutcome =
-  | { workflowId: string }
+  /** `wrongAccount`: the id is not the system account's. Tripped in the same UPDATE that records the
+   *  id, so no reconcile can record a clean verdict on the row in between. */
+  | { workflowId: string; wrongAccount: boolean }
   /** No id came back from a submit that was sent: it may have been accepted, so it trips. */
   | { unknown: true }
   /** Never sent. */
@@ -116,7 +120,15 @@ export async function settleSubmit(
     .updateTable('image_scan_probe_run')
     .set(
       'workflowId' in outcome
-        ? { status: 'submitted', workflow_id: outcome.workflowId }
+        ? outcome.wrongAccount
+          ? {
+              status: 'submitted',
+              workflow_id: outcome.workflowId,
+              workflow_status: UNRESOLVED_OUTCOME.wrongAccount,
+              tripped: true,
+              completed_at: sql<Date>`now()`,
+            }
+          : { status: 'submitted', workflow_id: outcome.workflowId }
         : 'unknown' in outcome
         ? {
             status: 'submit-failed',
@@ -128,8 +140,36 @@ export async function settleSubmit(
     )
     .where('id', '=', runId)
     .where('status', '=', 'pending')
+    .where('workflow_status', 'is', null)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) === 1;
+}
+
+/** Whether a reserved row may still be submitted: pending, unsettled, and the breaker not tripped. */
+export async function maySubmit(db: ScanProbeDb, runId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom('image_scan_probe_run')
+    .select([
+      'status',
+      'workflow_status',
+      sql<boolean>`EXISTS (SELECT 1 FROM image_scan_probe_run t
+        WHERE t.tripped AND t.breaker_reset_at IS NULL)`.as('tripped'),
+    ])
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  return !!row && row.status === 'pending' && row.workflow_status === null && !row.tripped;
+}
+
+/**
+ * Trips a run whatever its row says. For a workflow the probe sent but could not record: the row
+ * was settled by something else first, so the workflow will never be reconciled.
+ */
+export async function tripRun(db: ScanProbeDb, runId: string): Promise<void> {
+  await db
+    .updateTable('image_scan_probe_run')
+    .set({ tripped: true, breaker_reset_at: null, breaker_reset_by: null })
+    .where('id', '=', runId)
+    .execute();
 }
 
 /** Submitted runs whose verdict is not recorded yet, across every moderator. */
@@ -148,6 +188,7 @@ export async function tripAbandonedPending(db: ScanProbeDb): Promise<void> {
   await db
     .updateTable('image_scan_probe_run')
     .set({
+      status: 'submit-failed',
       workflow_status: UNRESOLVED_OUTCOME.abandoned,
       tripped: true,
       completed_at: sql<Date>`now()`,
@@ -201,13 +242,65 @@ export async function trippedRuns(db: ScanProbeDb) {
   return rows.map((r) => ({ id: String(r.id), imageId: r.image_id }));
 }
 
-/** Clears the breaker, recording who did. Returns how many tripped rows it reset. */
-export async function resetBreaker(db: ScanProbeDb, adminId: number): Promise<number> {
+/** Runs holding the probe because their verdict never arrived: submitted or pending, unsettled. */
+export async function inFlightRuns(db: ScanProbeDb) {
+  const rows = await db
+    .selectFrom('image_scan_probe_run')
+    .select(['id', 'image_id', 'created_at'])
+    .where('workflow_status', 'is', null)
+    .where('status', '<>', 'submit-failed')
+    .orderBy('id')
+    .execute();
+  return rows.map((r) => ({
+    id: String(r.id),
+    imageId: r.image_id,
+    createdAt: new Date(r.created_at as unknown as string | Date).toISOString(),
+  }));
+}
+
+/**
+ * Clears the breaker for exactly the runs the admin was shown, recording who did. A trip that
+ * landed after the page loaded stays. Returns how many rows it reset.
+ */
+export async function resetBreaker(
+  db: ScanProbeDb,
+  adminId: number,
+  runIds: string[]
+): Promise<number> {
+  if (!runIds.length) return 0;
   const result = await db
     .updateTable('image_scan_probe_run')
     .set({ breaker_reset_at: sql<Date>`now()`, breaker_reset_by: adminId })
+    .where('id', 'in', runIds)
     .where('tripped', '=', true)
     .where('breaker_reset_at', 'is', null)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows);
+}
+
+/**
+ * An admin giving up on runs whose verdict will not arrive (orchestrator gone for good, a status
+ * that never ends). Recorded as tripped AND reset by that admin, so the decision is on the row and
+ * the probe is released. Only rows still unsettled are touched. Returns how many it abandoned.
+ */
+export async function abandonInFlight(
+  db: ScanProbeDb,
+  adminId: number,
+  runIds: string[]
+): Promise<number> {
+  if (!runIds.length) return 0;
+  const result = await db
+    .updateTable('image_scan_probe_run')
+    .set({
+      workflow_status: UNRESOLVED_OUTCOME.abandonedByAdmin,
+      tripped: true,
+      breaker_reset_at: sql<Date>`now()`,
+      breaker_reset_by: adminId,
+      completed_at: sql<Date>`now()`,
+    })
+    .where('id', 'in', runIds)
+    .where('workflow_status', 'is', null)
+    .where('status', '<>', 'submit-failed')
     .executeTakeFirst();
   return Number(result.numUpdatedRows);
 }

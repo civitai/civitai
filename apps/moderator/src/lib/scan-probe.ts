@@ -54,5 +54,7 @@ export type ProbeResult =
   | { state: 'pending' }
   | { state: 'submit-failed' }
   | { state: 'unavailable' }
+  /** Sent, but whether the orchestrator accepted it is not known. */
+  | { state: 'unknown' }
   | { state: 'running'; workflowStatus: string }
   | { state: 'done'; workflowStatus: string; signals: ScanSignals | null };

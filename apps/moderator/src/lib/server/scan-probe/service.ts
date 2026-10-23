@@ -5,10 +5,12 @@ import type { ProbeResult } from '$lib/scan-probe';
 import { resolveProbeCandidates } from './eligibility';
 import {
   getOwnRun,
+  maySubmit,
   recordOutcome,
   reserveRuns,
   settleSubmit,
   tripAbandonedPending,
+  tripRun,
   unresolvedRuns,
   UNRESOLVED_OUTCOME,
   type ReserveRefusal,
@@ -83,7 +85,8 @@ async function reconcile(db: ScanProbeDb): Promise<void> {
 }
 
 export type RunProbeResult =
-  | { ok: true; submitted: number; failed: number; refused: number[] }
+  /** `stopped`: the batch ended early because the breaker tripped. */
+  | { ok: true; submitted: number; failed: number; stopped: boolean; refused: number[] }
   | {
       ok: false;
       reason: 'nothing-eligible' | ReserveRefusal | typeof UNRESOLVED_OUTCOME.wrongAccount;
@@ -115,6 +118,8 @@ export async function runProbe(moderatorId: number, imageIds: number[]): Promise
   let wrongAccount = false;
   for (const run of reserved.runs) {
     const mediaUrl = urlByImage.get(run.imageId);
+    // Re-checked per image: the breaker can trip, or this row be swept as abandoned, mid-batch.
+    if (!stopped && !(await maySubmit(db, run.id))) stopped = true;
     let outcome: SubmitOutcome = { skipped: true };
     if (mediaUrl && !stopped) {
       outcome = { unknown: true };
@@ -124,27 +129,30 @@ export async function runProbe(moderatorId: number, imageIds: number[]): Promise
           body: buildProbeWorkflow(mediaUrl),
           signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
         });
-        if (data?.id) outcome = { workflowId: data.id };
+        if (data?.id)
+          outcome = { workflowId: data.id, wrongAccount: !isSystemAccountWorkflow(data.id) };
       } catch (e) {
         console.error('[scan-probe] submit failed', { runId: run.id, error: e });
       }
     }
-    if (!(await settleSubmit(db, run.id, outcome)))
+    // An unknown outcome trips its own row, which the next image's `maySubmit` then sees.
+    if (!(await settleSubmit(db, run.id, outcome)) && !('skipped' in outcome)) {
       console.error('[scan-probe] run row did not settle', { runId: run.id, outcome });
+      await tripRun(db, run.id);
+      stopped = true;
+    }
     if (!('workflowId' in outcome)) {
       failed++;
-      if ('unknown' in outcome) stopped = true;
       continue;
     }
     submitted++;
-    if (!isSystemAccountWorkflow(outcome.workflowId)) {
+    if (outcome.wrongAccount) {
       console.error('[scan-probe] workflow is not the system account', { runId: run.id, outcome });
-      await tripUnresolved(db, run.id, UNRESOLVED_OUTCOME.wrongAccount);
       stopped = wrongAccount = true;
     }
   }
   if (wrongAccount) return { ok: false, reason: UNRESOLVED_OUTCOME.wrongAccount, refused };
-  return { ok: true, submitted, failed, refused };
+  return { ok: true, submitted, failed, stopped, refused };
 }
 
 /** The signals for one of `moderatorId`'s runs. Reads by the run row, never a caller's workflow id. */
@@ -153,6 +161,11 @@ export async function readProbe(runId: string, moderatorId: number): Promise<Pro
   const run = await getOwnRun(db, runId, moderatorId);
   if (!run) return null;
   if (run.status === 'pending') return { state: 'pending' };
+  if (
+    run.workflow_status === UNRESOLVED_OUTCOME.unknownSubmit ||
+    run.workflow_status === UNRESOLVED_OUTCOME.abandoned
+  )
+    return { state: 'unknown' };
   if (run.status !== 'submitted' || !run.workflow_id) return { state: 'submit-failed' };
   if (run.workflow_status === UNRESOLVED_OUTCOME.wrongAccount) return { state: 'unavailable' };
 

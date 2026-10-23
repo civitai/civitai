@@ -44,11 +44,26 @@
           {data.tripped.map((r) => `Run ${r.id} (image ${r.imageId})`).join(', ')}
         </p>
       {/if}
-      {#if data.canReset}
+      {#if data.canReset && data.tripped?.length}
         <form method="POST" action="?/resetBreaker" use:enhance class="mt-3">
+          <input type="hidden" name="runIds" value={data.tripped.map((r) => r.id).join(',')} />
           <Button type="submit" variant="destructive">Reset the probe</Button>
         </form>
       {/if}
+    </div>
+  {/if}
+
+  {#if data.inFlight?.length}
+    <div class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm text-dark-2">
+      <p>
+        Waiting on {data.inFlight.length} run{data.inFlight.length > 1 ? 's' : ''}:
+        {data.inFlight.map((r) => `${r.id} (image ${r.imageId}, ${new Date(r.createdAt).toLocaleString()})`).join(', ')}.
+        No new batch runs until they finish.
+      </p>
+      <form method="POST" action="?/abandonInFlight" use:enhance class="mt-3">
+        <input type="hidden" name="runIds" value={data.inFlight.map((r) => r.id).join(',')} />
+        <Button type="submit" variant="outline">Stop waiting for these runs</Button>
+      </form>
     </div>
   {/if}
 
@@ -62,9 +77,12 @@
         // A refusal can mean the breaker just tripped or runs were written: reload the page data
         // either way, which the default handling only does on success.
         return async ({ result }) => {
-          await applyAction(result);
-          await invalidateAll();
-          submitting = false;
+          try {
+            await applyAction(result);
+            await invalidateAll();
+          } finally {
+            submitting = false;
+          }
         };
       }}
     >
@@ -86,10 +104,16 @@
     <ErrorAlert message={form.error} />
   {:else if form && 'submitted' in form}
     <p class="text-sm text-dark-2">
-      Submitted {form.submitted}{form.failed ? `, ${form.failed} could not be submitted` : ''}.
+      Submitted {form.submitted}{form.failed ? `, ${form.failed} not submitted` : ''}.
+      {#if form.stopped}
+        The batch stopped early: a submit's outcome is unknown, so the probe is stopped until an admin
+        resets it.
+      {/if}
     </p>
   {:else if form && 'reset' in form}
     <p class="text-sm text-dark-2">The probe is reset.</p>
+  {:else if form && 'abandoned' in form && form.abandoned}
+    <p class="text-sm text-dark-2">Stopped waiting for {form.abandoned} run{form.abandoned > 1 ? 's' : ''}.</p>
   {/if}
   {#if refused.length}
     <p class="text-sm text-dark-2">{refused.join(', ')}: {NOT_AVAILABLE}</p>

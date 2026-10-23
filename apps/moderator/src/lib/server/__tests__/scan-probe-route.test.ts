@@ -16,6 +16,7 @@ const runProbe = vi.hoisted(() =>
 );
 const readProbe = vi.hoisted(() => vi.fn(async () => ({ state: 'pending' as const })));
 const resetBreaker = vi.hoisted(() => vi.fn(async () => 1));
+const abandonInFlight = vi.hoisted(() => vi.fn(async () => 1));
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
@@ -26,6 +27,8 @@ vi.mock('$lib/server/scan-probe/runs', () => ({
   recentOwnRuns: async () => [],
   trippedRuns: async () => [{ id: '9', imageId: 777009 }],
   resetBreaker,
+  abandonInFlight,
+  inFlightRuns: async () => [],
 }));
 
 const { actions, load } = await import('../../../routes/images/scan-probe/+page.server');
@@ -58,6 +61,7 @@ beforeEach(() => {
   runProbe.mockClear();
   readProbe.mockClear();
   resetBreaker.mockClear();
+  abandonInFlight.mockClear();
 });
 
 describe('load', () => {
@@ -117,17 +121,27 @@ describe('run action', () => {
 });
 
 describe('resetBreaker action', () => {
-  it('refuses anyone but an admin, grant or not', async () => {
-    expect(await actions.resetBreaker(runEvent(GRANT))).toMatchObject({ status: 403 });
-    expect(resetBreaker).not.toHaveBeenCalled();
-  });
-
-  it('control: an admin resets it', async () => {
-    const event = {
+  const adminEvent = (runIds: string) => {
+    const form = new FormData();
+    form.set('runIds', runIds);
+    return {
+      request: { formData: async () => form },
       locals: { user: { id: 1, roles: ['moderator:admin'] }, grants: {} },
     } as never;
-    expect(await actions.resetBreaker(event)).toEqual({ reset: 1 });
-    expect(resetBreaker).toHaveBeenCalledWith(expect.anything(), 1);
+  };
+
+  it('refuses anyone but an admin, grant or not', async () => {
+    expect(await actions.resetBreaker(runEvent(GRANT))).toMatchObject({ status: 403 });
+    expect(await actions.abandonInFlight(runEvent(GRANT))).toMatchObject({ status: 403 });
+    expect(resetBreaker).not.toHaveBeenCalled();
+    expect(abandonInFlight).not.toHaveBeenCalled();
+  });
+
+  it('control: an admin resets exactly the runs named, as themselves', async () => {
+    expect(await actions.resetBreaker(adminEvent('3,4,x'))).toEqual({ reset: 1 });
+    expect(resetBreaker).toHaveBeenCalledWith(expect.anything(), 1, ['3', '4']);
+    expect(await actions.abandonInFlight(adminEvent('9'))).toEqual({ abandoned: 1 });
+    expect(abandonInFlight).toHaveBeenCalledWith(expect.anything(), 1, ['9']);
   });
 });
 
