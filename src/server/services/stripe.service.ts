@@ -1005,18 +1005,26 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       return;
     }
 
-    await withRetries(() =>
-      createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: user.id,
-        toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-        type: TransactionType.Purchase,
-        externalTransactionId: invoice.id,
-        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
-        description: `Membership bonus`,
-        details: { invoiceId: invoice.id },
-      })
-    ).catch(handleLogError);
+    // A trial_end push bills the plan at $0, which sells no month. Line amounts are before
+    // discounts, so a gifted or comped month still counts, and a proration credit elsewhere on
+    // the invoice does not hide a renewal. Not amount_paid: a balance-paid renewal has 0 there.
+    const billedMonth = invoice.lines.data.some(
+      (l) => l.price?.product === billedProduct.id && !l.proration && l.amount > 0
+    );
+
+    if (billedMonth)
+      await withRetries(() =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+          type: TransactionType.Purchase,
+          externalTransactionId: invoice.id,
+          amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
+          description: `Membership bonus`,
+          details: { invoiceId: invoice.id },
+        })
+      ).catch(handleLogError);
 
     const { bindReferralCodeForUser, recordMembershipPaymentReward } = await import(
       '~/server/services/referral.service'
@@ -1076,18 +1084,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const stripeChargeId =
       typeof invoice.charge === 'string' ? invoice.charge : invoice.charge?.id ?? undefined;
 
-    await recordMembershipPaymentReward({
-      refereeId: user.id,
-      tier: billedProductMeta.tier,
-      monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
-      sourceEventId: invoice.id,
-      payment: {
-        paymentProvider: 'Stripe',
-        stripeInvoiceId: invoice.id,
-        stripePaymentIntentId,
-        stripeChargeId,
-      },
-    }).catch(handleLogError);
+    if (billedMonth)
+      await recordMembershipPaymentReward({
+        refereeId: user.id,
+        tier: billedProductMeta.tier,
+        monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+        sourceEventId: invoice.id,
+        payment: {
+          paymentProvider: 'Stripe',
+          stripeInvoiceId: invoice.id,
+          stripePaymentIntentId,
+          stripeChargeId,
+        },
+      }).catch(handleLogError);
 
     // -----------------------------------------------------------------
     // W3 flow C — App Blocks MEMBERSHIP attribution. If this membership
