@@ -81,7 +81,7 @@ export function UserAvatarSimple({
       fw={500}
       lineClamp={1}
       color="white"
-      className={clsx(classes.username, classNames?.namePill && nameplate?.data && classes.onPill)}
+      className={classes.username}
       nameplate={nameplate?.data}
       autoplay={autoplayAnimations !== false}
     >
