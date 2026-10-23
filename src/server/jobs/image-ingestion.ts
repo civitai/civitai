@@ -649,8 +649,8 @@ export const removeBlockedImages = createJob(
 
     // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
     // its own. A failure costs only the sweep. Gated like the deletes below, and kept above every
-    // early return but the failed hold lookup: it is also what clears a copy made in a race with the
-    // release.
+    // early return but the failed hold lookup and the missing view (which it names): it is also what
+    // clears a copy made in a race with the release.
     if (env.DATABASE_IS_PROD)
       await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
         logToAxiom({

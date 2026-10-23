@@ -245,8 +245,9 @@ const TRAINING_ENV = {
   APPEAL_OWNER_HASH_KEY: 'o',
 };
 
-// The default fixture with image 7's account held: 5, 6 and 10 are legal-held, 7 leaves the batch,
-// 2 is inside retention, 3 and 4 are stale, and 1 and 8 are deleted as takedowns.
+// The default fixture with image 7's account held and a marker on HELD_USER: 5, 6 and 10 are
+// legal-held (5 and 10 marker-held too), 7 leaves the batch, 2 is inside retention, 3 and 4 are
+// stale, and 1 and 8 are deleted as takedowns.
 const EXPECTED_SUMMARY = {
   name: 'remove-blocked-images',
   deleted: 2,
@@ -258,7 +259,7 @@ const EXPECTED_SUMMARY = {
   csamHeld: 3,
   appealHeld: 0,
   csamReviewHeld: 0,
-  evidenceHeld: 0,
+  evidenceHeld: 2,
   accountHeld: 1,
 };
 // Every queued image held one way or another, so the batch is empty.
@@ -467,6 +468,7 @@ describe('remove-blocked-images retention clock', () => {
 
   it("logs the run's counts", async () => {
     accountHeldIds.push(7);
+    evidenceHeldUserIds.push(HELD_USER);
     await runJob();
 
     expect(summaryLog()).toMatchObject(EXPECTED_SUMMARY);
