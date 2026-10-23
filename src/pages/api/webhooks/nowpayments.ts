@@ -86,7 +86,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // NOWPayments' own record of it. partially_paid is credited like finished; failed records the
     // status and credits nothing.
     if (ACTIONABLE_STATUSES.includes(paymentStatus)) {
-      const payment = await client.getPaymentStatus(event.payment_id);
+      const payment = await client.getPaymentStatus(event.payment_id).catch((e) => {
+        log({ stage: 'payment-status-failed', paymentId: event.payment_id, error: e.message });
+        return null;
+      });
       const verified = payment ? eventFromPayment(payment) : null;
       // NOWPayments' record can trail its own IPN. A paid IPN it cannot confirm yet is handed to
       // the retry sweep, and the 400 asks NOWPayments to redeliver.

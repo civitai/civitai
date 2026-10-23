@@ -9,12 +9,14 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
  * again must credit and notify once.
  */
 
-const { caller, grantBuzzPurchase, signalSend, createNotification } = vi.hoisted(() => ({
-  caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn() },
-  grantBuzzPurchase: vi.fn(),
-  signalSend: vi.fn(),
-  createNotification: vi.fn(),
-}));
+const { caller, grantBuzzPurchase, getTransactionByExternalId, signalSend, createNotification } =
+  vi.hoisted(() => ({
+    caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn() },
+    grantBuzzPurchase: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
+    signalSend: vi.fn(),
+    createNotification: vi.fn(),
+  }));
 
 vi.mock('~/env/server', () => ({
   env: {
@@ -31,7 +33,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({ default: caller }));
 vi.mock('~/server/services/buzz.service', () => ({
   grantBuzzPurchase,
-  getTransactionByExternalId: vi.fn(async () => null),
+  getTransactionByExternalId,
   getMultipliersForUser: vi.fn(async () => ({ purchasesMultiplier: 1 })),
 }));
 vi.mock('~/server/services/referral.service', () => ({
@@ -105,6 +107,8 @@ const matches = (row: Row, where: Record<string, any> = {}) =>
     if ('notIn' in cond && cond.notIn.includes(value)) return false;
     if ('lt' in cond && !(value < cond.lt)) return false;
     if ('gte' in cond && !(value >= cond.gte)) return false;
+    const known = ['in', 'notIn', 'lt', 'gte'];
+    if (Object.keys(cond).some((op) => !known.includes(op))) throw new Error(`fake: ${key}`);
     return true;
   });
 const applyData = (row: Row, data: Row) => {
@@ -139,11 +143,16 @@ beforeEach(() => {
     return `tx-${grantedIds.size}`;
   });
   dbMock.dbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
-  dbMock.dbRead.cryptoDeposit.findUnique.mockImplementation(
-    async ({ where }: { where: { paymentId: bigint } }) => deposits.get(where.paymentId) ?? null
-  );
+  // Reads return copies, as Prisma does, so a caller holding a row sees no later writes.
+  const findUnique = async ({ where }: { where: { paymentId: bigint } }) => {
+    const row = deposits.get(where.paymentId);
+    return row ? structuredClone(row) : null;
+  };
+  dbMock.dbRead.cryptoDeposit.findUnique.mockImplementation(findUnique);
+  dbMock.dbWrite.cryptoDeposit.findUnique.mockImplementation(findUnique);
+  getTransactionByExternalId.mockReset().mockResolvedValue(null);
   dbMock.dbRead.cryptoDeposit.findMany.mockImplementation(async ({ where }: { where: Row }) =>
-    [...deposits.values()].filter((row) => matches(row, where))
+    [...deposits.values()].filter((row) => matches(row, where)).map((row) => structuredClone(row))
   );
   dbMock.dbRead.cryptoDeposit.count.mockImplementation(
     async ({ where }: { where: Row }) =>
@@ -281,19 +290,41 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     expect(deposits.size).toBe(0);
   });
 
-  it('hands a deposit NOWPayments already confirmed to the sweep without changing its owner', async () => {
-    seed({ paymentId: ROW, userId: 42, status: 'confirming', payCurrency: 'btc' });
+  it.each(['confirming', 'failed'])(
+    'hands a %s deposit NOWPayments already confirmed to the sweep without changing its owner',
+    async (status) => {
+      seed({ paymentId: ROW, userId: 42, status, payCurrency: 'btc', retryCount: 5 });
+      caller.getPaymentStatus.mockResolvedValue(null);
+
+      await deliver(ipn({ order_id: 'user:99' }));
+
+      expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 0 });
+    }
+  );
+
+  it('keeps a redelivered unconfirmed IPN unverified', async () => {
     caller.getPaymentStatus.mockResolvedValue(null);
 
     await deliver(ipn({ order_id: 'user:99' }));
+    await deliver(ipn({ order_id: 'user:99' }));
 
-    expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42 });
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', userId: 99 });
+  });
+
+  it('treats a lookup that fails outright like one that finds nothing', async () => {
+    caller.getPaymentStatus.mockRejectedValue(new Error('socket hang up'));
+
+    const res = await deliver(ipn({ order_id: 'user:99' }));
+
+    expect(res._status()).toBe(400);
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified' });
   });
 
   it('shows the unverified row to no one', async () => {
     caller.getPaymentStatus.mockResolvedValue(null);
     await deliver(ipn({ order_id: 'user:99' }));
     seed({ paymentId: 777n, userId: 99, status: 'buzz_failed', payCurrency: 'btc' });
+    seed({ paymentId: 778n, userId: 99, status: 'unverified_exhausted', payCurrency: 'btc' });
 
     const history = await getDepositHistory(99);
     caller.getPaymentStatus.mockClear();
@@ -332,6 +363,40 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
 
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
     expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', retryCount: 1 });
+  });
+
+  it('counts a retry when the sweep finds the payment paid without an amount', async () => {
+    caller.getPaymentStatus.mockResolvedValue(null);
+    await deliver(ipn({ order_id: 'user:99' }));
+
+    caller.getPaymentStatus.mockResolvedValue(apiPayment({ outcome_amount: null }));
+    await retryFailedDeposits();
+
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 1 });
+  });
+
+  it('counts a retry when the sweep cannot write the confirmed deposit', async () => {
+    caller.getPaymentStatus.mockResolvedValue(null);
+    await deliver(ipn({ order_id: 'user:99' }));
+
+    caller.getPaymentStatus.mockResolvedValue(apiPayment());
+    dbMock.dbWrite.cryptoDeposit.upsert.mockRejectedValueOnce(new Error('write failed'));
+    await retryFailedDeposits();
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', retryCount: 1 });
+  });
+
+  it('marks a confirmed deposit the sweep can no longer find as failed when it gives up', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'buzz_failed', payCurrency: 'btc', retryCount: 71 });
+    caller.getPaymentStatus.mockResolvedValue(null);
+
+    await retryFailedDeposits();
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'failed', userId: 42 });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'payment-verify-exhausted' })
+    );
   });
 
   it('never credits a payment NOWPayments never confirms, and says so when the sweep gives up', async () => {
@@ -397,6 +462,25 @@ describe('nowpayments webhook: telling the user', () => {
     expect(grantedIds).toEqual(new Set([`np-deposit-${PAYMENT_ID}`]));
     expect(signalSend).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('still notifies the user when the signal fails', async () => {
+    signalSend.mockRejectedValueOnce(new Error('signal down'));
+
+    const res = await deliver(ipn());
+
+    expect(res._status()).toBe(200);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not credit again a deposit already credited by hand under the hash NOWPayments reports', async () => {
+    getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'np-payin-0xhash' ? { transactionId: 'manual' } : null
+    );
+
+    await deliver(ipn());
+
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
   });
 
   it('credits, signals and notifies once when the same payment is delivered twice', async () => {

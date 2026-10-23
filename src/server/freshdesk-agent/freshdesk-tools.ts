@@ -2,6 +2,7 @@ import type { ToolDefinitionJson } from '@openrouter/sdk/models';
 import { env } from '~/env/server';
 import { queryWithTimeout } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
+import { UNVERIFIED_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
 import { agentLog, getDebugContext } from './freshdesk-debug';
@@ -332,6 +333,9 @@ const queryDatabaseTool: ToolDefinitionJson = {
       `- The database cancels the statement after ${DB_QUERY_TIMEOUT_SECONDS} seconds. Always use LIMIT and filter on indexed columns.`,
       '- One statement only. No comments, no CTEs (WITH), no schema prefixes, no table functions.',
       '- Reference tables by their exact double-quoted name, e.g. FROM "User".',
+      `- "CryptoDeposit" rows with status ${UNVERIFIED_DEPOSIT_STATUSES.map((s) => `'${s}'`).join(
+        ' or '
+      )} are payment claims NOWPayments has not confirmed, filed under whichever user the claim named. They are not that user's deposits: leave them out (status NOT IN (...)) unless you are asked about one by its paymentId.`,
       "- FROM-inside-a-function-call is not supported: use date_part('epoch', col) rather than EXTRACT(EPOCH FROM col), and substr(...) rather than SUBSTRING(x FROM 1).",
       `- At most ${MAX_RESULT_ROWS} rows come back. The server wraps the statement in its own outer LIMIT, so this holds whether or not you wrote a LIMIT, and the result says so explicitly when it truncated. Your own LIMIT is still worth writing — the outer one caps what is returned, not how much the database has to sort or aggregate first.`,
     ].join('\n'),

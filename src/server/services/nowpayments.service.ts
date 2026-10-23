@@ -161,7 +161,7 @@ export const recordUnverifiedDeposit = async (event: NOWPayments.WebhookEvent) =
   if (!event.payment_id || !userId) return;
   const paymentId = BigInt(event.payment_id);
 
-  const existing = await dbRead.cryptoDeposit.findUnique({
+  const existing = await dbWrite.cryptoDeposit.findUnique({
     where: { paymentId },
     select: { status: true },
   });
@@ -409,17 +409,28 @@ export const processDeposit = async (
   const granted = !buzzGrantFailed && !!transactionId && transactionId !== 'already_granted';
   const tellUser = !buzzGrantFailed && (statusAdvanced || granted);
   if (tellUser) {
-    await signalClient.send({
-      userId,
-      target: SignalMessages.CryptoDepositUpdate,
-      data: {
-        paymentId: event.payment_id,
-        status: normalizedStatus,
-        amount: event.actually_paid,
-        currency: event.pay_currency,
-        outcomeAmount: event.outcome_amount,
-      },
-    });
+    // Best effort: a failed signal must not cost the user the notification below, which a
+    // redelivery would no longer send.
+    await signalClient
+      .send({
+        userId,
+        target: SignalMessages.CryptoDepositUpdate,
+        data: {
+          paymentId: event.payment_id,
+          status: normalizedStatus,
+          amount: event.actually_paid,
+          currency: event.pay_currency,
+          outcomeAmount: event.outcome_amount,
+        },
+      })
+      .catch((e) =>
+        log({
+          message: 'Failed to signal deposit update',
+          paymentId,
+          userId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      );
   }
 
   // Send persistent notification for completed deposits
@@ -789,6 +800,8 @@ export const retryFailedDeposits = async () => {
         succeeded++;
       } else if (updated?.status === 'buzz_failed') {
         await countRetry({ ...deposit, status: 'buzz_failed' });
+      } else if (updated?.status === 'unverified') {
+        await countRetry(deposit);
       } else {
         // Status changed by another path (e.g., webhook fixed it) — skip
         succeeded++;
