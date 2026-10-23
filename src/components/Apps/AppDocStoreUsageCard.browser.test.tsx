@@ -49,16 +49,36 @@ describe('AppDocStoreUsageCardView', () => {
     await expect.element(gamma).not.toHaveTextContent(/0 of/);
   });
 
-  test('renders nothing when the store is disabled', async () => {
+  // A render barrier before every absence assertion: `render()` commits on a later task, so
+  // an absence read straight after it sees an empty container whatever the component does.
+  // The sentinel renders beside the view; once it is there, so is the view's output.
+  async function renderBeside(data: MyDocStoreUsage) {
     const { container } = await renderWithProviders(
-      <AppDocStoreUsageCardView data={{ status: 'disabled' }} />
+      <>
+        <div data-testid="render-barrier" />
+        <AppDocStoreUsageCardView data={data} />
+      </>
     );
+    await expect.element(page.getByTestId('render-barrier')).toBeInTheDocument();
+    return container;
+  }
+
+  test('renders nothing when the store is disabled', async () => {
+    const container = await renderBeside({ status: 'disabled' });
     expect(container.querySelector('[data-testid="apps-docstore-usage"]')).toBeNull();
-    expect(container.textContent).not.toMatch(/0 of/);
+    expect(container.textContent).toBe('');
   });
 
   test('renders nothing when the owner has no on-platform apps', async () => {
-    const { container } = await renderWithProviders(<AppDocStoreUsageCardView data={ok([])} />);
+    const container = await renderBeside(ok([]));
     expect(container.querySelector('[data-testid="apps-docstore-usage"]')).toBeNull();
+    expect(container.textContent).toBe('');
+  });
+
+  test('positive control: the same barrier sees the card when there is something to show', async () => {
+    const container = await renderBeside(
+      ok([{ appBlockId: 'apb_4', name: 'Delta', usage: { bytes: 1, docs: 1 } }])
+    );
+    expect(container.querySelector('[data-testid="apps-docstore-usage"]')).not.toBeNull();
   });
 });
