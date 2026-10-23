@@ -1219,6 +1219,23 @@ describe('stripe webhook: signature', () => {
     expect(trackWebhookEvent).toHaveBeenCalledWith('stripe', '{}');
   });
 
+  it('records a verified event whose handling fails', async () => {
+    seedBuzzPurchase();
+    mockStripe.paymentIntents.retrieve.mockRejectedValueOnce(new Error('stripe unavailable'));
+
+    const res = await deliver('charge.refunded', charge('pi_buzz', 5000, 5000));
+
+    expect(res.statusCode).toBe(400);
+    expect(trackWebhookEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a verified event this webhook does not handle', async () => {
+    const res = await deliver('customer.created', { id: 'cus_new', object: 'customer' });
+
+    expect(res.statusCode).toBe(200);
+    expect(trackWebhookEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('answers 503 when Stripe is not configured', async () => {
     vi.mocked(getServerStripe).mockResolvedValueOnce(null as never);
 
