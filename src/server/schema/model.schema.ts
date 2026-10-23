@@ -597,6 +597,15 @@ export const getResourceSelectSchema = z.object({
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),
+  // A pasted model / version link: the same query scoped to that id, without the type and
+  // base-model scope so the picker can say which of them hid it.
+  lookup: z
+    .object({
+      modelId: z.number().int().positive().optional(),
+      modelVersionId: z.number().int().positive().optional(),
+    })
+    .refine((x) => x.modelId || x.modelVersionId)
+    .optional(),
 });
 
 export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;
