@@ -8,7 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * On-site listing-media OWNER editor (`ListingMediaEditor`, the "Listing media" tab of
- * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
+ * `/apps/<appBlockId>/edit`) — render test (browser mode, `Component tests` in CI).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
  * (`getMyListingForApp`), re-hosts the reused `ListingAssetStep` against the

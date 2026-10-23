@@ -26,13 +26,9 @@
  *
  * 🔴 THIS FILE IS A LOCAL INSTRUMENT, NOT AN ENFORCED GATE — RUN IT YOURSELF. It is a
  * `*.browser.test.tsx`, so `vitest.config.mts` collects it into the `component` project,
- * and no selector in `.github/workflows/lint.yml` names that project: the workflow runs
- * `--project 'unit*'`, `--project geometry` and the workspace `packages`/`apps` configs,
- * none of which can claim this glob. Its only CI home is the preview pipeline's
- * `preview / component-tests` status, which is report-only and non-blocking. So nothing
- * here will stop a regression reaching `main` on its own; it catches things for whoever
- * runs it. Widening the component tier into a blocking job is a real change with its own
- * cost argument and belongs in its own PR — do not bolt it on here. Run it with:
+ * which `.github/workflows/lint.yml` runs as `Component tests`. A failure turns that
+ * check red, but `main` requires no status check, so nothing here will stop a regression
+ * reaching `main` on its own. Run it with:
  *   pnpm exec vitest run --project component src/tests/pages/apps/review/review-queue-poll.browser.test.tsx
  */
 import '@mantine/core/styles.css';

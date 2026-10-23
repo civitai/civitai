@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Positive control for the `preview / component-tests` tier.
+ * Positive control for the browser `component` tier (`Component tests` in CI).
  *
  * 🔴 WHY: THE BROWSER SUITE HAS A FAILURE MODE THAT COLLECTS ZERO TESTS AND IS
  * INDISTINGUISHABLE, TO EVERY CONSUMER, FROM A SUITE THAT RAN.

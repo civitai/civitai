@@ -57,8 +57,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `appsSections` is exported, but
  * it pulls `@tabler/icons-react` and the rail that renders it pulls React, Mantine and
  * tRPC, so importing either into the node `unit` project — the tier that actually blocks
- * — is not what this guard should depend on. The browser
- * tier that could mount it is report-only. `appsMenuEntry.test.ts` solves the identical
+ * — is not what this guard should depend on. `appsMenuEntry.test.ts` solves the identical
  * problem the identical way, for the same reason.
  *
  * 🔴 AND IT IS BEHAVIOURAL, NOT A SPELLING CHECK. The predicate is EXTRACTED from the real

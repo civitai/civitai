@@ -12,9 +12,9 @@ import {
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
- * W13 P3b PR3 — pure moderation VIEW MODEL (the blocking gate for the report-row
- * action set + the status/action chips; the browser-mode queue test is
- * report-only). Pins the state→action-set matrix + that every chip has a label.
+ * W13 P3b PR3 — pure moderation VIEW MODEL (the node-tier gate for the report-row
+ * action set + the status/action chips). Pins the state→action-set matrix + that every chip has a
+ * label.
  */
 
 describe('reportRowActions — the per-row action set', () => {

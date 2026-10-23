@@ -39,13 +39,9 @@
  *
  * 🔴 THIS FILE IS A LOCAL INSTRUMENT, NOT AN ENFORCED GATE — RUN IT YOURSELF. It is a
  * `*.browser.test.tsx`, so `vitest.config.mts` collects it into the `component` project,
- * and no selector in `.github/workflows/lint.yml` names that project: the workflow runs
- * `--project 'unit*'`, `--project geometry` and the workspace `packages`/`apps` configs,
- * none of which can claim this glob. Its only CI home is the preview pipeline's
- * `preview / component-tests` status, which is report-only and non-blocking. So the
- * sentences above describing what this file "catches" are about what it catches FOR A
- * PERSON WHO RUNS IT — nothing here blocks a merge. Widening the component tier into a
- * blocking job is a real change with its own cost argument and belongs in its own PR — do
+ * which `.github/workflows/lint.yml` runs as `Component tests`. A failure turns that
+ * check red, but nothing in this repo blocks a merge. Making it required is a real change
+ * with its own cost argument and belongs in its own PR — do
  * not bolt it on here. Run it with:
  *   pnpm exec vitest run --project component src/components/Apps/AppsPageLayout.railSurface.browser.test.tsx
  */
