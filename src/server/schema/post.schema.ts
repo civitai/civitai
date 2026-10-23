@@ -331,6 +331,10 @@ export const postEditQuerySchema = z.object({
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
   model3dId: z.coerce.number().optional(),
+  /** The chapter this post continues, set by the storyline continue flow. */
+  continues: z.coerce.number().int().positive().optional(),
+  /** Display only: the number of the chapter being written. */
+  n: z.coerce.number().int().positive().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

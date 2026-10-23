@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Button,
   CloseButton,
@@ -13,12 +14,13 @@ import {
   IconCrown,
   IconGitFork,
   IconLock,
-  IconPlus,
+  IconPencil,
   IconRosetteDiscountCheck,
   IconRoute,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
@@ -35,6 +37,8 @@ import {
   getStorylineChapterName,
   getStorylineTombstoneLabel,
 } from '~/components/Storyline/storyline-mode.utils';
+import { storylineContinueUrl } from '~/components/Storyline/storyline-routes';
+import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -81,11 +85,9 @@ export function StorylineEndOfChapter({
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
   const tracking = useStorylineTracking();
-
-  const handleCreate = () => {
-    tracking.trackCreateClick({ chapterId });
-    openStorylineEarlyAccess({ chapterId, storylineId });
-  };
+  // The owner is never "closed out" of their own storyline, so their terms are not read.
+  const terms = useStorylineContinueTerms(isOwner ? undefined : parentPostId);
+  const canWrite = !!parentPostId && (isOwner || !!terms?.open);
 
   // Numbered from this chapter, not by their own depth, which a rejoined chapter takes from another branch.
   const [main, ...others] = (children ?? []).map((child) => ({
@@ -156,34 +158,87 @@ export function StorylineEndOfChapter({
         )}
 
         <div
-          className="flex flex-col items-stretch gap-3 rounded-xl border-[1.5px] border-dashed border-[var(--mantine-color-violet-5)] bg-[var(--mantine-color-violet-0)] px-4 py-3.5 @md:flex-row @md:flex-wrap @md:items-center dark:bg-[rgba(95,61,196,0.15)]"
+          className="flex flex-col gap-3 rounded-xl border-[1.5px] border-dashed border-[var(--mantine-color-violet-5)] bg-[var(--mantine-color-violet-0)] px-4 py-3.5 dark:bg-[rgba(95,61,196,0.15)]"
           data-testid="storyline-create-block"
         >
-          <div className="flex-1">
+          <div>
             <Text fw={700}>Write what happens next</Text>
             <Text size="sm" c="dimmed">
-              Add a chapter of your own. The creator reviews it before it joins the story.
+              {isOwner
+                ? 'Add a chapter of your own. It joins the story as soon as you publish it.'
+                : 'Add a chapter of your own. The creator reviews it before it joins the story.'}
             </Text>
           </div>
-          <Button
-            color="violet"
-            leftSection={<IconPlus size={16} />}
-            onClick={handleCreate}
-            data-testid="storyline-create-next"
-          >
-            Create the next section
-          </Button>
-          {parentPostId && !isOwner && <StorylineContinueWithPost parentPostId={parentPostId} />}
-          {parentPostId && isOwner && (
-            <Button
-              variant="default"
-              onClick={() =>
-                openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
-              }
-              data-testid="storyline-add-own-chapter"
+          <div className="flex flex-col items-stretch gap-2 @md:flex-row @md:flex-wrap @md:items-center @md:gap-x-4">
+            {canWrite && (
+              <Button
+                component={Link}
+                href={storylineContinueUrl({
+                  parentChapterId: chapterId,
+                  chapterNumber: chapterDepth + 2,
+                })}
+                color="violet"
+                leftSection={<IconPencil size={16} />}
+                onClick={() => tracking.trackCreateClick({ chapterId })}
+                data-testid="storyline-write-next"
+              >
+                Write the next chapter
+              </Button>
+            )}
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              c="dimmed"
+              className="self-center @md:ml-auto"
+              onClick={() => openStorylineEarlyAccess({ chapterId, storylineId })}
+              data-testid="storyline-early-access-link"
             >
-              Add the next chapter
-            </Button>
+              Story tool coming soon · get early access
+            </Anchor>
+          </div>
+          {canWrite && !isOwner && terms && (
+            <Text size="xs" c="dimmed" data-testid="storyline-write-next-price">
+              {terms.price > 0
+                ? `${storylinePriceLabel(terms.price)} when you publish`
+                : 'Free to submit'}
+            </Text>
+          )}
+          {parentPostId && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {isOwner ? (
+                <>
+                  <Anchor
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+                    }
+                    data-testid="storyline-add-own-chapter"
+                  >
+                    or use a post you already made
+                  </Anchor>
+                  <Anchor
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      openStorylineContinueModal({
+                        parentPostId,
+                        parentChapterId: chapterId,
+                        mode: 'join',
+                      })
+                    }
+                    data-testid="storyline-join-existing-chapter"
+                  >
+                    Join an existing chapter
+                  </Anchor>
+                </>
+              ) : (
+                <StorylineContinueWithPost parentPostId={parentPostId} />
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -465,12 +520,14 @@ export function StorylineContinueWithPost({ parentPostId }: { parentPostId: numb
     ) : null;
 
   return (
-    <Button
-      variant="default"
+    <Anchor
+      component="button"
+      type="button"
+      size="sm"
       onClick={() => openStorylineContinueModal({ parentPostId })}
       data-testid="storyline-continue-with-post"
     >
-      Use a post you made · {terms.price > 0 ? `${terms.price} Buzz` : 'Free'}
-    </Button>
+      or use a post you already made
+    </Anchor>
   );
 }

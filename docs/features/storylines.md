@@ -33,11 +33,15 @@ section).
   band where the story forks and where a branch joins back. Any chapter opens in storyline mode over
   the page, along the route the list draws to it. It shows the first 300 chapters, nearest the start;
   a chapter the reader cannot see is a placeholder that does not open.
-- **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
-  chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
-  review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
-  collaborators says so instead. The in-app tool for making the next section is not built yet:
-  "Create the next section" joins an early-access list.
+- **Continuing it.** At the end of a chapter "Write the next chapter" opens the post editor already
+  knowing which chapter it continues (`/posts/create?continues=<chapter>`). Publishing that draft
+  submits it as the next chapter at the price the writer was shown (Free or N Buzz); it goes to the
+  creator's review unless the writer is an endorsed collaborator, and the creator's own draft is
+  added as soon as it is published. "or use a post you already made" submits an existing post
+  instead. A storyline that is closed or open only to collaborators says so instead. A small
+  "Story tool coming soon · get early access" link joins a waitlist for a future story-creation
+  tool; it is not a way to write a chapter. Moderators read the sign-ups in the moderator app under
+  Storylines.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
   The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
