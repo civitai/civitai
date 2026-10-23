@@ -19,6 +19,7 @@ import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
+import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
@@ -462,6 +463,11 @@ export const getModelsRaw = async ({
   if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
+  const publishedError = publishedRangeError({
+    from: input.publishedFrom,
+    to: input.publishedTo,
+  });
+  if (publishedError) throw throwBadRequestError(publishedError);
 
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
@@ -490,6 +496,8 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
+    publishedFrom,
+    publishedTo,
     hidden,
     checkpointType,
     status,
@@ -821,6 +829,9 @@ export const getModelsRaw = async ({
       )})`
     );
   }
+  const published = publishedRangeBounds({ from: publishedFrom, to: publishedTo });
+  if (published.gte) AND.push(Prisma.sql`m."publishedAt" >= ${published.gte}`);
+  if (published.lt) AND.push(Prisma.sql`m."publishedAt" < ${published.lt}`);
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
     AND.push(Prisma.sql`${pSql}."status" = ${ModelStatus.Published}::"ModelStatus"`);
@@ -1063,7 +1074,26 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const queryWith = Prisma.sql``;
+  // A published range is at most a month, a few tens of thousands of models. Materializing them
+  // gives the planner a small driver; walking the ModelMetric feed index in lastVersionAt order
+  // until enough of them turn up costs up to a second and a half for a year-old range.
+  const rangedModels =
+    published.gte && published.lt
+      ? Prisma.sql`ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE ${
+          !sessionUser?.isModerator || !status?.length
+            ? Prisma.sql`"status" = ${ModelStatus.Published}::"ModelStatus" AND `
+            : Prisma.empty
+        }"publishedAt" >= ${published.gte} AND "publishedAt" < ${published.lt}${
+          types?.length
+            ? Prisma.sql` AND "type" = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`
+            : Prisma.empty
+        }
+      )`
+      : undefined;
+  const queryWith = rangedModels ? Prisma.sql`WITH ${rangedModels}` : Prisma.sql``;
+  const rangedJoin = rangedModels ? Prisma.sql`JOIN ranged ON ranged."id" = m."id"` : Prisma.empty;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -1159,6 +1189,7 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
   const fromAndJoin = Prisma.sql`${fromClause}
+      ${rangedJoin}
       ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;

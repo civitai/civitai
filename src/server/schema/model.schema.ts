@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { publishedDateSchema } from '~/shared/utils/published-range';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
@@ -94,6 +95,9 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  /** First and last day published, UTC `YYYY-MM-DD`, both inclusive. */
+  publishedFrom: publishedDateSchema.optional(),
+  publishedTo: publishedDateSchema.optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -140,13 +144,16 @@ export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
 /** Query contract for /api/v1/models, which parses it off `req.query` where every value is a string. */
-export const modelsEndpointSchema = getAllModelsSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
-  nsfw: booleanString().optional(),
-  primaryFileOnly: booleanString().optional(),
-  favorites: booleanString().optional().default(false),
-  hidden: booleanString().optional().default(false),
-});
+export const modelsEndpointSchema = getAllModelsSchema
+  // Not part of the documented public contract.
+  .omit({ publishedFrom: true, publishedTo: true })
+  .extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
+    nsfw: booleanString().optional(),
+    primaryFileOnly: booleanString().optional(),
+    favorites: booleanString().optional().default(false),
+    hidden: booleanString().optional().default(false),
+  });
 
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
