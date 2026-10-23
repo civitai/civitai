@@ -80,10 +80,15 @@ const REFUSAL: Record<'not-open' | 'already-voted' | 'full' | 'not-yours', strin
   'already-voted': 'You already voted on this one. Here is the next.',
 };
 
+const STALE_PAGE = 'This page is out of date. Reload it to keep voting.';
+
 export const actions: Actions = {
   vote: async (event) => {
     const { request, locals } = event;
-    const input = parseForm(voteSchema, await request.formData());
+    const form = await request.formData();
+    // A page rendered before the claim token shipped posts an item id: say how to recover.
+    if (!form.has('token')) return fail(400, { error: STALE_PAGE });
+    const input = parseForm(voteSchema, form);
     if (typeof input === 'string') return fail(400, { error: input });
     const itemId = await itemForToken(input.token, locals.user.id);
     if (itemId === null) return fail(409, { error: REFUSAL['not-yours'] });

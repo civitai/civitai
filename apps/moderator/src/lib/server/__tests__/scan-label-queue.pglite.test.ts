@@ -140,10 +140,13 @@ describe('claimNext order', () => {
   it('gives a moderator their live lease back instead of taking a second one', async () => {
     const a = await seedItem(1);
     const b = await seedItem(2);
-    expect((await claimNext(1, {}, NOW))!.itemId).toBe(a);
+    const first = (await claimNext(1, {}, NOW))!;
+    expect(first.itemId).toBe(a);
     // b is now partly voted, so a fresh claim would rank it first.
     await castVote({ itemId: b, userId: 2, choice: KEEP, msOnItem: 1 }, NOW);
-    expect((await claimNext(1, {}, later(1000)))!.itemId).toBe(a);
+    const again = (await claimNext(1, {}, later(1000)))!;
+    expect(again.itemId).toBe(a);
+    expect(again.token).toBe(first.token);
     const { rows } = await pg.query(`SELECT * FROM "ScanLabelClaim" WHERE "userId" = 1`);
     expect(rows).toHaveLength(1);
   });
@@ -427,6 +430,20 @@ describe('claim tokens', () => {
     expect(await itemForToken(token, 2)).toBeNull();
   });
 
+  it('lets a token whose lease ran out vote while a slot is free', async () => {
+    const it1 = await seedItem(1);
+    const { token } = (await claimNext(1, {}, NOW))!;
+    expect(await itemForToken(token, 1)).toBe(it1);
+    expect(
+      (
+        await castVote(
+          { itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token },
+          later(LEASE_MS + 1)
+        )
+      ).ok
+    ).toBe(true);
+  });
+
   it('still finds the card for a repeat vote from a second tab', async () => {
     const it1 = await seedItem(1);
     const { token } = (await claimNext(1, {}, NOW))!;
@@ -434,9 +451,9 @@ describe('claim tokens', () => {
       castVote({ itemId: it1, userId: 1, choice: KEEP, msOnItem: 1, claimToken: token }, NOW);
     expect((await cast()).ok).toBe(true);
     // The vote released the lease, so only the vote can say what the token was for.
-    expect((await pg.query(`SELECT 1 FROM "ScanLabelClaim" WHERE token = $1`, [token])).rows).toEqual(
-      []
-    );
+    expect(
+      (await pg.query(`SELECT 1 FROM "ScanLabelClaim" WHERE token = $1`, [token])).rows
+    ).toEqual([]);
     expect(await itemForToken(token, 1)).toBe(it1);
     expect(await itemForToken(token, 2)).toBeNull();
     expect(await cast()).toEqual({ ok: false, reason: 'already-voted' });

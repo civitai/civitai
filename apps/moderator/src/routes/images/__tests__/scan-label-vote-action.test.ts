@@ -179,9 +179,13 @@ describe('vote action', () => {
     expect(castVote).not.toHaveBeenCalled();
   });
 
-  it('refuses a vote that names an item instead of a card token', async () => {
-    const result = (await actions.vote(event({ itemId: '5', block: '0' }))) as { status: number };
+  it('tells a page from before the claim token to reload, recording nothing', async () => {
+    const result = (await actions.vote(event({ itemId: '5', block: '0' }))) as {
+      status: number;
+      data: { error: string };
+    };
     expect(result.status).toBe(400);
+    expect(result.data.error).toContain('Reload');
     expect(itemForToken).not.toHaveBeenCalled();
     expect(castVote).not.toHaveBeenCalled();
   });
@@ -232,14 +236,18 @@ describe('load', () => {
       height: 1,
       leaseExpiresAt: new Date(0),
     });
-    const data = await open('');
-    const keys = (v: unknown): string[] =>
-      v && typeof v === 'object' && !(v instanceof Date)
-        ? Object.entries(v).flatMap(([k, child]) => [k, ...keys(child)])
-        : [];
-    expect(keys(data)).toContain('token');
-    expect(keys(data)).not.toContain('itemId');
-    expect(keys(data)).not.toContain('imageId');
+    const data = (await open('')) as unknown as { card: unknown };
+    // Exactly these fields, so no id reaches the page under any name.
+    expect(data.card).toEqual({
+      token: TOKEN,
+      url: 'guid',
+      type: 'image',
+      name: 'a.png',
+      width: 1,
+      height: 1,
+      leaseExpiresAt: new Date(0),
+    });
+    expect(JSON.stringify(data)).not.toMatch(/[^0-9.]4[12][^0-9]/);
   });
 
   it('keeps any other version as the filter', async () => {
