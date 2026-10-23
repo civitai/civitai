@@ -156,6 +156,19 @@ describe('deleteImageFromS3', () => {
     expect(invalidateCalls()).toHaveLength(0);
   });
 
+  // A hold marker can keep the row its caller just tried to delete, so the image's own row
+  // counts as still pointing at the url.
+  it("looks for any row with the url, the image's own included", async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { url: 'abc-def/original.jpeg' },
+    });
+  });
+
   // Legacy avatar rows store a full external URL rather than a bucket key. Passing one to
   // deleteObject as a Key can only fail, and it is not ours to delete either way.
   it('ignores rows whose url is an external link, before touching the db', async () => {

@@ -1208,9 +1208,11 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
         RETURNING id, "nsfwLevel"
       `;
 
-      // Skipped images keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
-      // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
-      const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
+      // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+      // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+      // never revisits them — their docs must be dropped here.
+      const deletedIds = new Set(deletedImages.map(({ id }) => id));
+      const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
 
       const imageOwnerIds = uniq(images.map((image) => image.userId));
 

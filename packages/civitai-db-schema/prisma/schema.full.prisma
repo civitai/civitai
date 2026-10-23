@@ -6603,6 +6603,64 @@ model CsamReportArchiveObject {
   @@index([csamReportId])
 }
 
+/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
+/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
+/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
+/// later), or when a person releases it; clearing an image's review flag never ends it.
+model EvidenceHold {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  csamReportId    Int?
+  /// subject | secondary | manual
+  role            String
+  reportSentAt    DateTime?
+  /// NULL holds until released.
+  releaseAt       DateTime?
+  extendedUntil   DateTime?
+  /// Who asked for the extension, and their reference.
+  extensionRequestedBy String?
+  extensionReference   String?
+  reason          String
+  createdAt       DateTime  @default(now())
+  createdById     Int?
+  releasedAt      DateTime?
+  releasedById    Int?
+  releaseReason   String?
+
+  @@index([userId])
+}
+
+/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
+/// is the post it was in, and nothing else records it. Purged once no hold covers the owner.
+model EvidenceHoldImage {
+  imageId Int      @id
+  userId  Int
+  postId  Int?
+  keptAt  DateTime @default(now())
+}
+
+/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
+/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
+model EvidenceHoldPost {
+  postId         Int       @id
+  userId         Int
+  title          String?
+  detail         String?
+  createdAt      DateTime?
+  publishedAt    DateTime?
+  modelVersionId Int?
+  collectionId   Int?
+  metadata       Json?
+  keptAt         DateTime  @default(now())
+}
+
+/// @view
+/// The owners with at least one active `EvidenceHold`.
+model EvidenceHeldUser {
+  userId    Int       @id
+  heldUntil DateTime?
+}
+
 model Link {
   id         Int      @id @default(autoincrement())
   url        String

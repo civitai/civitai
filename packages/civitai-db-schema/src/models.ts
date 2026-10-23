@@ -4078,6 +4078,49 @@ export interface CsamReportArchiveObject {
   uploadedAt: Date;
 }
 
+export interface EvidenceHold {
+  id: number;
+  userId: number;
+  csamReportId: number | null;
+  role: string;
+  reportSentAt: Date | null;
+  releaseAt: Date | null;
+  extendedUntil: Date | null;
+  extensionRequestedBy: string | null;
+  extensionReference: string | null;
+  reason: string;
+  createdAt: Date;
+  createdById: number | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  releaseReason: string | null;
+}
+
+export interface EvidenceHoldImage {
+  imageId: number;
+  userId: number;
+  postId: number | null;
+  keptAt: Date;
+}
+
+export interface EvidenceHoldPost {
+  postId: number;
+  userId: number;
+  title: string | null;
+  detail: string | null;
+  createdAt: Date | null;
+  publishedAt: Date | null;
+  modelVersionId: number | null;
+  collectionId: number | null;
+  metadata: JsonValue | null;
+  keptAt: Date;
+}
+
+export interface EvidenceHeldUser {
+  userId: number;
+  heldUntil: Date | null;
+}
+
 export interface Link {
   id: number;
   url: string;
