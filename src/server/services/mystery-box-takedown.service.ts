@@ -10,6 +10,7 @@ import { dbWrite } from '~/server/db/client';
 import { lockBox } from '~/server/services/box-version-lock';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { withRetries } from '~/server/utils/errorHandling';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 type Tx = Prisma.TransactionClient;
 
@@ -152,7 +153,7 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
     await tx.$executeRaw`
       UPDATE "UserCosmeticShopPurchases" p
       SET refunded = true,
-        meta = COALESCE(p.meta, '{}'::jsonb) || jsonb_build_object(
+        meta = ${asJsonbObjectSql('p.meta')} || jsonb_build_object(
           'takedownRefund', jsonb_build_object('shopItemId', ${shopItemId}::int, 'at', now())
         )
       FROM "CosmeticShopItem" s

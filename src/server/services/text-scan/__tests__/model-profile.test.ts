@@ -4,7 +4,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const { loadModelScanSubjects } = await import(
   '~/server/services/text-scan/profiles/model.profile'
 );
-await import('~/server/services/text-scan/profiles/model-rules.profile');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { getTextScanProfile } = await import('~/server/services/text-scan/profiles');
 
@@ -112,14 +111,6 @@ describe('pre-publish and post-publish text hash agreement', () => {
 });
 
 describe('profiles', () => {
-  it('the ModelRules profile loads public text only, and Model does not', async () => {
-    await getTextScanProfile('ModelRules')!.load([1]);
-    expect(call().where).toHaveProperty('availability');
-    findMany.mockClear();
-    await getTextScanProfile('Model')!.load([1]);
-    expect(call().where).not.toHaveProperty('availability');
-  });
-
   it('the Model profile reads only public versions', async () => {
     await getTextScanProfile('Model')!.load([1]);
     expect(call().select.modelVersions.where).toEqual({

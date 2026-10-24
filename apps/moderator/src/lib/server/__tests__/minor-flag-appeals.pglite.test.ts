@@ -213,6 +213,58 @@ describe('text-scan real-person flag with no snapshot', () => {
   });
 });
 
+describe('real-person hash flag', () => {
+  const rowFor = async (modelId: number) =>
+    (await getMinorFlagAppealsForReview({ limit: 50 })).items.find((i) => i.modelId === modelId)!;
+  const setMeta = (id: number, meta: object) =>
+    db.query(`UPDATE "Model" SET poi = TRUE, meta = $2::jsonb WHERE id = $1`, [
+      id,
+      JSON.stringify(meta),
+    ]);
+
+  it('reads its source from the real-person snapshot when the model has no minor one', async () => {
+    await setMeta(4, { poiFlagSnapshot: { source: 'auto', at: '2026-09-28T00:00:00Z' } });
+    const row = await rowFor(4);
+    expect(row).toMatchObject({ flagSource: 'auto', flagSnapshotLabel: 'poi', poiHashFlag: true });
+    expect(new Date(row.flaggedAt!).toISOString()).toBe('2026-09-28T00:00:00.000Z');
+    expect(new Date(row.poiFlaggedAt!).toISOString()).toBe('2026-09-28T00:00:00.000Z');
+    expect(await ids({ source: 'hash' })).toEqual([2, 4]);
+    expect(await ids({ flag: 'poi' })).toContain(4);
+  });
+
+  it('keeps the hash origin of a confirmed flag, and names the moderator who confirmed it', async () => {
+    await setMeta(4, {
+      poiFlagSnapshot: { source: 'manual', confirmedFrom: 'auto', at: '2026-09-28T00:00:00Z' },
+    });
+    await db.query(
+      `INSERT INTO "ModActivity" ("userId","activity","entityType","entityId","createdAt") VALUES
+        (99, 'setPoi', 'model', 4, '2026-09-29'), (99, 'setMinor', 'model', 4, '2026-09-30')`
+    );
+    const row = await rowFor(4);
+    expect(row).toMatchObject({ flagSource: 'manual', flagConfirmedFrom: 'auto' });
+    expect(row.flaggedByUsername).toBe('modA');
+    expect(new Date(row.flaggedByAt!).toISOString()).toBe('2026-09-29T00:00:00.000Z');
+    expect(await ids({ source: 'moderator' })).toContain(4);
+  });
+
+  it('a minor snapshot names the row; the real-person hash flag is still marked', async () => {
+    await setMeta(2, {
+      minorFlagSnapshot: { source: 'manual', at: '2026-09-25' },
+      poiFlagSnapshot: { source: 'auto', at: '2026-09-27T00:00:00Z' },
+    });
+    expect(await rowFor(2)).toMatchObject({
+      flagSource: 'manual',
+      flagSnapshotLabel: 'minor',
+      poiHashFlag: true,
+    });
+  });
+
+  it('marks nothing on a model with no real-person snapshot', async () => {
+    expect(await rowFor(7)).toMatchObject({ flagSnapshotLabel: null, poiHashFlag: false });
+    expect(await rowFor(4)).toMatchObject({ poiHashFlag: false });
+  });
+});
+
 describe('flag filter', () => {
   it.each([
     ['all', [1, 2, 3, 4, 5, 6, 7]],

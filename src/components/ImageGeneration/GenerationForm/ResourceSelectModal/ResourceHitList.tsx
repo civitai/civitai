@@ -28,6 +28,7 @@ import {
   skipBaseModelForOwnTabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const GRID_GAP = 16;
@@ -331,6 +332,13 @@ export function ResourceHitList({ query }: { query: string }) {
               We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
               query.
             </Text>
+            {resources.length > 0 && (
+              <Text align="center" c="dimmed" size="sm">
+                Only showing {[...new Set(resources.map((r) => getDisplayName(r.type)))].join(', ')}{' '}
+                compatible with your selected resources. Paste a model link to see why a specific
+                model is missing.
+              </Text>
+            )}
           </Stack>
         </Center>
       </div>

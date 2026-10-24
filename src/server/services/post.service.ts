@@ -730,6 +730,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   return {
     ...post,
     parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
     collectionTagId,
     images,
     collectionItemExists,
@@ -747,26 +748,9 @@ async function getPostModel({
   if (!modelVersionId) return null;
   const version = await db.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { model: { select: { id: true, userId: true } } },
+    select: { model: { select: { id: true, name: true, userId: true } } },
   });
   return version?.model ?? null;
-}
-
-/**
- * The model a post belongs to, when the post's owner also owns the model: the editor's event card
- * then hats the model. A review post on someone else's model gets null.
- */
-export async function getOwnModelId({
-  modelVersionId,
-  postOwnerId,
-  db,
-}: {
-  modelVersionId: number | null;
-  postOwnerId: number;
-  db?: typeof dbRead | typeof dbWrite;
-}) {
-  const model = await getPostModel({ modelVersionId, db });
-  return model?.userId === postOwnerId ? model.id : null;
 }
 
 export type PostUnpublishContext = {
@@ -963,6 +947,11 @@ export const createPost = async ({
     collectionItemExists = !!collectionItem;
   }
 
+  const model = await getPostModel({
+    modelVersionId: data.modelVersionId ?? null,
+    db: dbWrite,
+  });
+
   return {
     ...post,
     collectionTagId,
@@ -975,12 +964,9 @@ export const createPost = async ({
     wasPublished: false,
     unpublishedAt: null,
     unpublishedBy: null,
-    parentModelId: null,
-    ownModelId: await getOwnModelId({
-      modelVersionId: data.modelVersionId ?? null,
-      postOwnerId: userId,
-      db: dbWrite,
-    }),
+    parentModelId: model?.id ?? null,
+    parentModelName: model?.name ?? null,
+    ownModelId: model?.userId === userId ? model.id : null,
   };
 };
 
