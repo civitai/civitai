@@ -72,3 +72,25 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
   // The tag sets are not cleared: a URL cached again during this purge, or whose purge failed,
   // is purged again next time. Each set is bounded and expires once nothing new is recorded.
 }
+
+/**
+ * `purgeCache` for a caller that must know the purge happened: every batch is awaited and the first
+ * failure throws. Not paced, so keep it to one image's urls rather than a bulk list.
+ */
+export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 10_000 } = {}) {
+  if (!env.CF_ZONE_ID || !client) return;
+  for (const files of chunk(urls, PURGE_BATCH_SIZE)) {
+    // The client takes no abort signal; a hung request must not hold the caller indefinitely.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        client.zones.purgeCache(env.CF_ZONE_ID, { files }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('cloudflare purge timed out')), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

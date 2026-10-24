@@ -6,8 +6,12 @@ import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { uniq } from 'lodash-es';
+import { purgeUrlsOrThrow } from '~/server/cloudflare/client';
+import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
-import { JobQueueType, ModelStatus } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { EntityType, JobQueueType, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * What the image CDN should do for one stored url, ordered by strength:
@@ -136,27 +140,35 @@ export function cdnImageKey(url: string) {
   return UUID.test(url) ? url.toLowerCase() : null;
 }
 
-function cdnCallRequest(url: string, call: CdnCall) {
+/**
+ * `persist` asks the image server to keep the deny until it is lifted, rather than letting it
+ * expire. Only a takedown sends it (see `sendTakedownPersist`), and `allow` lifts it like any deny.
+ */
+type CdnCallOptions = { persist?: boolean };
+
+function cdnCallRequest(url: string, call: CdnCall, { persist = false }: CdnCallOptions = {}) {
   const key = cdnImageKey(url);
   if (!key) throw new Error('not an image server key');
   const imageKey = encodeURIComponent(key);
   // The only two endpoints this path calls. Retraction is a flag on invalidate, and the image
   // server applies it to its public variant tier only.
-  if (call === 'allow')
+  if (call === 'allow') {
+    if (persist) throw new Error('a lift cannot persist');
     return { method: 'DELETE', path: `/admin/deny?imageKey=${imageKey}` } as const;
+  }
   return {
     method: 'POST',
     path: `/admin/invalidate?imageKey=${imageKey}${
       call === 'retract' ? '&retractPublicBlobs=true' : ''
-    }`,
+    }${persist ? '&persist=true' : ''}`,
   } as const;
 }
 
 /** Throws unless the image server accepted the call, after `CALL_ATTEMPTS` tries. */
-export async function callCdnAccess(url: string, call: CdnCall) {
+export async function callCdnAccess(url: string, call: CdnCall, options: CdnCallOptions = {}) {
   if (!env.IMAGE_CACHER_URL) throw new Error('IMAGE_CACHER_URL is not set');
   if (!env.IMAGE_CACHER_ADMIN_SECRET) throw new Error('IMAGE_CACHER_ADMIN_SECRET is not set');
-  const { method, path } = cdnCallRequest(url, call);
+  const { method, path } = cdnCallRequest(url, call, options);
   const headers = { 'X-Admin-Secret': env.IMAGE_CACHER_ADMIN_SECRET };
 
   let lastError: unknown;
@@ -441,6 +453,9 @@ async function applyCall(url: string, call: CdnCall) {
       "retractedAt" = COALESCE(EXCLUDED."retractedAt", "ImageCdnAccess"."retractedAt"),
       "lastAssertedAt" = now()
   `;
+  // After the state is recorded: the takedown stands whether or not this lands.
+  if (call === 'retract')
+    await sendTakedownPersistOrRetry(url, { retract: false, purgeEdge: true });
 }
 
 /**
@@ -468,6 +483,167 @@ async function withUrlClaim<T>(
       DELETE FROM "ImageCdnAccessClaim" WHERE url = ${url} AND token = ${token}
     `;
   }
+}
+
+// ── takedown persist ────────────────────────────────────────────────────────────────────────────
+
+export type TakedownPersistRetry = {
+  url: string;
+  /** Resend the retraction too: the request that failed carried both. */
+  retract: boolean;
+  /** Purge the url's CDN entries afterwards. */
+  purgeEdge: boolean;
+};
+type PersistOptions = Omit<TakedownPersistRetry, 'url'>;
+type UrlImage = { id: number; name: string | null; type: MediaType | null };
+
+const PERSIST_RETRY_BATCH = 100;
+
+async function imagesOnUrl(url: string) {
+  const [images, deletes] = await Promise.all([
+    dbWrite.$queryRaw<UrlImage[]>`
+      SELECT id, name, type::text AS type FROM "Image" WHERE url = ${url}`,
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT "imageId" AS id FROM "ImageCdnModeratorDelete" WHERE url = ${url}`,
+  ]);
+  return { images, imageIds: [...images, ...deletes].map((x) => x.id) };
+}
+
+/**
+ * Makes a takedown's deny persistent, then purges the url's cached copies from the CDN: a redirect
+ * cached there before the deny would otherwise keep resolving until it expires. Throws on failure.
+ */
+async function sendTakedownPersist(
+  url: string,
+  { retract, purgeEdge }: PersistOptions,
+  images: UrlImage[]
+) {
+  await callCdnAccess(url, retract ? 'retract' : 'deny', { persist: true });
+  if (!purgeEdge) return;
+  // A moderator delete's row is gone, so only the key name is left to purge.
+  const named = images.length ? images : [{ name: null, type: null }];
+  await purgeUrlsOrThrow(
+    uniq(named.flatMap(({ name, type }) => getImageEdgePurgeUrls({ url, name, type })))
+  );
+}
+
+/**
+ * Never throws: it runs after the takedown has been applied, and must not undo or fail it. A
+ * failure is logged and queued for exactly one more attempt.
+ */
+export async function sendTakedownPersistOrRetry(
+  url: string,
+  options: PersistOptions,
+  { imageId }: { imageId?: number } = {}
+) {
+  let imageIds: number[] = imageId === undefined ? [] : [imageId];
+  try {
+    const found = await imagesOnUrl(url);
+    imageIds = uniq([...imageIds, ...found.imageIds]);
+    await sendTakedownPersist(url, options, found.images);
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'takedown-persist-failed',
+      message: 'takedown persist failed; retrying once',
+      imageIds,
+      imageKey: url,
+      error: safeError(error),
+    }).catch(() => undefined);
+    await queueTakedownPersistRetry({ imageId: imageIds[0], url, ...options });
+  }
+}
+
+/**
+ * 🔴 Must tolerate the enum label not existing yet: it is added only after the deploy. Until then
+ * the insert fails and is logged.
+ */
+export async function queueTakedownPersistRetry({
+  imageId,
+  ...data
+}: TakedownPersistRetry & { imageId: number | undefined }) {
+  try {
+    if (imageId === undefined) throw new Error('no image id for this url');
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      VALUES (${imageId}, ${EntityType.Image}::"EntityType",
+              ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", ${JSON.stringify(data)}::jsonb)
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data = EXCLUDED.data
+    `;
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'takedown-persist-retry-not-queued',
+      message: 'takedown persist retry was not queued',
+      imageId,
+      imageKey: data.url,
+      error: safeError(error),
+    }).catch(() => undefined);
+  }
+}
+
+/**
+ * The one retry. Each row gets a single attempt and is removed whatever happens, unless another run
+ * holds its url. A url lifted since the failure is skipped: persisting it would deny a restored
+ * image. One with no image row left was deleted as a takedown, so it is still sent.
+ */
+export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}) {
+  // Compared as text: casting a label the database does not know yet throws.
+  const rows = await dbWrite.$queryRaw<{ entityId: number; data: TakedownPersistRetry | null }[]>`
+    SELECT "entityId", data FROM "JobQueue"
+    WHERE type::text = ${JobQueueType.ImageCdnPersistRetry}
+    ORDER BY "createdAt"
+    LIMIT ${limit}
+  `;
+  const totals = { queued: rows.length, sent: 0, skipped: 0, failed: 0, busy: 0 };
+  await limitConcurrency(
+    rows.map((row) => async () => {
+      const data = row.data;
+      if (data?.url) {
+        const url = data.url;
+        let outcome: 'sent' | 'skipped' | 'failed';
+        try {
+          const result = await withUrlClaim(url, async () => {
+            const [still] = await dbWrite.$queryRaw<{ takenDown: boolean }[]>`
+              SELECT EXISTS (
+                  SELECT 1 FROM "ImageCdnAccess" WHERE url = ${url} AND state = 'Retracted'
+                ) OR NOT EXISTS (SELECT 1 FROM "Image" WHERE url = ${url}) AS "takenDown"
+            `;
+            if (!still?.takenDown) return 'skipped' as const;
+            await sendTakedownPersist(url, data, (await imagesOnUrl(url)).images);
+            return 'sent' as const;
+          });
+          if (!result.claimed) {
+            totals.busy++;
+            return;
+          }
+          outcome = result.value;
+        } catch (error) {
+          outcome = 'failed';
+          await logToAxiom({
+            type: 'error',
+            name: 'takedown-persist-retry-failed',
+            message: 'takedown persist retry failed; not retrying again',
+            imageId: row.entityId,
+            imageKey: url,
+            error: safeError(error),
+          }).catch(() => undefined);
+        }
+        totals[outcome]++;
+      }
+      await dbWrite.$executeRaw`
+        DELETE FROM "JobQueue"
+        WHERE type::text = ${JobQueueType.ImageCdnPersistRetry}
+          AND "entityType" = ${EntityType.Image}::"EntityType"
+          AND "entityId" = ${row.entityId}
+          AND data IS NOT DISTINCT FROM ${
+            row.data === null ? null : JSON.stringify(row.data)
+          }::jsonb
+      `;
+    }),
+    CALL_CONCURRENCY
+  );
+  return totals;
 }
 
 // ── queue drain ─────────────────────────────────────────────────────────────────────────────────

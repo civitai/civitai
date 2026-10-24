@@ -7226,6 +7226,7 @@ enum JobQueueType {
   ReplacedImageDelete
   ImageStorageDelete
   CdnAccessSync
+  ImageCdnPersistRetry
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with

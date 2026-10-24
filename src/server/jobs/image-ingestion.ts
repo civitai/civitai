@@ -914,7 +914,13 @@ export const removeBlockedImages = createJob(
     const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
     const deleted: number[] = [];
     if (takedowns.length > 0) {
-      const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
+      // The CDN sync purged these urls' CDN entries at takedown time, and the retention window
+      // outlasts anything cached before the deny, so this sends no CDN purge of its own.
+      const rows = await deleteImages(takedowns, true, {
+        retractPublicBlobs: true,
+        persistTakedown: true,
+        onlyWhere,
+      });
       deleted.push(...rows.map((x) => x.id));
     }
     if (deletedWithoutRetraction.length > 0) {

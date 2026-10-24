@@ -45,6 +45,7 @@ import {
 } from '~/server/services/feed-primary.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { purgeCache } from '~/server/cloudflare/client';
+import { queueTakedownPersistRetry } from '~/server/services/cdn-access.service';
 import {
   CacheTTL,
   constants,
@@ -370,15 +371,26 @@ export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
  * the copies are derived from, so lifting the deny lets them re-derive on the next request. The
  * `image-blob-retraction-requested` log line below records each request.
  */
-export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
+export type PurgeResizeCacheRetraction = {
+  retractPublicBlobs?: boolean;
+  /**
+   * Also make the deny persistent (see `sendTakedownPersistOrRetry`). A takedown only, like retraction,
+   * and only with the full scope.
+   */
+  persistTakedown?: boolean;
+};
 
 export async function purgeResizeCache({
   url,
   scope = 'all',
   retractPublicBlobs = false,
+  persistTakedown = false,
+  imageId,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
+  /** Names the image in a persist failure, and keys its retry. */
+  imageId?: number;
 } & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
@@ -428,11 +440,14 @@ export async function purgeResizeCache({
     // The combination degrades to NO retraction rather than to the wider blast radius, and says
     // so, because it can only mean a caller is confused about what it is asking for.
     const retract = retractPublicBlobs === true && scope === 'all';
-    if (retractPublicBlobs === true && scope !== 'all') {
+    // The service answers 400 to a persist on a partial scope, and it is incoherent there for the
+    // same reason as retraction.
+    const persist = persistTakedown === true && scope === 'all';
+    if ((retractPublicBlobs === true || persistTakedown === true) && scope !== 'all') {
       logToAxiom({
         type: 'warning',
         name: 'image-blob-retraction-refused',
-        message: 'blob retraction was requested with a partial scope; not retracting',
+        message: 'retraction or persist was requested with a partial scope; sending neither',
         imageKey: url,
         scope,
       }).catch(() => {
@@ -441,8 +456,9 @@ export async function purgeResizeCache({
     }
     // The exact literal the service gates on; it fails closed on anything else.
     const retractParam = retract ? '&retractPublicBlobs=true' : '';
+    const persistParam = persist ? '&persist=true' : '';
 
-    const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}`;
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}${persistParam}`;
 
     // Sent whenever the secret is configured, rather than only on a retracting call, so THIS
     // caller does not have to be redeployed in step with a change on the service side.
@@ -458,7 +474,7 @@ export async function purgeResizeCache({
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
     }
 
-    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
+    const accepted = fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
       headers,
       // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
@@ -466,8 +482,9 @@ export async function purgeResizeCache({
       // endpoint would hand X-Admin-Secret to wherever it pointed. It only ever answers
       // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
       redirect: 'error',
-      // Invalidation must not slow down the delete flow.
-      signal: AbortSignal.timeout(2000),
+      // Invalidation must not slow down the delete flow. A persist is awaited, and it carries the
+      // retraction, which can take tens of seconds.
+      signal: AbortSignal.timeout(persist ? 60_000 : 2000),
     })
       .then((res) => {
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
@@ -478,7 +495,7 @@ export async function purgeResizeCache({
         // the first symptom of a stale shared secret would otherwise be stale images with no
         // signal anywhere.
         if (!res.ok) {
-          return logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'image-cacher-invalidate',
             message: 'image-cacher invalidate returned a non-success status',
@@ -489,6 +506,7 @@ export async function purgeResizeCache({
             // swallow — best effort logging
           });
         }
+        return res.ok;
       })
       .catch((err) => {
         logToAxiom({
@@ -501,7 +519,21 @@ export async function purgeResizeCache({
         }).catch(() => {
           // swallow — best effort logging
         });
+        return false;
       });
+
+    // A persist that did not land is retried once from the job queue; the delete flow still never
+    // fails on it.
+    if (persist && !(await accepted)) {
+      await logToAxiom({
+        type: 'error',
+        name: 'takedown-persist-failed',
+        message: 'takedown persist failed; retrying once',
+        imageId,
+        imageKey: url,
+      }).catch(() => undefined);
+      await queueTakedownPersistRetry({ imageId, url, retract, purgeEdge: false });
+    }
   }
 }
 
@@ -511,6 +543,7 @@ export async function deleteImageFromS3({
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
   // destroys and for the collateral that is knowingly accepted along with it.
   retractPublicBlobs = false,
+  persistTakedown = false,
   // The retry job turns this off: the first failure already purged, and an outage would otherwise
   // re-purge every queued key on every run.
   purgeOnFailure = true,
@@ -634,7 +667,7 @@ export async function deleteImageFromS3({
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
   if (outcome === 'deleted' || purgeOnFailure)
-    await purgeResizeCache({ url: url, retractPublicBlobs });
+    await purgeResizeCache({ url: url, retractPublicBlobs, persistTakedown, imageId: id });
   return outcome;
 }
 
@@ -911,6 +944,7 @@ export async function deleteImages(
   updatePosts = true,
   {
     retractPublicBlobs = false,
+    persistTakedown = false,
     onlyWhere,
   }: PurgeResizeCacheRetraction & {
     /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
@@ -977,7 +1011,9 @@ export async function deleteImages(
       results,
       async (results) =>
         await Promise.all(
-          results.map(({ id, url }) => deleteImageFromS3({ id, url, retractPublicBlobs }))
+          results.map(({ id, url }) =>
+            deleteImageFromS3({ id, url, retractPublicBlobs, persistTakedown })
+          )
         )
     );
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);

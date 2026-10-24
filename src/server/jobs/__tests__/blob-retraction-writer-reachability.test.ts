@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
@@ -173,6 +173,28 @@ function retractionFor(id: number) {
   if (!call) return undefined;
   return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
+
+/** The persist intent for one image, read the same way as `retractionFor`. */
+function persistFor(id: number) {
+  const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
+  if (!call) return undefined;
+  return Boolean((call[2] as { persistTakedown?: boolean } | undefined)?.persistTakedown);
+}
+
+/**
+ * 🔴 Persist rides with retraction and nothing else: every case below that does not retract is
+ * also a case that must not persist. Read per call, so a persist on the non-retracting batch of a
+ * mixed run fails here too.
+ */
+afterEach(() => {
+  for (const call of mockDeleteImages.mock.calls) {
+    const opts = call[2] as { retractPublicBlobs?: boolean; persistTakedown?: boolean } | undefined;
+    expect(
+      Boolean(opts?.persistTakedown),
+      `persist differs from retraction for images ${(call[0] as number[]).join(',')}`
+    ).toBe(Boolean(opts?.retractPublicBlobs));
+  }
+});
 
 function image(id: number, userId: number, over: Partial<ImageRow> = {}): ImageRow {
   return {
@@ -477,6 +499,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(1), 'a moderator takedown stopped asking for retraction').toBe(true);
+    expect(persistFor(1), 'a moderator takedown stopped asking for persist').toBe(true);
   });
 
   // The main app's own single-image TOS takedown. It is `moderatorProcedure`-gated and per-image,
@@ -512,6 +535,7 @@ describe('who can reach blob retraction, driven through the real block writers',
       retractionFor(11),
       'the main-app TOS takedown stopped asking for retraction — check it still records ModActivity'
     ).toBe(true);
+    expect(persistFor(11), 'the main-app TOS takedown stopped asking for persist').toBe(true);
   });
 
   // 🔴 F1. The uploader owns `Image.metadata`, so anything the retraction decision reads out of it
@@ -939,6 +963,8 @@ describe('who can reach blob retraction, driven through the real block writers',
 
     expect(retractionFor(7)).toBe(true);
     expect(retractionFor(8)).toBe(false);
+    expect(persistFor(7)).toBe(true);
+    expect(persistFor(8)).toBe(false);
     // The purge itself is unchanged: both are still hard-deleted on schedule.
     expect(store.queue, 'the queue was not drained').toEqual([]);
   });
