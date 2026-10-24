@@ -54,6 +54,38 @@ describe('CsamHeldMedia', () => {
     await expect.element(page.getByTestId('cdn-media')).toBeInTheDocument();
   });
 
+  test('shows an error tile, never the CDN copy, when the probe itself fails', async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    renderWithProviders(<CsamHeldMedia image={image} onClick={() => undefined} />);
+    await expect
+      .element(page.getByText('Could not load this file.', { exact: false }))
+      .toBeVisible();
+    expect(page.getByTestId('cdn-media').query()).toBeNull();
+  });
+
+  test('plays a video from the route, and shows an error tile when it fails for any other reason', async () => {
+    const video = { ...image, type: 'video' } as unknown as ModerationImageModel;
+    // A probe that never answers holds the video on screen, so its src is read from a state that stays.
+    fetchMock.mockImplementation(() => new Promise(() => undefined));
+    const first = await renderWithProviders(
+      <CsamHeldMedia image={video} onClick={() => undefined} />
+    );
+    expect(first.container.querySelector('video')?.getAttribute('src')).toBe(
+      '/api/mod/held-media/41'
+    );
+    await first.unmount();
+
+    probeAnswers(502);
+    renderWithProviders(<CsamHeldMedia image={video} onClick={() => undefined} />);
+    await expect
+      .element(page.getByText('Could not load this file.', { exact: false }))
+      .toBeVisible();
+    expect(page.getByTestId('cdn-media').query()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('/api/mod/held-media/41?probe=1');
+  });
+
   test('loads from the route first, not the CDN', async () => {
     fetchMock.mockImplementation(() => new Promise(() => undefined));
     renderWithProviders(<CsamHeldMedia image={image} onClick={() => undefined} />);

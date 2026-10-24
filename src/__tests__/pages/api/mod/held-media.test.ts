@@ -105,17 +105,6 @@ describe('/api/mod/held-media', () => {
     expect(getGetUrlByKey).not.toHaveBeenCalled();
   });
 
-  it('refuses a row whose url is not a storage key, as not held', async () => {
-    getHeldMedia.mockResolvedValue({
-      url: 'https://elsewhere.test/x.png',
-      type: 'image',
-      mimeType: null,
-    });
-    const res = await call();
-    expect(res.statusCode).toBe(404);
-    expect(getGetUrlByKey).not.toHaveBeenCalled();
-  });
-
   it('answers a probe for a held image without serving it', async () => {
     const res = await call({ imageId: '7', probe: '1' });
     expect(res.statusCode).toBe(204);
@@ -227,6 +216,7 @@ describe('/api/mod/held-media', () => {
     };
     expect(await post({ count: 12, userId: 9, imageIds: [1, 2] })).toBe(204);
     expect(await post({ count: 5_000, userId: 9 })).toBe(204);
+    expect(await post({ count: 2 ** 40, userId: 9 })).toBe(204);
     expect(await post({ count: 0, userId: 9 })).toBe(400);
     expect(await post({ count: 12 })).toBe(400);
     flags.csamReports = false;
@@ -234,6 +224,7 @@ describe('/api/mod/held-media', () => {
     expect(trackModActivity.mock.calls).toEqual([
       [42, { entityType: 'user', entityId: 9, activity: 'heldMedia:grid:12' }],
       [42, { entityType: 'user', entityId: 9, activity: 'heldMedia:grid:5000' }],
+      [42, { entityType: 'user', entityId: 9, activity: 'heldMedia:grid:2147483647' }],
     ]);
   });
 
@@ -257,11 +248,54 @@ describe('/api/mod/held-media', () => {
     ]);
   });
 
-  it('audits every serve from byte 0 and skips only mid-file ranges', async () => {
-    await call();
-    await call({ imageId: '7' }, 'bytes=0-1');
+  const storeAnswers = (status: number, contentRange?: string) =>
+    fetchMock.mockImplementation(
+      async () =>
+        new Response('x', {
+          status,
+          headers: {
+            'content-type': 'image/png',
+            ...(contentRange ? { 'content-range': contentRange } : {}),
+          },
+        })
+    );
+  const row = [42, { entityType: 'image', entityId: 7, activity: 'heldMedia:view' }];
+
+  it.each([
+    ['a zero-padded start', 'bytes=00-', 206, 'bytes 0-99/100'],
+    ['a suffix range covering the file', 'bytes=-999999999', 206, 'bytes 0-99/100'],
+    ['a range the store ignored', 'bytes=5000-', 200, undefined],
+  ])(
+    'audits a serve from byte 0, decided by the store: %s',
+    async (_name, range, status, contentRange) => {
+      storeAnswers(status, contentRange);
+      await call({ imageId: '7' }, range);
+      expect(trackModActivity.mock.calls).toEqual([row]);
+    }
+  );
+
+  it('skips the row only for a mid-file range', async () => {
+    storeAnswers(206, 'bytes 2-99/100');
     await call({ imageId: '7' }, 'bytes=2-');
-    const row = [42, { entityType: 'image', entityId: 7, activity: 'heldMedia:view' }];
-    expect(trackModActivity.mock.calls).toEqual([row, row]);
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs no serve for a store answer that carries no held bytes', async () => {
+    for (const status of [404, 416, 500, 503]) {
+      fetchMock.mockImplementationOnce(async () => new Response(null, { status }));
+      await call({ imageId: '7' }, status === 416 ? 'bytes=500-' : undefined);
+    }
+    const serves = loggingMock.logToAxiom.mock.calls
+      .map(([line]: [Record<string, unknown>]) => line)
+      .filter((line: Record<string, unknown>) => line.name === 'held-media-serve');
+    expect(serves).toEqual([]);
+  });
+
+  it('answers a held image whose url is not a storage key without the not-held header', async () => {
+    getHeldMedia.mockResolvedValue({ url: 'legacy/x.png', type: 'image', mimeType: null });
+    const res = await call();
+    expect(res.statusCode).toBe(422);
+    expect(res.headers['x-held-media']).toBeUndefined();
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
   });
 });

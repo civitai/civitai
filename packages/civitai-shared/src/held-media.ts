@@ -27,8 +27,10 @@ export function heldImageSql(image: string): string {
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${owner})
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-          AND (hs.details ->> 'secondaryUserId')::bigint = ${owner}
+        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
+        -- every request.
+        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${owner}
       )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${owner})
     ))
@@ -70,10 +72,15 @@ export function forwardableRange(header: string | null | undefined): string | nu
   return `bytes=${match[1]}-${match[2]}`;
 }
 
-/** Whether a served request gets its own audit row: every one that starts at byte 0. A video's
- *  seeks are mid-file ranges of a view already recorded, and only those are skipped. */
-export function isAuditedServe(range: string | null): boolean {
-  return range == null || range.startsWith('bytes=0-');
+/** Whether a response gets its own audit row: every one that starts at byte 0, read from what the
+ *  store sent rather than what was asked. A video's seeks are mid-file ranges of a view already
+ *  recorded, and only those are skipped. */
+export function isAuditedServe(upstream: {
+  status: number;
+  headers: { get(name: string): string | null };
+}): boolean {
+  if (upstream.status === 200) return true;
+  return /^bytes 0-/.test(upstream.headers.get('content-range') ?? '');
 }
 
 /** The headers every held-media response carries. `withBody: false` for a response sent empty. */

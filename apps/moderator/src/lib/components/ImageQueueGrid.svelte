@@ -1,7 +1,7 @@
 <script lang="ts" generics="T extends { id: number; url: string; type: MediaType; nsfwLevel?: number }">
   import { goto } from '$app/navigation';
   import { page as pageState } from '$app/state';
-  import { untrack, type Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
   // Used by the `generics=` attribute on the script tag above. ESLint cannot see that as a usage and
   // reports it unused — deleting it is a build error, not a cleanup.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -81,11 +81,14 @@
     heldMedia ? heldMediaUrl(item.id) : `${civitaiUrl}/images/${item.id}`;
   const fullLabel = $derived(heldMedia ? 'Open full size' : 'Open on Civitai');
 
-  // Once per page view: keyed on the URL, so an action that refreshes the same page adds no row.
+  // Once per page view, at its first non-empty render: keyed on the URL, so an action that refreshes
+  // the same page adds no row.
+  let reportedHref: string | null = null;
   $effect(() => {
-    void pageState.url.href;
-    const count = untrack(() => items.length);
-    if (heldMedia && count) reportHeldGridView(count);
+    const href = pageState.url.href;
+    if (!heldMedia || !items.length || reportedHref === href) return;
+    reportedHref = href;
+    reportHeldGridView(items.length);
   });
 
   const key = (item: T) => keyOf?.(item) ?? item.id;

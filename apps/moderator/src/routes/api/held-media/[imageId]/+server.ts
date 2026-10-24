@@ -78,7 +78,7 @@ export const GET: RequestHandler = async ({ params, locals, request }) => {
       upstream: upstream.headers,
     })
   );
-  if (isAuditedServe(range)) recordHeldView(locals.user.id, imageId);
+  if (isAuditedServe(upstream)) recordHeldView(locals.user.id, imageId);
 
   return new Response(upstream.body, {
     status: upstream.status,

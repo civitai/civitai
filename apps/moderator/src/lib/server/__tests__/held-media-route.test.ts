@@ -306,16 +306,34 @@ describe('audit', () => {
     expect(serves()).toEqual([]);
   });
 
-  it('audits every serve from byte 0, whatever the request says it is for, and skips only mid-file ranges', async () => {
-    await call('/api/held-media/7');
-    await call('/api/held-media/7?view=grid');
-    await call('/api/held-media/7', { range: 'bytes=0-1' });
-    await call('/api/held-media/7', { range: 'bytes=2-' });
+  // Decided from what the store sent, never from the Range text: each of these asks oddly and gets
+  // the file from byte 0.
+  it.each([
+    ['no range', undefined, 200, undefined],
+    ['a zero-padded start', 'bytes=00-', 206, 'bytes 0-99/100'],
+    ['a suffix range covering the file', 'bytes=-999999999', 206, 'bytes 0-99/100'],
+    ['a range the store ignored', 'bytes=5000-', 200, undefined],
+    ['the probe ahead of a video', 'bytes=0-1', 206, 'bytes 0-1/100'],
+  ])('audits a serve from byte 0: %s', async (_name, range, status, contentRange) => {
+    fetchMock.mockResolvedValue(
+      upstream(status, {
+        'content-type': 'image/jpeg',
+        ...(contentRange ? { 'content-range': contentRange } : {}),
+      })
+    );
+    await call('/api/held-media/7', range ? { range } : {});
+    expect(recordModActivity.mock.calls).toEqual([
+      [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }],
+    ]);
+  });
+
+  it('skips the row only for a mid-file range, which still leaves its serve line', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(206, { 'content-type': 'image/jpeg', 'content-range': 'bytes 5000-5099/9000' })
+    );
     await call('/api/held-media/7', { range: 'bytes=5000-' });
-    const row = [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }];
-    expect(recordModActivity.mock.calls).toEqual([row, row, row]);
-    // Every one of the five still left its serve line.
-    expect(serves()).toHaveLength(5);
+    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(serves()).toHaveLength(1);
   });
 
   it('records no view of an image it refused', async () => {

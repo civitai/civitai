@@ -44,10 +44,13 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const { imageId } = parsed.data;
 
   const media = await getHeldMedia(imageId);
-  if (!media || !isProbeableMediaKey(media.url)) {
+  if (!media) {
     res.setHeader(NOT_HELD_HEADER, NOT_HELD);
     return void res.status(404).json({ error: 'Not available here' });
   }
+  // Held, but not a key this store can serve: no not-held answer, so the page never shows the CDN copy.
+  if (!isProbeableMediaKey(media.url))
+    return void res.status(422).json({ error: 'This file is not in a servable place' });
   if (req.query.probe === '1') return void res.status(204).end();
 
   let signedUrl: string;
@@ -101,7 +104,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       upstream: upstream.headers,
     })
   ).catch(() => null);
-  if (isAuditedServe(range))
+  if (isAuditedServe(upstream))
     void trackModActivity(user.id, {
       entityType: 'image',
       entityId: imageId,
