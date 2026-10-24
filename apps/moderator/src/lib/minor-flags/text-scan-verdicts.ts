@@ -75,10 +75,12 @@ export const flagsOf = (v: unknown) =>
 export const isOpenVerdict = (flag: TextScanFlagView | undefined) =>
   !!flag?.workflowId && !flag.appealGranted;
 
-type FlagRow = { minor: boolean; poi: boolean; textScanFlags: unknown };
+type FlagRow = { minor: boolean; poi: boolean; textScanFlags: unknown; poiHashFlag?: boolean };
 
+/** Mirrors the appeal resolver: `poi` counts with an open text-scan verdict or a hash flag's snapshot,
+ *  since owners set it by hand otherwise. */
 export const poiInForce = (row: FlagRow) =>
-  row.poi && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
+  row.poi && (!!row.poiHashFlag || isOpenVerdict(flagsOf(row.textScanFlags)?.poi));
 
 export const flagInForce = (row: FlagRow) => row.minor || poiInForce(row);
 

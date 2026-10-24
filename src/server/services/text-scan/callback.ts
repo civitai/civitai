@@ -1,5 +1,4 @@
 import { getWorkflow } from '@civitai/orchestration-client';
-import type { StoredModelRules } from '@civitai/moderation/model-rules';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -18,10 +17,6 @@ import { parseTextScanSteps } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
-import {
-  filterModelRuleMatches,
-  getModelRuleSnapshots,
-} from '~/server/services/text-scan/model-rules';
 import {
   readTextScanVerdict,
   recordTextScanFailure,
@@ -55,9 +50,6 @@ type TextScanWorkflowMetadata = {
   model?: string;
   textHash?: string;
   subjectMeta?: Record<string, unknown>;
-  ruleIds?: number[];
-  rulesFingerprint?: string;
-  literalRuleIds?: number[];
   inputChars?: number;
   inputCut?: boolean;
   segments?: number;
@@ -67,34 +59,6 @@ type TextScanWorkflowMetadata = {
 /** Workflows submitted before segmentation carry no `segments` and hold one step. */
 function expectedSegments({ segments }: TextScanWorkflowMetadata) {
   return Number.isInteger(segments) && (segments as number) > 0 ? (segments as number) : 1;
-}
-
-/**
- * Narrows the merged `modelRules` match to rules the prompt listed that are still live, in place.
- * Every path that acts on a verdict goes through here, so a rule the prompt never carried, or one
- * disabled since the submit, can never unpublish a model.
- */
-async function scopeModelRules(
-  output: TextScanOutput,
-  metadata: TextScanWorkflowMetadata,
-  ctx: Record<string, unknown>
-): Promise<StoredModelRules | undefined> {
-  if (!output.modelRules) return undefined;
-  const { kept, dropped } = filterModelRuleMatches(output.modelRules.matched, metadata.ruleIds);
-  if (dropped.length)
-    await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
-  const listed = new Set(metadata.ruleIds);
-  const literalCandidates = (metadata.literalRuleIds ?? []).filter((id) => listed.has(id));
-  const snapshot = await getModelRuleSnapshots([
-    ...new Set([...kept.map((m) => m.ruleId), ...literalCandidates]),
-  ]);
-  const live = new Set(snapshot.map((rule) => rule.id));
-  output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
-  return {
-    fingerprint: metadata.rulesFingerprint,
-    snapshot,
-    literalRuleIds: literalCandidates.filter((id) => live.has(id)),
-  };
 }
 
 function inputMeta(metadata: TextScanWorkflowMetadata, flaggedSegments: FlaggedSegments) {
@@ -136,6 +100,15 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     return;
   }
+  // In flight when the LLM scan was retired: there is no profile or label left to read it with.
+  if (entityType === 'ModelRules')
+    return log('info', 'callback for the retired ModelRules scan dropped', {
+      workflowId,
+      entityType,
+      entityId,
+      mode,
+      status: event.status,
+    });
   const variant = metadata.variant;
   if (
     variant !== undefined &&
@@ -208,7 +181,6 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     if (!stored) return;
     const { output: merged } = mergeTextScanOutputs(outputs, labels);
-    const modelRules = await scopeModelRules(merged, metadata, ctx);
     const raised = stricterThanStored(stored, merged, labels);
     if (!raised.length) return;
     const output: TextScanOutput = Object.fromEntries(
@@ -226,7 +198,6 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       model: metadata.model ?? '',
       textHash: metadata.textHash,
       meta: metadata.subjectMeta ?? subject.meta,
-      modelRules,
     });
     if (!recorded) return;
     await log('warning', 'partial verdict raised', {
@@ -305,8 +276,6 @@ export async function handleTextScanCallback(event: { workflowId: string; status
 
   const { output, flaggedSegments } = mergeTextScanOutputs(parsed.outputs, labels);
 
-  const modelRules = await scopeModelRules(output, metadata, ctx);
-
   const outcome = evaluateTextScan(output, subject.declared, labels);
   const subjectMeta = metadata.subjectMeta ?? subject.meta;
   const extra = inputMeta(metadata, flaggedSegments);
@@ -322,7 +291,6 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     model: metadata.model ?? '',
     textHash: metadata.textHash,
     meta,
-    modelRules,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
@@ -341,11 +309,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
     csam: outcome.csam?.detected,
-    tags: [
-      ...outcome.triggeredLabels,
-      ...(outcome.modelRules?.matched.map((m) => `modelRules:${m.ruleId}`) ?? []),
-      ...(metadata.inputCut ? ['inputCut'] : []),
-    ],
+    tags: [...outcome.triggeredLabels, ...(metadata.inputCut ? ['inputCut'] : [])],
     textHash: metadata.textHash,
     ...(variant ? { variant } : {}),
   });

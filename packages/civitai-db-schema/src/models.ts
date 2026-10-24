@@ -4752,12 +4752,14 @@ export interface ScanLabelVote {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Date;
+  claimToken: string | null;
 }
 
 export interface ScanLabelClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;
+  token: string | null;
 }
 
 export interface ScanLabelCopyObject {

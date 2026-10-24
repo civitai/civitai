@@ -54,29 +54,18 @@ export type UserReview = {
    *  deciding without reading it. */
   details: string | null;
   modelCreator: string | null;
-  imageCount: number;
 };
 
-export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
-  // Retool's SubmittedReviewImageCount. This is the body of the `ResourceReviewHelper` VIEW, inlined and
-  // correlated to the row — NEVER join the view itself. It groups over all 71M reviews, and the qual does
-  // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
-  // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
-  // per returned row: 0.9s.
+const REVIEWS_LIMIT = 100;
+
+export async function getReviews(
+  userId: number,
+  limit = REVIEWS_LIMIT
+): Promise<Capped<UserReview>> {
   return dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
-    .select((eb) =>
-      eb
-        .selectFrom('ImageResourceNew as ir')
-        .innerJoin('Image as i', (join) =>
-          join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
-        )
-        .select((agg) => agg.fn.count('i.id').distinct().as('count'))
-        .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
-        .as('imageCount')
-    )
     .select([
       'rr.id',
       'rr.createdAt',
@@ -92,12 +81,46 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
     .orderBy('rr.createdAt', 'desc')
     .limit(limit + 1)
     .execute()
-    .then((rows) =>
-      capped(
-        rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
-        limit
-      )
-    );
+    .then((rows) => capped(rows, limit));
+}
+
+/**
+ * Review id → how many of the reviewer's own images use the reviewed version, for the same reviews
+ * `getReviews` lists. Retool's SubmittedReviewImageCount.
+ *
+ * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
+ * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
+ * instead is slower for prolific reviewers, so neither shape wins.
+ *
+ * The body of the `ResourceReviewHelper` VIEW, inlined and correlated to the row — NEVER join the view
+ * itself. It groups over every review and the qual does not push through, so both a join and a keyed
+ * `IN (…)` lookup time out. (The main app hit the same wall: resourceReview.service.ts.)
+ */
+export async function getReviewImageCounts(
+  userId: number,
+  limit = REVIEWS_LIMIT
+): Promise<Record<number, number>> {
+  // The same joins as `getReviews`, so the limit lands on the same rows.
+  const rows = await dbRead
+    .selectFrom('ResourceReview as rr')
+    .innerJoin('Model as m', 'm.id', 'rr.modelId')
+    .innerJoin('User as u', 'u.id', 'm.userId')
+    .select((eb) => [
+      'rr.id',
+      eb
+        .selectFrom('ImageResourceNew as ir')
+        .innerJoin('Image as i', (join) =>
+          join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
+        )
+        .select((agg) => agg.fn.count('i.id').distinct().as('count'))
+        .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
+        .as('imageCount'),
+    ])
+    .where('rr.userId', '=', userId)
+    .orderBy('rr.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+  return Object.fromEntries(rows.map((row) => [row.id, Number(row.imageCount ?? 0)]));
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
