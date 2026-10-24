@@ -1,15 +1,17 @@
 /**
- * One-off recovery tool for a challenge whose review phase was lost (e.g. a judge-provider outage)
- * and which then completed with no winners. Delete after use.
+ * One-off recovery tool for challenges whose review ticks were lost (e.g. a judge-provider outage).
+ * Delete after use.
  *
  * Mod-only. POST /api/admin/temp/challenge-review-replay
  *
  *   { "challengeId": 601, "step": "review", "cursor": "<ISO>" }
  *     Starts replaying the original 10-minute review ticks from `cursor` (default: the challenge
- *     start) through `endsAt + 10min` in the background, and answers 202 at once: one tick can
- *     outlast the request timeout. Each tick logs `challenge-review-replay` to Axiom with the
- *     next cursor, so an interrupted run resumes from the last one logged. Re-running is safe:
- *     entries the judge already commented on are skipped.
+ *     start) in the background, and answers 202 at once: one tick can outlast the request
+ *     timeout. A Completed challenge (with no winners) replays through `endsAt + 10min`; an
+ *     Active one only up to its live review watermark, so the regular job keeps the ticks after
+ *     it. Each tick logs `challenge-review-replay` to Axiom with the next cursor, so an
+ *     interrupted run resumes from the last one logged. Re-running is safe: entries the judge
+ *     already commented on are skipped.
  *
  *   { "challengeId": 601, "step": "status" }
  *     Whether a replay is running on this pod, and how many entries are judged so far.
@@ -76,10 +78,14 @@ export default ModEndpoint(
     if (!challenge.collectionId)
       return res.status(400).json({ error: 'Challenge has no collection' });
 
-    if (challenge.status !== ChallengeStatus.Completed) {
-      return res.status(400).json({ error: `Challenge is ${challenge.status}, not Completed` });
+    const isActive = challenge.status === ChallengeStatus.Active;
+    if (!isActive && challenge.status !== ChallengeStatus.Completed) {
+      return res.status(400).json({ error: `Challenge is ${challenge.status}` });
     }
-    if ((await countWinners(challengeId)) > 0) {
+    if (isActive && step === 'winners') {
+      return res.status(400).json({ error: 'Challenge is still Active; it closes on its own' });
+    }
+    if (!isActive && (await countWinners(challengeId)) > 0) {
       return res.status(400).json({ error: 'Challenge already has winners' });
     }
 
@@ -96,8 +102,19 @@ export default ModEndpoint(
         return res.status(409).json({ error: 'A replay is already running on this pod' });
       }
       const collectionId = challenge.collectionId;
-      // Entries are promoted up to endsAt (plus a few seconds), so the last window must reach past it.
-      const lastTickStart = challenge.endsAt.getTime() + TICK_MS;
+      // Completed: entries are promoted up to endsAt (plus a few seconds), so the last window must
+      // reach past it. Active: stop at the live watermark; the regular job owns everything after.
+      let lastTickStart = challenge.endsAt.getTime() + TICK_MS;
+      if (isActive) {
+        const [state] = await dbWrite.$queryRaw<{ reviewedAt: bigint | null }[]>`
+          SELECT cast(metadata->>'reviewedAt' as bigint) AS "reviewedAt"
+          FROM "Challenge" WHERE id = ${challengeId}
+        `;
+        if (!state?.reviewedAt) {
+          return res.status(400).json({ error: 'Active challenge has no review watermark yet' });
+        }
+        lastTickStart = Number(state.reviewedAt);
+      }
       const firstTickStart = (cursor ?? challenge.startsAt).getTime();
 
       running.add(challengeId);
@@ -105,8 +122,11 @@ export default ModEndpoint(
         let tickStart = firstTickStart;
         try {
           while (tickStart < lastTickStart) {
+            const tickEnd = isActive
+              ? Math.min(tickStart + TICK_MS, lastTickStart)
+              : tickStart + TICK_MS;
             await challengeReviewInternals.reviewEntriesForChallenge(details, {
-              replayWindow: { from: new Date(tickStart), to: new Date(tickStart + TICK_MS) },
+              replayWindow: { from: new Date(tickStart), to: new Date(tickEnd) },
             });
             tickStart += TICK_MS;
             logToAxiom({
