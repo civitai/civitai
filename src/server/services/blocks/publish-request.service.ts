@@ -1299,6 +1299,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     const { carryForkProvenanceToPublishRequest } = await import('./app-fork.service');
     await carryForkProvenanceToPublishRequest(dbWrite, { publishRequestId, slug });
   }
+  // A FIRST version of a fork: its provenance comes from the server-side fork session the Fork
+  // action recorded for this slug, and only when that session is the SUBMITTER's. Never from
+  // `manifest` or anything else the client sent. Best-effort and never throws.
+  if (existingApp == null) {
+    const { applyForkSessionToFirstPublishRequest } = await import('./app-fork-start.service');
+    await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
+  }
 
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
   // `AppListing` now that the pending request exists. Ordered AFTER the request create

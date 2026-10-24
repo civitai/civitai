@@ -502,6 +502,9 @@ export const createSubscribeSession = async ({
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
+    // A bank debit takes days to clear, but the membership goes active on checkout, so a
+    // bounced first payment has already granted the tier. Link is left out: it can pay from a bank.
+    payment_method_types: ['card'],
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
@@ -989,8 +992,17 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const products = (await dbRead.product.findMany()).filter(
       (p) => !!(p.metadata as any)?.[env.TIER_METADATA_KEY]
     );
-    const billedProduct = products.find((p) =>
-      invoice.lines.data.some((l) => l.price?.product === p.id)
+    // A trial_end push bills the plan at $0, which sells no month. Line amounts are before
+    // discounts, so a gifted or comped month still counts. On a plan switch the renewed plan is the
+    // non-proration line; the old plan's credit and the new plan's prorations don't decide it.
+    // Not amount_paid: a balance-paid renewal has 0 there.
+    const tierLines = invoice.lines.data.filter((l) =>
+      products.some((p) => p.id === l.price?.product)
+    );
+    const billedLine = tierLines.find((l) => !l.proration && l.amount > 0);
+    const billedMonth = !!billedLine;
+    const billedProduct = products.find(
+      (p) => p.id === (billedLine ?? tierLines[0])?.price?.product
     );
 
     if (!billedProduct) {
@@ -1005,18 +1017,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       return;
     }
 
-    await withRetries(() =>
-      createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: user.id,
-        toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-        type: TransactionType.Purchase,
-        externalTransactionId: invoice.id,
-        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
-        description: `Membership bonus`,
-        details: { invoiceId: invoice.id },
-      })
-    ).catch(handleLogError);
+    if (billedMonth)
+      await withRetries(() =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+          type: TransactionType.Purchase,
+          externalTransactionId: invoice.id,
+          amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
+          description: `Membership bonus`,
+          details: { invoiceId: invoice.id },
+        })
+      ).catch(handleLogError);
 
     const { bindReferralCodeForUser, recordMembershipPaymentReward } = await import(
       '~/server/services/referral.service'
@@ -1076,18 +1089,19 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     const stripeChargeId =
       typeof invoice.charge === 'string' ? invoice.charge : invoice.charge?.id ?? undefined;
 
-    await recordMembershipPaymentReward({
-      refereeId: user.id,
-      tier: billedProductMeta.tier,
-      monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
-      sourceEventId: invoice.id,
-      payment: {
-        paymentProvider: 'Stripe',
-        stripeInvoiceId: invoice.id,
-        stripePaymentIntentId,
-        stripeChargeId,
-      },
-    }).catch(handleLogError);
+    if (billedMonth)
+      await recordMembershipPaymentReward({
+        refereeId: user.id,
+        tier: billedProductMeta.tier,
+        monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+        sourceEventId: invoice.id,
+        payment: {
+          paymentProvider: 'Stripe',
+          stripeInvoiceId: invoice.id,
+          stripePaymentIntentId,
+          stripeChargeId,
+        },
+      }).catch(handleLogError);
 
     // -----------------------------------------------------------------
     // W3 flow C — App Blocks MEMBERSHIP attribution. If this membership
@@ -1128,7 +1142,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     // pending zero-everything rows that the confirm-pending cron promotes
     // forever. amount_paid is the correct basis (you only share new money).
     const grossUsdCents = invoice.amount_paid ?? invoice.total ?? 0;
-    if (isAttributableBillingReason && grossUsdCents > 0) {
+    if (isAttributableBillingReason && grossUsdCents > 0 && billedMonth) {
       try {
         const blockAttribution = extractAttribution(
           subscriptionMetadata as Record<string, string | number | null | undefined>

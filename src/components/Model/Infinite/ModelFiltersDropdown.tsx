@@ -5,7 +5,6 @@ import {
   Drawer,
   Group,
   Indicator,
-  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
@@ -22,12 +21,11 @@ import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   Availability,
@@ -399,14 +397,9 @@ export function DumbModelFiltersDropdown({
       ) : null}
       <Stack gap={0}>
         <Divider label="Base model" className="text-sm font-bold" mb={4} />
-        <MultiSelect
-          data={baseModelSelectData}
+        <BaseModelFilterSelect
           value={(mergedFilters.baseModels as string[]) ?? []}
-          onChange={(baseModels) => patchPending({ baseModels: baseModels as BaseModel[] })}
-          placeholder="All Base Models"
-          searchable={!isMobileDevice()}
-          clearable
-          comboboxProps={{ withinPortal: false }}
+          onChange={(baseModels) => patchPending({ baseModels })}
         />
       </Stack>
 

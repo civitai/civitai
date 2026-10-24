@@ -43,6 +43,7 @@ import {
   withSpan,
 } from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
 import {
   annotateOrchestratorMissingBlob,
   annotateOrchestratorSubmitFailure,
@@ -809,11 +810,25 @@ export function throwOrchestratorFailure({
       throw throwAuthorizationError(message);
     case 403:
       throw throwInsufficientFundsError(message);
-    case 429:
+    case 429: {
       // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
       // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
       // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
-      throw throwRateLimitError(message);
+      // Not "too many jobs" for every 429: a free-tier quota 429 carries its own detail.
+      const retryAfter = getRetryAfterSeconds(response);
+      const reason = message || 'Too many requests right now.';
+      // A detail that already says when to retry is left as it is.
+      if (!retryAfter || /try again|retry/i.test(reason)) throw throwRateLimitError(reason);
+      const wait =
+        retryAfter === 1
+          ? 'a second'
+          : retryAfter < 120
+          ? `about ${retryAfter} seconds`
+          : `about ${Math.ceil(retryAfter / 60)} minutes`;
+      throw throwRateLimitError(
+        `${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again in ${wait}.`
+      );
+    }
     default:
       // An unhandled 4xx from the orchestrator is a client/validation fault
       // (e.g. "<resource> is not enabled for generation. Please contact …"),
