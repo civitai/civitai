@@ -1,21 +1,25 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import client from 'prom-client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
 /**
  * The legacy-store shutdown on the REST twins: with `app-blocks-legacy-stores-removed` on, every
  * `/api/v1/blocks/app-storage/*` and `/api/v1/blocks/shared-storage/*` route answers 410 with the
- * stable body and never reaches the store; with it off, or when the flag eval fails, every route
- * reaches its store function exactly as before.
+ * stable body and never reaches the store; explicitly off, every route reaches its store as before.
+ * A flag Flipt cannot answer for (missing key, no client) keeps the stores before the fail-closed
+ * cutoff (2026-11-10T00:00Z) and removes them from the cutoff on.
  */
 
-const FLAG = 'app-blocks-legacy-stores-removed';
 const GUIDE = 'https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores';
+const BEFORE_CUTOFF = new Date('2026-11-09T23:59:59.999Z');
+const AFTER_CUTOFF = new Date('2027-01-15T12:00:00.000Z');
 
-const { mockIsFlipt, fns, mockHandleEndpointError } = vi.hoisted(() => {
+// What Flipt answers for app-blocks-legacy-stores-removed: true / false, or null when it cannot
+// answer (key missing from the snapshot, or no client) — the three outcomes `isFliptSync` reports.
+const { flagState, fns, mockHandleEndpointError } = vi.hoisted(() => {
   const names = [
     'getAppStorageValue',
     'setAppStorageValue',
@@ -35,7 +39,7 @@ const { mockIsFlipt, fns, mockHandleEndpointError } = vi.hoisted(() => {
     'incrementSharedCounter',
   ] as const;
   return {
-    mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(),
+    flagState: { value: null as boolean | null },
     fns: Object.fromEntries(names.map((n) => [n, vi.fn()])) as Record<
       (typeof names)[number],
       ReturnType<typeof vi.fn>
@@ -57,8 +61,11 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClientModule>()),
-  isFlipt: (flag: string, entityId?: string, context?: unknown) =>
-    mockIsFlipt(flag, entityId, context),
+  isFlipt: async (flag: string) =>
+    flag === 'app-blocks-legacy-stores-removed' && flagState.value === true,
+  isFliptSync: (flag: string) =>
+    flag === 'app-blocks-legacy-stores-removed' ? flagState.value : null,
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   handleEndpointError: mockHandleEndpointError,
@@ -346,10 +353,27 @@ const label = (r: Route) => `${r.store}-storage/${r.name}`;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(BEFORE_CUTOFF);
   claimsBox.claims = fakeClaims;
-  mockIsFlipt.mockResolvedValue(false);
+  flagState.value = false;
   for (const r of ROUTES) fns[r.fn].mockResolvedValue(r.returns);
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+type Cell = { flag: boolean | null; at: Date; removed: boolean };
+const CELLS: Cell[] = [
+  { flag: true, at: BEFORE_CUTOFF, removed: true },
+  { flag: true, at: AFTER_CUTOFF, removed: true },
+  { flag: false, at: BEFORE_CUTOFF, removed: false },
+  { flag: false, at: AFTER_CUTOFF, removed: false },
+  { flag: null, at: BEFORE_CUTOFF, removed: false },
+  { flag: null, at: AFTER_CUTOFF, removed: true },
+];
+const flagName = (v: boolean | null) => (v === null ? 'unanswered' : v ? 'on' : 'off');
 
 describe('legacy-store shutdown — REST', () => {
   it('covers every route under both legacy-store directories', () => {
@@ -363,14 +387,28 @@ describe('legacy-store shutdown — REST', () => {
     expect(onDisk.sort()).toEqual(ROUTES.map(label).sort());
   });
 
-  it.each(ROUTES.map((r) => [label(r), r] as const))(
-    'flag on: %s answers 410 with the stable body and never reaches the store',
-    async (_name, route) => {
-      mockIsFlipt.mockImplementation(async (flag) => flag === FLAG);
-      const { req, res } = createMocks(route);
+  it.each(
+    CELLS.flatMap((cell) =>
+      ROUTES.map(
+        (r) =>
+          [
+            label(r),
+            flagName(cell.flag),
+            cell.at.toISOString(),
+            cell.removed ? 'answers 410' : 'reaches the store',
+            r,
+            cell,
+          ] as const
+      )
+    )
+  )('%s, flag %s at %s: %s', async (_name, _flag, _at, _want, route, cell) => {
+    flagState.value = cell.flag;
+    vi.setSystemTime(cell.at);
+    const { req, res } = createMocks(route);
 
-      await route.handler(req, res);
+    await route.handler(req, res);
 
+    if (cell.removed) {
       expect(res._status()).toBe(410);
       expect(res._json()).toEqual({
         error: 'legacy_store_removed',
@@ -381,38 +419,14 @@ describe('legacy-store shutdown — REST', () => {
         docs: GUIDE,
       });
       expect(fns[route.fn]).not.toHaveBeenCalled();
-    }
-  );
-
-  it.each(ROUTES.map((r) => [label(r), r] as const))(
-    'flag off: %s reaches its store function',
-    async (_name, route) => {
-      const { req, res } = createMocks(route);
-
-      await route.handler(req, res);
-
+    } else {
       expect(fns[route.fn]).toHaveBeenCalledTimes(1);
       expect(res._status()).not.toBe(410);
     }
-  );
-
-  // Invariant guard (green before the change too): a failing flag eval must leave the legacy
-  // stores working, never turn them off.
-  it.each(ROUTES.map((r) => [label(r), r] as const))(
-    'flag eval throws: %s still reaches its store function',
-    async (_name, route) => {
-      mockIsFlipt.mockRejectedValue(new Error('flipt unreachable'));
-      const { req, res } = createMocks(route);
-
-      await route.handler(req, res);
-
-      expect(fns[route.fn]).toHaveBeenCalledTimes(1);
-      expect(res._status()).not.toBe(410);
-    }
-  );
+  });
 
   it('counts each refusal by store and transport', async () => {
-    mockIsFlipt.mockImplementation(async (flag) => flag === FLAG);
+    flagState.value = true;
     const read = async (store: string) => {
       const metric = client.register.getSingleMetric(
         'civitai_app_block_legacy_store_refusals_total'

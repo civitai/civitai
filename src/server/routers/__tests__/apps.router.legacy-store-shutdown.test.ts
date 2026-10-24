@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import type * as FliptClientModule from '~/server/flipt/client';
 
@@ -6,14 +6,18 @@ import type * as FliptClientModule from '~/server/flipt/client';
  * The legacy-store shutdown on the bridge: with `app-blocks-legacy-stores-removed` on, every
  * `apps.storage.*` and `apps.shared.*` procedure (what useAppStorage / useSharedStorage reach
  * through the hosts) refuses with PRECONDITION_FAILED and the stable code before the block token
- * is even verified. Off, or when the flag eval fails, each procedure reaches token verification
- * as before.
+ * is even verified. Explicitly off, each procedure reaches token verification as before. A flag
+ * Flipt cannot answer for (missing key, no client) keeps the bridge before the fail-closed cutoff
+ * (2026-11-10T00:00Z) and refuses it from the cutoff on.
  */
 
-const FLAG = 'app-blocks-legacy-stores-removed';
 const GUIDE = 'https://developer.civitai.com/apps/guide/storage#moving-from-the-legacy-stores';
+const BEFORE_CUTOFF = new Date('2026-11-09T23:59:59.999Z');
+const AFTER_CUTOFF = new Date('2027-01-15T12:00:00.000Z');
 
-const { mockIsFlipt, mockVerifyBlockToken, mockPool } = vi.hoisted(() => {
+// What Flipt answers for app-blocks-legacy-stores-removed: true / false, or null when it cannot
+// answer (key missing from the snapshot, or no client) — the three outcomes `isFliptSync` reports.
+const { flagState, mockVerifyBlockToken, mockPool } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
     params?: unknown[]
@@ -23,7 +27,7 @@ const { mockIsFlipt, mockVerifyBlockToken, mockPool } = vi.hoisted(() => {
     release: vi.fn(),
   };
   return {
-    mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(),
+    flagState: { value: null as boolean | null },
     mockVerifyBlockToken: vi.fn<(token: string) => Promise<unknown>>(async () => null),
     mockPool: {
       connect: vi.fn(async () => client),
@@ -34,8 +38,11 @@ const { mockIsFlipt, mockVerifyBlockToken, mockPool } = vi.hoisted(() => {
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClientModule>()),
-  isFlipt: (flag: string, entityId?: string, context?: unknown) =>
-    mockIsFlipt(flag, entityId, context),
+  isFlipt: async (flag: string) =>
+    flag === 'app-blocks-legacy-stores-removed' && flagState.value === true,
+  isFliptSync: (flag: string) =>
+    flag === 'app-blocks-legacy-stores-removed' ? flagState.value : null,
+  ensureFliptInitialized: async () => undefined,
   getFliptBoolean: async () => false,
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -172,10 +179,27 @@ async function settle(p: Promise<unknown>): Promise<unknown> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockIsFlipt.mockResolvedValue(false);
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(BEFORE_CUTOFF);
+  flagState.value = false;
   mockVerifyBlockToken.mockResolvedValue(null);
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+type Cell = { flag: boolean | null; at: Date; removed: boolean };
+const CELLS: Cell[] = [
+  { flag: true, at: BEFORE_CUTOFF, removed: true },
+  { flag: true, at: AFTER_CUTOFF, removed: true },
+  { flag: false, at: BEFORE_CUTOFF, removed: false },
+  { flag: false, at: AFTER_CUTOFF, removed: false },
+  { flag: null, at: BEFORE_CUTOFF, removed: false },
+  { flag: null, at: AFTER_CUTOFF, removed: true },
+];
+const flagName = (v: boolean | null) => (v === null ? 'unanswered' : v ? 'on' : 'off');
 
 describe('legacy-store shutdown — bridge procedures', () => {
   it('covers every procedure on both legacy-store routers', () => {
@@ -187,44 +211,38 @@ describe('legacy-store shutdown — bridge procedures', () => {
     expect(procs.sort()).toEqual(CASES.map(label).sort());
   });
 
-  it.each(CASES.map((c) => [label(c), c] as const))(
-    'flag on: %s refuses with legacy_store_removed before verifying the token',
-    async (_name, c) => {
-      mockIsFlipt.mockImplementation(async (flag) => flag === FLAG);
+  it.each(
+    CELLS.flatMap((cell) =>
+      CASES.map(
+        (c) =>
+          [
+            label(c),
+            flagName(cell.flag),
+            cell.at.toISOString(),
+            cell.removed ? 'refuses before verifying the token' : 'reaches token verification',
+            c,
+            cell,
+          ] as const
+      )
+    )
+  )('%s, flag %s at %s: %s', async (_name, _flag, _at, _want, c, cell) => {
+    flagState.value = cell.flag;
+    vi.setSystemTime(cell.at);
 
-      const err = await settle(c.call(caller()));
+    const result = await settle(c.call(caller()));
 
-      expect(err).toBeInstanceOf(TRPCError);
-      expect((err as TRPCError).code).toBe('PRECONDITION_FAILED');
-      expect((err as TRPCError).message).toBe(
+    if (cell.removed) {
+      expect(result).toBeInstanceOf(TRPCError);
+      expect((result as TRPCError).code).toBe('PRECONDITION_FAILED');
+      expect((result as TRPCError).message).toBe(
         c.store === 'app'
           ? `legacy_store_removed: the legacy app storage (useAppStorage) has been removed. Move this app to the document store: ${GUIDE}`
           : `legacy_store_removed: the legacy shared storage (useSharedStorage) has been removed. Move this app to the document store: ${GUIDE}`
       );
       expect(mockVerifyBlockToken).not.toHaveBeenCalled();
-    }
-  );
-
-  it.each(CASES.map((c) => [label(c), c] as const))(
-    'flag off: %s reaches token verification',
-    async (_name, c) => {
-      const result = await settle(c.call(caller()));
-
+    } else {
       expect(mockVerifyBlockToken).toHaveBeenCalledWith(TOKEN);
       expect((result as TRPCError | undefined)?.code).not.toBe('PRECONDITION_FAILED');
     }
-  );
-
-  // Invariant guard (green before the change too): a failing flag eval keeps the bridge working.
-  it.each(CASES.map((c) => [label(c), c] as const))(
-    'flag eval throws: %s still reaches token verification',
-    async (_name, c) => {
-      mockIsFlipt.mockRejectedValue(new Error('flipt unreachable'));
-
-      const result = await settle(c.call(caller()));
-
-      expect(mockVerifyBlockToken).toHaveBeenCalledWith(TOKEN);
-      expect((result as TRPCError | undefined)?.code).not.toBe('PRECONDITION_FAILED');
-    }
-  );
+  });
 });
