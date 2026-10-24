@@ -39,6 +39,10 @@ Required environment: database connection strings, authentication providers, S3/
 
 Local dev never uses real mail credentials. Every email goes to the Mailpit catcher in `docker-compose.base.yml` (`docker compose -f docker-compose.base.yml up -d mailpit`): SMTP on `localhost:1025`, inbox UI and API at http://localhost:1080. The dev-server daemon forces the catcher's `EMAIL_*` values into every app it starts, whatever the `.env` chain says, and `wt new` and `wt env --refresh` write them into each `.env` they copy. Commented-out mail lines left in an older local `.env` are dead values; delete them. With Mailpit down a send fails with a connection error; nothing falls back to a real server.
 
+## Analytics and ads on a local origin
+
+A local build (including `next build` + `next start`) can send tracker, Google Analytics and ad requests; they are off by default when `NEXT_PUBLIC_CIVITAI_LINK` is a loopback origin (or unset outside production). Set `NEXT_PUBLIC_LOCAL_TRACKER_ENABLED=true` (tracker and Google Analytics) or `NEXT_PUBLIC_LOCAL_ADS_ENABLED=true` (ads) to opt in.
+
 ## Traps that cost hours
 
 Each presents as something other than its cause. None is OS-specific.
