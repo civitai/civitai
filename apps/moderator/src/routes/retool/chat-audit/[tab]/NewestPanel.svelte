@@ -2,7 +2,8 @@
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import { LINK_CLASS, num } from '$lib/format';
-  import MessageMeta from './MessageMeta.svelte';
+  import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
+  import { chatUrl } from '../url';
   import type { NewestMessage } from './chat-insights';
 
   let { messages }: { messages: NewestMessage[] } = $props();
@@ -60,7 +61,7 @@
       <ul class="space-y-1.5 text-sm">
         {#each visible as m (m.id)}
           <li class="min-w-0">
-            <MessageMeta {...m} />
+            <MessageMeta {...m} chatHref={chatUrl} />
             {#if showBodies}
               <p class="line-clamp-2 wrap-break-word text-dark-0">{m.content}</p>
             {/if}

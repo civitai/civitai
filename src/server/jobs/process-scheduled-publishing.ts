@@ -9,6 +9,7 @@ import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/ca
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { publishDueScheduledArticles } from '~/server/services/article-schedule.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustMvCache,
@@ -16,6 +17,7 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -242,7 +244,7 @@ export const processScheduledPublishing = createJob(
               THEN (p."metadata"->>'prevPublishedAt')::timestamptz
               ELSE mv."publishedAt"
             END,
-            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
@@ -287,6 +289,21 @@ export const processScheduledPublishing = createJob(
       { timeout: 30000 }
     );
 
+    // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
+    // already read Published, so the next run never selects them again — a bust skipped here is lost.
+    // Each bust is guarded so that moving them first cannot let one cache fault cancel the engagements.
+    for (const modelVersion of scheduledModelVersions) {
+      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId).catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'model version cache bust failed',
+          modelVersionId: modelVersion.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+    }
+
     // Process event engagements
     for (const model of scheduledModels) {
       await eventEngine.processEngagement({
@@ -303,7 +320,6 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
     // Neither scheduled path reaches the inline side effects in post.controller, so
     // they land here on the day the post actually goes live. The sweep half of this
@@ -380,6 +396,11 @@ export const processScheduledPublishing = createJob(
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      // Undated until now, so never scanned.
+      scanEntitiesInBackground(
+        'Post',
+        scheduledPosts.map((p) => p.id)
+      );
     }
 
     const processedModelIds = [
@@ -394,6 +415,19 @@ export const processScheduledPublishing = createJob(
         processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
     }
+
+    // Last and caught: an article fault must not stop the run being recorded.
+    const goLive = await publishDueScheduledArticles(now).catch((error) =>
+      logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'error',
+        message: 'scheduled article go-live failed',
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
+    // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
+    const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];
+    if (liveArticleIds.length) scanEntitiesInBackground('Article', liveArticleIds);
 
     await setLastRun();
   }

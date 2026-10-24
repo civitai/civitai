@@ -123,6 +123,16 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     });
   });
 
+  it('resolves the crucible creator', async () => {
+    mockDb.crucible.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'crucible', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it('resolves the storyline owner', async () => {
+    mockDb.storyline.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'storyline', entityId: 1 })).toEqual([OWNER]);
+  });
+
   it('resolves the challenge creator', async () => {
     mockDb.challenge.findUnique.mockResolvedValueOnce({ createdById: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([OWNER]);
@@ -224,7 +234,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: 1 })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   // `commentOld` has one consumer, `toggleReaction` (reaction.service.ts) — the legacy comment
@@ -241,7 +255,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
     ).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   it('allows that reaction when neither the author nor the model owner blocks', async () => {
@@ -251,7 +269,11 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'commentOld', entityId: 1 })
     ).resolves.toBeUndefined();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
   });
 
   it('rejects a blocked user creating a model3d comment', async () => {
@@ -373,6 +395,8 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     comicProjectId: { table: 'comicProject', ownerKey: 'userId', whereKey: 'id' },
     challengeId: { table: 'challenge', ownerKey: 'createdById', whereKey: 'id' },
     appListingId: { table: 'appListing', ownerKey: 'userId', whereKey: 'serialId' },
+    crucibleId: { table: 'crucible', ownerKey: 'userId', whereKey: 'id' },
+    storylineId: { table: 'storyline', ownerKey: 'userId', whereKey: 'id' },
   } as const;
   // Rooted, but with no owner lookup: the replies are allowed, with no content owner to check.
   const OWNERLESS_ROOT_COLUMN = 'clubPostId';
@@ -494,11 +518,15 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'comment', entityId: REPLY })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
-    expect(amIBlockedByUser).not.toHaveBeenCalledWith({
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
       userId: VIEWER,
-      targetUserId: OTHER_OWNER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
     });
+    // Shape-independent: no call for OTHER_OWNER, whatever options it carries.
+    expect(amIBlockedByUser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ targetUserId: OTHER_OWNER })
+    );
   });
 
   it('resolves a top-level comment to its own thread content', async () => {

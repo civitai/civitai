@@ -86,3 +86,14 @@
 .detailsPanel {
   background-color: light-dark(var(--mantine-color-gray-0), #1f2023);
 }
+
+// Placeholders for the sections the `modelPageDeferBelowFold` trial renders client-side only.
+// Each reserves roughly the height its section takes with typical data, so the sections can
+// arrive after hydration without pushing the rest of the sidebar around.
+.deferredCreatorCard {
+  min-height: 150px;
+}
+
+.deferredLicense {
+  min-height: 40px;
+}

@@ -4,6 +4,10 @@ import type * as FeedbackService from '~/server/services/feedback.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
+import {
+  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL,
+  GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL,
+} from '~/server/schema/feedback.schema';
 
 /**
  * `feedback.create` — the extended context must survive the ROUTER, and the
@@ -164,11 +168,75 @@ describe('feedback.create — extended context reaches the service', () => {
   });
 });
 
-describe('feedback.create — the submission quota is not widened by uploads', () => {
-  it('is configured at 5 per hour', () => {
-    expect(FEEDBACK_RATE_LIMIT).toEqual({ max: 5, periodSeconds: 3600 });
+/**
+ * `app-block` is a declared area (moderators and the DB CHECK need the slug), but its rows must
+ * carry a server-resolved listing and are read by the app's OWNER, so only the dedicated
+ * app-feedback procedure may write them. The generic route refuses the slug DETERMINISTICALLY:
+ * the flag mock below says ON, so the only thing that can stop the submission is the guard.
+ *
+ * Matched on the guard's OWN message, not just `BAD_REQUEST`: any input-validation failure (an
+ * unknown slug, an over-long message) is also BAD_REQUEST, and would satisfy a code-only check
+ * while saying nothing about this guard. The unknown-slug case below is that control.
+ */
+describe('feedback — the generic route refuses the app-block area', () => {
+  const refusal = expect.objectContaining({
+    code: 'BAD_REQUEST',
+    message: expect.stringContaining(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL),
   });
 
+  it('create refuses app-block before the flag lookup and the service, with the flag ON', async () => {
+    await expect(
+      caller().create({ area: 'app-block', message: 'this app is broken' })
+    ).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // The seam with `create`: a notice that says "enabled" for an area whose submit is refused is
+  // the disagreement `feedback.router.flag-context.test.ts` exists to prevent.
+  it('getArea refuses app-block too, so it can never report it enabled', async () => {
+    await expect(caller().getArea({ area: 'app-block' })).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+  });
+
+  // `apps-platform` rows are counted on a server-computed fingerprint, so the generic route must
+  // not be able to write one without it. Same shape as the app-block cases: flag ON, own message.
+  it('create and getArea refuse apps-platform before the flag lookup and the service', async () => {
+    const platformRefusal = expect.objectContaining({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining(GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL),
+    });
+    await expect(
+      caller().create({ area: 'apps-platform', message: 'the cli is broken' })
+    ).rejects.toEqual(platformRefusal);
+    await expect(caller().getArea({ area: 'apps-platform' })).rejects.toEqual(platformRefusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // Positive control: every OTHER declared area still goes through both procedures. The list is
+  // hand-typed so a third dedicated-procedure area cannot silently join it.
+  it.each(['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const)(
+    'still accepts %s on create and getArea',
+    async (area) => {
+      await expect(caller().getArea({ area })).resolves.toEqual({ enabled: true });
+      await caller().create({ area, message: 'something looked wrong' });
+      expect(createFeedbackMock).toHaveBeenCalledTimes(1);
+      expect(createFeedbackMock.mock.calls[0][0].area).toBe(area);
+    }
+  );
+
+  // Control for the matcher: an undeclared slug is ALSO a BAD_REQUEST, but not this guard's.
+  it('an undeclared slug fails for a different reason (not the app-block message)', async () => {
+    const err = await caller()
+      .create({ area: 'models-feed' as never, message: 'x' })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((err as Error).message).not.toContain(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL);
+  });
+});
+
+describe('feedback.create — the submission quota is not widened by uploads', () => {
   it('wires exactly those numbers into the router’s rate limiter', () => {
     expect(rateLimitCalls).toHaveLength(1);
     const [limits] = rateLimitCalls[0] as [{ limit: number; period: number }];

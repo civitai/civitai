@@ -35,11 +35,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * says so rather than implying coverage it has not got.
  *
  * 🔴 `pollWorkflow` IS THE EXCEPTION, AND IT IS THE POINT. It does NOT throw when its bucket
- * refuses — it returns a non-terminal snapshot — because both hosts convert any throw from that
- * mutation into `status: 'failed'`, which the SDK treats as TERMINAL. A thrown 429 there would end
- * the watch loop on a generation the viewer has already paid for. So its cases assert the RETURNED
- * SHAPE and the absence of the orchestrator call, not an error code. See the procedure for the
- * full reasoning.
+ * refuses — it returns a non-terminal snapshot. The current hosts would also turn a thrown
+ * TOO_MANY_REQUESTS into a non-terminal snapshot, but a host bundle loaded before that change turns
+ * any throw into a TERMINAL `failed`, and the REST twin would answer 429; either ends the watch loop
+ * on a generation the viewer has already paid for. So its cases assert the RETURNED SHAPE and the
+ * absence of the orchestrator call, not an error code. See the procedure for the full reasoning.
  *
  * RED/GREEN MATRIX, measured rather than asserted — and the numbers below were WRONG in an earlier
  * revision of this file (it claimed 6 failed / 7 passed, on a "one failure per newly-limited
@@ -64,6 +64,7 @@ const {
   mockCheckBlockCatalogRateLimit,
   mockCheckBlockPublishRateLimit,
   mockCheckBlockPollRateLimit,
+  mockCheckBlockEstimateCellsRateLimit,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockListMyBlockWorkflows,
@@ -83,6 +84,7 @@ const {
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockPublishRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockPollRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockCheckBlockEstimateCellsRateLimit: vi.fn(async () => ({ allowed: true })),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockListMyBlockWorkflows: vi.fn(async () => ({ items: [], nextCursor: null })),
@@ -145,6 +147,10 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // over-declares an export is harmless (the importer only binds what it names), and declaring it
   // is what lets the RED half of the matrix above be measured against the same file.
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
+  // The per-cell bucket `estimateWorkflowBatch` charges beside the catalog one. Absent at this
+  // file's BASE, like the poll one above was, and declared for the same reason.
+  checkBlockEstimateCellsRateLimit: (...a: unknown[]) =>
+    mockCheckBlockEstimateCellsRateLimit(...(a as [])),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -306,11 +312,12 @@ describe('blocks.pollWorkflow — the POLL bucket', () => {
   });
 
   it('🔴 DOES NOT THROW, and returns a NON-TERMINAL status — a throw would kill a paid generation', async () => {
-    // 🔴 THE REGRESSION THIS FILE EXISTS FOR, pinned as a VALUE rather than a shape. Both hosts
-    // wrap this mutation in `catch (err) { send('WORKFLOW_STATUS', failureSnapshot(err)) }`, and
-    // `failureSnapshot` returns `status: 'failed'` — a member of the SDK's TERMINAL set. So a
-    // thrown 429 reaches the block as a finished, failed workflow and its watch loop stops, on a
-    // generation whose Buzz is already spent and which the orchestrator is still running.
+    // 🔴 THE REGRESSION THIS FILE EXISTS FOR, pinned as a VALUE rather than a shape. A host bundle
+    // loaded before the hosts classified poll errors wraps this mutation in
+    // `catch (err) { send('WORKFLOW_STATUS', failureSnapshot(err)) }`, and `failureSnapshot`
+    // returns `status: 'failed'` — a member of the SDK's TERMINAL set; the REST twin would answer
+    // 429. Either way a thrown refusal ends the watch loop on a generation whose Buzz is already
+    // spent and which the orchestrator is still running.
     //
     // Asserting "does not throw" alone would be satisfied by a throw-free path that returned
     // `failed` anyway, which is the same bug. The status is checked against the terminal set by
@@ -460,7 +467,58 @@ describe('blocks.estimateWorkflow — above the kind branch', () => {
   });
 });
 
-describe('blocks.getMyBuzzBalance — the one buzz read outside the helper', () => {
+describe('blocks.estimateWorkflowBatch — one catalog token, plus the cells bucket', () => {
+  // A body that really PARSES. Whether it PRICES is a different suite's job (this file stubs too
+  // little of the world for that — `blocks.router.workflow.test.ts` pins the prices); what
+  // matters here is that no cell is reached when a bucket refuses, and that the call RESOLVES
+  // when both allow.
+  const cell = { kind: 'customComfy', recipe: 'starter-comfy-txt2img', params: {} };
+
+  beforeEach(() => {
+    mockCheckBlockEstimateCellsRateLimit.mockReset();
+    mockCheckBlockEstimateCellsRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('REFUSES when the CATALOG bucket refuses, before the cells bucket is charged', async () => {
+    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [cell, cell] })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockCheckBlockEstimateCellsRateLimit).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES when the CELLS bucket refuses, with TOO_MANY_REQUESTS and no cell priced', async () => {
+    // 🔴 THE BUCKET THAT MAKES WEIGHT 1 SAFE. The catalog bucket ALLOWS here, so the only thing
+    // that can produce this code is the cells bucket: with it deleted, or its answer dropped,
+    // the call returns a priced reply instead.
+    mockCheckBlockEstimateCellsRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [cell, cell, cell] })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('REACHABILITY CONTROL — both buckets allow, and the call resolves with one result per cell', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [cell, cell, cell],
+    });
+    // One token for the call, three cells for the cells bucket (install, count).
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith(INSTANCE);
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith(INSTANCE, 3);
+    // It RESOLVED — a per-cell failure is a result, never a refusal of the call.
+    expect(result.snapshots).toHaveLength(3);
+    expect(result.aggregate.cellCount).toBe(3);
+  });
+});
+
+describe('blocks.getMyBuzzBalance', () => {
   it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the buzz service call', async () => {
     mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
 

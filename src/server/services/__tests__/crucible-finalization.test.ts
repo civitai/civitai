@@ -11,7 +11,8 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
-import { loggingMock, dbMock } from '~/__tests__/mocks';
+import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -133,6 +134,9 @@ const setupCrucible = ({
   elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
   voteCounts = {} as Record<number, number>,
   ingestion = CrucibleIngestionStatus.Scanned,
+  timeAdjustedPlacement = false,
+  startAt = null as Date | null,
+  endAt = new Date(Date.now() - 1000),
 } = {}) => {
   findUnique.mockResolvedValue({
     id: 1,
@@ -146,7 +150,9 @@ const setupCrucible = ({
     seededPrizePool,
     seedTransactionId: null,
     prizePositions: { '1': 50, '2': 30, '3': 20 },
-    endAt: new Date(Date.now() - 1000),
+    startAt,
+    endAt,
+    timeAdjustedPlacement,
     nsfwLevel: 1,
     _count: { entries: entries.length },
   });
@@ -203,12 +209,13 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a banned entrant's, a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
     expect(where).toEqual({
       crucibleId: 1,
+      user: { bannedAt: null },
       image: {
         needsReview: null,
         tosViolation: false,
@@ -331,6 +338,18 @@ describe('finalizeCrucible — completion', () => {
     });
   });
 
+  it('awards nothing for a 0-Buzz place, and still completes', async () => {
+    setupCrucible({ entryFee: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(createPrizes).not.toHaveBeenCalled();
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
+      data: { status: CrucibleStatus.Completed },
+    });
+  });
+
   it('awards the prizes before it claims Completed, and pays none of them itself', async () => {
     setupCrucible({ entryFee: 100 });
     await finalizeCrucible(1);
@@ -377,6 +396,49 @@ describe('finalizeCrucible — completion', () => {
       'crucible-prize-1-2-2',
       'crucible-prize-1-3-3',
     ]);
+  });
+
+  const buzzWonKey = (id: number) => `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${id}`;
+  // User 13 places 4th, below the three prizes; user 4 is the host.
+  const withUnplacedEntrant = () =>
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000),
+        dbEntry(2, 11, 2_000),
+        dbEntry(3, 12, 3_000),
+        dbEntry(4, 13, 4_000),
+      ],
+      elos: { 1: 1600, 2: 1550, 3: 1400, 4: 1300 },
+    });
+
+  it("busts exactly the prize winners' cached Buzz Won, not other entrants or the host", async () => {
+    withUnplacedEntrant();
+
+    await finalizeCrucible(1);
+
+    expect(awarded().map((prize) => prize.userId)).toEqual([10, 11, 12]);
+    expect(redisMock.redis.del.mock.calls.map(([key]) => key).sort()).toEqual(
+      [10, 11, 12].map(buzzWonKey).sort()
+    );
+  });
+
+  it('still completes the crucible when busting the cache fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    redisMock.redis.del.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(finalizeCrucible(1)).resolves.toBeDefined();
+
+    expect(claim).toHaveBeenCalled();
+  });
+
+  it('busts nothing when awarding fails', async () => {
+    setupCrucible({ entryFee: 100 });
+    createPrizes.mockRejectedValue(new Error('db down'));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('db down');
+
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
   it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {
@@ -720,6 +782,134 @@ describe('finalizeCrucible — minimum votes to place', () => {
       [2, 112],
       [3, 0],
     ]);
+  });
+
+  describe('when the bar follows the time each entry was live', () => {
+    const HOUR = 3_600_000;
+    const endAt = new Date(Date.now() - 1000);
+    const startAt = new Date(endAt.getTime() - 100 * HOUR);
+    // Entry 3 is live for the last 10 of 100 hours.
+    const lateEntries = [
+      dbEntry(1, 10, startAt.getTime()),
+      dbEntry(2, 11, startAt.getTime()),
+      dbEntry(3, 12, endAt.getTime() - 10 * HOUR),
+    ];
+    const run = (timeAdjustedPlacement: boolean) => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 40 },
+        timeAdjustedPlacement,
+        startAt,
+        endAt,
+      });
+      return finalizeCrucible(1);
+    };
+
+    it('places a late entry that collected the votes expected for its time', async () => {
+      // Expects 1040 × 10/210 ≈ 50 votes, so 38 is enough; the old bar would ask for 260.
+      const result = await run(true);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(3);
+    });
+
+    it('keeps the old bar for a crucible that predates the rule', async () => {
+      const result = await run(false);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('still leaves a late entry unplaced when it is under its own bar', async () => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 10 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('checks each entry against its own bar, whatever order the entries come in', async () => {
+      const at = (hoursLive: number) => endAt.getTime() - hoursLive * HOUR;
+      // Total 940 votes over 260 live hours, old bar 177. Bars by entry: late 28, early 177 (its
+      // share is 271), mid 136, big 177. Input order differs from the score order late, mid, big, early.
+      setupCrucible({
+        entries: [
+          dbEntry(1, 10, at(10)),
+          dbEntry(2, 11, at(100)),
+          dbEntry(3, 12, at(50)),
+          dbEntry(4, 13, at(100)),
+        ],
+        elos: { 1: 1600, 2: 1500, 3: 1550, 4: 1520 },
+        voteCounts: { 1: 40, 2: 150, 3: 150, 4: 700 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      const positions = Object.fromEntries(result.finalEntries.map((e) => [e.entryId, e.position]));
+      expect(positions).toEqual({ 1: 1, 3: 2, 4: 3, 2: null });
+    });
+
+    it('keeps the old bar when the flag is on but the crucible has no end', async () => {
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 500, 2: 500, 3: 40 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt: null as unknown as Date,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBeNull();
+    });
+
+    it('lets a late entry place at a low-vote crucible only on the old bar', async () => {
+      // 30 votes over 3 entries: old bar 8, so the floor is 8 rather than 25 and 8 votes place.
+      setupCrucible({
+        entries: lateEntries,
+        elos: { 1: 1550, 2: 1520, 3: 1500 },
+        voteCounts: { 1: 11, 2: 11, 3: 8 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(3);
+    });
+
+    it('still places the leader when every entry is under the time-adjusted bar', async () => {
+      // The leader's share of the votes would ask for 38, but the old bar is 15 and it has 32.
+      setupCrucible({
+        entries: [
+          dbEntry(1, 10, startAt.getTime()),
+          dbEntry(2, 11, endAt.getTime() - 10 * HOUR),
+          dbEntry(3, 12, endAt.getTime() - 10 * HOUR),
+        ],
+        elos: { 1: 1600, 2: 1550, 3: 1500 },
+        voteCounts: { 1: 32, 2: 14, 3: 14 },
+        timeAdjustedPlacement: true,
+        startAt,
+        endAt,
+      });
+
+      const result = await finalizeCrucible(1);
+
+      expect(result.finalEntries.filter((e) => e.position !== null).map((e) => e.entryId)).toEqual([
+        1,
+      ]);
+    });
   });
 
   it('writes a null position for the unplaced entry', async () => {

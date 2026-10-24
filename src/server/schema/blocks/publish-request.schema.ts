@@ -1,6 +1,8 @@
 import * as z from 'zod';
+import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -15,7 +17,8 @@ import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.c
  * 33% base64 overhead becomes a bottleneck. v0 prioritizes shipping.
  */
 
-export const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+// One rule for a block slug, which App Assistant's app keys (`@civitai/app-assistant`) follow too.
+export const SLUG_REGEX = BLOCK_SLUG;
 export const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 export const MAX_BUNDLE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MiB
 export const MAX_FILES_IN_BUNDLE = 2000;
@@ -210,6 +213,7 @@ export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;

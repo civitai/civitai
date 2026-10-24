@@ -28,3 +28,6 @@ export const listSubListingQueueSchema = z.object({
   limit: z.number().int().min(1).max(50).default(25),
 });
 export type ListSubListingQueueInput = z.infer<typeof listSubListingQueueSchema>;
+
+/** The creator's own withdraw of a catalog item listed under their name (account settings). */
+export const withdrawMyCatalogSubListingSchema = z.object({ id: z.string().min(1).max(64) });

@@ -51,6 +51,26 @@ export type EcosystemSupport = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
+/** A default with its bounds. */
+export type Range = { min: number; max: number; default: number };
+
+/** The settings a turbo LoRA applies when it is on. */
+export type TurboSettings = { steps: Range; cfgScale: Range };
+
+/** Each preset's numbers are what the site's LoRA pages state for that ecosystem; confirm there before adding one. */
+export const TURBO_PRESETS = {
+  /** The MOSS Image DMD LoRAs, designed to run without CFG. */
+  mossDmd: {
+    steps: { min: 4, max: 8, default: 8 },
+    cfgScale: { min: 1, max: 1, default: 1 },
+  },
+  /** The Anima turbo / DMD2 LoRAs: CFG stays at 1 unless the step count goes up. */
+  animaDmd2: {
+    steps: { min: 8, max: 16, default: 12 },
+    cfgScale: { min: 1, max: 1.4, default: 1 },
+  },
+} as const satisfies Record<string, TurboSettings>;
+
 export type EcosystemSettings = {
   ecosystemId: number;
   defaults?: {
@@ -59,6 +79,11 @@ export type EcosystemSettings = {
     modelLocked?: boolean;
     /** Orchestrator engine identifier. Used for backwards compatibility with getBaseModelEngine(). */
     engine?: string;
+    /** Present only on an ecosystem whose LoRAs may be turbo variants; absent, the editor offers none. */
+    turbo?: {
+      /** Prefills a LoRA version's turbo settings; the generator uses it for a turbo LoRA whose own `recommendedSettings` are not loaded. */
+      settings: TurboSettings;
+    };
   };
 };
 
@@ -202,6 +227,9 @@ export const ECO = {
   // `Flux3` is the Image release, not the family root; the Dev backbone needs its own key.
   Flux3Video: 79,
   Flux3: 92,
+  Flux3Klein: 94,
+  Flux3Klein_base: 95,
+  MossImage: 96,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -228,6 +256,7 @@ export const ECO = {
 
   // Krea AI
   Krea2: 70,
+  Krea3: 93,
 
   // Microsoft
   MAI: 71,
@@ -343,11 +372,25 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 8,
   },
   {
+    id: ECO.Flux3Klein,
+    key: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    familyId: 1,
+    sortOrder: 9,
+  },
+  {
+    id: ECO.Flux3Klein_base,
+    key: 'Flux3Klein_base',
+    displayName: 'Flux.3 Klein Base',
+    familyId: 1,
+    sortOrder: 10,
+  },
+  {
     id: ECO.Flux3Video,
     key: 'Flux3Video',
     displayName: 'Flux 3 Video',
     familyId: 1,
-    sortOrder: 9,
+    sortOrder: 11,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -683,6 +726,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 20,
     sortOrder: 150,
   },
+  {
+    id: ECO.Krea3,
+    key: 'Krea3',
+    displayName: 'Krea 3',
+    familyId: 20,
+    sortOrder: 151,
+  },
 
   // Microsoft Family (familyId: 21)
   {
@@ -883,6 +933,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 271,
   },
 
+  // OpenMOSS
+  {
+    id: ECO.MossImage,
+    key: 'MossImage',
+    displayName: 'MOSS Image',
+    familyId: 29,
+    sortOrder: 272,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -973,7 +1032,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
  * than an external provider. Single source of truth for the self-hosted
  * generation toggle; derived from the handlers in
- * `src/server/services/orchestrator/ecosystems/`, which are authoritative for which
+ * `src/server/services/orchestrator/form-graph/*.handler.ts`, which are authoritative for which
  * input type each ecosystem produces.
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
@@ -1001,6 +1060,10 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'ZImageTurbo',
   'ZImageBase',
   'Qwen',
+  'Flux3Klein',
+  'Flux3Klein_base',
+  // ComfyMossImage{Sft,Base}CreateImageInput
+  'MossImage',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1172,9 +1235,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // OpenAI - checkpoint only
   { ecosystemId: ECO.OpenAI, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Imagen4 - checkpoint only
-  { ecosystemId: ECO.Imagen4, supportType: 'generation', modelTypes: checkpointOnly },
-
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1196,6 +1256,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
+  { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
+
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1210,9 +1272,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
-
-  // Sora2 - checkpoint only
-  { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Mochi - checkpoint only
   // { ecosystemId: ECO.Mochi, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1236,6 +1295,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Flux.3 - checkpoint only (FLUX 3 Image, BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3, supportType: 'generation', modelTypes: checkpointOnly },
+  // Flux.3 Klein - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
+  // MOSS Image - open weights, checkpoint and LoRA
+  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: checkpointAndLora },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1416,12 +1480,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2945208 },
+      turbo: { settings: TURBO_PRESETS.animaDmd2 },
     },
   },
   {
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 3072329 },
+    },
+  },
+  {
+    ecosystemId: ECO.Krea3,
+    defaults: {
+      model: { id: 3405360 },
+      modelLocked: true,
     },
   },
   {
@@ -1490,7 +1562,8 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HyV1,
     defaults: {
-      model: { id: 1314512 },
+      // bf16, the build the orchestrator's Hunyuan engine has always run. The handler names it.
+      model: { id: 1313562 },
       modelLocked: true,
       engine: 'hunyuan',
     },
@@ -1654,14 +1727,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.OpenAI,
     defaults: {
-      model: { id: 1733399 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Imagen4,
-    defaults: {
-      model: { id: 1889632 },
+      model: { id: 2880272 },
       modelLocked: true,
     },
   },
@@ -1694,13 +1760,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.PonyV7,
     defaults: {
       model: { id: 2152373 },
-      modelLocked: true,
-    },
-  },
-  {
-    ecosystemId: ECO.Sora2,
-    defaults: {
-      model: { id: 2320065 },
       modelLocked: true,
     },
   },
@@ -1742,6 +1801,27 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 3376170 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Klein,
+    defaults: {
+      model: { id: 3407486 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3Klein_base,
+    defaults: {
+      model: { id: 3407485 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MossImage,
+    defaults: {
+      model: { id: 3409867 },
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -2191,6 +2271,14 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: loraOnly,
     support: 'partial',
   },
+  // Flux3 Klein has partial support for Flux3 Klein-base
+  {
+    sourceEcosystemId: ECO.Flux3Klein_base,
+    targetEcosystemId: ECO.Flux3Klein,
+    supportType: 'generation',
+    modelTypes: loraOnly,
+    support: 'partial',
+  },
 
   // ==========================================================================
   // AuraFlow ↔ PonyV7 (parent ↔ child)
@@ -2339,6 +2427,11 @@ export const BM = {
   Sonilo: 110,
   Ideogram45: 111,
   Flux3: 112,
+  Krea2Turbo: 113,
+  Krea3: 114,
+  Flux3Klein: 115,
+  Flux3Klein_base: 116,
+  MossImage: 117,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2673,6 +2766,24 @@ export const licenses: LicenseRecord[] = [
     url: 'https://ideogram.ai/legal/tos',
     disableMature: true,
   },
+  {
+    id: 48,
+    // Separate from id 28: that is Krea's hosted-service ToS, this is the 22 Jun 2026
+    // open-weights licence the Krea 2 Raw and Turbo checkpoints ship under.
+    name: 'Krea 2 Community License Agreement',
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+  },
+  {
+    id: 49,
+    name: 'FLUX Kommunity License',
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2822,6 +2933,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Sonilo',
     description: "Sonilo's music and sound-effect generation models",
   },
+  {
+    id: 29,
+    name: 'OpenMOSS',
+    description: "OpenMOSS's image generation models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2965,6 +3081,30 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 39,
   },
   {
+    id: BM.Flux3Klein,
+    name: 'Flux.3 Klein',
+    description: 'Flux.3 Klein 5.6 billion parameter distilled model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein,
+    licenseId: 49,
+  },
+  {
+    id: BM.Flux3Klein_base,
+    name: 'Flux.3 Klein-base',
+    description: 'Flux.3 Klein 5.6 billion parameter base model',
+    type: 'image',
+    ecosystemId: ECO.Flux3Klein_base,
+    licenseId: 49,
+  },
+  {
+    id: BM.MossImage,
+    name: 'MOSS Image',
+    description: "OpenMOSS's 5B text-to-image model, the Base and SFT releases",
+    type: 'image',
+    ecosystemId: ECO.MossImage,
+    licenseId: 13,
+  },
+  {
     id: BM.Flux3Video,
     name: 'Flux 3 Video',
     description: "Black Forest Labs' FLUX 3 video generation model with native audio",
@@ -3097,6 +3237,23 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Krea AI's in-house image generation model",
     type: 'image',
     ecosystemId: ECO.Krea2,
+    licenseId: 48,
+  },
+  {
+    id: BM.Krea2Turbo,
+    name: 'Krea 2 Turbo',
+    description: 'Krea 2 with Turbo distillation for reduced steps',
+    type: 'image',
+    ecosystemId: ECO.Krea2,
+    licenseId: 48,
+  },
+  {
+    id: BM.Krea3,
+    name: 'Krea 3',
+    description: "Krea AI's image model for reference-driven generation and editing",
+    type: 'image',
+    ecosystemId: ECO.Krea3,
+    hidden: true,
     licenseId: 28,
   },
 
@@ -4340,6 +4497,11 @@ export function getEcosystemDefaults(
   };
 }
 
+/** The turbo numbers for an ecosystem, or undefined where turbo LoRAs are not a thing. */
+export function getEcosystemTurboSettings(ecosystemId: number): TurboSettings | undefined {
+  return getEcosystemDefaults(ecosystemId)?.turbo?.settings;
+}
+
 // =============================================================================
 // Base Model Helpers
 // =============================================================================
@@ -4549,6 +4711,13 @@ export const ecosystemGroups: EcosystemGroup[] = [
     ],
     defaultEcosystemId: ECO.Flux2Klein_9B,
     sortOrder: 22,
+  },
+  {
+    id: 'Flux3Klein',
+    displayName: 'Flux.3 Klein',
+    ecosystemIds: [ECO.Flux3Klein, ECO.Flux3Klein_base],
+    defaultEcosystemId: ECO.Flux3Klein,
+    sortOrder: 23,
   },
   {
     id: 'LTXV',
@@ -5039,7 +5208,7 @@ export function getBaseModelGroup(baseModel: string): string {
   // Fall back to matching by ecosystem key directly (e.g., "NanoBanana", "OpenAI").
   // Matches the legacy base-model.constants.ts behavior where getBaseModelConfig
   // checked both `x.name === baseModel || x.group === baseModel`. Some constants
-  // (e.g. generationConfig.NanoBanana.checkpoint.baseModel = 'NanoBanana') store
+  // (e.g. a NanoBanana checkpoint whose resource baseModel is 'NanoBanana') store
   // the ecosystem key in the resource's baseModel field instead of the display
   // name, and downstream code like the form-watch subscription in
   // GenerationFormProvider relies on this lookup returning a real ecosystem key

@@ -1,4 +1,4 @@
-import type { TransactionInfo, WorkflowCost } from '@civitai/client';
+import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
 import { Anchor, Group, Loader, NumberInput, Popover, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
@@ -455,8 +455,8 @@ function LicensingFeeDetail({
     <div className="flex flex-col gap-3">
       <Text size="sm" c="dimmed">
         Some resources charge a licensing fee set by their creator, paid to them each time you
-        generate an image with the resource. The amounts below are per image — your total scales with
-        the number of images you generate.
+        generate an image with the resource. The amounts below are per image — your total scales
+        with the number of images you generate.
       </Text>
       {isLoading ? (
         <div className="flex justify-center p-4">

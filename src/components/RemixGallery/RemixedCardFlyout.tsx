@@ -265,6 +265,8 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     // expressible at all.
     let item: HTMLElement | null = cardRef.current;
     while (item) {
+      // The attribute too: an item whose hat is hovered has its containment lifted.
+      if (item.hasAttribute('data-masonry-item')) break;
       const cs = getComputedStyle(item);
       if (cs.contentVisibility === 'auto' || cs.contain.includes('paint')) break;
       item = item.parentElement;

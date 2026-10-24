@@ -81,6 +81,21 @@ function capturedValues(): unknown[] {
 }
 
 /** A fully-hydrated onsite listing row (as `listingHydrateSelect` returns). */
+/** A listing image as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgImage(url: string) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
+
 function hydratedRow(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_1',
@@ -96,8 +111,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     externalUrl: null,
     connectClientId: null,
     appBlockId: 'ab_1',
-    icon: { url: 'icon-key' },
-    cover: { url: 'cover-key' },
+    // Scanned, unflagged, PG — what a live listing's media is. The per-image store gate
+    // (`listing-media-audience`) hides anything else, which its own suites cover.
+    icon: scannedPgImage('icon-key'),
+    cover: scannedPgImage('cover-key'),
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
     // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
@@ -127,7 +144,7 @@ function hydratedRow(over: Record<string, unknown> = {}) {
         settings: { apiKey: 'super-secret' },
       },
     },
-    screenshots: [{ caption: 'first shot', image: { url: 'shot-0' } }],
+    screenshots: [{ caption: 'first shot', image: scannedPgImage('shot-0') }],
     ...over,
   };
 }
@@ -244,6 +261,9 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         // `number | null`, and the null-vs-zero suite below pins which is which.
         'openCount',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         'slug',
         'tagline',
@@ -457,6 +477,10 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'coverUrl',
         'creator',
         'description',
+        // Fork opt-in + provenance. `forkOf` is viewer-scoped: the parent's name/slug are
+        // present only when this viewer may open the parent (see `ListingDetail.forkOf`).
+        'forkOf',
+        'forkable',
         'iconUrl',
         'id',
         // 🔴 The two fields added for the store-detail header. Both are in the
@@ -475,6 +499,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'kindData',
         'name',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         // 🔴 DETAIL-ONLY BY DECISION, like `sourceRepoUrl` — the card allowlist above
         // asserts its ABSENCE. The pre-launch permission disclosure: the app's APPROVED
@@ -572,9 +599,8 @@ describe('projectListingDetail — public allowlist + gallery', () => {
    * PRE-LAUNCH PERMISSION DISCLOSURE (`ListingDetail.scopes`).
    *
    * 🔴 THE GATING HALF of this change. The sibling browser test renders the section,
-   * but the `component` project is report-only in CI and cannot block a merge; these
-   * assertions run in the blocking node project and are what actually hold the
-   * source-of-truth decision in place.
+   * and these assertions, in the node project, hold the source-of-truth decision in
+   * place.
    *
    * 🔴 The claim is about WHICH COLUMN feeds the disclosure, not merely that a
    * `scopes` key exists. `hydratedRow`'s `approvedScopes` and `manifest.scopes` are
@@ -725,9 +751,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
   it('the gallery excludes screenshots whose backing Image is gone (null image)', () => {
     const row = hydratedRow({
       screenshots: [
-        { caption: 'a', image: { url: 's0' } },
+        { caption: 'a', image: scannedPgImage('s0') },
         { caption: 'b', image: null },
-        { caption: 'c', image: { url: 's2' } },
+        { caption: 'c', image: scannedPgImage('s2') },
       ],
     });
     const detail = projectListingDetail(row as never);
@@ -913,10 +939,14 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 20,
     });
     expect(items).toHaveLength(1);
-    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped.
+    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped. (The
+    // restricted-audience level read is also a `$queryRaw`, but it is skipped for this
+    // anonymous, `public`-floor call because it could disclose nothing.)
     expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
+    expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).
-    expect(capturedValues()).toContain(0.25);
+    expect(idPage.values).toContain(0.25);
   });
 
   it('sort=top-rated with a crafted out-of-range mean cursor does NOT 500', async () => {

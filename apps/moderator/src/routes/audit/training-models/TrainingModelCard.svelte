@@ -4,7 +4,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
-  import TrainingDataSheet from './TrainingDataSheet.svelte';
+  import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, bytes, dateTime } from '$lib/format';
@@ -20,6 +20,8 @@
     civitaiUrl: string;
     canBan: boolean;
   } = $props();
+
+  const userLabel = $derived(model.username ?? `#${model.userId}`);
 
   let banning = $state(false);
   let viewing = $state<TrainingFeedModel['versions'][number] | null>(null);
@@ -47,7 +49,7 @@
   };
 </script>
 
-<article class="flex flex-col gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+<article class="flex min-w-0 flex-col gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <div class="flex items-start justify-between gap-3">
     <a
       href="{civitaiUrl}/models/{model.id}"
@@ -59,12 +61,13 @@
     </a>
     <a
       href={userLookupUrl(model.username ?? model.userId)}
-      class="{LINK_CLASS} flex shrink-0 items-center gap-1.5 text-xs"
+      class="{LINK_CLASS} flex max-w-1/2 shrink-0 items-center gap-1.5 text-xs"
+      title={userLabel}
     >
       {#if model.userImage}
-        <EdgeImage src={model.userImage} width={32} class="size-5 rounded-full" alt="" />
+        <EdgeImage src={model.userImage} width={32} class="size-5 shrink-0 rounded-full" alt="" />
       {/if}
-      {model.username ?? `#${model.userId}`}
+      <span class="min-w-0 truncate">{userLabel}</span>
     </a>
   </div>
 

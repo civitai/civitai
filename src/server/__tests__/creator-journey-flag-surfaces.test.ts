@@ -21,9 +21,9 @@ describe('Creator Journey flag gates', () => {
     );
     // One chunk per procedure, whatever kind of procedure it is or how it is written.
     const procedures = router.split(/^ {2}(?=\w+: \w+Procedure(?!\w))/m).slice(1);
-    expect(procedures).toHaveLength(6);
+    expect(procedures).toHaveLength(9);
     const gated = procedures.filter((procedure) => !procedure.startsWith(`${OWNER_FLAGGED}:`));
-    expect(gated).toHaveLength(5);
+    expect(gated).toHaveLength(8);
     for (const procedure of gated) {
       expect(procedure, procedure.split(':')[0]).toContain(
         ".use(isFlagProtected('creatorJourney'))"
@@ -39,7 +39,7 @@ describe('Creator Journey flag gates', () => {
     expect(procedure).toContain('isMilestoneShareable(input)');
     expect(procedure).not.toContain('isFlagProtected');
     expect(read('src/server/services/creator-milestone-share.service.ts')).toMatch(
-      /if \(!\(await isCreatorJourneyOnFor\(\{ id: userId, isModerator: row\.isModerator \}\)\)\) return null;/
+      /if \(!\(await isCreatorJourneyOnFor\(\{ id: userId, isModerator: row\.isModerator \}\)\)\) return \[\];/
     );
   });
 

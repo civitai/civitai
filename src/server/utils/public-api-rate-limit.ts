@@ -26,7 +26,7 @@ export { resolveClientIp };
  *
  * PATTERN: the established fixed-window limiter — INCR + EXPIRE on the `redis`
  * cache client — byte-identical in shape to `checkBlockCatalogRateLimit` /
- * `checkSharedAppendRateLimit` / `BlockTokenService.checkRateLimit`.
+ * `checkSharedVoteRateLimit` / `BlockTokenService.checkRateLimit`.
  *
  * KEY: keyed on the CLIENT IP for unauthenticated callers, and on the USER ID for
  * authenticated callers (who get a higher bucket — a logged-in integration is a

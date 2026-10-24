@@ -23,7 +23,6 @@ export type ImageDataType = {
   type: string;
   label: string;
   // labelType: LabelTypes;
-  invalidLabel: boolean;
   source: { type: ImageSelectSource; url: string } | null;
 };
 
@@ -447,7 +446,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
     updateImage: (
       modelId,
       mediaType,
-      { matcher, urlMatcher, url, name, type, label, appendLabel, invalidLabel, source }
+      { matcher, urlMatcher, url, name, type, label, appendLabel, source }
     ) => {
       set((state) => {
         setModelState(state, modelId, mediaType);
@@ -474,7 +473,6 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               name: name ?? i.name,
               type: type ?? i.type,
               label: newLabel,
-              invalidLabel: invalidLabel ?? i.invalidLabel,
               source: source ?? i.source,
             };
           }

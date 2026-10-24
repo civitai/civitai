@@ -12,10 +12,18 @@ type ModelModActivity = {
     | 'unsetMinor'
     | 'setSfwOnly'
     | 'unsetSfwOnly'
+    | 'setPoi'
+    | 'unsetPoi'
     | 'setMinorAutoHash'
     | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
-    | 'dismissMinorHashMatch';
+    | 'dismissMinorHashMatch'
+    | 'setPoiAutoHash'
+    | 'revertPoiAutoHash'
+    | 'dismissPoiHashMatch'
+    // A moderator's model save added or removed one locked property (`lockProperty:poi`).
+    | `lockProperty:${string}`
+    | `unlockProperty:${string}`;
 };
 
 type ModelVersionModActivity = {
@@ -75,7 +83,25 @@ type UserModActivity = {
     // A moderator closed the account FOR its owner, which in practice means a data-subject erasure
     // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
     // which strips what an account owns and leaves the account itself identifiable.
-    | 'deleteAccount';
+    | 'deleteAccount'
+    // A moderator removed every reaction the account made, on its owner's request. One row per call;
+    // the per-table counts are on the ClickHouse audit row (`affected`).
+    | 'removeReactions'
+    // Support minted a membership code for this account (`mintMembershipCode:<tier>:<months>`). The
+    // daily per-moderator cap counts these rows; the code itself lives on RedeemableCode, never here.
+    | `mintMembershipCode:${string}`
+    // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
+    | `revokeMembershipCode:${string}`
+    // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
+    // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
+    | `grantCreatorScore:${string}`
+    | `revokeCreatorScore:${string}`
+    // A moderator set or cleared the Creator Program ban
+    // (`creatorProgramBan:<set|clear>:<before>:<after>:<{reason,gateRef} JSON>`).
+    | `creatorProgramBan:${string}`
+    // A lost payment dispute on a payment this account made
+    // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
+    | `chargeback:${string}`;
 };
 
 type ComicProjectModActivity = {
@@ -88,6 +114,25 @@ type ComicProjectModActivity = {
 type PlacementModActivity = {
   entityType: 'placement';
   activity: 'removePlacement';
+};
+
+/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+type FeedbackModActivity = {
+  entityType: 'feedback';
+  activity: 'hideFromOwner' | 'unhideFromOwner';
+};
+
+/** A moderator cleared a bounty entry file's check result
+ *  (`clearFileCheck:<{fileId,reason} JSON>`; the file holds it as `metadata.checkOverride`), or
+ *  undid that clear (`reblockFileCheck:<{fileId,reason} JSON>`). */
+type BountyEntryModActivity = {
+  entityType: 'bountyEntry';
+  activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
+};
+
+type SiteAlertModActivity = {
+  entityType: 'siteAlert';
+  activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
 type ModActivity = {
@@ -103,6 +148,9 @@ type ModActivity = {
   | UserModActivity
   | ComicProjectModActivity
   | PlacementModActivity
+  | FeedbackModActivity
+  | BountyEntryModActivity
+  | SiteAlertModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

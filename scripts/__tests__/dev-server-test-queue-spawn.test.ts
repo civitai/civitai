@@ -80,6 +80,44 @@ describe('the queued run does not re-enter the queue', () => {
   });
 });
 
+describe('the run width is not overridden by an inherited VITEST_MAX_WORKERS', () => {
+  /**
+   * Vitest reads `VITEST_MAX_WORKERS` after it merges the CLI, so the daemon's own copy (4 on the
+   * desk's user env) beat every `--max-workers` this queue passed: 3-4 forks under
+   * `--max-workers=12`, and every full unit run timed out at 30 minutes (2026-10-20).
+   */
+  beforeEach(() => vi.stubEnv('VITEST_MAX_WORKERS', '4'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const envFor = (opts: { args?: string[]; maxWorkers?: number | null }) => {
+    const handle = defaultStartRun({
+      worktree: '/repo',
+      args: opts.args ?? [],
+      maxWorkers: opts.maxWorkers ?? null,
+      onLog: () => undefined,
+      onExit: () => undefined,
+    });
+    handle.dispose();
+    return (spawn.mock.calls[0][2] as { env: Record<string, string | undefined> }).env;
+  };
+
+  it("sets it to the queue's width", () => {
+    expect(envFor({ maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('12');
+  });
+
+  it("keeps a caller's own --max-workers, in either spelling", () => {
+    expect(envFor({ args: ['--max-workers=3'], maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('3');
+    vi.clearAllMocks();
+    spawn.mockReturnValue(fakeChild());
+    expect(envFor({ args: ['--maxWorkers', '5'], maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('5');
+  });
+
+  it('clears it for an uncapped run rather than inheriting the daemon value', () => {
+    const env = envFor({ maxWorkers: null });
+    expect('VITEST_MAX_WORKERS' in env ? env.VITEST_MAX_WORKERS : undefined).toBeUndefined();
+  });
+});
+
 /**
  * The queue suites all use fake runners, so nothing else reads the handle `defaultStartRun` builds.
  * A member dropped from it - `kill` is the one that matters, since cancel, timeout and shutdown call

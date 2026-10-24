@@ -6,17 +6,26 @@ import type { MembershipTier } from '~/shared/utils/subscription-tokens';
  * is which — a surface supplies its own payload and render, and reaches this
  * layer only through the table below.
  */
-export type PlacementSurface = 'sticker' | 'remixGallery' | 'galleryPromotion' | 'modelPromotion';
+export type PlacementSurface =
+  | 'sticker'
+  | 'remixGallery'
+  | 'galleryPromotion'
+  | 'modelPromotion'
+  | 'storyline';
 
-/** Where a space can be configured. Resolution runs image -> post -> account. */
-export type PlacementSpaceEntity = 'image' | 'post' | 'user';
+/**
+ * Where a space can be configured. Resolution runs image -> post -> account,
+ * and storyline -> account for a storyline continuation.
+ */
+export type PlacementSpaceEntity = 'image' | 'post' | 'user' | 'storyline';
 
 /**
  * What a placement sits on. Not the same set as `PlacementSpaceEntity`: a
  * gallery promotion sits on a model, but its space is configured on the
- * owner's account only.
+ * owner's account only. A storyline continuation sits on the chapter post it
+ * continues.
  */
-export type PlacementTargetType = 'image' | 'model';
+export type PlacementTargetType = 'image' | 'model' | 'post';
 
 export type PlacementSpaceMode =
   /** Nothing may be placed. */
@@ -167,6 +176,17 @@ export const PLACEMENT_LEDGER_TEXT: Record<
     toPlatform: 'Platform share of a model promotion',
     forfeit: 'Forfeited model promotion',
   },
+  storyline: {
+    holdFee: 'Storyline continuation fee, held while the creator decides',
+    holdPrincipal: 'Storyline continuation, held while the creator decides',
+    toOwner: 'Someone continued your storyline',
+    feeToOwner: 'Fee kept from a storyline continuation you declined',
+    toSeller: 'Share of a storyline continuation',
+    principalToPlacer: 'Refund: your storyline continuation',
+    feeToPlacer: 'Refund: storyline continuation fee',
+    toPlatform: 'Platform share of a storyline continuation',
+    forfeit: 'Forfeited storyline continuation',
+  },
 };
 
 /** The placement descriptions a Buzz surface may render to a user verbatim. */
@@ -286,6 +306,43 @@ export const PLACEMENT_SURFACES = {
     maxPendingPerOwner: 10,
     allowedModes: ['off', 'review'],
   },
+  /**
+   * A continuation of someone's storyline, submitted for the storyline's creator to accept. The one
+   * surface whose price may be zero, so it has no free tier: see `placementSurfaceAllowsZeroPrice`.
+   *
+   * With no price to act as the spam gate, what bounds it instead is the per-owner pending cap
+   * (enforced under a lock, since a spammer pays nothing to race it), the owner's review, and the
+   * storyline's rating ceiling.
+   */
+  storyline: {
+    label: 'storylines',
+    // The chapter post being continued, never one of its images: a chapter is
+    // a post, and forks happen only at its end.
+    targets: ['post'],
+    defaultMode: 'review',
+    // Same decision as the mode, per the sticker note: 0 is a price `setPlacementSpace` accepts on
+    // this surface, so the default is reachable.
+    defaultPrice: 0,
+    trackMinPrice: 0,
+    // 🔴 Zero on THIS surface only, and that is the whole relaxation. Every other
+    // surface keeps its floor because its price is its spam gate; the guard test
+    // `keeps the price floor on every surface that has one` fails if this value
+    // spreads. See the surface note above for what gates a storyline instead.
+    serverMinPrice: 0,
+    // Platform-fixed, like the remix gallery. Only bites on a priced storyline.
+    defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    // Longer than the other surfaces: a creator reads a chapter before answering.
+    expiryHours: 24 * 7,
+    // `createFreePlacement` refuses this surface, so free slots here would do nothing.
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    // Never `auto`: a continuation is user-uploaded media added to someone
+    // else's story. Endorsed collaborators skip review per user, not per space.
+    allowedModes: ['off', 'review'],
+  },
 } as const satisfies Record<
   PlacementSurface,
   {
@@ -304,6 +361,9 @@ export const PLACEMENT_SURFACES = {
      * Separate from `trackMinPrice` because the two answer different questions
      * and stickers already answer them differently: its slider starts at 50
      * while prices below that remain chargeable.
+     *
+     * `0` only on a surface with another spam gate, and it changes what the
+     * surface is: see `placementSurfaceAllowsZeroPrice`.
      */
     serverMinPrice: number;
     defaultDeclineFeeRate: number;
@@ -354,6 +414,16 @@ export const isPlacementSurface = (surface: string): surface is PlacementSurface
 
 export const surfaceAcceptsTarget = (surface: PlacementSurface, target: string) =>
   (PLACEMENT_SURFACES[surface].targets as readonly string[]).includes(target);
+
+/**
+ * Whether a creator may price this surface at zero, which also means it has no free tier.
+ *
+ * Derived from the floor rather than stored beside it, so the two cannot disagree. A zero-priced
+ * placement is an ordinary placement of amount 0 (`free: false`): it holds no slot, spends no
+ * allowance and takes no escrow, and `createFreePlacement` refuses these surfaces.
+ */
+export const placementSurfaceAllowsZeroPrice = (surface: PlacementSurface) =>
+  PLACEMENT_SURFACES[surface].serverMinPrice === 0;
 
 /**
  * Read the copy from the table so a surface that isn't listed cannot be named
@@ -465,6 +535,7 @@ export type PlacementSpaceSetting = {
 export function resolvePlacementSpace(
   surface: PlacementSurface,
   levels: {
+    storyline?: PlacementSpaceSetting;
     image?: PlacementSpaceSetting;
     post?: PlacementSpaceSetting;
     user?: PlacementSpaceSetting;
@@ -474,7 +545,10 @@ export function resolvePlacementSpace(
   // nullable here for a real reason — an unpriced space must not be charged for
   // — where an unset slot count has an unambiguous answer.
 ): PlacementSpaceSetting & { freeSlots: number } {
-  const ordered = [levels.image, levels.post, levels.user];
+  // A storyline level only ever arrives without image or post levels beside it
+  // (its target resolves to the storyline and the creator's account), so its
+  // place at the front decides nothing between them; it outranks the account.
+  const ordered = [levels.storyline, levels.image, levels.post, levels.user];
   return {
     mode:
       ordered.find((level) => level?.mode !== undefined)?.mode ??
@@ -495,7 +569,8 @@ export function resolvePlacementSpace(
       {},
       levels.user?.settings,
       levels.post?.settings,
-      levels.image?.settings
+      levels.image?.settings,
+      levels.storyline?.settings
     ),
   };
 }

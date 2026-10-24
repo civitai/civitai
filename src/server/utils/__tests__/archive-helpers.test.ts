@@ -11,7 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import plimit from 'p-limit';
 import {
   createBoundedArchive,
+  createByteBudget,
   deriveUploadPartGeometry,
+  ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MAX_PART_SIZE_BYTES,
   MAX_PENDING_ARCHIVE_ENTRIES,
   MAX_UPLOAD_QUEUE_SIZE,
@@ -509,5 +511,151 @@ describe('deriveUploadPartGeometry', () => {
     const huge = deriveUploadPartGeometry({ expectedBytes: 100_000 * 1024 * MiB });
     expect(huge.partSize).toBeGreaterThan(small.partSize);
     expect(huge.queueSize).toBeLessThan(small.queueSize);
+  });
+});
+
+describe('createByteBudget', () => {
+  const settled = async <T>(promise: Promise<T>) =>
+    Promise.race([promise.then(() => 'granted'), tick().then(() => 'parked')]);
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it('parks the reservation that would overflow until bytes are given back', async () => {
+    const budget = createByteBudget(100);
+    const releaseA = await budget.reserve(60);
+    await budget.reserve(40);
+    expect(budget.reservedBytes).toBe(100);
+
+    const third = budget.reserve(1);
+    expect(await settled(third)).toBe('parked');
+
+    releaseA();
+    expect(await settled(third)).toBe('granted');
+    expect(budget.reservedBytes).toBe(41);
+  });
+
+  it('runs an object larger than the whole budget, alone', async () => {
+    const budget = createByteBudget(100);
+    const releaseSmall = await budget.reserve(30);
+
+    const oversize = budget.reserve(5_000);
+    expect(await settled(oversize)).toBe('parked');
+
+    releaseSmall();
+    const releaseOversize = await oversize;
+    expect(budget.reservedBytes).toBe(100);
+
+    const after = budget.reserve(1);
+    expect(await settled(after)).toBe('parked');
+    releaseOversize();
+    expect(await settled(after)).toBe('granted');
+  });
+
+  it('serves reservations in order, so a large one is not starved by small ones behind it', async () => {
+    const budget = createByteBudget(100);
+    const release = await budget.reserve(50);
+    const large = budget.reserve(80);
+    const small = budget.reserve(10);
+
+    // `small` would fit now, but it is behind `large`.
+    expect(await settled(small)).toBe('parked');
+
+    release();
+    expect(await settled(large)).toBe('granted');
+    expect(await settled(small)).toBe('granted');
+    expect(budget.reservedBytes).toBe(90);
+  });
+
+  it('takes the whole budget for a size that is not a number, and gives it all back', async () => {
+    const budget = createByteBudget(100);
+    const release = await budget.reserve(NaN);
+    expect(budget.reservedBytes).toBe(100);
+
+    const next = budget.reserve(1);
+    expect(await settled(next)).toBe('parked');
+    release();
+    expect(await settled(next)).toBe('granted');
+    expect(budget.reservedBytes).toBe(1);
+  });
+
+  it('gives bytes back once, however many times release is called', async () => {
+    const budget = createByteBudget(100);
+    const release = await budget.reserve(70);
+    await budget.reserve(30);
+    release();
+    release();
+    expect(budget.reservedBytes).toBe(30);
+  });
+
+  it('rejects parked and later reservations once aborted', async () => {
+    const budget = createByteBudget(100);
+    await budget.reserve(100);
+    const parked = budget.reserve(1);
+
+    budget.abort(new Error('archive failed'));
+
+    await expect(parked).rejects.toThrow('archive failed');
+    await expect(budget.reserve(1)).rejects.toThrow('archive failed');
+  });
+});
+
+describe('createBoundedArchive onWritten', () => {
+  it('runs each callback once its entry is written, in append order', async () => {
+    const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
+    const output = fs.createWriteStream(path.join(tmpDir, 'on-written.zip'));
+    archive.pipe(output);
+    const bounded = createBoundedArchive({ archive, output, maxPendingEntries: BOUND });
+
+    const written: Array<{ entry: number; entriesWritten: number }> = [];
+    let entriesWritten = 0;
+    archive.prependListener('entry', () => entriesWritten++);
+    for (let i = 0; i < ENTRY_COUNT; i++) {
+      await bounded.append(entryBuffer(i), { name: `e-${i}.bin` }, () =>
+        written.push({ entry: i, entriesWritten })
+      );
+    }
+    await bounded.finalize();
+
+    expect(written).toEqual(
+      Array.from({ length: ENTRY_COUNT }, (_, i) => ({ entry: i, entriesWritten: i + 1 }))
+    );
+  });
+
+  it('runs every pending callback when the archive fails, so a byte budget cannot deadlock', async () => {
+    // A stub that never writes: only the error path can give the bytes back.
+    const stub = new EventEmitter() as unknown as Archiver;
+    (stub as unknown as { append: () => void }).append = () => undefined;
+    const bounded = createBoundedArchive({ archive: stub, maxPendingEntries: 4 });
+    const budget = createByteBudget(100);
+
+    for (const name of ['a', 'b']) {
+      const release = await budget.reserve(50);
+      await bounded.append(entryBuffer(0), { name }, release);
+    }
+    const reader = budget.reserve(50);
+    const parked = await Promise.race([
+      reader.then(() => 'granted'),
+      new Promise((resolve) => setTimeout(() => resolve('parked'), 10)),
+    ]);
+    expect(parked).toBe('parked');
+
+    stub.emit('error', new Error('synthetic archive failure'));
+
+    const outcome = await Promise.race([
+      reader.then(() => 'granted'),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 500)),
+    ]);
+    expect(outcome).toBe('granted');
+    expect(budget.reservedBytes).toBe(50);
+  });
+});
+
+describe('ESTIMATED_BYTES_PER_ARCHIVED_IMAGE', () => {
+  const LIBRARY = 20_000;
+
+  it('sizes parts so a large library of originals at that estimate fits in one upload', () => {
+    const expectedBytes = LIBRARY * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE;
+    expect(deriveUploadPartGeometry({ expectedBytes }).maxObjectBytes).toBeGreaterThanOrEqual(
+      expectedBytes
+    );
   });
 });

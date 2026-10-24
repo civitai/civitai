@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   blockPassThroughStepBodySchema,
+  blockWorkflowBodySchema,
   PASS_THROUGH_TYPE_MAX_CHARS,
 } from '~/server/schema/blocks/workflow.schema';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
@@ -89,7 +90,7 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
   // parameters through `blockGenerationCoarseType` and labels its counters with the
   // result.
 
-  it('the coarse key is exactly these six', () => {
+  it('the coarse key is exactly these seven', () => {
     // Literal, not derived. Widening this set is a wire-contract decision and a
     // fee-table decision; it must not happen by accident.
     //
@@ -102,8 +103,19 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
     // `training` IS THE SIXTH, ADDED WITH `kind:'training'`: its own fee group, so a
     // training run is priced by the zero-fee `training` override and never as a
     // pass-through `step`.
+    //
+    // `workflow` IS THE SEVENTH, ADDED WITH `kind:'workflow'`: one multi-step
+    // workflow is one generation and one fee, grouped apart from a single `step`.
     expect([...BLOCK_GENERATION_COARSE_TYPES].sort()).toEqual(
-      ['chat-completion', 'convert-image', 'customComfy', 'step', 'textToImage', 'training'].sort()
+      [
+        'chat-completion',
+        'convert-image',
+        'customComfy',
+        'step',
+        'textToImage',
+        'training',
+        'workflow',
+      ].sort()
     );
   });
 
@@ -1168,6 +1180,8 @@ describe('the accepted sets stay DERIVED from the registries', () => {
         // the TRAINING FORM'S schema — not off the literal under test.
         'training',
         ...schemaTrainingEcosystems().map((e) => `training:${e}`),
+        // The multi-step coarse key. It has no subtype.
+        'workflow',
       ].sort()
     );
     for (const value of BLOCK_GENERATION_TYPES) {
@@ -1338,6 +1352,25 @@ function schemaTrainingEcosystems(): string[] {
   ).options;
   return options.map((o) => o.shape.ecosystem.value);
 }
+
+describe("resolveBlockGenerationType — kind:'workflow' records the bare coarse key", () => {
+  it("resolves kind:'workflow' to the bare `workflow`, whatever its steps are", () => {
+    const body = {
+      kind: 'workflow',
+      steps: [
+        { $type: 'imageGen', input: {} },
+        { $type: 'textToImage', input: {} },
+      ],
+    };
+    expect(resolveBlockGenerationType(body)).toBe('workflow');
+    // The value is real, parsed input: the wire schema accepts this body.
+    expect(blockWorkflowBodySchema.safeParse(body).success).toBe(true);
+    expect(blockGenerationCoarseType('workflow')).toBe('workflow');
+    // No subtype axis: a step `$type` can never ride this key.
+    expect(isBlockGenerationType('workflow:imageGen')).toBe(false);
+    expect(isBlockGenerationType('workflow:')).toBe(false);
+  });
+});
 
 describe("resolveBlockGenerationType — kind:'training' records training:<ecosystem>", () => {
   it('the instrument reads the schema (positive control)', () => {

@@ -6,6 +6,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { getResourceIntent } from '~/server/services/resource-intent.service';
+import { matchHostedModels } from '~/server/services/resource-intent-hosted-models';
 import { resourceIntentInputSchema } from '~/server/schema/resource-intent.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { checkBlockLLMRateLimit } from '~/server/utils/block-catalog-rate-limit';
@@ -40,7 +41,12 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * request is up to three vendor calls (stage 1, then two stage-3 calls in
  * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
- * response cache so a dark flag never reads, never spends.
+ * response cache so a dark flag never reads, never spends. Behind it,
+ * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10, and
+ * `resourceIntentCheckpoint` admits `kind: 'checkpoint'` (400 while it is off), `resourceIntentV1`
+ * serves the v1 content-tag arm for add-ons (over POOL_MERGE and HYBRID_10), and `resourceIntentV1Shadow`
+ * / `resourceIntentJudgeCapture` only record, after the response is built. Checkpoint mode
+ * makes no vendor call but still spends from the same LLM bucket: kept, not split, while it is dark.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
  * suggestions — never a stack trace, never fabricated suggestions. ⚠️ ONE
@@ -85,6 +91,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     res.status(400).json({ error: parsed.error });
     return;
   }
+  // Refused rather than answered as add-ons: a caller that asked for checkpoints must not get a
+  // list of a different kind. An absent `kind` (or 'addon') is unaffected by this flag.
+  if (parsed.data.kind === 'checkpoint' && !features.resourceIntentCheckpoint) {
+    res.status(400).json({ error: "kind 'checkpoint' is not enabled" });
+    return;
+  }
 
   const rateLimit = await checkBlockLLMRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
@@ -93,17 +105,29 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
+  const { needs, ...intentInput } = parsed.data;
   const regionRestricted = isRegionRestricted(getRegion(req));
   const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   try {
-    // Coverage is resolved INSIDE the service, on the cache-miss path only —
-    // a Flipt eval on every cache hit would be pure waste.
-    const result = await getResourceIntent(parsed.data, { browsingLevel });
+    // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
+    // path only (a Flipt eval on every hit would be waste); in checkpoint mode
+    // before the cache read, because it is a term of that mode's cache key. The
+    // v1 shadow resolves its own in either mode.
+    const result = await getResourceIntent(intentInput, {
+      browsingLevel,
+      poolMerge: !!features.resourceIntentPoolMerge,
+      v1: !!features.resourceIntentV1,
+      v1Shadow: !!features.resourceIntentV1Shadow,
+      judgeCapture: !!features.resourceIntentJudgeCapture,
+    });
     res.status(200).json({
       ...result,
       // Echo the applied ceiling (advisory — the clamp is authoritative).
       maturity: { browsingLevel, sfwOnly: isSfwCeiling },
+      // Only when asked for, so a caller that sends no `needs` gets the body it always got. Not
+      // filtered by the ceiling: every hosted model is listed in every browsing mode.
+      ...(needs && { hostedModels: matchHostedModels(needs) }),
     });
     return;
   } catch (e) {

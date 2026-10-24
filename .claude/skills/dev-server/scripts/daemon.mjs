@@ -23,9 +23,12 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
+import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
+import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
+import { blankKeys, blankedKeyNames } from './blank-keys.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
+import { DEFAULT_MAX_WORKERS, DEFAULT_RUN_TIMEOUT_MS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -69,6 +72,7 @@ function loadSkillConfig() {
     distCacheKeep: 4,
     distCacheMaxGb: 40,
     perBranchDistDir: false,
+    worktreeDevFsCache: false,
     killOnBranchSwitch: false,
     autoInstall: true,
     // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
@@ -84,11 +88,16 @@ function loadSkillConfig() {
     //
     // It stays FIRST in the list: any page route ahead of it would trigger the same compile from
     // inside a render, which is the thing being avoided.
+    //
+    // 🔴 Measured when `_app` reached the settings bootstrap over HTTP. It now calls the same code
+    // in-process, so a page render compiles that graph itself rather than waiting on the route's
+    // compile; whether this prewarm still buys anything is unmeasured. Kept until it is.
     prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,
     typecheckConcurrency: 1,
-    testMaxWorkers: null,
+    testMaxWorkers: DEFAULT_MAX_WORKERS,
+    testRunTimeoutMs: DEFAULT_RUN_TIMEOUT_MS,
     testCacheMode: 'off',
     prodGroups: [],
   };
@@ -146,6 +155,9 @@ function loadSkillConfig() {
         case 'PER_BRANCH_DIST_DIR':
           config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
           break;
+        case 'WORKTREE_DEV_FS_CACHE':
+          config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          break;
         case 'KILL_ON_BRANCH_SWITCH':
           config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
           break;
@@ -187,11 +199,23 @@ function loadSkillConfig() {
         case 'TEST_MAX_WORKERS': {
           // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
           // the queue is built at module scope, so a typo would stop the daemon binding at all.
-          // An empty value means "no cap", which is the default and not an error.
+          // An empty value keeps the default; `none` is the only way to uncap.
           if (!value) break;
+          if (value === 'none') {
+            config.testMaxWorkers = null;
+            break;
+          }
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
-          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1)`);
+          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1 or 'none')`);
+          break;
+        }
+        case 'TEST_RUN_TIMEOUT_MIN': {
+          // Minutes. Same degrade-don't-throw rule: the queue is built at module scope.
+          if (!value) break;
+          const parsed = /^\d+$/.test(value) ? Number(value) : NaN;
+          if (parsed >= 1) config.testRunTimeoutMs = parsed * 60 * 1000;
+          else console.error(`Ignoring TEST_RUN_TIMEOUT_MIN=${value} (want whole minutes >= 1)`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':
@@ -747,16 +771,25 @@ class DevSession {
     // Set PORT in environment
     envVars.PORT = String(this.port);
     envVars.NEXT_DIST_DIR = this.distDir;
+    applyDevFsCacheDefault(envVars, {
+      worktree: this.worktree,
+      primary: primaryCheckout,
+      worktreeOptIn: skillConfig.worktreeDevFsCache,
+    });
 
-    // Merge with current process env (for PATH, etc.)
-    const env = { ...process.env, ...envVars };
+    const env = spawnEnvFor(envVars, { blankedEnvDir: worktreeEnvDir(this.worktree, this.worktree) });
 
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
     this.addLog('info', `Env: ${this.envPaths.join(' <- ')}`);
     this.addLog('info', `Env modes: ${this.modeSummary}`);
+    this.addLog('info', LOCAL_MAIL_LOG);
     this.addLog('info', `Build dir: ${this.distDir}`);
+    this.addLog(
+      'info',
+      `Turbopack dev FS cache: ${envVars.NEXT_DEV_FS_CACHE === 'false' ? 'off' : 'on'}`
+    );
 
     if (skillConfig.perBranchDistDir) {
       pruneDistDirs(
@@ -1549,11 +1582,21 @@ class AuthHub {
     // refusal, the host warning, the spawn options) must AGREE with each other: the thing refused,
     // the thing described and the thing handed to the child have to be one object.
     if (!this.spawnEnvCache) {
-      this.spawnEnvCache = this.envPaths.length
-        ? { ...process.env, ...loadEnvChain(this.envPaths) }
-        : process.env;
+      this.spawnEnvCache = spawnEnvFor(this.envPaths.length ? loadEnvChain(this.envPaths) : {}, {
+        databaseEnv: this.databaseEnv(),
+        blankedEnvDir: this.blankedEnvDir(),
+      });
     }
     return this.spawnEnvCache;
+  }
+
+  // The hub runs from the primary checkout and keeps whatever its own .env names.
+  databaseEnv() {
+    return null;
+  }
+
+  blankedEnvDir() {
+    return null;
   }
 
   // `::` (dual-stack), not a single literal. Bound to `127.0.0.1` these servers answered on v4 and
@@ -1623,7 +1666,7 @@ class AuthHub {
     if (!this.requiredEnvPath && !this.spawnEnv().DATABASE_URL) {
       this.status = 'error';
       this.lastError =
-        `${this.label} has no DATABASE_URL: none of ${this.envPaths.join(', ')} supply one. ` +
+        `${this.label} has no DATABASE_URL: none of ${(this.databaseEnv() ? [resolve(this.path, '.env'), ...this.rootEnvPaths] : this.envPaths).join(', ')} supply one. ` +
         (primaryResolution.derived
           ? 'Copy an .env from the primary checkout.'
           : `The primary checkout could not be resolved from git (${primaryResolution.error}), ` +
@@ -1644,17 +1687,18 @@ class AuthHub {
     this.readyAt = null;
     this.lastError = null;
     this.addLog('info', `Starting ${this.label} on port ${this.port}: ${this.path}`);
+    this.addLog('info', LOCAL_MAIL_LOG);
+    if (this.databaseEnv()) this.addLog('info', DEV_DB_LOG);
 
-    // A fresh worktree inherits the primary checkout's apps/<name>/.env, and those point at the
-    // production database. Nothing in the start output used to say so, and a moderator remove-click
-    // deletes live rows — so name the host here, where it is read at the moment it matters, rather
-    // than only in a doc nobody opens at start time.
+    // An app's database is whatever its .env chain, the worktree's own app .env, or a hand edit made
+    // it, and a moderator remove-click deletes rows in it — so name the host here, where it is read
+    // at the moment it matters, rather than only in a doc nobody opens at start time.
     //
     // Describes the MERGED env, not the chain: the child gets `{ ...process.env, ...chain }`, so a
     // DATABASE_URL inherited from the daemon's own environment is one the app will really use and
     // nobody chose. Reporting null for it would read as "no database configured".
     // Only for a process whose env this daemon actually supplies. The auth hub passes an empty
-    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env verbatim —
+    // chain and lets Vite load apps/auth/.env itself, so spawnEnv() there is process.env plus the mail keys —
     // the line would name the daemon's inherited candidate, say nothing about the file the hub
     // really reads, and stay silent when THAT is the one pointing at production. Saying nothing is
     // the honest answer for the hub.
@@ -1856,7 +1900,7 @@ const APP_REGISTRY = {
 // a worktree served the primary checkout instead, silently: the app came up, answered 200s, and
 // showed `main`. Nothing in the output contradicted you unless you read the `path` field.
 class AppSession extends AuthHub {
-  constructor(name, worktree, port, envPaths) {
+  constructor(name, worktree, port, envPaths, rootEnvPaths = rootEnvChain(worktree)) {
     super('.', port);
     this.name = name;
     this.worktree = worktree;
@@ -1866,6 +1910,7 @@ class AppSession extends AuthHub {
     // primary checkout instead of refusing to start, which is what `requiredEnvPath: null` buys.
     this.requiredEnvPath = null;
     this.envPaths = envPaths;
+    this.rootEnvPaths = rootEnvPaths;
     // Born live: an entry reading `stopped` between the map insert and start() is one a concurrent
     // start treats as dead and inherits the port of. The handler sets it too — see there for why.
     this.status = 'starting';
@@ -1883,6 +1928,50 @@ class AppSession extends AuthHub {
       dbHost: this.dbHost ?? null,
     };
   }
+
+  // In a worktree the DB keys skip the chain's base, the primary's app .env, which may name a
+  // database other than dev. A key neither the worktree's app .env nor its root chain sets is
+  // removed rather than inherited.
+  databaseEnv() {
+    if (samePath(this.worktree, primaryCheckout)) return null;
+    return appDatabaseEnv(loadEnvFile(resolve(this.path, '.env')), loadEnvChain(this.rootEnvPaths));
+  }
+
+  blankedEnvDir() {
+    return worktreeEnvDir(this.worktree, this.path);
+  }
+}
+
+// Turbopack's dev filesystem cache (`.next/dev/cache`, read by next.config.mjs as NEXT_DEV_FS_CACHE)
+// is several GB per checkout, so across many worktrees it fills the disk. Off for worktrees unless
+// the skill .env opts back in; a NEXT_DEV_FS_CACHE from the session's own .env chain wins either
+// way. The primary checkout keeps it.
+// Vite gives process.env precedence over the .env files it loads, so the auth hub (which reads
+// apps/auth/.env itself) is routed to the catcher only because the keys are set here.
+// `databaseEnv` is non-null only for an app in a worktree; `blankedEnvDir` only for a process in a
+// worktree, naming the directory it reads its own .env files from.
+function spawnEnvFor(envVars, { databaseEnv = null, blankedEnvDir = null } = {}) {
+  const env = { ...process.env, ...envVars, ...LOCAL_MAIL_ENV };
+  if (databaseEnv) {
+    for (const key of DB_KEYS) {
+      if (databaseEnv[key] === undefined) delete env[key];
+      else env[key] = databaseEnv[key];
+    }
+  }
+  if (blankedEnvDir) blankKeys(env, blankedKeyNames(blankedEnvDir));
+  return env;
+}
+
+// `dir` for a process running in a worktree; null in the primary checkout, which keeps its values.
+function worktreeEnvDir(worktree, dir) {
+  return samePath(worktree, primaryCheckout) ? null : dir;
+}
+
+function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
+  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
+    envVars.NEXT_DEV_FS_CACHE = 'false';
+  }
+  return envVars;
 }
 
 // Host only, never the credential. A DATABASE_URL is `postgres://user:pass@host:port/db`, so the
@@ -1914,6 +2003,14 @@ function appEnvChain(worktree, name) {
   // samePath, not `!==`: started from the primary checkout in the other drive-letter casing this
   // would otherwise put the same file in the chain twice.
   if (!samePath(worktreeEnv, paths[0])) paths.push(worktreeEnv);
+  return paths;
+}
+
+// The root .env chain a worktree session runs on: the primary's, then the worktree's own.
+function rootEnvChain(worktree) {
+  const paths = [resolve(primaryCheckout, '.env')];
+  const own = resolve(worktree, '.env');
+  if (!samePath(own, paths[0])) paths.push(own);
   return paths;
 }
 
@@ -2022,6 +2119,7 @@ const testQueue = new TestQueue({
     typecheck: skillConfig.typecheckConcurrency,
   },
   maxWorkers: skillConfig.testMaxWorkers,
+  runTimeoutMs: skillConfig.testRunTimeoutMs,
   cacheMode: skillConfig.testCacheMode,
 });
 
@@ -2651,6 +2749,7 @@ async function main() {
                 }
               }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
+              if (parsed.runTimeoutMs !== undefined) testQueue.setRunTimeoutMs(parsed.runTimeoutMs);
               if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
             } catch (err) {
               res.writeHead(400);
@@ -2690,6 +2789,8 @@ async function main() {
           res.end(JSON.stringify({
             ...laneLimits,
             maxWorkers: testQueue.maxWorkers,
+            runTimeoutMs: testQueue.runTimeoutMs,
+            runTimeoutMin: testQueue.runTimeoutMs / 60000,
             cacheMode: testQueue.cacheMode,
             paused: testQueue.paused,
             queued: testQueue.order.length,
@@ -3217,12 +3318,16 @@ export {
   APP_REGISTRY,
   AppSession,
   appEnvChain,
+  rootEnvChain,
   appIsLive,
   appSessionKey,
   settleDelayMs,
   inheritablePort,
   releaseIfOurs,
   describeDatabaseHost,
+  applyDevFsCacheDefault,
+  spawnEnvFor,
+  worktreeEnvDir,
   appReservedPorts,
   appSessions,
   checkPath,

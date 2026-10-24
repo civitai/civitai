@@ -1,10 +1,12 @@
-import { Button, Group, Text } from '@mantine/core';
-import { IconBarbell } from '@tabler/icons-react';
+import { Anchor, Button, Group, Text } from '@mantine/core';
+import { IconBarbell, IconSparkles } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { isStudioToggleAvailable } from '~/components/Training/Form/studioAudioNotice';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -72,6 +74,49 @@ export function SwitchToTrainingStudioAlert({
         </Button>
       </Group>
     </AlertWithIcon>
+  );
+}
+
+// Models that train only in Training Studio, each behind the flag that shows its Studio card.
+const STUDIO_ONLY_MODELS = [
+  { name: 'Flux.3 Klein', feature: 'flux3KleinTraining' },
+  { name: 'MOSS Image', feature: 'mossImageTraining' },
+] as const satisfies readonly { name: string; feature: FeatureFlagKey }[];
+
+export function StudioOnlyModelsNotice() {
+  const features = useFeatureFlags();
+  const canSwitch = useCanSwitchToTrainingStudio();
+  const { switchTo, switching } = useTrainingStudioSwitch();
+  const models = STUDIO_ONLY_MODELS.filter((model) => features[model.feature]);
+  if (!canSwitch || !models.length) return null;
+
+  const names = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+    models.map((model) => model.name)
+  );
+
+  return (
+    <DismissibleAlert
+      // Keyed on the models shown, so a newly added one brings the notice back after a dismissal.
+      id={`training-studio-only-${models.map((model) => model.feature).join('-')}`}
+      color="blue"
+      size="sm"
+      icon={<IconSparkles size={16} />}
+      title={`${names} ${models.length > 1 ? 'are' : 'is'} here — in Training Studio`}
+    >
+      <Text size="sm">
+        {names} LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
+        <Anchor
+          component="button"
+          type="button"
+          size="sm"
+          disabled={switching}
+          onClick={() => switchTo(true, '/training-studio?view=new')}
+        >
+          Switch to Training Studio
+        </Anchor>{' '}
+        to try {models.length > 1 ? 'them' : 'it'}. You can switch back at any time.
+      </Text>
+    </DismissibleAlert>
   );
 }
 

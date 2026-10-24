@@ -14,8 +14,10 @@ const { mockTx } = vi.hoisted(() => ({
   // Separate from the write client on purpose: modelVersion.update is asserted as "inside the
   // transaction", which collapses if $transaction hands back dbWrite itself.
   mockTx: {
-    modelVersion: { update: vi.fn(), findUniqueOrThrow: vi.fn() },
+    modelVersion: { create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
     $executeRaw: vi.fn(),
+    // The name/trained-words row lock; no stored row, so no conflict check.
+    $queryRaw: vi.fn(async () => []),
   },
 }));
 
@@ -257,6 +259,112 @@ describe('upsertModelVersion — cannot take a published version down through th
     mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
     await upsertModelVersion({ id: VERSION_ID, status: 'Published', name: 'renamed' } as never);
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+  });
+});
+
+// Publishing runs through modelVersion.publish; the editor route must not be a second way in.
+describe('upsertModelVersion — cannot publish through the editor', () => {
+  const PUBLISH_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
+
+  const seedExisting = (status: ModelStatus) =>
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      status,
+      meta: null,
+      model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Private' },
+      monetization: null,
+    });
+
+  beforeEach(() => {
+    seedPurchase();
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
+    mockTx.modelVersion.create.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+    mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+  });
+
+  const createData = () => mockTx.modelVersion.create.mock.calls[0][0].data;
+
+  it.each(PUBLISH_STATUSES)(
+    'creates a Draft, private version when a non-moderator sends %s',
+    async (status) => {
+      await upsertModelVersion({ modelId: MODEL_ID, name: 'v1', status } as never);
+
+      expect(createData().status).toBe(ModelStatus.Draft);
+      expect(createData().availability).toBe('Private');
+    }
+  );
+
+  it('keeps a moderator-supplied status on create', async () => {
+    await upsertModelVersion({
+      modelId: MODEL_ID,
+      name: 'v1',
+      status: ModelStatus.Published,
+      isModerator: true,
+    } as never);
+
+    expect(createData().status).toBe(ModelStatus.Published);
+    expect(createData().availability).toBe('Public');
+  });
+
+  // Every ordered pair of distinct statuses, minus leaving Published (its own guard, above).
+  const transitions = Object.values(ModelStatus)
+    .filter((from) => from !== ModelStatus.Published)
+    .flatMap((from) =>
+      Object.values(ModelStatus)
+        .filter((to) => to !== from)
+        .map((to) => [from, to] as const)
+    );
+
+  it.each(transitions)('refuses a non-moderator moving %s to %s', async (from, to) => {
+    seedExisting(from);
+
+    await expect(upsertModelVersion({ id: VERSION_ID, status: to } as never)).rejects.toThrowError(
+      /Use the publish or unpublish action/
+    );
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  // The live repro: Draft is the one status modelVersion.publish accepts from an owner, so this
+  // move turned a moderator takedown into a self-serve republish.
+  it('refuses laundering a moderator takedown into Draft', async () => {
+    seedExisting(ModelStatus.UnpublishedViolation);
+
+    await expect(
+      upsertModelVersion({ id: VERSION_ID, status: ModelStatus.Draft } as never)
+    ).rejects.toThrowError(/Use the publish or unpublish action/);
+  });
+
+  // The form and the review handlers replay the stored row, status included, with no moderator flag.
+  it.each(Object.values(ModelStatus).filter((s) => s !== ModelStatus.Published))(
+    'lets a save that carries the current %s status through',
+    async (status) => {
+      seedExisting(status);
+
+      await upsertModelVersion({ id: VERSION_ID, status } as never);
+
+      expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    }
+  );
+
+  it('lets a save without a status through', async () => {
+    seedExisting(ModelStatus.UnpublishedViolation);
+
+    await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator move a Draft to Published', async () => {
+    seedExisting(ModelStatus.Draft);
+
+    await upsertModelVersion({
+      id: VERSION_ID,
+      status: ModelStatus.Published,
+      isModerator: true,
+    } as never);
 
     expect(mockTx.modelVersion.update).toHaveBeenCalled();
   });

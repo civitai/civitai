@@ -124,10 +124,11 @@ const LEDGER = [
   },
   {
     file: 'src/server/routers/blocks.router.ts',
-    count: 6,
+    count: 8,
     why:
-      'The tRPC bridge paths: the block-post writer plus the five workflow-submit arms ' +
-      '(txt2img, registry step, custom comfy, pass-through, training). These do NOT pass through the ' +
+      'The tRPC bridge paths: the block-post writer, the app-reaction writer, plus the six workflow-submit arms ' +
+      '(txt2img, registry step, custom comfy, pass-through, multi-step workflow, and the shared ' +
+      'confirmed-quote path that serves training runs and confirmed steps). These do NOT pass through the ' +
       'REST middleware, so the middleware site above does not cover them.',
   },
   {
@@ -160,7 +161,7 @@ const PREDICATE_MODULE = 'src/server/services/blocks/scope-activity-predicate.ts
 /**
  * 🔴 THE CARRIER, AND IT CLOSES A MUTANT THAT SURVIVED THE WHOLE SUITE.
  *
- * Two of the eleven writers — the storage set and delete audit rows — never see the claims
+ * Two of the thirteen writers — the storage set and delete audit rows — never see the claims
  * object, so they thread a LOCAL destructured off the resolver that verified the token. The
  * accepted-spellings list admits that local by name, which means the per-site check above
  * accepts `privateRun: privateRun === true` without tracing where `privateRun` came from —
@@ -741,6 +742,9 @@ describe('every block_scope_invocations writer carries the private-run marker', 
 
 describe('the storage path carries the VERIFIED claim, not just a local', () => {
   const source = read(STORAGE_CARRIER.file);
+  // A call to the shared resolver, tolerating explicit type arguments before the paren: `tsc`
+  // rejects that spelling (the function is not generic) but a bare-call matcher would miss it.
+  const RESOLVER_CALL_RE = /\bresolveBlockToken\s*(?:<[^()]*>)?\s*\(/;
 
   it('[REG] every return of the storage resolver derives privateRun from the verified claim', () => {
     // 🔴 THE ASSERTION THAT KILLS THE SURVIVING MUTANT. `resolveStorageContext` is the only
@@ -761,12 +765,21 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
     // matcher working: a TYPE DECLARATION IS NOT A CODE PATH, and a check that counted it
     // would have been reading the promise rather than the delivery. Slice from the first
     // body statement so only real expressions are in scope.
-    const VERIFY = 'const claims = await verifyBlockToken(blockToken);';
+    // The verification is `resolveBlockToken` (`block-bridge-auth.service.ts`), the one
+    // tRPC-side resolver; it was a direct `verifyBlockToken` call here until the three tRPC
+    // resolvers were consolidated. `claims` is then destructured from its result, so the
+    // second anchor is what ties every `claims.privateRun` below to that verification.
+    const VERIFY = 'const resolved = await resolveBlockToken(blockToken, {';
     const bodyAt = body.indexOf(VERIFY);
     // Positive control: the region really is the resolver's body, not an empty or wrong
     // slice — without this every assertion below is vacuous over a truncated string.
     expect(bodyAt, 'the resolver must still verify the token as its first act').toBeGreaterThan(0);
     body = body.slice(bodyAt);
+    expect(
+      body,
+      '`claims` must be destructured from the verified resolution (presence only — this does ' +
+        'not prove no other `claims` binding exists)'
+    ).toContain('const { claims, slug, approval } = resolved;');
     // And the body really does contain the resolve branches the count below is about.
     expect(
       body.split('return {').length - 1,
@@ -853,6 +866,12 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
         body,
         `${writer} must not verify the token itself — the resolver already did`
       ).not.toContain('verifyBlockToken(');
+      // Since the consolidation the natural way to re-verify is the shared resolver, so a
+      // writer may not call that either.
+      expect(
+        body,
+        `${writer} must not resolve the token itself — the resolver already did`
+      ).not.toMatch(RESOLVER_CALL_RE);
     }
   );
 
@@ -862,10 +881,16 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
     // precisely why the ledger's entry for this file notes that one REST write produces two
     // audit rows. What is asserted is narrower and true: within this module there is one
     // verification, so there is one place the claim is read.
+    // Since the consolidation that one verification is the module's single
+    // `resolveBlockToken(` call; a direct `verifyBlockToken(` here would be a second one.
     expect(
-      source.split('verifyBlockToken(').length - 1,
+      source.match(new RegExp(RESOLVER_CALL_RE.source, 'g'))?.length ?? 0,
       'this module must verify the token exactly once, in resolveStorageContext'
     ).toBe(1);
+    expect(
+      source.split('verifyBlockToken(').length - 1,
+      'this module must not verify the token directly — resolveBlockToken already does'
+    ).toBe(0);
   });
 });
 

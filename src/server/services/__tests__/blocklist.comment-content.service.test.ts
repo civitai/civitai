@@ -346,4 +346,57 @@ describe('throwOnBlockedCommentContent', () => {
       await rejection('<p>Scam alert: "to safely unlock your held balance" is a phish.</p>')
     ).toBeInstanceOf(TRPCError);
   });
+
+  /**
+   * `onBlocked` lets a surface reuse this check under its own wording (app feedback). The comment
+   * messages below are what a caller WITHOUT the hook still gets, so they are pinned too.
+   */
+  describe('onBlocked', () => {
+    const hook = () =>
+      vi.fn((): never => {
+        throw new Error('hooked');
+      });
+
+    it('hands a link hit the blocked URLs as data, and its throw replaces the comment message', async () => {
+      setLists({ domains: ['blocked.example'] });
+      const onBlocked = hook();
+      await expect(
+        throwOnBlockedCommentContent('<p>https://blocked.example/x and https://ok.example/y</p>', {
+          onBlocked,
+        })
+      ).rejects.toThrow('hooked');
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'link', urls: ['https://blocked.example/x'] });
+    });
+
+    it('hands a pattern hit NO matched text', async () => {
+      setLists({ patterns: ['to safely unlock your held balance'] });
+      const onBlocked = hook();
+      await expect(
+        throwOnBlockedCommentContent('<p>to safely unlock your held balance</p>', { onBlocked })
+      ).rejects.toThrow('hooked');
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'pattern' });
+    });
+
+    it('is not called for clean text or an exempt moderator', async () => {
+      setLists({ patterns: ['to safely unlock your held balance'], domains: ['blocked.example'] });
+      const onBlocked = hook();
+      await throwOnBlockedCommentContent('<p>Lovely work.</p>', { onBlocked });
+      await throwOnBlockedCommentContent('<p>https://blocked.example/x</p>', {
+        onBlocked,
+        isModerator: true,
+      });
+      expect(onBlocked).not.toHaveBeenCalled();
+    });
+
+    it('leaves the comment wording unchanged for a caller without it', async () => {
+      setLists({ domains: ['blocked.example'] });
+      expect(await rejection('<p>https://blocked.example/x</p>')).toMatchObject({
+        message: 'invalid urls: https://blocked.example/x',
+      });
+      setLists({ patterns: ['to safely unlock your held balance'] });
+      expect(await rejection('<p>to safely unlock your held balance</p>')).toMatchObject({
+        message: 'Comment blocked by content filter',
+      });
+    });
+  });
 });

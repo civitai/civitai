@@ -1,7 +1,11 @@
 import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
-import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
+import { IconAward, IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
+import {
+  creatorScorePenalty,
+  creatorScoreSources,
+  creatorScoreStaffAwarded,
+} from '~/components/Account/creator-score-copy';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
@@ -12,6 +16,7 @@ type Scores = {
   users?: number;
   reportsActioned?: number;
   reportsAgainst?: number;
+  staffAwarded?: number;
 };
 
 export const scoreCategories = [
@@ -33,6 +38,8 @@ const reportCategories = [
     icon: IconFlag,
     tooltip:
       'Points deducted for images this user posted that were removed for Terms of Service violations',
+    ownerLabel: 'Removed content',
+    ownerTooltip: creatorScorePenalty,
   },
   {
     key: 'reportsActioned' as const,
@@ -40,17 +47,22 @@ const reportCategories = [
     color: 'green',
     icon: IconShieldCheck,
     tooltip: 'Points earned for reports this user filed that moderators actioned',
+    ownerLabel: creatorScoreSources.reportsActioned.label,
+    ownerTooltip: creatorScoreSources.reportsActioned.earnedBy,
   },
 ];
 
 export function UserScoreDisplay({
   scores,
   showReports = false,
+  owner = false,
   flat = false,
   abbreviate = true,
 }: {
   scores: Scores | null | undefined;
   showReports?: boolean;
+  /** The creator looking at their own score: the reports block speaks to them, not about them. */
+  owner?: boolean;
   /** Drop the panel chrome when the caller already provides it. */
   flat?: boolean;
   abbreviate?: boolean;
@@ -75,6 +87,8 @@ export function UserScoreDisplay({
   // what pulls the score below zero, so it's the thing the user needs to see.
   const total = scores.total ?? 0;
   const reportsAgainstScore = scores.reportsAgainst ?? 0;
+  const reportsActionedScore = scores.reportsActioned ?? 0;
+  const staffAwardedScore = scores.staffAwarded ?? 0;
 
   return (
     <Paper withBorder={!flat} p={flat ? 0 : 'md'} radius="md">
@@ -148,7 +162,14 @@ export function UserScoreDisplay({
                           style={{ cursor: 'help' }}
                         />
                       </Tooltip>
-                      <Text size="sm">{label}</Text>
+                      <Text size="sm">
+                        {label}{' '}
+                        <Text span size="sm" c="dimmed" className="tabular-nums">
+                          {abbreviate
+                            ? abbreviateNumber(categoryValues[index], { decimals: 1 })
+                            : Math.round(categoryValues[index]).toLocaleString()}
+                        </Text>
+                      </Text>
                     </Group>
                   );
                 })}
@@ -161,50 +182,70 @@ export function UserScoreDisplay({
           )}
         </Stack>
 
-        {/* Non-moderators don't get the full Reports block, but a negative score
-            still needs a cause — surface the deduction as a distinct tinted penalty
-            callout (not a plain list row) so it reads as the thing pulling the score
-            down rather than another contributing category. */}
+        {/* Non-moderators don't get the full Reports block, so each report score that moves the
+            total shows as a tinted callout instead. Neither is in the bar above, which sums only
+            the content categories. */}
         {!showReports && reportsAgainstScore < 0 && (
-          <Group
-            justify="space-between"
-            wrap="nowrap"
-            gap="sm"
-            px="sm"
-            py={8}
-            style={{
-              backgroundColor: 'var(--mantine-color-red-light)',
-              borderRadius: 'var(--mantine-radius-md)',
-            }}
-          >
-            <Group gap={8} wrap="nowrap">
+          <ScoreCallout
+            color="red"
+            icon={
               <IconFlag size={16} color="var(--mantine-color-red-6)" style={{ flexShrink: 0 }} />
-              <Text size="sm">Reports against</Text>
-              <Tooltip label={creatorScorePenalty} multiline w={240} withArrow>
-                <IconInfoCircle
-                  size={14}
-                  style={{ flexShrink: 0, cursor: 'help' }}
-                  color="var(--mantine-color-dimmed)"
-                />
-              </Tooltip>
-            </Group>
-            {/* Abbreviated to match the headline's scale; exact value in the tooltip. */}
-            <Tooltip label={`${Math.round(reportsAgainstScore).toLocaleString()} points`} withArrow>
-              <Text size="sm" fw={700} c="red" style={{ whiteSpace: 'nowrap', cursor: 'help' }}>
-                {abbreviateNumber(reportsAgainstScore, { decimals: 1 })} pts
-              </Text>
-            </Tooltip>
-          </Group>
+            }
+            label="Reports against"
+            tooltip={creatorScorePenalty}
+            value={reportsAgainstScore}
+            abbreviate
+          />
+        )}
+
+        {!showReports && reportsActionedScore > 0 && (
+          <ScoreCallout
+            color="green"
+            icon={
+              <IconShieldCheck
+                size={16}
+                color="var(--mantine-color-green-6)"
+                style={{ flexShrink: 0 }}
+              />
+            }
+            label={creatorScoreSources.reportsActioned.label}
+            tooltip={creatorScoreSources.reportsActioned.earnedBy}
+            value={reportsActionedScore}
+            abbreviate={abbreviate}
+          />
+        )}
+
+        {staffAwardedScore > 0 && (
+          <ScoreCallout
+            color="yellow"
+            icon={
+              <IconAward
+                size={16}
+                color="var(--mantine-color-yellow-6)"
+                style={{ flexShrink: 0 }}
+              />
+            }
+            label={creatorScoreStaffAwarded.label}
+            tooltip={creatorScoreStaffAwarded.earnedBy}
+            value={staffAwardedScore}
+            abbreviate={abbreviate}
+          />
         )}
 
         {showReports && (
           <>
             <Divider label="Reports" labelPosition="left" />
             <Stack gap="sm">
-              {reportCategories.map(({ key, label, color, icon: Icon, tooltip }) => {
+              {reportCategories.map((category) => {
+                const { key, color, icon: Icon } = category;
                 const value = scores[key] ?? 0;
                 return (
-                  <ScoreRow key={key} icon={<Icon size={16} />} label={label} tooltip={tooltip}>
+                  <ScoreRow
+                    key={key}
+                    icon={<Icon size={16} />}
+                    label={owner ? category.ownerLabel : category.label}
+                    tooltip={owner ? category.ownerTooltip : category.tooltip}
+                  >
                     <Text size="sm" fw={600} c={color}>
                       {Math.round(value).toLocaleString()} pts
                     </Text>
@@ -240,7 +281,7 @@ function ScoreRow({
   return (
     <Group gap="sm" wrap="nowrap">
       <div style={{ flexShrink: 0 }}>{icon}</div>
-      <Text size="sm" w={70}>
+      <Text size="sm" miw={70}>
         {label}
       </Text>
       <Tooltip label={tooltip} multiline w={220} withArrow>
@@ -251,6 +292,56 @@ function ScoreRow({
         />
       </Tooltip>
       {children}
+    </Group>
+  );
+}
+
+function ScoreCallout({
+  color,
+  icon,
+  label,
+  tooltip,
+  value,
+  abbreviate,
+}: {
+  color: 'red' | 'green' | 'yellow';
+  icon: ReactNode;
+  label: string;
+  tooltip: string;
+  value: number;
+  abbreviate: boolean;
+}) {
+  return (
+    <Group
+      justify="space-between"
+      wrap="nowrap"
+      gap="sm"
+      px="sm"
+      py={8}
+      style={{
+        backgroundColor: `var(--mantine-color-${color}-light)`,
+        borderRadius: 'var(--mantine-radius-md)',
+      }}
+    >
+      <Group gap={8} wrap="nowrap">
+        {icon}
+        <Text size="sm">{label}</Text>
+        <Tooltip label={tooltip} multiline w={240} withArrow>
+          <IconInfoCircle
+            size={14}
+            style={{ flexShrink: 0, cursor: 'help' }}
+            color="var(--mantine-color-dimmed)"
+          />
+        </Tooltip>
+      </Group>
+      <Tooltip label={`${Math.round(value).toLocaleString()} points`} withArrow>
+        <Text size="sm" fw={700} c={color} style={{ whiteSpace: 'nowrap', cursor: 'help' }}>
+          {abbreviate
+            ? abbreviateNumber(value, { decimals: 1 })
+            : Math.round(value).toLocaleString()}{' '}
+          pts
+        </Text>
+      </Tooltip>
     </Group>
   );
 }

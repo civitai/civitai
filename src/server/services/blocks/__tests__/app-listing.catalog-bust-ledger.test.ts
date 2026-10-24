@@ -508,11 +508,16 @@ const LEDGER = [
   'src/pages/api/internal/blocks/build-callback.ts::watchApplyJobAndRecord',
   // Mints rows at `status:'approved'` — a go-live path, not a data migration.
   'src/server/services/blocks/app-listing-backfill.service.ts::backfillAppListings',
-  // All three run `reDeriveContentRatingForModLiveEdit` inside their tx, which can RAISE
-  // `content_rating` — the `listingMatureFilter` axis.
+  // All four run `reDeriveContentRatingForModLiveEdit` inside their tx, which can RAISE
+  // `content_rating` — the `listingMatureFilter` axis. (`setListingRedMedia`'s override write
+  // itself lands outside `app_listings`; the re-derive it triggers is what moves the axis.)
   'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+  'src/server/services/blocks/app-listing-assets.service.ts::setListingRedMedia',
+  // A moderator re-rated a listing image: `reDeriveListingRatingInTx` moves `content_rating`
+  // — in EITHER direction — on each live listing that uses it.
+  'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingsForModeratedImage',
   // W14: moves `al.visibility`, which the cached statement's LEVEL GATE reads, so it
   // changes which rows a given audience floor sees. Not optional — the catalog key is
   // per-cohort, so an un-busted level change leaves one cohort's id page wrong for up to
@@ -581,11 +586,15 @@ const EXEMPT: Record<string, string> = {
   'src/server/services/blocks/app-listing-assets.service.ts::backfillListingAssets':
     'writes only `coverId` / `iconId`, both hydrated projection fields — no cached axis.',
   'src/server/services/blocks/app-listing-assets.service.ts::reDeriveContentRatingForModLiveEdit':
-    'BAR 2 (CALLER-BUSTS), the only row here that is: it DOES raise `content_rating`. ' +
+    'BAR 2 (CALLER-BUSTS), one of the two rows here that are: it DOES raise `content_rating`. ' +
     'Every caller busts post-commit — a bust inside the tx would also fire on a ' +
     'rollback — and the caller set is pinned in `CALLER_BUSTS`, not asserted here in ' +
     'prose, because a fourth caller is invisible to the writer scan (it issues no ' +
     '`appListing.` write of its own).',
+  'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingInTx':
+    'BAR 2 (CALLER-BUSTS): it DOES move `content_rating`, up or down, inside its caller’s ' +
+    'transaction. Its one caller busts after the commit; the caller set is pinned in ' +
+    '`CALLER_BUSTS`.',
   'src/server/services/blocks/app-ownership-transfer.service.ts::acceptTransfer':
     'writes only `userId`; the cached statement never reads ownership and no sort or ' +
     'filter keys on it (same argument `claimListing` makes for its own inert bust).',
@@ -638,7 +647,11 @@ const CALLER_BUSTS: Record<string, string[]> = {
     'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
     'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
     'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+    'src/server/services/blocks/app-listing-assets.service.ts::setListingRedMedia',
   ].sort(),
+  reDeriveListingRatingInTx: [
+    'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingsForModeratedImage',
+  ],
 };
 
 /**
@@ -818,7 +831,11 @@ const BUST_HELPER = 'bustCatalogAfterVisibilityWrite';
 const PINNED_RECORD_KEYS: ReadonlyArray<
   readonly [label: string, record: Record<string, string[]>, keys: readonly string[]]
 > = [
-  ['CALLER_BUSTS', CALLER_BUSTS, ['reDeriveContentRatingForModLiveEdit']],
+  [
+    'CALLER_BUSTS',
+    CALLER_BUSTS,
+    ['reDeriveContentRatingForModLiveEdit', 'reDeriveListingRatingInTx'],
+  ],
   ['RAW_HELPER_BUSTS', RAW_HELPER_BUSTS, ['applyVisibility']],
 ];
 

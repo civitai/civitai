@@ -123,6 +123,14 @@ describe('POST /api/v1/blocks/shared-storage/update', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
+  it('forwards edited `data` VERBATIM — object keys and format characters included — for the router to moderate', async () => {
+    const value = { title: 't', data: { 'a k\u200Bey': ['lo\u200Bli', { nested: 1 }] } };
+    const { req, res } = createMocks({ body: { key: KEY, value } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockUpdate).toHaveBeenCalledWith('tok_update', KEY, value);
+  });
+
   it('200: hands the BEARER token, the key and the value down IN THAT ORDER', async () => {
     // The three arguments are pairwise distinct and none is falsy, so a
     // transposition (key and value swapped) fails here rather than passing.

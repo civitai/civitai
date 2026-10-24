@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./model-rules": "./src/model-rules.ts",
+    "./model-rules-convert": "./src/model-rules-convert.ts"
   },
   "scripts": {
     "test": "vitest run",

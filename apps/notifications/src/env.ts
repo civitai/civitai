@@ -20,6 +20,22 @@ export const isProd = process.env.NODE_ENV === 'production';
  */
 export const workerEnabled = process.env.WORKER_ENABLED === 'true';
 
+function positiveMs(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// --- worker health (GET /health; see lib/server/health.ts) ---
+/** /health fails once every redis command has failed for this long, with no success in between. */
+export const healthRedisFailureWindowMs = positiveMs(
+  process.env.HEALTH_REDIS_FAILURE_WINDOW_MS,
+  60_000
+);
+/** /health fails once the poll loop has finished no row and no tick for this long. */
+export const healthWorkerStallMs = positiveMs(process.env.HEALTH_WORKER_STALL_MS, 10 * 60_000);
+/** Bound on one recipient's unread-counter bump, so a stuck redis call can't hold the tick. */
+export const counterBumpTimeoutMs = positiveMs(process.env.COUNTER_BUMP_TIMEOUT_MS, 2_000);
+
 // --- web push (VAPID) ---
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
 export const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? '';

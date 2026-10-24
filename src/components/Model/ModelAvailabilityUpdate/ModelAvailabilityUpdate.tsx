@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button, Divider, Group, Modal, Radio, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -13,7 +14,8 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
 
   const { data: model } = trpc.model.getById.useQuery({ id: modelId });
   const publishPrivateModelMutation = trpc.model.publishPrivateModel.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id: modelId });
       await queryUtils.modelVersion.getById.invalidate();
       handleClose();

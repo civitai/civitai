@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { anyTipEligible, isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { constants } from '~/server/common/constants';
 
 describe('isCreatorTipEligible', () => {
   it('is true for an ordinary owner', () => {
@@ -20,6 +21,12 @@ describe('isCreatorTipEligible', () => {
 
   it('is false for the system owner (-1)', () => {
     expect(isCreatorTipEligible({ ownerId: -1, ownerFlags: 0 })).toBe(false);
+  });
+
+  it('is false for the official Civitai account', () => {
+    expect(isCreatorTipEligible({ ownerId: constants.system.officialUserId, ownerFlags: 0 })).toBe(
+      false
+    );
   });
 
   it('treats unknown owner flags as no flags', () => {
@@ -43,5 +50,20 @@ describe('anyTipEligible', () => {
 
   it('counts a resource with unknown eligibility as eligible', () => {
     expect(anyTipEligible([{ tipsEnabled: false }, {}])).toBe(true);
+  });
+
+  it('does not count a resource the generating user owns', () => {
+    expect(
+      anyTipEligible([{ tipsEnabled: false }, { tipsEnabled: true, isOwnedByUser: true }])
+    ).toBe(false);
+  });
+
+  it("is true when another creator's resource sits beside the user's own", () => {
+    expect(
+      anyTipEligible([
+        { tipsEnabled: true, isOwnedByUser: true },
+        { tipsEnabled: true, isOwnedByUser: false },
+      ])
+    ).toBe(true);
   });
 });

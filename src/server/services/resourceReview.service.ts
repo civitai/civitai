@@ -4,6 +4,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
@@ -359,10 +360,11 @@ export const upsertResourceReview = async ({
   // Edits too, not just creates — a review written before a block would otherwise stay editable
   // into anything afterwards. An edit writes `modelId` through from the request while being scoped
   // by review id, so the review's stored model is checked alongside the one the request names.
+  const storedModelId = data.id ? await storedReviewModelId(data.id) : undefined;
   await throwIfBlockedByModelOwners({
     userId,
     isModerator,
-    modelIds: [data.modelId, data.id ? await storedReviewModelId(data.id) : undefined],
+    modelIds: [data.modelId, storedModelId],
   });
 
   if (!data.id) {
@@ -389,13 +391,19 @@ export const upsertResourceReview = async ({
       modelVersionId: data.modelVersionId,
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
+    void onModelReviewsChanged([{ modelId: data.modelId, userId }]);
     return ret;
   } else {
     const ret = await dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
-      select: { id: true, modelId: true, modelVersionId: true },
+      select: { id: true, modelId: true, modelVersionId: true, userId: true },
     });
+    // An edit can move the review to another model, so the model it left is re-checked too.
+    void onModelReviewsChanged([
+      ret,
+      ...(storedModelId ? [{ modelId: storedModelId, userId: ret.userId }] : []),
+    ]);
     await bustRatingTotalsCache({
       modelId: ret.modelId,
       modelVersionId: ret.modelVersionId,
@@ -410,6 +418,7 @@ export const deleteResourceReview = async ({ id }: GetByIdInput) => {
   // resourceReview.controller.ts already relies on this — so we use modelId
   // and modelVersionId from the returned row rather than pre-fetching.
   const ret = await dbWrite.resourceReview.delete({ where: { id } });
+  void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,
@@ -443,14 +452,16 @@ export async function setExcludeResourceReviews({
 export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   if (ids.length === 0) return { count: 0 };
   // Fetch model/version ids BEFORE the delete so we can bust the rating-totals
-  // cache after.
-  const affected = await dbRead.resourceReview.findMany({
+  // cache and send event point removals after. From the primary: a review too new
+  // to have replicated would otherwise be missed and keep its point.
+  const affected = await dbWrite.resourceReview.findMany({
     where: { id: { in: ids } },
-    select: { modelId: true, modelVersionId: true },
+    select: { modelId: true, modelVersionId: true, userId: true },
   });
   const result = await dbWrite.resourceReview.deleteMany({
     where: { id: { in: ids } },
   });
+  void onModelReviewsChanged(affected);
   await bustRatingTotalsForRows(affected).catch();
   return { count: result.count };
 }
@@ -483,6 +494,7 @@ export const createResourceReview = async ({
       throw err;
     });
   await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  void onModelReviewsChanged([{ modelId: data.modelId, userId: data.userId }]);
   await bustRatingTotalsCache({
     modelId: data.modelId,
     modelVersionId: data.modelVersionId,
@@ -515,8 +527,10 @@ export const updateResourceReview = async ({
       rating: true,
       recommended: true,
       nsfw: true,
+      userId: true,
     },
   });
+  void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,

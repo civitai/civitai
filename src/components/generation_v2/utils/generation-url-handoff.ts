@@ -7,7 +7,7 @@
  * the param and pushes it through `generationGraphStore.setData` as a remix.
  */
 
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { combineResources } from '~/shared/utils/resource.utils';
 import { isMediaHost } from '~/shared/utils/media-host';
 import { env } from '~/env/client';
@@ -22,7 +22,7 @@ const RESOURCE_KEYS = ['model', 'upscaler', 'vae'] as const;
 
 interface DecodedHandoff {
   params: Record<string, unknown>;
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
 }
 
 /**
@@ -46,10 +46,10 @@ export function encodeGenerationHandoff(
   }
 
   const resources = combineResources({
-    model: snapshot.model as GenerationResource | undefined,
-    upscaler: snapshot.upscaler as GenerationResource | undefined,
-    vae: snapshot.vae as GenerationResource | undefined,
-    resources: (snapshot.resources as GenerationResource[] | undefined) ?? [],
+    model: snapshot.model as GenerationResourceValue | undefined,
+    upscaler: snapshot.upscaler as GenerationResourceValue | undefined,
+    vae: snapshot.vae as GenerationResourceValue | undefined,
+    resources: (snapshot.resources as GenerationResourceValue[] | undefined) ?? [],
   });
 
   if (Object.keys(params).length === 0 && resources.length === 0) return undefined;
@@ -113,9 +113,7 @@ function stripForeignMediaUrls(
 // survives URL params without escaping.
 function toBase64Url(input: string): string {
   const utf8 = typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(input) : null;
-  const binary = utf8
-    ? String.fromCharCode(...utf8)
-    : unescape(encodeURIComponent(input));
+  const binary = utf8 ? String.fromCharCode(...utf8) : unescape(encodeURIComponent(input));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 

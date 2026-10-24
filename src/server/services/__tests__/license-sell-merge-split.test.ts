@@ -47,7 +47,7 @@ const RENT_CLAUSE = '<b>Generation Services:';
 const RENT_CIVIT_CLAUSE = '<b>Civitai Generation Services:';
 const CHANGING_PERMISSIONS_CLAUSE = '<b>Changing Permissions:';
 const CHANGING_PERMISSIONS =
-  'Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.';
+  'Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.';
 const CREATOR_CREDIT_CLAUSE = '<b>Creator Credit:';
 const FORBIDS_MODEL_SALE = 'Do not sell or license the Model';
 const FORBIDS_MERGE_SALE = 'Do not sell or license a Merge';
@@ -250,6 +250,21 @@ describe('sell / sell-merge split in the generated licence', () => {
       CHANGING_PERMISSIONS
     );
     expect(buildLicense(OTHERS, true, false)).not.toContain(CHANGING_PERMISSIONS);
+  });
+
+  /**
+   * ~111k models store merges off with "different permissions" still on, because the form hid the
+   * box without clearing it. Read as off: granting the clause there would let a buyer strip the
+   * "Do not Share a Merge" restriction from the very Merge it forbids.
+   */
+  it('Changing Permissions is withheld while merges are not allowed, whatever is stored', () => {
+    const license = buildLicense(OTHERS, false, true);
+    expect(license).not.toContain(CHANGING_PERMISSIONS_CLAUSE);
+    // Control on the same document: the merge prohibition it would have undercut is there.
+    expect(license).toContain(SHARING_CLAUSE);
+    expect(clauseBody(buildLicense(OTHERS, true, true), CHANGING_PERMISSIONS_CLAUSE)).toContain(
+      CHANGING_PERMISSIONS
+    );
   });
 
   /**

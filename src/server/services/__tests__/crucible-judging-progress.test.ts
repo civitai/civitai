@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { countJudgedPairs, countRemainingPairs } from '~/server/services/crucible.service';
+import {
+  countJudgedPairs,
+  countRemainingPairs,
+  countTotalPairs,
+  countUnjudgedRemainingPairs,
+} from '~/server/services/crucible.service';
 
 const CAP = 5;
 const count = (
@@ -129,5 +134,56 @@ describe('countJudgedPairs', () => {
 
   it('is zero when nothing was voted', () => {
     expect(countJudgedPairs({ entryIds: [1, 2], votedPairKeys: [] })).toBe(0);
+  });
+});
+
+describe('countUnjudgedRemainingPairs', () => {
+  it('matches countRemainingPairs with no votes', () => {
+    for (const maxVotesPerEntry of [1, 2, 5]) {
+      for (let n = 0; n <= 30; n++) {
+        const expected = countRemainingPairs({
+          entryIds: Array.from({ length: n }, (_, i) => i + 1),
+          judgeEntryVotes: {},
+          votedPairKeys: [],
+          maxVotesPerEntry,
+        });
+        expect([n, maxVotesPerEntry, countUnjudgedRemainingPairs(n, maxVotesPerEntry)]).toEqual([
+          n,
+          maxVotesPerEntry,
+          expected,
+        ]);
+      }
+    }
+  });
+});
+
+describe('countTotalPairs', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+
+  it('does not shrink when a vote caps an entry and drops the pairs left by more than one', () => {
+    const entryIds = ids(4);
+    const before = { votes: { 2: 3, 3: 4, 4: CAP }, voted: [] as string[] };
+    const after = { votes: { 1: 1, 2: 4, 3: 4, 4: CAP }, voted: ['1:2'] };
+    // Entry 4 is already an anchor and 2:3 run low, so one vote removes two pairs from the count.
+    expect(count(entryIds, before) - count(entryIds, after)).toBeGreaterThan(1);
+    expect(countTotalPairs({ entryCount: 4, judgedPairs: 1, maxVotesPerEntry: CAP })).toBe(6);
+  });
+
+  it('grows when an entry is added and shrinks when one is hidden', () => {
+    const total = (n: number) =>
+      countTotalPairs({ entryCount: n, judgedPairs: 0, maxVotesPerEntry: CAP });
+    expect(total(5)).toBeGreaterThan(total(4));
+    expect(total(3)).toBeLessThan(total(4));
+  });
+
+  it('is never below the pairs already judged', () => {
+    expect(countTotalPairs({ entryCount: 3, judgedPairs: 9, maxVotesPerEntry: CAP })).toBe(9);
+  });
+
+  it('matches the pairs a judge can reach from nothing', () => {
+    expect(countTotalPairs({ entryCount: 30, judgedPairs: 0, maxVotesPerEntry: CAP })).toBe(
+      countUnjudgedRemainingPairs(30, CAP)
+    );
+    expect(countTotalPairs({ entryCount: 1, judgedPairs: 0, maxVotesPerEntry: CAP })).toBe(0);
   });
 });

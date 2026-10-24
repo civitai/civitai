@@ -70,7 +70,7 @@ describe('createViduInput — Q4', () => {
       aspectRatio: '9:16',
       resolution: '4K',
       duration: 1,
-      enableAudio: true,
+      generateAudio: true,
     });
     expect(result.image).toBeUndefined();
   });

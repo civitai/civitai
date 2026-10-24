@@ -1,8 +1,17 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
 import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
-import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
+import {
+  MODEL_FLAGS_APPEALS_PATH,
+  MODEL_FLAGS_AUTO_PATH,
+  MODEL_FLAGS_NEEDS_REVIEW_PATH,
+  MODEL_FLAGS_PATH,
+} from '$lib/minor-flags/paths';
+import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
+import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
 export const APP = 'moderator';
 
@@ -37,6 +46,11 @@ export type NavLink = {
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
   sharedAccess?: boolean;
+  // Hover-preloading runs the page's `load`; for a page whose load takes a lease, that is a write.
+  noPreload?: boolean;
+  // The children are grant-aware tab routes of one page: still granted one by one (and listed on /admin), but
+  // the sidebar renders the group as a single entry and the page draws its own tab bar.
+  tabs?: true;
   children?: NavLink[];
 };
 
@@ -77,9 +91,19 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/newUser', label: 'New Users', countKey: 'newUser' },
       { path: '/images/modRule', label: 'Rule Violations', countKey: 'modRule' },
       { path: '/images/remixSource', label: 'Remix Source', countKey: 'remixSource' },
-      { path: '/images/reported', label: 'Reported', countKey: 'reported' },
       { path: '/images/appeals', label: 'Appeals', countKey: 'appeals' },
+      {
+        path: '/images/removed-appeals',
+        label: 'Appeals: Content Removed',
+        countKey: 'removedAppeals',
+      },
+      { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
+      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
+      { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
+      { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
+      { path: '/images/scan-probe', label: 'Scan Probe' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -100,17 +124,39 @@ export const NAVIGATION: NavLink[] = [
     label: 'Models',
     path: '/models',
     children: [
-      // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
-      // that every navigation in the app waits on. The counts live on the page's own tabs instead,
-      // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches' },
-      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals' },
+      {
+        label: 'Model Flags',
+        path: MODEL_FLAGS_PATH,
+        tabs: true,
+        children: [
+          { path: MODEL_FLAGS_APPEALS_PATH, label: 'Appeals', countKey: 'modelFlagsAppeals' },
+          { path: MODEL_FLAGS_AUTO_PATH, label: 'Auto-flagged', countKey: 'modelFlagsAuto' },
+          // The badge each viewer sees counts only the leads they may rule (`withViewerCountKey`).
+          {
+            path: MODEL_FLAGS_NEEDS_REVIEW_PATH,
+            label: 'Needs review',
+            countKey: 'modelFlagsNeedsReview',
+          },
+        ],
+      },
+      { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
     ],
   },
   {
     label: 'Bounties',
     path: '/bounties',
-    children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
+    children: [
+      { path: '/bounties/poi-appeals', label: 'Real-Person Appeals' },
+      { path: '/bounties/file-checks', label: 'Entry File Checks' },
+    ],
+  },
+  {
+    label: 'Storylines',
+    path: '/storylines',
+    children: [
+      { path: '/storylines/title-appeals', label: 'Title Appeals' },
+      { path: '/storylines/early-access', label: 'Early Access Sign-ups' },
+    ],
   },
   {
     label: 'Articles',
@@ -124,9 +170,18 @@ export const NAVIGATION: NavLink[] = [
       },
     ],
   },
-  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  // Every rated entity's owner disputes.
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
+  {
+    label: 'Items',
+    path: '/items',
+    children: [
+      { path: '/items/definitions', label: 'Item Definitions' },
+      { path: '/items/boxes', label: 'Mystery Boxes' },
+    ],
+  },
+  { path: '/creator-services/disputes', label: 'Service Disputes' },
   {
     label: 'Audit',
     path: '/audit',
@@ -145,8 +200,9 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
-      { path: '/text-scan/check', label: 'Check' },
-      { path: '/text-scan/prompts', label: 'Versions' },
+      { path: '/csam/text-holds', label: 'CSAM holds', countKey: 'csamTextHolds' },
+      { path: '/text-scan/prompts', label: 'Prompts' },
+      { path: '/text-scan/model-rules', label: 'Model rules' },
     ],
   },
   {
@@ -161,10 +217,11 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/reactor-lookup', label: 'Reactor Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
       { path: '/retool/model-lookup', label: 'Model Lookup' },
-      { path: '/retool/user-reports', label: 'User Reports' },
-      { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
+      // Its own grant, not Chat Audit's: it shows which moderator read whose conversations, which is
+      // oversight of the moderators themselves.
+      { path: '/retool/chat-audit-log', label: 'Chat Audit Log' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
       { path: '/retool/image-help', label: 'Image Help Requests' },
       { path: '/retool/queue-stats', label: 'Queue Stats' },
@@ -183,7 +240,22 @@ export const NAVIGATION: NavLink[] = [
   // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by
   // prefix rather than being listed — the same shape as `/abuse` below. A report is a row of this
   // queue, and granting the list without the rows would show a moderator a count they cannot open.
-  { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
+  //
+  // `sharedAccess`, like `/reports`: both children are views of one page, so the grant stays on
+  // `/feedback`.
+  {
+    path: '/feedback',
+    label: 'Feedback',
+    sharedAccess: true,
+    children: [
+      { path: '/feedback', label: 'General queue', countKey: 'feedbackNew' },
+      {
+        path: `/feedback?area=${APPS_PLATFORM_FEEDBACK_AREA}&status=new`,
+        label: 'Apps platform (developers)',
+        countKey: 'feedbackAppsPlatformNew',
+      },
+    ],
+  },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.
@@ -193,6 +265,16 @@ export const NAVIGATION: NavLink[] = [
   // separate permission (`decisions.rule`), checked in the action.
   { path: '/decisions', label: 'Decisions' },
   { path: '/blocklists', label: 'Blocklists' },
+  // No path of its own, so each child carries its own grant (like Users). `/assistant` covers the
+  // moderator's own chats, the playbooks and the tool requests by prefix; the audit reads every
+  // moderator's conversations, so it is a separate page that nobody holds until granted.
+  {
+    label: 'Assistant',
+    children: [
+      { path: '/assistant', label: 'Mod Assistant' },
+      { path: '/assistant/audit', label: 'Assistant Audit' },
+    ],
+  },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history
   // would hide the numbers their review produces.
@@ -210,8 +292,19 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
-      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
+      { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
+  },
+  // No path of its own, so each queue is granted on its own: whoever handles account appeals need not
+  // see the others. A group's grant would be the union of its children.
+  {
+    label: 'Appeals',
+    children: SITE_APPEAL_QUEUES.map((q) => ({
+      path: siteAppealQueuePath(q.slug),
+      label: q.label,
+      countKey: siteAppealCountKey(q.category),
+    })),
   },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
@@ -230,10 +323,10 @@ export function applyGrants(map: Record<string, string[]>): void {
   // and a grant filtered against a catalogue that failed to load would revoke the app. A grant naming a
   // role nobody holds — a deleted one — matches nobody anyway.
   for (const [key, roles] of Object.entries(map)) {
+    if (!isEditableGrant(key)) continue;
     const allowed = roles.filter(isStorableRole);
-    if (isPermissionKey(key)) {
-      if (isGrantablePermission(key)) nextPermissions[key] = allowed;
-    } else if (isGrantable(key)) nextPages[key] = allowed;
+    if (isPermissionKey(key)) nextPermissions[key] = allowed;
+    else nextPages[key] = allowed;
   }
   if (sameGrants(nextPages, stored) && sameGrants(nextPermissions, storedPermissions)) return;
   stored = nextPages;
@@ -291,6 +384,13 @@ function allows(path: string, user: RoleUser): boolean {
   return !!match && (user?.roles ?? []).some((r) => match.roles.has(r));
 }
 
+/** Needs review lists only the kinds of lead a viewer holds a permission for, so its badge reads the
+ *  shared count for exactly those. */
+function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
+  if (link.path !== MODEL_FLAGS_NEEDS_REVIEW_PATH) return link;
+  return { ...link, countKey: needsReviewCountKey(needsReviewSources(resolvePermissions(user))) };
+}
+
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
@@ -301,7 +401,7 @@ function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
     }
     const children = link.children ? pruneNav(link.children, user) : undefined;
     if (link.children && (!children || children.length === 0)) continue;
-    out.push({ ...link, children });
+    out.push(withViewerCountKey({ ...link, children }, user));
   }
   return out;
 }
@@ -347,6 +447,19 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
     ])
   );
 }
+
+/** The Investigate button: the assistant page AND the right to run it. */
+export const canInvestigate = (locals: App.Locals) =>
+  canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
+
+/** The training-data viewer: whoever `/api/training-data` would serve, so a page never shows a
+ *  button that only answers 403. */
+export const canViewTrainingData = (user: RoleUser) =>
+  canAccess(user, '/audit/training-data') || canAccess(user, '/audit/training-models');
+
+/** Same grant as User Lookup. */
+export const canSeeAddresses = (locals: App.Locals) =>
+  canAccess(locals.user, '/retool/user-lookup');
 
 // Longest-matching path wins, so a sub-path resolves to the nav entry that owns it; unmatched = denied.
 export function canAccess(user: RoleUser, pathname: string): boolean {
@@ -440,7 +553,9 @@ export function pageAccessState(edit?: {
         // A section whose every child is ungrantable would render as an empty header with a checkbox
         // that addresses nothing. It is still a real route, so it is still reported in `paths`.
         paths.push(link.path);
-        if (children.length)
+        // Tab routes read as pages of the section on /admin, not as a header of their own.
+        if (link.tabs) out.push(...children);
+        else if (children.length)
           out.push({ key: link.path, label: link.label, kind: 'group', children });
         continue;
       }
@@ -453,11 +568,15 @@ export function pageAccessState(edit?: {
     return out;
   };
 
-  const actions = PERMISSIONS.map((permission): AccessNode => {
-    const key = permissionKey(permission.id);
-    granted[key] = from[key] ?? [];
-    return { key, label: permission.label, kind: 'permission', children: [] };
-  });
+  // Listed by grant key, which `/admin` shows in its own column: the id is the name a call site, an
+  // audit entry and `denied()` all use, so sorting on it puts each key's actions together.
+  const actions = [...PERMISSIONS]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((permission): AccessNode => {
+      const key = permissionKey(permission.id);
+      granted[key] = from[key] ?? [];
+      return { key, label: permission.label, kind: 'permission', children: [] };
+    });
 
   return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths };
 }
@@ -466,6 +585,10 @@ export function pageAccessState(edit?: {
 export function isGrantablePermission(key: string): boolean {
   return !!permissionByKey(key);
 }
+
+/** A key a grant may be stored under: a grantable page, or a declared `grant:` permission. */
+export const isEditableGrant = (key: string): boolean =>
+  isPermissionKey(key) ? isGrantablePermission(key) : isGrantable(key);
 
 // A link with children is a section, and a section is reachable exactly when one of its pages is — there
 // is nothing separate to grant.

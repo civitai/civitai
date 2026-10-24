@@ -264,6 +264,38 @@ export async function hasOtherPendingRestriction(
 }
 
 /**
+ * Swaps the `origin` of the trigger carrying `entryId` in the user's restriction rows. Returns the
+ * number of rows changed; zero means no pending row holds that trigger (yet). A row a moderator
+ * already resolved is left alone.
+ */
+export async function replaceTriggerOrigin({
+  userId,
+  entryId,
+  origin,
+}: {
+  userId: number;
+  entryId: string;
+  origin: unknown;
+}) {
+  return dbWrite.$executeRaw`
+    UPDATE "UserRestriction" ur
+    SET triggers = (
+          SELECT jsonb_agg(
+                   CASE WHEN t.e ->> 'id' = ${entryId}
+                        THEN jsonb_set(t.e, '{origin}', ${JSON.stringify(origin)}::jsonb)
+                        ELSE t.e END
+                   ORDER BY t.ord)
+          FROM jsonb_array_elements(ur.triggers) WITH ORDINALITY AS t(e, ord)
+        ),
+        "updatedAt" = now()
+    WHERE ur."userId" = ${userId}
+      AND ur.status = 'Pending'
+      AND jsonb_typeof(ur.triggers) = 'array'
+      AND ur.triggers @> ${JSON.stringify([{ id: entryId }])}::jsonb
+  `;
+}
+
+/**
  * Not a ruling, so no notice and no change to the mute: the review queue hides deleted accounts,
  * and a case left Pending there would never be ruled on.
  *

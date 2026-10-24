@@ -12,17 +12,22 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 
 const {
   composeTextScanMessages,
-  composeUserMessage,
   subjectTextLength,
   getTextScanConfig,
   setTextScanConfig,
   setTextScanRollout,
+  setTextScanWebSearchRollout,
+  setTextScanLabelMode,
+  setTextScanCsamMode,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
   textScanTextHash,
 } = await import('~/server/services/text-scan/prompt');
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
+const { TEXT_SCAN_LABELS } = await import('~/server/services/text-scan/types');
+const { composeUserText } = await import('~/server/services/text-scan/segment');
+const { hashContent } = await import('~/server/services/entity-moderation.service');
 
 const prompts = {
   base: { id: 10, key: 'base', content: 'BASE PROMPT' },
@@ -40,7 +45,12 @@ const subject = {
   declared: {},
 };
 
-const DEFAULTS = { model: DEFAULT_TEXT_SCAN_MODEL, maxInputChars: 12000, thinking: false };
+const DEFAULTS = {
+  model: DEFAULT_TEXT_SCAN_MODEL,
+  maxInputChars: 200000,
+  maxSegments: 10,
+  thinking: false,
+};
 
 describe('composeTextScanMessages', () => {
   it('puts base then each requested label definition in the system message', () => {
@@ -49,6 +59,7 @@ describe('composeTextScanMessages', () => {
       labels: ['nsfw', 'poi'],
       subject,
       maxInputChars: 1000,
+      maxSegments: 10,
     });
     expect(system.indexOf('BASE PROMPT')).toBeLessThan(system.indexOf('NSFW DEF'));
     expect(system.indexOf('NSFW DEF')).toBeLessThan(system.indexOf('POI DEF'));
@@ -61,6 +72,7 @@ describe('composeTextScanMessages', () => {
       labels: ['nsfw'],
       subject,
       maxInputChars: 1000,
+      maxSegments: 10,
     });
     expect(system).not.toContain('POI DEF');
     expect(promptIds).toEqual({ base: 10, nsfw: 11 });
@@ -73,10 +85,17 @@ describe('composeTextScanMessages', () => {
         labels: ['nsfw', 'scam'],
         subject,
         maxInputChars: 1000,
+        maxSegments: 10,
       })
     ).toThrow(MissingTextScanPromptError);
     try {
-      composeTextScanMessages({ prompts: {}, labels: ['scam'], subject, maxInputChars: 1000 });
+      composeTextScanMessages({
+        prompts: {},
+        labels: ['scam'],
+        subject,
+        maxInputChars: 1000,
+        maxSegments: 10,
+      });
     } catch (e) {
       expect((e as InstanceType<typeof MissingTextScanPromptError>).keys).toEqual([
         'base',
@@ -92,26 +111,54 @@ describe('composeTextScanMessages', () => {
         labels: ['nsfw'],
         subject,
         maxInputChars: 1000,
+        maxSegments: 10,
       });
     expect(compose).toThrow(MissingTextScanPromptError);
     expect(compose).toThrow('label:nsfw');
   });
 });
 
-describe('composeUserMessage', () => {
-  it('renders non-empty fields under plain headers, skipping empty ones', () => {
-    expect(composeUserMessage(subject, 1000)).toBe('## Name\nMy LoRA\n\n## Version\nv1 notes');
+describe('composeTextScanMessages segments', () => {
+  const body = (n: number) => ({ fields: [{ heading: 'B', text: 'x'.repeat(n) }], declared: {} });
+  const labels = ['scam'] as any;
+  const p = { base: { id: 1, content: 'b' }, 'label:scam': { id: 2, content: 's' } } as any;
+
+  it('sends text within the budget whole, as one segment equal to the full text', () => {
+    const fits = composeTextScanMessages({
+      prompts: p,
+      labels,
+      subject: body(100),
+      maxInputChars: 200000,
+      maxSegments: 10,
+    });
+    expect(fits.segments).toEqual([fits.text]);
+    expect(fits).toMatchObject({ inputChars: '## B\n'.length + 100, inputCut: false });
   });
 
-  it('caps at maxInputChars', () => {
-    const long = { fields: [{ heading: 'Body', text: 'x'.repeat(500) }], declared: {} };
-    expect(composeUserMessage(long, 100)).toHaveLength(100);
+  it('splits text past the budget instead of cutting it', () => {
+    const big = composeTextScanMessages({
+      prompts: p,
+      labels,
+      subject: body(250000),
+      maxInputChars: 200000,
+      maxSegments: 10,
+    });
+    expect(big.segments).toHaveLength(2);
+    expect(big.segments.every((s) => s.length <= 200000)).toBe(true);
+    expect(big).toMatchObject({ inputChars: '## B\n'.length + 250000, inputCut: false });
   });
 
-  it('returns an empty string when every field is empty', () => {
-    expect(composeUserMessage({ fields: [{ heading: 'A', text: '  ' }], declared: {} }, 100)).toBe(
-      ''
-    );
+  it('reports a cut only when maxSegments runs out', () => {
+    const cut = composeTextScanMessages({
+      prompts: p,
+      labels,
+      subject: body(250000),
+      maxInputChars: 200000,
+      maxSegments: 1,
+    });
+    expect(cut.segments).toHaveLength(1);
+    expect(cut.scannedChars).toBeLessThan(cut.inputChars);
+    expect(cut.inputCut).toBe(true);
   });
 });
 
@@ -125,7 +172,7 @@ describe('subjectTextLength', () => {
       declared: {},
     };
     expect(subjectTextLength(short)).toBe(2);
-    expect(composeUserMessage(short, 1000).length).toBeGreaterThan(10);
+    expect(composeUserText(short).length).toBeGreaterThan(10);
     expect(subjectTextLength(subject)).toBe('My LoRA'.length + 'v1 notes'.length);
   });
 });
@@ -153,11 +200,19 @@ describe('getTextScanConfig', () => {
 
   it('falls back to defaults on unparseable or invalid config', async () => {
     redisMock.sysRedis.get.mockResolvedValue('{not json');
-    expect((await getTextScanConfig()).maxInputChars).toBe(12000);
+    expect((await getTextScanConfig()).maxInputChars).toBe(200000);
     redisMock.sysRedis.get.mockResolvedValue(
       JSON.stringify({ maxInputChars: -1, model: '', thinking: 'yes' })
     );
     expect(await getTextScanConfig()).toEqual(DEFAULTS);
+  });
+
+  it('reads maxSegments and ignores one outside 1-20', async () => {
+    redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ maxSegments: 3 }));
+    expect((await getTextScanConfig()).maxSegments).toBe(3);
+    for (const bad of [0, 21, 2.5, '4'])
+      redisMock.sysRedis.get.mockResolvedValueOnce(JSON.stringify({ maxSegments: bad }));
+    for (let i = 0; i < 4; i++) expect((await getTextScanConfig()).maxSegments).toBe(10);
   });
 
   it('falls back to defaults when sysRedis throws', async () => {
@@ -252,6 +307,164 @@ describe('setTextScanRollout', () => {
   });
 });
 
+describe('setTextScanWebSearchRollout', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses entity types other than Model and users who are not active moderators', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanWebSearchRollout('Post', { shadow: 10, active: 0 }, { moderatorId: 5 })
+    ).rejects.toThrow('Model');
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(
+      setTextScanWebSearchRollout('Model', { shadow: 10, active: 0 }, { moderatorId: 9 })
+    ).rejects.toThrow();
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active share unless allowActive is set', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanWebSearchRollout('Model', { shadow: 100, active: 10 }, { moderatorId: 5 })
+    ).rejects.toThrow('allowActive');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    await setTextScanWebSearchRollout(
+      'Model',
+      { shadow: 100, active: 10 },
+      { moderatorId: 5, allowActive: true }
+    );
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:web-search',
+      'Model',
+      '{"shadow":100,"active":10}'
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'web-search rollout updated', moderatorId: 5 })
+    );
+  });
+
+  it('removes the field for null', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await setTextScanWebSearchRollout('Model', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:web-search', 'Model');
+  });
+});
+
+describe('setTextScanLabelMode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses users who are not active moderators, and unknown labels', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(setTextScanLabelMode('minor', 'review', { moderatorId: 9 })).rejects.toThrow();
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanLabelMode('nsfw' as never, 'review', { moderatorId: 5 })
+    ).rejects.toThrow('nsfw');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('writes review, removes the field for auto, and logs both', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await setTextScanLabelMode('minor', 'review', { moderatorId: 5 });
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:label-modes',
+      'minor',
+      'review'
+    );
+    await setTextScanLabelMode('minor', 'auto', { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'minor');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'label mode updated',
+        moderatorId: 5,
+        label: 'minor',
+        mode: 'review',
+      })
+    );
+  });
+});
+
+describe('setTextScanCsamMode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses users who are not active moderators, and any mode but off or review', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 9 })).rejects.toThrow(
+      'not an active moderator'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(setTextScanCsamMode('auto' as never, { moderatorId: 5 })).rejects.toThrow(
+      'csam has no auto mode'
+    );
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no csam prompt row', []],
+    ['a blank csam prompt row', [{ id: 7, key: 'label:csam', content: '  ' }]],
+  ])('refuses review while there is %s, and still allows off', async (_, rows) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(rows as never);
+    await expect(setTextScanCsamMode('review', { moderatorId: 5 })).rejects.toThrow('label:csam');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+  });
+
+  it('writes review, removes the field for off, logs both, and this pod sees it at once', async () => {
+    const { getTextScanCsamMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 7, key: 'label:csam', content: 'CSAM DEF' },
+    ] as never);
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanCsamMode()).toBe('off');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ csam: 'review' } as never);
+    expect(await setTextScanCsamMode('review', { moderatorId: 5 })).toBe('review');
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:label-modes',
+      'csam',
+      'review'
+    );
+    expect(await getTextScanCsamMode()).toBe('review');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await setTextScanCsamMode('off', { moderatorId: 5 })).toBe('off');
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:label-modes', 'csam');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'label mode updated', label: 'csam', mode: 'review' })
+    );
+    resetTextScanRolloutCache();
+  });
+});
+
+describe('setTextScanLabelMode cache', () => {
+  it('drops the cached read, so this pod sees the change at once', async () => {
+    const { getTextScanLabelMode, resetTextScanRolloutCache } = await import(
+      '~/server/services/text-scan/mode'
+    );
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    resetTextScanRolloutCache();
+    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ minor: 'review' } as never);
+    expect(await getTextScanLabelMode('minor')).toBe('auto');
+    await setTextScanLabelMode('minor', 'review', { moderatorId: 5 });
+
+    expect(await getTextScanLabelMode('minor')).toBe('review');
+    resetTextScanRolloutCache();
+  });
+});
+
 describe('textScanTextHash', () => {
   it('hashes the uncapped composed text only', () => {
     const long = { fields: [{ heading: 'Body', text: 'x'.repeat(20000) }], declared: {} };
@@ -261,6 +474,11 @@ describe('textScanTextHash', () => {
     expect(textScanTextHash({ ...subject, declared: { nsfwLevel: 8 } })).toBe(
       textScanTextHash(subject)
     );
+  });
+
+  it('hashes exactly the #5856 composition', () => {
+    expect(textScanTextHash(subject)).toBe(hashContent('## Name\nMy LoRA\n\n## Version\nv1 notes'));
+    expect(composeUserText(subject)).toBe('## Name\nMy LoRA\n\n## Version\nv1 notes');
   });
 });
 
@@ -273,6 +491,13 @@ describe('insertTextScanPrompt', () => {
       insertTextScanPrompt({ key: 'label:hate', content: 'x', createdById: 5 })
     ).rejects.toThrow();
     expect(dbMock.dbWrite.textScanPrompt.create).not.toHaveBeenCalled();
+  });
+
+  it.each(TEXT_SCAN_LABELS)('accepts a prompt for the %s label', async (label) => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    dbMock.dbWrite.textScanPrompt.create.mockResolvedValue({ id: 3, key: `label:${label}` });
+    await insertTextScanPrompt({ key: `label:${label}`, content: 'x', createdById: 5 });
+    expect(dbMock.dbWrite.textScanPrompt.create).toHaveBeenCalled();
   });
 
   it('rejects a createdById that is not an active moderator', async () => {
@@ -301,5 +526,91 @@ describe('insertTextScanPrompt', () => {
       select: { id: true, key: true },
     });
     expect(bustFetchThroughCache).toHaveBeenCalled();
+  });
+});
+
+describe('insertTextScanPrompt with a base version', () => {
+  const save = (baseId: number | null) =>
+    insertTextScanPrompt({ key: 'base', content: 'B', createdById: 5, baseId });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+  });
+
+  it('takes the per-key lock, reads the newest version, then inserts', async () => {
+    const order: string[] = [];
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(async () => {
+      order.push('lock');
+      return [{ locked: 1 }];
+    });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockImplementationOnce(async () => {
+      order.push('read');
+      return { id: 3 };
+    });
+    dbMock.dbWrite.textScanPrompt.create.mockImplementationOnce(async () => {
+      order.push('insert');
+      return { id: 4, key: 'base' };
+    });
+    await expect(save(3)).resolves.toEqual({ id: 4, key: 'base' });
+    expect(order).toEqual(['lock', 'read', 'insert']);
+    expect(dbMock.dbWrite.textScanPrompt.findFirst).toHaveBeenCalledWith({
+      where: { key: 'base' },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    expect(bustFetchThroughCache).toHaveBeenCalled();
+  });
+
+  it('refuses with CONFLICT when a newer version exists, and inserts nothing', async () => {
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce({ id: 4 });
+    await expect(save(3)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.textScanPrompt.create).not.toHaveBeenCalled();
+    expect(bustFetchThroughCache).not.toHaveBeenCalled();
+  });
+
+  it('reads a null base as "no version yet"', async () => {
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce(null);
+    dbMock.dbWrite.textScanPrompt.create.mockResolvedValueOnce({ id: 1, key: 'base' });
+    await expect(save(null)).resolves.toEqual({ id: 1, key: 'base' });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce({ id: 1 });
+    await expect(save(null)).rejects.toMatchObject({ code: 'CONFLICT' });
+    dbMock.dbWrite.textScanPrompt.findFirst.mockResolvedValueOnce(null);
+    await expect(save(3)).rejects.toThrow(/^(?!.*undefined)/);
+  });
+
+  it('lets only one of two saves from the same base through', async () => {
+    const ids = [3];
+    let held: Promise<void> | null = null;
+    let release = () => undefined;
+    const tx = async (fn: unknown) => {
+      try {
+        return await (fn as (client: unknown) => Promise<unknown>)(dbMock.dbWrite);
+      } finally {
+        const done = release;
+        held = null;
+        done();
+      }
+    };
+    const lock = async () => {
+      while (held) await held;
+      held = new Promise<void>((resolve) => (release = resolve));
+      return [{ locked: 1 }];
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce(tx).mockImplementationOnce(tx);
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(lock).mockImplementationOnce(lock);
+    dbMock.dbWrite.textScanPrompt.findFirst.mockImplementation(async () => ({
+      id: Math.max(...ids),
+    }));
+    dbMock.dbWrite.textScanPrompt.create.mockImplementation(async () => {
+      const id = Math.max(...ids) + 1;
+      ids.push(id);
+      return { id, key: 'base' };
+    });
+
+    const results = await Promise.allSettled([save(3), save(3)]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(ids).toEqual([3, 4]);
   });
 });

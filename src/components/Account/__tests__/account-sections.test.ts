@@ -55,6 +55,7 @@ describe('legacy anchor redirects', () => {
     '#manage-subscription': 'billing',
     '#strikes': 'profile',
     '#creator-score': 'profile',
+    '#creator-controls': 'creator',
     '#accounts': 'security',
     '#api-keys': 'security',
     '#notification-settings': 'notifications',

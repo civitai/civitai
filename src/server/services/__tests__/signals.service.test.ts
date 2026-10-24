@@ -71,6 +71,15 @@ describe('signals.service getAccessToken', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
+  it("mints tokens on the wrapper's own 'token' lane (a token storm cannot crowd out pushes)", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+
+    await getAccessToken({ id: 42 });
+
+    expect(mockWithSignals).toHaveBeenCalledTimes(1);
+    expect(mockWithSignals).toHaveBeenCalledWith(expect.any(Function), { lane: 'token' });
+  });
+
   it('fails SOFT (degraded, no token) when the signals fetch rejects with "fetch failed"', async () => {
     // The exact production symptom: undici TypeError, cause "fetch failed".
     const err = new TypeError('fetch failed');

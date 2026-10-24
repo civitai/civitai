@@ -1,6 +1,6 @@
 ---
 name: add-trainer-model
-description: Add a new trainable base model to BOTH trainers end-to-end — the in-app trainer (main Next.js app, src/) and the Training Studio (apps/training-studio). Orchestrates add-ecosystem (if the base model is missing) and add-training-support (main-app wiring), then mirrors the model into the Training Studio catalog, which nothing else covers. AI-Toolkit only (Kohya is discontinued). Use when onboarding a new model family for training, or a new version of one — e.g. ZImage, MiniMax H3, a new Flux/Wan variant. Always checks whether @civitai/client ships the ecosystem's training input type first.
+description: Add a new trainable base model to BOTH trainers end-to-end — the in-app trainer (main Next.js app, src/) and the Training Studio (apps/training-studio). Orchestrates add-ecosystem (if the base model is missing) and add-training-support (main-app wiring), then mirrors the model into the Training Studio catalog, which nothing else covers. AI-Toolkit only (Kohya is discontinued). Use when onboarding a new model family for training, or a new version of one — e.g. ZImage, MiniMax H3, a new Flux/Wan variant. Always checks whether @civitai/orchestration-client ships the ecosystem's training input type first.
 ---
 
 # Add a Trainer Model
@@ -54,19 +54,19 @@ three are answered — each one changes what you do:
    (Flux.1 `dev|schnell`, Wan `2.1|2.2`, Flux.2 Klein `4b|9b`) — this disambiguates "new version" from
    "new ecosystem".
 
-3. **Does `@civitai/client` ship the ecosystem's training input type?** The orchestrator API depends on
+3. **Does `@civitai/orchestration-client` ship the ecosystem's training input type?** The orchestrator API depends on
    the SDK, so submission validation and the typed dispatch need it.
    ```bash
    grep -niE "<Name>AiToolkitTrainingInput|ecosystem: '<name>'" \
-     node_modules/@civitai/client/dist/generated/types.gen.d.ts
+     node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts
    ```
    - **Present** → note the exact `ecosystem` literal, whether `modelVariant` is required, any fixed
      fields (e.g. Boogu `batchSize` fixed at 1), and the server-computed `readonly` outputs (never send
      those).
-   - **Absent** → check `npm view @civitai/client versions --json | tail` and bump with
-     `pnpm add @civitai/client@<v>`. The current pin is in `package.json` (`@civitai/client`). If the
+   - **Absent** → check `npm view @civitai/orchestration-client versions --json | tail` and bump with
+     `pnpm add @civitai/orchestration-client@<v>`. The current pin is in `package.json` (`@civitai/orchestration-client`). If the
      type is still absent after bumping, the AI-Toolkit dispatch casts `ecosystem as any` so it works
-     untyped — but say so to the user and prefer a typed SDK. **The `@civitai/client` bump, when needed,
+     untyped — but say so to the user and prefer a typed SDK. **The `@civitai/orchestration-client` bump, when needed,
      is the answer to the brief's "does the client need updating?" — surface it explicitly.**
 
 ## Step 1 — Confirm the plan with the user
@@ -77,7 +77,7 @@ State the whole plan back before editing, across both trainers:
 Add trainer model: <Name>
   Base model exists in basemodel.constants.ts:  yes | NO → run add-ecosystem first
   Relationship:  new ecosystem | new version of <existing ecosystem>
-  @civitai/client:  ships <Name>AiToolkitTrainingInput | needs bump to <v> | untyped (cast)
+  @civitai/orchestration-client:  ships <Name>AiToolkitTrainingInput | needs bump to <v> | untyped (cast)
   Engine:  ai-toolkit  (or imageResourceTraining/<engine> for a Flux.2-style model)
   ecosystem literal: '<eco>'   modelVariant: <none | enum>
   Media: image | video | audio
@@ -177,7 +177,14 @@ Edit `trainingModels.ts`:
    media (`image`/`video`). Add the card `type` here if it should appear above the "show more" fold;
    otherwise it lives in the long tail automatically.
 
-5. **Update the mirror-date comment** at the top of `trainingModels.ts` (and the `PARAM_DEFAULTS`
+5. **Train further's checkpoint AIR** — the orchestrator checks a continuation's `continueFrom` AIR
+   ecosystem against its own name for the model, which can differ from the step's `ecosystem` input
+   (`mossImage` → `moss`). Whatif a training step for the new ecosystem with
+   `continueFrom: urn:air:<ecosystem>:lora:orchestrator:blob@<any existing blob key>`; if it fails with
+   "continueFrom ecosystem … must match the training model ecosystem 'X'", add `<ecosystem>: 'X'` to
+   `CONTINUE_FROM_ECOSYSTEM` in `apps/training-studio/src/lib/train-core.ts`.
+
+6. **Update the mirror-date comment** at the top of `trainingModels.ts` (and the `PARAM_DEFAULTS`
    comment if numbers changed) so the next re-mirror knows the snapshot moved.
 
 ## Step 4 — Typecheck both trainers, then the gate test

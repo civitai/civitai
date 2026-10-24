@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { EventViewer } from '~/server/events/event-access';
+import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import type {
   GetUserProfileSchema,
@@ -15,6 +17,7 @@ import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -82,11 +85,14 @@ export const getUserWithProfile = async ({
   tx,
   isModerator,
   sessionUserId,
+  eventViewer = { id: sessionUserId, isModerator },
   domain,
 }: GetUserProfileSchema & {
   tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
+  /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
+  eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -166,6 +172,11 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
+      // Claim keys are owner-only; withheld from every other viewer, moderators included.
+      cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
+        ...c,
+        claimKey: sameUser ? c.claimKey : null,
+      })),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
@@ -286,11 +297,14 @@ export const updateUserProfile = async ({
   // profilePicture,
   creatorCardStatsPreferences,
   domain,
+  sessionUserId,
   ...profile
 }: UserProfileUpdateSchema & {
   userId: number;
   isModerator?: boolean;
   domain?: ColorDomain;
+  /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
+  sessionUserId: number;
 }) => {
   // Both domain variants, not just the field being edited: the SFW override and the field it
   // overrides are independently writable and independently rendered, so checking one leaves the
@@ -355,7 +369,7 @@ export const updateUserProfile = async ({
             connectOrCreate: {
               where: { id: image.id ?? -1 },
               create: {
-                ...image,
+                ...pickClientImageColumns(image),
                 meta:
                   (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
                     | Prisma.JsonObject
@@ -519,5 +533,5 @@ export const updateUserProfile = async ({
   )
     queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
-  return getUserWithProfile({ id: userId, sessionUserId: userId, domain });
+  return getUserWithProfile({ id: userId, sessionUserId, domain });
 };

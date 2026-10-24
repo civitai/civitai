@@ -1,16 +1,26 @@
 import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { acquireJobLock, NOOP_LOCK, type JobLock } from '~/server/jobs/job-lock';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
 import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
+import {
+  appealDecisionRecordsJob,
+  appealTrainingCopyJob,
+} from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
+import { scanLabelControlSampleJob } from '~/server/jobs/scan-label-control-sample';
+import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
+import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
+import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -35,6 +45,7 @@ import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-b
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
+import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
@@ -44,6 +55,7 @@ import { challengeActivationJob } from '~/server/jobs/challenge-activation';
 import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
+import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
@@ -64,9 +76,12 @@ import { entityModerationJobs } from '~/server/jobs/entity-moderation';
 import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
+  eventPointsHatReconcile,
+  eventRosterReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
+import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -74,6 +89,9 @@ import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
+import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs';
+import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
+import { creatorShopWithdrawnRefundsJob } from '~/server/jobs/creator-shop-withdrawn-refunds';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -82,6 +100,11 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
+import {
+  buildResourceIntentCoocJob,
+  resourceIntentCoocRetentionJob,
+} from '~/server/jobs/build-resource-intent-cooc';
+import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
@@ -98,11 +121,13 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
+import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
@@ -134,8 +159,6 @@ import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-co
 import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
 import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
 import { prizeAutoPayJob } from '~/server/jobs/prize-autopay';
-import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
@@ -165,6 +188,8 @@ export const jobs: Job[] = [
   ...leaderboardJobs,
   ingestImages,
   removeBlockedImages,
+  cdnAccessSync,
+  cdnAccessReconcile,
   removeReplacedImages,
   retryImageStorageDeletes,
   processScheduledPublishing,
@@ -176,6 +201,7 @@ export const jobs: Job[] = [
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
   autoFeatureHealthCheckJob,
+  commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
@@ -186,6 +212,8 @@ export const jobs: Job[] = [
   ...bountyJobs,
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
+  eventPointsHatReconcile,
+  eventRosterReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -208,6 +236,9 @@ export const jobs: Job[] = [
   countReviewImages,
   processingEngingEarlyAccess,
   syncGeneratorLoadedResources,
+  buildResourceIntentCoocJob,
+  resourceIntentCoocRetentionJob,
+  buildResourceIntentTagIndexJob,
   updateUserScore,
   grantCreatorMilestones,
   userScoreHealthCheckJob,
@@ -219,12 +250,15 @@ export const jobs: Job[] = [
   botAccountDetection,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  creatorProgramCounterpartyReview,
+  creatorProgramPrepayoutReview,
   giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
+  sweepReviewStorageJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
@@ -236,11 +270,13 @@ export const jobs: Job[] = [
   challengeCompletionJob,
   challengeAutoQueueJob,
   challengeHealthCheckJob,
+  evidenceHoldExpiryAlertJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
   retroactiveHashBlocking,
   minorHashSweep,
+  poiHashSweep,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,
@@ -253,6 +289,9 @@ export const jobs: Job[] = [
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
   ...placementJobs,
+  ...creatorServiceDealJobs,
+  ...creatorServiceDealFileJobs,
+  creatorShopWithdrawnRefundsJob,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,
@@ -267,6 +306,11 @@ export const jobs: Job[] = [
   dedupeOfficialUploadsJob,
   announcementDismissalCleanupJob,
   voidOrphanedAppealsJob,
+  appealDecisionRecordsJob,
+  appealTrainingCopyJob,
+  scanLabelCopyJob,
+  scanLabelControlSampleJob,
+  scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,
@@ -328,97 +372,13 @@ export default WebhookEndpoint(async (req, res) => {
   }
 });
 
-const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
-const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
-
-// Release only if we still hold the token. The old blind DEL let a fast run
-// free a concurrent slow run's lock.
-const LOCK_RELEASE_SCRIPT = `
-  if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("del", KEYS[1])
-  else
-    return 0
-  end
-`;
-// Extend the TTL only if we still hold the token (don't clobber a lock that
-// expired and was re-acquired by another run).
-const LOCK_REFRESH_SCRIPT = `
-  if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("set", KEYS[1], ARGV[1], "EX", ARGV[2])
-  else
-    return 0
-  end
-`;
-
-// A held job lock. `release()` is idempotent and closes over THIS run's token +
-// interval only — it can never free or clear a different (newer) run's lock,
-// which is why token/interval must be per-invocation, not keyed by job name.
-type JobLock = { release: () => Promise<void> };
-const NOOP_LOCK: JobLock = { release: async () => undefined };
-
-// Atomically acquire the job lock. Returns null if another run already holds it.
-// Uses SET NX (atomic check-and-set) instead of the old GET-then-SET, which let
-// two concurrent triggers both pass the check and run the same job in parallel
-// (e.g. the duplicate ingest-images cron triggers).
+// The prod-only gate around the shared job lock (`~/server/jobs/job-lock`), which the points
+// self-heal also takes so it can never run beside this route's run of the same job.
 async function acquireLock(
   name: string,
   lockExpiration: number,
   noCheck?: boolean
 ): Promise<JobLock | null> {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return NOOP_LOCK;
-  // Redis unavailable — fail open (run without a lock), matching prior behavior.
-  if (!sysRedis) return NOOP_LOCK;
-
-  const token = `${pod ?? 'unknown'}:${Date.now()}-${Math.random()}`;
-  let acquired: string | null;
-  try {
-    acquired = await sysRedis.set(`${REDIS_SYS_KEYS.JOB}:${name}`, token, {
-      NX: true,
-      EX: LOCK_REFRESH_INTERVAL + LOCK_BUFFER,
-    });
-  } catch (e) {
-    // Redis errored on acquire — fail open (run unlocked) rather than skip.
-    logToAxiom(
-      { type: 'job-lock', message: 'acquire-error', job: name, error: (e as Error)?.message },
-      'webhooks'
-    ).catch();
-    return NOOP_LOCK;
-  }
-  if (acquired !== 'OK') return null;
-
-  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
-
-  let released = false;
-  let interval: ReturnType<typeof setInterval> | undefined;
-  const release = async () => {
-    if (released) return;
-    released = true;
-    if (interval) clearInterval(interval);
-    logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
-    await sysRedis
-      ?.eval(LOCK_RELEASE_SCRIPT, {
-        keys: [`${REDIS_SYS_KEYS.JOB}:${name}`],
-        arguments: [token],
-      })
-      .catch(() => undefined);
-  };
-
-  // Refresh while we still own the lock so long jobs keep it and dead pods
-  // release it (the short TTL lapses). Hard-cap total hold at lockExpiration.
-  let ttl = lockExpiration;
-  interval = setInterval(async () => {
-    ttl -= LOCK_REFRESH_INTERVAL;
-    if (ttl <= 0) {
-      release().catch(() => undefined);
-      return;
-    }
-    await sysRedis
-      ?.eval(LOCK_REFRESH_SCRIPT, {
-        keys: [`${REDIS_SYS_KEYS.JOB}:${name}`],
-        arguments: [token, String(LOCK_REFRESH_INTERVAL + LOCK_BUFFER)],
-      })
-      .catch(() => undefined);
-  }, LOCK_REFRESH_INTERVAL * 1000);
-
-  return { release };
+  return acquireJobLock(name, lockExpiration);
 }

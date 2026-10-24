@@ -214,6 +214,25 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
   });
 });
 
+describe('createFreePlacement — a surface with no free tier', () => {
+  // A `free` row on a zero-priceable surface would spend the daily allowance shared with stickers
+  // and remix galleries.
+  it('refuses a storyline before resolving anything', async () => {
+    await expect(
+      createFreePlacement({
+        surface: 'storyline',
+        targetType: 'image',
+        targetId: TARGET,
+        placerId: PLACER,
+        data: {},
+      })
+    ).rejects.toThrow(/storylines have no free tier/);
+
+    expect(resolveSpace).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe('createFreePlacement — the free-tier refusals', () => {
   it('refuses once the slots on this image are taken', async () => {
     givenCounts({ reserved: 4 });
@@ -423,11 +442,52 @@ describe('the advisory locks have exactly one call site', () => {
   // article ids article.service.ts locks on.
   // creator-gallery-hidden-users takes one for the same count-then-insert reason, on a creator's
   // gallery hidden-users cap. Classed two-arg form (0x47480001), never nested inside another lock.
+  // game-frame-report takes two classed locks (0x47460001 per gfReportId, then 0x47460002 per game
+  // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
+  // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
+  // count-then-insert, never nested inside another lock.
+  // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
+  // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
+  // platform-feedback takes one per report fingerprint so two first reports cannot both insert.
+  // One-arg form on hashtextextended of a prefixed sha256, never nested inside another lock.
+  // text-scan/prompt takes one per prompt key (single-arg hashtext form) so two saves from the same
+  // base version cannot both insert as newest; never nested inside another lock.
+  // storyline-placement takes one per placer (0x74ee0003) for the pending cap's
+  // count-then-insert, since a zero-priced continuation costs nothing to race. It is
+  // the only lock in its transaction and is never taken alongside the free path's.
+  // scan-label-flag takes one per post (0x5c1a0001) for the scan label queue's per-post cap
+  // count-then-insert; the only lock in its transaction.
+  // item-holder-lock takes one per user (0x49480001) in the shop and pack grant transactions, after
+  // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
+  // never nested inside another advisory lock.
+  // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
+  // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
+  // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
+  // ingestion lock, so an article removal serialises with a recompute. The only lock in its transaction.
+  // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
+  // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
+  // transaction, for a decision's final update. The only lock in either transaction.
+  // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
+  // form) around the open-hold check and the hold write. The only lock in its transaction.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
+    'services/creator-mystery-pack.service.ts',
+    'services/creator-score-grant.service.ts',
     'services/free-placement.service.ts',
+    'services/game-frame-report.service.ts',
+    'services/item-holder-lock.ts',
+    'services/platform-feedback.service.ts',
+    'services/scan-label-flag.service.ts',
+    'services/storyline-placement.service.ts',
+    'services/support-membership-code.service.ts',
+    'services/text-scan/actions/csam-hold.ts',
+    'services/text-scan/actions/model-rules-hold.ts',
+    'services/text-scan/csam-hold-decision.ts',
+    'services/text-scan/prompt.ts',
   ];
 
   it('is taken only inside createFreePlacement', () => {

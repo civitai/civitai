@@ -20,10 +20,8 @@ import {
  * a zod schema over `router.query`, read through `useZodRouteParams` (see
  * `useAppsStoreQueryParams.ts`, and `useModelQueryParams2` for the precedent).
  *
- * REACT-FREE ON PURPOSE. The browser-mode (`component`) suites run only in the PR
- * preview pipeline, report-only and not a required check, so the parse/serialise
- * decisions that decide whether a shared link works have to be coverable by the
- * node `unit` project — same split as
+ * REACT-FREE ON PURPOSE, so the parse/serialise decisions that decide whether a
+ * shared link works are testable in the node `unit` project without a browser — same split as
  * `appListingCardView` / `recentAppsRail` / `appListingGrid`.
  *
  * 🔴 EVERY FIELD DEGRADES INDEPENDENTLY (`.catch(...)` per field, not one

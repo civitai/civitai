@@ -31,6 +31,13 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
+import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -40,7 +47,6 @@ import {
   InputRTE,
   InputSegmentedControl,
   InputSelect,
-  InputSwitch,
   InputTags,
   InputText,
   useForm,
@@ -71,6 +77,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
+import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 
 const schema = modelUpsertSchema
   .extend({
@@ -105,6 +112,10 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
     error: 'Private models must be set to SFW only.',
     path: ['sfwOnly'],
+  })
+  .refine((data) => data.sfwName == null || data.sfwName.trim().length > 0, {
+    error: 'Cannot be empty',
+    path: ['sfwName'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -160,6 +171,10 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
+    sfwName: model?.sfwName ?? null,
+    sfwDescription: model?.sfwDescription ?? null,
+    coverImageId: model?.coverImageId ?? null,
+    sfwCoverImageId: model?.sfwCoverImageId ?? null,
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: initialType,
@@ -181,12 +196,13 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     attestation: !!model?.id,
     availability: model?.availability ?? Availability.Public,
     // A model whose `meta` is null predates the metric-privacy feature. Left null, RHF's `get`
-    // returns null (not the default) for every `meta.*` path and the three switches submit null.
+    // returns null (not the default) for every `meta.*` path, so the choices are always seeded.
     meta: {
       ...(initialMeta ?? {}),
-      hideBuzz: initialMeta?.hideBuzz ?? false,
-      hideDownloads: initialMeta?.hideDownloads ?? false,
-      hideGenerations: initialMeta?.hideGenerations ?? false,
+      // The form holds the schema INPUT (choices, including inherit); defaultValues is typed as its output.
+      metricVisibility: getMetricVisibilityChoices(
+        initialMeta
+      ) as unknown as ModelMeta['metricVisibility'],
     },
   };
 
@@ -205,6 +221,13 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const features = useFeatureFlags();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const userSettings = useCurrentUserSettings();
+  const inheritedMetrics = inheritedMetricPrivacy({
+    level: 'model',
+    userSettings,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
+  });
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -322,6 +345,12 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     } else onSubmit(defaultValues);
   };
 
+  // The box is hidden while merges are off; clear it so re-allowing merges does not bring back a
+  // stale tick the creator cannot see.
+  useEffect(() => {
+    if (!allowDerivatives) form.setValue('allowDifferentLicense', false);
+  }, [allowDerivatives]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const subscription = form.watch((value, { name }) => {
       if (
@@ -352,12 +381,46 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
   const isDraft = model?.status === ModelStatus.Draft;
 
+  const nameInput = <InputText name="name" label="Name" placeholder="Name" withAsterisk />;
+  const descriptionInput = (
+    <InputRTE
+      name="description"
+      label="Description"
+      description="Tell us what your model does"
+      includeControls={[
+        'heading',
+        'formatting',
+        'list',
+        'link',
+        'media',
+        'mentions',
+        'colors',
+        'blurb',
+      ]}
+      editorSize="xl"
+      placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
+      withAsterisk
+    />
+  );
+
   return (
     <Form id={id} form={form} onSubmit={handleSubmit}>
       <ContainerGrid2 gutter="xl">
         <ContainerGrid2.Col span={12}>
           <Stack>
-            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+            {features.modelComFace ? (
+              <ModelListingTabs
+                modelId={model?.id}
+                redFields={
+                  <>
+                    {nameInput}
+                    {descriptionInput}
+                  </>
+                }
+              />
+            ) : (
+              nameInput
+            )}
             <Stack gap={5}>
               {replacedType && (
                 <AlertWithIcon
@@ -463,24 +526,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 </Text>
               </AlertWithIcon>
             )}
-            <InputRTE
-              name="description"
-              label="Description"
-              description="Tell us what your model does"
-              includeControls={[
-                'heading',
-                'formatting',
-                'list',
-                'link',
-                'media',
-                'mentions',
-                'colors',
-                'blurb',
-              ]}
-              editorSize="xl"
-              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
-              withAsterisk
-            />
+            {!features.modelComFace && descriptionInput}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"
@@ -491,34 +537,16 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             )}
             <Paper radius="md" p="md" withBorder>
               <Stack gap="xs">
-                <div>
-                  <Text size="sm" fw={600}>
-                    Creator Controls: metric privacy
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Hide these public stats on this model&apos;s page and cards.{' '}
-                    {isActiveCreatorMember
-                      ? 'You and moderators always see your real stats.'
-                      : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
-                  </Text>
-                </div>
-                <InputSwitch
-                  name="meta.hideBuzz"
-                  label="Hide tipped / earned Buzz"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideDownloads"
-                  label="Hide download count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideGenerations"
-                  label="Hide generation count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
+                <Text size="sm" fw={600}>
+                  Creator Controls: metric privacy
+                </Text>
+                <MetricPrivacyControls
+                  level="model"
+                  inherited={inheritedMetrics}
+                  access={metricPrivacyAccessFor({
+                    isOwner: !model?.user || model.user.id === currentUser?.id,
+                    ownerHasMembership: isActiveCreatorMember,
+                  })}
                 />
               </Stack>
             </Paper>
@@ -785,7 +813,16 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
                     dialogStore.trigger({
                       component: PrivateModelAutomaticSetup,
-                      props: { ...schema.parse(form.getValues()), modelVersionId },
+                      props: {
+                        ...schema.parse(form.getValues()),
+                        modelVersionId,
+                        // Nothing is stored until the dialog completes, so a dismissed one puts
+                        // the chip back on what the model actually is.
+                        onCancel: () => {
+                          form.setValue('availability', model?.availability ?? Availability.Public);
+                          form.setValue('sfwOnly', model?.sfwOnly ?? false);
+                        },
+                      },
                     });
 
                     return;
@@ -839,11 +876,16 @@ type Props = {
 
 export const PrivateModelAutomaticSetup = ({
   modelVersionId,
+  onCancel,
   ...form
-}: ModelUpsertSchema & { modelVersionId?: number }) => {
+}: ModelUpsertSchema & { modelVersionId?: number; onCancel?: () => void }) => {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const handleClose = dialog.onClose;
+  const handleDismiss = () => {
+    onCancel?.();
+    handleClose();
+  };
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
 
@@ -880,7 +922,7 @@ export const PrivateModelAutomaticSetup = ({
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+    <Modal {...dialog} onClose={handleDismiss} size="lg" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
         <Text size="lg" fw="bold">
           You are about to create a private model
@@ -896,7 +938,7 @@ export const PrivateModelAutomaticSetup = ({
         <Text fw="bold">Only PG (or SFW) content can be generated with private models.</Text>
         <Group ml="auto">
           <Button
-            onClick={handleClose}
+            onClick={handleDismiss}
             color="gray"
             disabled={privateModelFromTrainingMutation.isPending}
           >

@@ -16,6 +16,7 @@ import {
   FREE_PLACEMENTS_PER_DAY,
   PLACEMENT_SURFACES,
   freePlacementDayStart,
+  placementSurfaceAllowsZeroPrice,
 } from '~/shared/utils/placement';
 
 /**
@@ -175,6 +176,14 @@ export async function createFreePlacement({
   sellerId,
   data,
 }: CreateFreePlacement) {
+  // A surface that may be priced at zero has no free tier: a `free` row on it would spend a slot
+  // and the daily allowance, which every surface shares, so continuing a story would quietly
+  // cost the placer today's free sticker. Refused before any I/O.
+  if (placementSurfaceAllowsZeroPrice(surface))
+    throw throwBadRequestError(
+      `placement: ${PLACEMENT_SURFACES[surface].label} have no free tier to claim from`
+    );
+
   const target = { surface, targetType, targetId };
   const space = await resolvePlacementSpaceFor(target);
 

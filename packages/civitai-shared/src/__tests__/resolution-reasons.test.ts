@@ -4,6 +4,7 @@ import {
   RESOLUTION_REASONS,
   resolutionReasonError,
   resolutionReasonLabel,
+  resolutionReasonsFor,
   type ResolutionReason,
 } from '../resolution-reasons';
 
@@ -23,7 +24,7 @@ describe('RESOLUTION_REASONS', () => {
   });
 
   // This is the list moderation agreed to. Changing it is a moderation decision, not a code cleanup:
-  // there is no remix/template/enhancer reason because moderators cannot see a prompt's origin, no
+  // there is no template/enhancer reason, no
   // "nothing new" reject reason because moderation found it meaningless, and minor-age misreads are
   // split from keyword hits because they are most of the overturns.
   it('offers exactly the reasons moderation agreed to', () => {
@@ -35,6 +36,7 @@ describe('RESOLUTION_REASONS', () => {
     );
     expect(offered).toEqual({
       'restriction/Overturned': [
+        'remix-source',
         'minor-term-misread',
         'word-match',
         'art-context',
@@ -44,6 +46,18 @@ describe('RESOLUTION_REASONS', () => {
       'restriction/Upheld': ['clear-intent', 'repeat-evasion', 'prior-history', 'other'],
       'appeal/Approved': ['misclassified', 'rating-only', 'context-provided', 'other'],
       'appeal/Rejected': ['violation-confirmed', 'different-violation', 'other'],
+      'flagAppeal/Approved': [
+        'not-a-minor',
+        'not-a-real-person',
+        'terms-misread',
+        'context-provided',
+        'other',
+      ],
+      'flagAppeal/Rejected': ['flag-confirmed', 'other'],
+      'heldDetection/Kept': ['detection-correct', 'other'],
+      'heldDetection/Dismissed': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
+      'flagReview/Kept': ['detection-correct', 'other'],
+      'flagReview/Lifted': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
     });
   });
 
@@ -88,6 +102,58 @@ describe('resolutionReasonError', () => {
   it('caps the note', () => {
     const long = 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1);
     expect(resolutionReasonError('appeal', 'Approved', 'misclassified', long)).toMatch(/longer/);
+  });
+});
+
+describe('flagReview', () => {
+  it('accepts a keep reason on Kept and refuses it on Lifted', () => {
+    expect(
+      resolutionReasonError('flagReview', 'Kept', 'detection-correct', undefined, ['poi'])
+    ).toBeNull();
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'detection-correct', undefined, ['poi'])
+    ).toMatch(/not a reason for Lifted/);
+  });
+
+  it('requires a reason and scopes lift reasons to the flag', () => {
+    expect(resolutionReasonError('flagReview', 'Kept', '', undefined)).toMatch(/Pick a reason/);
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'not-a-minor', undefined, ['poi'])
+    ).toMatch(/does not apply to this flag/);
+    expect(
+      resolutionReasonError('flagReview', 'Lifted', 'not-a-real-person', undefined, ['poi'])
+    ).toBeNull();
+  });
+});
+
+describe('label-bound reasons', () => {
+  const offered = (labels?: ('minor' | 'poi')[]) =>
+    resolutionReasonsFor('flagAppeal', 'Approved', labels).map((r) => r.value);
+
+  it('offers a reason bound to a label only when that flag is in play', () => {
+    expect(offered(['poi'])).toEqual([
+      'not-a-real-person',
+      'terms-misread',
+      'context-provided',
+      'other',
+    ]);
+    expect(offered(['minor'])).toEqual([
+      'not-a-minor',
+      'terms-misread',
+      'context-provided',
+      'other',
+    ]);
+    expect(offered(['minor', 'poi'])).toEqual(offered());
+  });
+
+  it('refuses a reason bound to a flag that is not being ruled on', () => {
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined, ['poi'])
+    ).toMatch(/does not apply to this flag/);
+    expect(
+      resolutionReasonError('heldDetection', 'Dismissed', 'not-a-minor', undefined, ['minor'])
+    ).toBeNull();
+    expect(resolutionReasonError('flagAppeal', 'Approved', 'not-a-minor', undefined)).toBeNull();
   });
 });
 

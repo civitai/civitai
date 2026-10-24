@@ -1,4 +1,4 @@
-import { getResource, queryResources } from '@civitai/client';
+import { getResource, queryResources } from '@civitai/orchestration-client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
@@ -13,6 +13,7 @@ import {
   modelVersionToAir,
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
+import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
 
 export async function getModelClient({
   token,
@@ -33,7 +34,7 @@ export async function queryResourcesClient({
   return await queryResources({ client, query });
 }
 
-// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/client: the operation
+// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/orchestration-client: the operation
 // carries [ApiExplorerSettings(IgnoreApi = true)] (orchestrator c2d2c370), so it is absent from the
 // OpenAPI documents the SDK is generated from — the endpoint itself is live.
 async function invalidateOrchestratorResource(air: string, etag: string, userId?: number) {
@@ -60,6 +61,19 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
+  try {
+    await invalidateVersions(versionIds, userId);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateVersions(versionIds: number[], userId?: number) {
   const versions = (await dbWrite.modelVersion.findMany({
     where: { id: { in: versionIds } },
     select: modelVersionAirSelect,
@@ -77,6 +91,26 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
     ),
   ];
 
+  await invalidateAirs(airs, userId);
+}
+
+/** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
+export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+
+  try {
+    await invalidateAirs([modelFileScanAir(file)]);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      fileId: file.fileId,
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateAirs(airs: string[], userId?: number) {
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 

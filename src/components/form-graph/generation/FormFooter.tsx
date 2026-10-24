@@ -82,9 +82,16 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
+import {
+  FLUX3_MATURE_SOURCE_MESSAGE,
+  MATURE_SOURCE_ALTERNATIVE,
+} from '~/shared/constants/mature-source.constants';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
-import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import {
+  hasPendingPromptMint,
+  remixProvenanceStore,
+  waitForPromptMint,
+} from '~/store/remix-provenance.store';
 import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
@@ -94,8 +101,10 @@ import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 import { hasTipEligibleSelection } from './creator-tip';
+import { FOOTER_RESET } from './footer-reset';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
+import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
 
 // =============================================================================
 // Cost (including tips)
@@ -140,6 +149,38 @@ export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore })
 // Priority alerts
 // =============================================================================
 
+export function MatureSourceNotice({
+  store,
+  canSwitch,
+}: {
+  store: GenerationStore;
+  canSwitch: boolean;
+}) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      <div className="flex w-full items-center justify-between gap-2">
+        <Text size="sm">{FLUX3_MATURE_SOURCE_MESSAGE}</Text>
+        {canSwitch && (
+          <Button
+            variant="light"
+            color="yellow"
+            radius="xl"
+            size="compact-sm"
+            onClick={() => switchToMatureSourceAlternative(store)}
+          >
+            Switch to {MATURE_SOURCE_ALTERNATIVE.label}
+          </Button>
+        )}
+      </div>
+    </Notification>
+  );
+}
+
 function PriorityAlertSpace({
   store,
   submitError,
@@ -175,6 +216,7 @@ function PriorityAlertSpace({
   const totalCost = useTotalGenerationCost(store);
   const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
+  const matureSource = useFlux3MatureSource(store);
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
@@ -220,6 +262,8 @@ function PriorityAlertSpace({
         {missingFieldMessage}
       </Notification>
     );
+  } else if (matureSource.blocked) {
+    priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;
   } else if (blockingTrialMessage) {
     showingTrialAlert = true;
     priorityAlert = (
@@ -370,13 +414,20 @@ function BaseModelWarnings() {
 // Submit button
 // =============================================================================
 
+const PREPARING_REMIX_LABEL = 'Preparing remix…';
+const REMIX_LINK_TIMEOUT_MESSAGE =
+  "Couldn't prepare the remix link in time; this generation won't count toward a free remix-gallery spot.";
+
 export function SubmitButton({
   store,
   isLoading: isSubmitting,
+  preparing,
   onSubmit,
 }: {
   store: GenerationStore;
   isLoading?: boolean;
+  /** Waiting on the reuse-prompt remix link before submitting. */
+  preparing?: boolean;
   onSubmit?: () => void;
 }) {
   const { running, helpers, setBlockedTarget } = useTourContext();
@@ -393,9 +444,11 @@ export function SubmitButton({
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const matureSource = useFlux3MatureSource(store);
 
   const submitBlocked =
     !canGenerate ||
+    matureSource.blocked ||
     gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
@@ -420,9 +473,11 @@ export function SubmitButton({
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={submitBlocked}
+      disabled={submitBlocked || preparing}
       onClick={handleClick}
-    />
+    >
+      {preparing ? PREPARING_REMIX_LABEL : undefined}
+    </GenerateButton>
   );
 }
 
@@ -795,7 +850,15 @@ export function FormFooter({
 
   const clearWarning = () => setPromptWarning(null);
 
+  const [preparingRemix, setPreparingRemix] = useState(false);
+  // A second click while the remix link is being prepared must not submit twice.
+  const preparingRemixRef = useRef(false);
+
+  // "Generate Anyway" on a flagged prompt submits without the Generate button.
+  const matureSource = useFlux3MatureSource(store);
+
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    if (preparingRemixRef.current || matureSource.blocked) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
@@ -853,6 +916,20 @@ export function FormFooter({
             : 'Request queued. Your generation request will begin shortly.',
       });
       return;
+    }
+
+    // A reuse-prompt remix's token arrives when its mint answers, which can be well after the
+    // click; submitting before then would lose the free remix-gallery placement it is for.
+    if (hasPendingPromptMint(remixOfId)) {
+      preparingRemixRef.current = true;
+      setPreparingRemix(true);
+      try {
+        const { timedOut } = await waitForPromptMint(remixOfId);
+        if (timedOut) showWarningNotification({ message: REMIX_LINK_TIMEOUT_MESSAGE });
+      } finally {
+        preparingRemixRef.current = false;
+        setPreparingRemix(false);
+      }
     }
 
     let externalId: string | undefined;
@@ -1004,17 +1081,7 @@ export function FormFooter({
   };
 
   const handleReset = () => {
-    const snap = store.getSnapshot().state as { output?: string };
-    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
-
-    // clear only THIS output's buckets while preserving output preferences;
-    // other outputs' settings survive
-    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
-
-    if (outputType === 'video') store.set({ workflow: 'txt2vid' });
-    if (outputType === 'audio') store.set({ workflow: 'txt2music' });
-    if (outputType === 'model3d') store.set({ workflow: 'txt2model3d' });
-
+    store.reset(FOOTER_RESET);
     remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);
@@ -1087,6 +1154,7 @@ export function FormFooter({
             <SubmitButton
               store={store}
               isLoading={generateMutation.isPending || isMinLoading}
+              preparing={preparingRemix}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector store={store} />}

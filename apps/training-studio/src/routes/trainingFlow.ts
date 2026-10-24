@@ -3,6 +3,7 @@ import {
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
+  allowsCustomBase,
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
@@ -129,6 +130,14 @@ export function runVersionLabel(run: Run): string {
   return versionSuffix(card.name, v?.label);
 }
 
+/** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
+export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+  return [
+    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
+  ];
+}
+
 export function newRun(card: ModelCard): Run {
   const first = card.versions[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
@@ -156,7 +165,15 @@ export function recommendedCardFor(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
+export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+
+/** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
+ *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
+ *  wasn't inspected), which made a failed upload impossible to place against the user's own folder. */
+export const compareFileNames: (a: string, b: string) => number = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+}).compare;
 
 let imgSeq = 0;
 /** Client id for a dataset tile. Module-level because the flow keeps `images` across Back/Continue
@@ -198,9 +215,24 @@ export interface Img {
   caption: string;
 }
 
+/** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
+ *  here, at submit, rather than when its result lands — a tile whose result never maps back can't be
+ *  resent by the drain. Results map back by position, not tile id: when two tiles shared an id, the
+ *  second was never marked and was resent every pass until the user's Buzz ran out. */
+export function startLabelPass(targets: Img[]) {
+  const byKey = new Map(targets.map((t, i) => [String(i), t]));
+  for (const t of targets) Object.assign(t, { labeling: true, labelTried: true });
+  const items = [...byKey].map(([key, t]) => ({ key, mediaUrl: t.blobUrl ?? '' }));
+  return { byKey, items };
+}
+
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
+}
+
+export function isFailed(img: Img): boolean {
+  return img.status === 'blocked' || img.status === 'error';
 }
 
 /** The training-data `air` reference for a blob-backed item (a generation / reused dataset). The
@@ -338,9 +370,9 @@ export function defaultStepsForRun(run: Run): number {
 }
 
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
-export function defaultRunParams(run: Run): RunParams {
+export function defaultRunParams(run: Run, trigger = ''): RunParams {
   const d = paramsForVersion(runCard(run), run.versionKey);
-  const x = extraParamDefaults(runCard(run), run.versionKey);
+  const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
@@ -395,9 +427,10 @@ function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): bool
 export function paramDeviations(
   run: Run,
   params: RunParams,
-  labelMode: LabelType
+  labelMode: LabelType,
+  trigger = ''
 ): ParamDeviation[] {
-  const defaults = defaultRunParams(run);
+  const defaults = defaultRunParams(run, trigger);
   const caps = runExtraCapabilities(run, labelMode);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
@@ -425,6 +458,30 @@ export const runParamsKey = (run: Run): string => `${run.id}:${run.cardType}:${r
 export interface SamplePrompt {
   id: number;
   text: string;
+}
+
+export const MAX_SAMPLE_PROMPTS = 6;
+
+/** The list with one more, empty, prompt row (an id past every existing one), or unchanged at the cap.
+ *  Empty, not example text: whatever the row holds is submitted unless the user rewrites it. */
+export function addSamplePrompt(prompts: SamplePrompt[]): SamplePrompt[] {
+  if (prompts.length >= MAX_SAMPLE_PROMPTS) return prompts;
+  const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
+  return [...prompts, { id, text: '' }];
+}
+
+/** The filled sample prompts, trimmed. An added row starts empty, and an empty sample prompt is not a
+ *  test image anyone asked for. */
+export function filledPrompts(texts: string[]): string[] {
+  return texts.map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
+/** The sample prompts a run is submitted with: the filled ones, or the rows as they are when none is
+ *  filled. Blank prompts generate no images either way; an all-blank list keeps the shape every
+ *  trainer has always sent rather than an empty array no submit path has been seen to accept. */
+export function submittedPrompts(texts: string[]): string[] {
+  const filled = filledPrompts(texts);
+  return filled.length ? filled : texts;
 }
 
 /** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
@@ -542,7 +599,7 @@ export function buildTrainingRuns(
       flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
-      prompts,
+      prompts: submittedPrompts(prompts),
       currencies,
       meta: {
         name: name.trim() || t || selection.loraType,

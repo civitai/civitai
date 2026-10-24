@@ -9,6 +9,9 @@ interface UseBlockTokenResult {
    *  BLOCK_INIT.token.expiresAt so blocks don't have to JWT-decode. */
   expiresAt: string | null;
   kind: 'block' | 'oauth' | undefined;
+  /** The per-call Buzz budget the current token carries, as the mint reported it.
+   *  `undefined` when the token carries no spend scope. */
+  buzzBudget: number | undefined;
   error: Error | null;
   pending: boolean;
   /** A6: true when the app's approved manifest declares scopes the viewer has
@@ -17,6 +20,9 @@ interface UseBlockTokenResult {
   needsConsent: boolean;
   /** A6: the consent-gated scopes withheld from the current token. */
   missingScopes: string[];
+  /** The scopes the mint signed into the current token. `undefined` when the
+   *  response omits them (the dev-tunnel mint) — see `resolveAdvertisedScopes`. */
+  signedScopes: string[] | undefined;
   /** Advisory maturity signal mirrored from the mint (BLOCK_INIT). The color
    *  domain the token was minted on, or null when unresolved. */
   domain: 'green' | 'blue' | 'red' | null;
@@ -51,14 +57,21 @@ interface TokenResponse {
   token: string;
   expiresAt: string;
   kind?: 'block' | 'oauth';
+  buzzBudget?: number;
   /** A6: present from the server when the viewer's grant is short of the
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
   missingScopes?: string[];
+  scopes?: string[];
   /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
   effectiveBrowsingLevel?: number;
+}
+
+export interface UseBlockTokenOptions {
+  /** A dev-tunnel preview: the mint then signs no document-store scopes. */
+  devTunnel?: boolean;
 }
 
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
@@ -84,14 +97,20 @@ const MIN_REFRESH_MS = 30 * 1000;
  * `blockInstanceId`. If a caller needs to force a refresh on context change,
  * use the returned `refresh()`.
  */
-export function useBlockToken(install: BlockInstall, context: SlotContext): UseBlockTokenResult {
+export function useBlockToken(
+  install: BlockInstall,
+  context: SlotContext,
+  options: UseBlockTokenOptions = {}
+): UseBlockTokenResult {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [kind, setKind] = useState<'block' | 'oauth' | undefined>(undefined);
+  const [buzzBudget, setBuzzBudget] = useState<number | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
+  const [signedScopes, setSignedScopes] = useState<string[] | undefined>(undefined);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
   const [effectiveBrowsingLevel, setEffectiveBrowsingLevel] = useState<number | undefined>(
@@ -156,6 +175,10 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const abortRef = useRef<AbortController | null>(null);
   const contextRef = useRef<SlotContext>(context);
   contextRef.current = context;
+  // Read through a ref like `contextRef`, so an inline options literal does not
+  // re-key `requestToken` (and so re-mint) on every render.
+  const devTunnelRef = useRef<boolean>(options.devTunnel === true);
+  devTunnelRef.current = options.devTunnel === true;
 
   const requestToken = useCallback(async (): Promise<void> => {
     // 🔴 BAIL BEFORE CLAIMING `abortRef`. This check used to sit just below the
@@ -199,6 +222,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
           body: JSON.stringify({
             blockInstanceId: instanceId,
             slotContext: contextRef.current,
+            ...(devTunnelRef.current ? { devTunnel: true } : {}),
           }),
         });
         if (res.status === 429 && attempt === 0) {
@@ -234,8 +258,16 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       setToken(data.token);
       setExpiresAt(data.expiresAt);
       setKind(data.kind === 'block' || data.kind === 'oauth' ? data.kind : undefined);
+      setBuzzBudget(
+        typeof data.buzzBudget === 'number' && Number.isFinite(data.buzzBudget)
+          ? data.buzzBudget
+          : undefined
+      );
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
+      setSignedScopes(
+        Array.isArray(data.scopes) ? data.scopes.filter((s) => typeof s === 'string') : undefined
+      );
       setDomain(
         data.domain === 'green' || data.domain === 'blue' || data.domain === 'red'
           ? data.domain
@@ -449,10 +481,12 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
     token: scopedToken,
     expiresAt: scopedExpiresAt,
     kind: tokenMatchesInstance ? kind : undefined,
+    buzzBudget: tokenMatchesInstance ? buzzBudget : undefined,
     error,
     pending,
     needsConsent,
     missingScopes,
+    signedScopes: tokenMatchesInstance ? signedScopes : undefined,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,

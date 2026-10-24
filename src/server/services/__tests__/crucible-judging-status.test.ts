@@ -52,12 +52,14 @@ describe('countJudgingPairs', () => {
     expect(counts.get(1)).toEqual({
       remainingPairs: 3,
       judgedPairs: 0,
+      totalPairs: 3,
       visibleEntries: 3,
       judged: false,
     });
     expect(counts.get(2)).toEqual({
       remainingPairs: 0,
       judgedPairs: 1,
+      totalPairs: 1,
       visibleEntries: 2,
       judged: true,
     });
@@ -72,6 +74,32 @@ describe('countJudgingPairs', () => {
     expect(counts.get(1)).toMatchObject({ judgedPairs: 1 });
   });
 
+  it('keeps the total when a vote caps an entry and drops the remaining pairs', async () => {
+    queryRaw.mockResolvedValue(entries({ 1: [10, 11, 12, 13] }));
+    judgeState({ 1: { voted: [], votes: { 11: 3, 12: 4, 13: CAP } } });
+    const before = (
+      await countJudgingPairs({ crucibleIds: [1], userId: JUDGE, viewerLevel: 1 })
+    ).get(1)!;
+
+    judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 4, 12: 4, 13: CAP } } });
+    const after = (
+      await countJudgingPairs({ crucibleIds: [1], userId: JUDGE, viewerLevel: 1 })
+    ).get(1)!;
+
+    expect(before.remainingPairs - after.remainingPairs).toBeGreaterThan(1);
+    expect(after.totalPairs).toBe(before.totalPairs);
+  });
+
+  it('never reports fewer total pairs than the judge already voted', async () => {
+    queryRaw.mockResolvedValue(entries({ 1: [10, 11] }));
+    // Three voted keys among two visible ids can't happen for real; the clamp still holds.
+    judgeState({ 1: { voted: ['10:11', '11:10', '10:10'], votes: { 10: 3, 11: 3 } } });
+
+    const counts = await countJudgingPairs({ crucibleIds: [1], userId: JUDGE, viewerLevel: 1 });
+
+    expect(counts.get(1)).toMatchObject({ judgedPairs: 3, totalPairs: 3 });
+  });
+
   it('answers a crucible with no visible entries', async () => {
     queryRaw.mockResolvedValue([]);
 
@@ -80,6 +108,7 @@ describe('countJudgingPairs', () => {
     expect(counts.get(3)).toEqual({
       remainingPairs: 0,
       judgedPairs: 0,
+      totalPairs: 0,
       visibleEntries: 0,
       judged: false,
     });
@@ -216,7 +245,7 @@ describe('getJudgingStatuses', () => {
     const statuses = await getJudgingStatuses({
       crucibleIds: [1, 2, 3],
       userId: JUDGE,
-      blockedByUserIds: [777],
+      blockedCreatorIds: [777],
     });
 
     expect(statuses.map((s) => s.crucibleId)).toEqual([3]);
@@ -237,9 +266,23 @@ describe('getJudgingSuggestions', () => {
     vi.clearAllMocks();
     judgeState({});
     findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
-      where.id.in.map((id) => ({ id }))
+      where.id.in.map((id) => ({ id, _count: { entries: 4 } }))
     );
     dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+  });
+
+  it('counts pairs left exactly where judged, and from every entry where not', async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ id: 1 }, { id: 2 }])
+      .mockResolvedValueOnce(entries({ 1: [10, 11, 12] }));
+    judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
+
+    const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
+
+    expect(suggestions.map((c) => [c.id, c.remainingPairs])).toEqual([
+      [1, 2],
+      [2, 6],
+    ]);
   });
 
   it('skips crucibles the judge has no pairs left in', async () => {
@@ -261,7 +304,9 @@ describe('getJudgingSuggestions', () => {
     const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
 
     expect(suggestions.map((c) => c.id)).toEqual([1, 2]);
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    // Only the candidates query; the card's batched entrant count is not an entry fetch.
+    const sqls = queryRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+    expect(sqls.filter((sql) => !sql.includes('count(DISTINCT e."userId")'))).toHaveLength(1);
   });
 
   it('caps the candidates query at 50, not at the requested limit', async () => {

@@ -1,4 +1,4 @@
-import type { XGuardModerationOutput } from '@civitai/client';
+import type { XGuardModerationOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -17,10 +17,17 @@ import {
   applySystemModelNsfwFlag,
 } from '~/server/services/text-scan/actions/model-nsfw';
 import { applyModelPoiMinor } from '~/server/services/text-scan/actions/model-poi-minor';
+import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { notifyTextScanRatingRaised } from '~/server/services/text-scan/notify';
-import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import { PUBLIC_MODEL_WHERE } from '~/server/services/text-scan/public-content';
+import {
+  submitTextModerationOrScan,
+  TEXT_SCAN_ENTITY_NOT_PUBLIC,
+} from '~/server/services/text-scan/route';
+import { checkModelRulesInBackground } from '~/server/services/text-scan/submit';
 import { removeTags } from '~/utils/string-helpers';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const MODEL_MODERATION_ENTITY_TYPE = 'Model' as const;
 
@@ -170,7 +177,7 @@ async function recordForensics({
   // erased, and that key is what gates the owner's appeal flow.
   await dbWrite.$executeRaw`
     UPDATE "Model" m
-    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
       'textModeration', jsonb_build_object(
         'labels', ${labelsJson}::jsonb,
         'matchedTerms', to_jsonb(${matchedTerms}::text[]),
@@ -184,7 +191,7 @@ async function recordForensics({
 export const modelModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.model.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, deletedAt: null },
       select: { id: true, name: true, description: true },
     });
     return new Map(rows.map((r) => [r.id, buildModelModerationText(r)]));
@@ -203,20 +210,22 @@ export const modelModerationAdapter: ModerationAdapter = {
     submitTextModerationOrScan({
       entityType: MODEL_MODERATION_ENTITY_TYPE,
       entityId,
+      fromRetry: true,
       // Gated as well as `isEnabled`: a caller that reaches the hook directly must not be
       // able to request an XGuard scan the flag has turned off. Undefined is contractual
       // here — the same shape as a submit the helper itself declined.
       xguard: async () => {
         if (!(await submitEnabled(entityId))) return undefined;
+        if (!(await isPublicModel(entityId))) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
         return submitModelScan({ entityId, content });
       },
     }),
 
-  applyTextScan: async (args) => {
+  applyTextScan: withCsamHold('Model', async (args) => {
     const { deferredRatingNotice } = await applyModelNsfwTextScan(args);
     const { notified } = await applyModelPoiMinor(args);
     if (deferredRatingNotice && !notified) await notifyTextScanRatingRaised(deferredRatingNotice);
-  },
+  }),
 
   // `output.blocked` is deliberately unread. The submit sends fifteen labels this adapter
   // does not act on beyond the three level labels, several with Block or Review actions
@@ -293,15 +302,26 @@ export const modelModerationAdapter: ModerationAdapter = {
   // The omission is deliberate — do not add an empty hook.
 };
 
+// The primary: a publish scans right after its commit, before a replica has the new status.
+async function isPublicModel(id: number) {
+  return !!(await dbWrite.model.findFirst({
+    where: { id, ...PUBLIC_MODEL_WHERE },
+    select: { id: true },
+  }));
+}
+
 /**
- * Fire-and-forget submit for the model write path. Owns its own flag check and error
- * handling so `upsertModel` gets a single awaitable that can never fail the save.
+ * Fire-and-forget submit for the model write and publish paths. Owns its own flag check and
+ * error handling so a caller gets a single awaitable that can never fail the save. A model that
+ * is not public is not scanned.
  */
 export async function submitModelTextModeration(model: {
   id: number;
   name: string;
   description?: string | null;
   isModerator?: boolean;
+  /** False when the caller checks the Model rules itself (the publish paths). */
+  rules?: boolean;
 }): Promise<void> {
   // Same carve-out as the profanity branch's `!isModerator` guard in `upsertModel`: an
   // unattended scan must never re-flip a decision a moderator just made while editing the
@@ -309,8 +329,11 @@ export async function submitModelTextModeration(model: {
   // stays cleared going into this call).
   if (model.isModerator) return;
 
+  if (model.rules !== false) checkModelRulesInBackground(model.id);
   const content = buildModelModerationText(model);
   try {
+    if (!(await isPublicModel(model.id))) return;
+
     await submitTextModerationOrScan({
       entityType: MODEL_MODERATION_ENTITY_TYPE,
       entityId: model.id,

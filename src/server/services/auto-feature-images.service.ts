@@ -225,8 +225,11 @@ export function buildCandidatesQuery({
         AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - ${intervalDays(windowDays)}
       ORDER BY ci."imageId", COALESCE(ci."reviewedAt", ci."createdAt") DESC
     )
+    -- Only reactions since curation: the score's age clock starts at curatedAt, so counting older
+    -- reactions would let a re-curated image carry its whole history into a fresh decay window.
     SELECT c."imageId", i."userId", c."collectionId", c."curatedAt",
-           (SELECT count(*) FROM "ImageReaction" r WHERE r."imageId" = c."imageId") AS reactions
+           (SELECT count(*) FROM "ImageReaction" r
+            WHERE r."imageId" = c."imageId" AND r."createdAt" >= c."curatedAt") AS reactions
     FROM cand c
     JOIN "Image" i ON i.id = c."imageId"
     JOIN "User" u ON u.id = i."userId"

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * `ReviewActionBar` — the approve/reject control surface extracted from
@@ -36,6 +38,8 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   errorMode: false,
   pending: false,
+  assets: { data: undefined as unknown, isError: false },
+  assetsQuery: vi.fn(),
 }));
 
 const showError = vi.fn();
@@ -44,7 +48,7 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
-vi.mock('~/utils/trpc', () => {
+vi.mock('~/utils/trpc', async (importOriginal) => {
   const mutation =
     (name: string) =>
     (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
@@ -65,13 +69,20 @@ vi.mock('~/utils/trpc', () => {
     },
   };
   return {
-    trpc: {
-      useUtils: () => utils,
-      blocks: {
-        approveRequest: { useMutation: mutation('approve') },
-        rejectRequest: { useMutation: mutation('reject') },
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {
+        'blocks.approveRequest': { useMutation: mutation('approve') },
+        'blocks.rejectRequest': { useMutation: mutation('reject') },
+        'appListings.getAssets': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.assetsQuery(input, opts);
+            return { data: mocks.assets.data, isError: mocks.assets.isError };
+          },
+        },
       },
-    },
+      { useUtils: () => utils }
+    ),
   };
 });
 
@@ -82,6 +93,8 @@ beforeEach(() => {
   mocks.mutate.mockClear();
   mocks.errorMode = false;
   mocks.pending = false;
+  mocks.assets = { data: undefined, isError: false };
+  mocks.assetsQuery.mockClear();
   showError.mockClear();
 });
 
@@ -268,5 +281,192 @@ describe('ReviewActionBar — modal busyRef + page onStatusChange observers', ()
     // The pinned bar is a labelled group so screen readers announce it.
     await expect.element(page.getByRole('group', { name: 'Review actions' })).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+  });
+});
+
+describe('ReviewActionBar — approving will raise the listing’s rating', () => {
+  // NsfwLevel bits: PG 1, PG-13 2, R 4.
+  const assetsWithShot2At = (level: number | null, over: Record<string, unknown> = {}) => ({
+    iconId: 41,
+    coverId: 53,
+    iconNsfwLevel: 1,
+    coverNsfwLevel: 2,
+    screenshots: [
+      { imageId: 61, nsfwLevel: 1 },
+      { imageId: 67, nsfwLevel: level },
+    ],
+    hasPendingScan: false,
+    hasBlockedAsset: false,
+    ...over,
+  });
+  const reRated = (over: Record<string, unknown> = {}) => ({
+    ...PENDING,
+    appListingId: 'apl_joined',
+    approveRating: { listingId: 'apl_draft', declared: 'g' as string | null },
+    ...over,
+  });
+  const bar = (request: ReturnType<typeof reRated>) =>
+    renderWithProviders(
+      <ReviewActionBar selection={{ request, mode: 'pending' }} onClose={vi.fn()} />
+    );
+  const alertText = async () => {
+    const alert = page.getByTestId('apps-onsite-rating-mismatch');
+    await expect.element(alert).toBeInTheDocument();
+    return alert.element().textContent;
+  };
+  const approveVisibleWithoutAlert = async () => {
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-rating-mismatch').elements()).toHaveLength(0);
+  };
+
+  test('declared G + an R screenshot: says approving raises the listing to R, hides it, and names the screenshot', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    expect(await alertText()).toBe(
+      'Store imagery is rated higher (R) than the app’s declared rating (G). Approving raises the store listing to R, which hides it from the civitai.com marketplace (it stays visible on civitai.red). If the app itself is not that mature, reject and ask the author to replace the image.Rated highest: Screenshot 2 (R).'
+    );
+    // Re-read on every open: the author can swap an image between two opens.
+    expect(mocks.assetsQuery).toHaveBeenCalledWith(
+      { listingId: 'apl_draft' },
+      { staleTime: 0, refetchOnMount: 'always', retry: false }
+    );
+    // Still approvable — it is a warning, not a gate.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+  });
+
+  test('a raise to PG-13 is warned about without the hidden-from-the-marketplace clause', async () => {
+    mocks.assets.data = assetsWithShot2At(1);
+    bar(reRated());
+    expect(await alertText()).toBe(
+      'Store imagery is rated higher (PG-13) than the app’s declared rating (G). Approving raises the store listing to PG-13. If the app itself is not that mature, reject and ask the author to replace the image.Rated highest: Cover (PG-13).'
+    );
+  });
+
+  test.each([{ hasPendingScan: true }, { hasBlockedAsset: true }])(
+    'media not scanned clean (%o): the warning adds that this approve does not publish the listing yet',
+    async (scan) => {
+      mocks.assets.data = assetsWithShot2At(4, scan);
+      bar(reRated());
+      expect(await alertText()).toBe(
+        'Store imagery is rated higher (R) than the app’s declared rating (G). Approving raises the store listing to R, which hides it from the civitai.com marketplace (it stays visible on civitai.red). If the app itself is not that mature, reject and ask the author to replace the image. The listing only goes live once all of its media has scanned clean.Rated highest: Screenshot 2 (R).'
+      );
+    }
+  );
+
+  test('the comparison uses the rating the SERVER says the approve starts from', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated({ approveRating: { listingId: 'apl_draft', declared: 'r' } }));
+    await approveVisibleWithoutAlert();
+    expect(mocks.assetsQuery).toHaveBeenCalled();
+  });
+
+  test('a null starting rating is treated as SFW and shown as a dash', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated({ approveRating: { listingId: 'apl_draft', declared: null } }));
+    await expect
+      .element(page.getByTestId('apps-onsite-rating-mismatch'))
+      .toHaveTextContent(
+        'than the app’s declared rating (—). Approving raises the store listing to R'
+      );
+  });
+
+  test('an approve that does not re-rate the listing asks for nothing and warns of nothing', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated({ approveRating: null }));
+    await approveVisibleWithoutAlert();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    expect(mocks.assetsQuery).not.toHaveBeenCalled();
+  });
+
+  test('the levels are read for the listing the SERVER says is re-rated, joined or not', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated({ appListingId: null }));
+    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    expect(mocks.assetsQuery).toHaveBeenCalledWith(
+      { listingId: 'apl_draft' },
+      { staleTime: 0, refetchOnMount: 'always', retry: false }
+    );
+  });
+
+  test('🔴 while the levels are loading it says it is checking, and approve waits for them', async () => {
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-onsite-rating-checking')).toBeInTheDocument();
+    await approveVisibleWithoutAlert();
+    // Approving now would send a split decision nobody has seen.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+  });
+
+  test('a failed asset read is said out loud rather than read as "nothing to warn about"', async () => {
+    mocks.assets = { data: undefined, isError: true };
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-onsite-rating-unchecked')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-rating-mismatch').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-onsite-rating-checking').elements()).toHaveLength(0);
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+  });
+
+  test('🔴 a split the app cannot read: no choice, a note, and the on-site approve sends no decision', async () => {
+    // `null` = the write role cannot read the record. The operator's rule (2026-10-18): approve
+    // proceeds with NO split decision, exactly as before the split existed.
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: null };
+    bar(reRated());
+    // The WHOLE note, pinned literally: it states what this approve does, so a reword is a claim
+    // change (the on-site approve floors the rating by all media; an earlier split is not applied).
+    const note = page.getByTestId('apps-media-split-unreadable');
+    await expect.element(note).toBeInTheDocument();
+    expect((note.element().textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
+      'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.'
+    );
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const [name, vars] = mocks.mutate.mock.calls[0];
+    expect(name).toBe('approve');
+    expect(vars).toEqual({ publishRequestId: 'req-1', approvalNotes: undefined });
+    expect(vars).not.toHaveProperty('mediaSplit');
+  });
+
+  test('🔴 an already-split listing keeps its split by default on the on-site approve', async () => {
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: true };
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
+  });
+
+  test('🔴 the media split: the warning follows the choice and approve sends it', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    await page.getByTestId('apps-media-split-split').click();
+    // Split: only the civitai.com-eligible images floor the rating — the PG-13 cover now leads.
+    await expect
+      .element(page.getByTestId('apps-onsite-rating-mismatch'))
+      .toHaveTextContent('Approving raises the store listing to PG-13.');
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
+  });
+
+  test('without a choice approve sends rate-mature', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'rate-mature',
+    });
   });
 });

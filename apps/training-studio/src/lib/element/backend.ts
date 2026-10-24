@@ -1,7 +1,7 @@
 // The web-component's StudioBackend: the browser-direct half of the contract in
 // docs/training-studio-web-component.md. Every call runs with a freshly-minted host token and talks
 // to the orchestrator with the client-safe cores — no server routes involved.
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import type { StudioBackend } from '$lib/backend';
 import type {
   GenerateRequest,
@@ -17,14 +17,24 @@ import * as label from '$lib/autolabel-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
+import { parseServiceStatus } from '$lib/service-status-core';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
  *  attribute — it carries a credential provider). */
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
+  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
+   *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
+   *  cannot start training: the element refuses rather than submit unchecked. */
+  checkTrainingText?(input: {
+    triggerWord: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
+  /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
+   *  and the element shows no status banner and leaves Start enabled. */
+  getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
   config: {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
@@ -106,6 +116,13 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     throw retried.err;
   };
 
+  const hostTextCheck: train.TrainingTextCheck = async (input) => {
+    if (!host.checkTrainingText)
+      throw new Error('Training is unavailable on this page right now. Reload and try again.');
+    const result = await host.checkTrainingText(input);
+    if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
+  };
+
   const submitOpts = (): train.SubmitOptions => ({
     // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
     traceMode: host.config.traceMode ?? 'events',
@@ -156,16 +173,23 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
 
     submitTraining: (runs) =>
-      call((client) => train.submitTrainingBatch(client, runs, submitOpts())),
+      call((client) =>
+        train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
+      ),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
-    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+    epochArchive: (workflowId, kind) =>
+      call((client) => orch.createEpochArchive(client, workflowId, kind)),
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
-    continueQuote: (workflowId, fromEpoch, addEpochs) =>
+    continueQuote: (workflowId, fromEpoch, addEpochs, currencies) =>
       call((client) =>
-        train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs }, submitOpts())
+        train.continueTrainingWhatIf(
+          client,
+          { workflowId, fromEpoch, addEpochs, currencies },
+          submitOpts()
+        )
       ),
 
     continueRun: (workflowId, fromEpoch, addEpochs, currencies) =>
@@ -173,7 +197,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         train.continueTraining(
           client,
           { workflowId, fromEpoch, addEpochs, currencies },
-          submitOpts()
+          { ...submitOpts(), checkText: hostTextCheck }
         )
       ),
 
@@ -182,5 +206,10 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
+
+    getServiceStatus: async () => {
+      const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
+      return raw ? parseServiceStatus(raw) : null;
+    },
   };
 }

@@ -21,17 +21,21 @@ describe('TokenScope constants', () => {
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksSubmit)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksDevTunnel)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.LinkConnect)).toBe(true);
+    expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppStoreCatalogWrite)).toBe(true);
+    expect(Flags.hasFlag(ALL_SCOPES, TokenScope.WorkerRegister)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.UserRead)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.VaultWrite)).toBe(true);
     // ALL_SCOPES = Full | the opt-in bits NOT folded into Full: AppBlocksSubmit (25),
-    // AppBlocksDevTunnel (26) and LinkConnect (27).
+    // AppBlocksDevTunnel (26), LinkConnect (27), AppStoreCatalogWrite (28) and WorkerRegister (29).
     expect(ALL_SCOPES).toBe(
       TokenScope.Full |
         TokenScope.AppBlocksSubmit |
         TokenScope.AppBlocksDevTunnel |
-        TokenScope.LinkConnect
+        TokenScope.LinkConnect |
+        TokenScope.AppStoreCatalogWrite |
+        TokenScope.WorkerRegister
     );
-    expect(ALL_SCOPES).toBe(268435455); // (1 << 28) - 1
+    expect(ALL_SCOPES).toBe(1073741823); // (1 << 30) - 1
   });
 
   it('the Civitai Link desktop grant is UserRead|VaultRead|VaultWrite|LinkConnect = 159383553', () => {
@@ -62,6 +66,8 @@ describe('TokenScope constants', () => {
   });
 
   it('AppBlocksSubmit has a human-readable consent label', () => {
-    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit Apps for review');
+    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe(
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback'
+    );
   });
 });

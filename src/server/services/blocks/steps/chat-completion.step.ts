@@ -1,5 +1,6 @@
-import type { ChatCompletionInput } from '@civitai/client';
+import type { ChatCompletionInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import type { BlockStep, OrchestratorStepTemplate } from './index';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9,7 +10,7 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //
 //  1. A GENUINE STANDALONE `$type`. `ChatCompletionStep` /
 //     `ChatCompletionStepTemplate` with `$type: 'chatCompletion'` are first-class
-//     in the generated `@civitai/client` types, and the orchestrator runs the
+//     in the generated `@civitai/orchestration-client` types, and the orchestrator runs the
 //     step standalone (Civitai's own `xGuardModeration` scanning is implemented
 //     as `chatCompletion` jobs).
 //
@@ -203,7 +204,7 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 //
 // 🔴 WHY THAT IS STILL NOT ENOUGH TO SCOPE THE SCAN. That paragraph is a claim
 // about the CURRENT source of a SEPARATELY DEPLOYED service. Nothing in this
-// repo can hold it true: the generated `@civitai/client` types encode the SHAPE
+// repo can hold it true: the generated `@civitai/orchestration-client` types encode the SHAPE
 // of `ChatCompletionInput`, never which of its fields get resolved, so an
 // orchestrator change that started resolving AIRs mentioned in prompt text
 // would turn a per-entry "don't scan `messages`" exemption into a silent
@@ -768,6 +769,7 @@ const MAX_TOOLS = 8;
 export const MAX_TOOL_NAME_CHARS = 64;
 const MAX_TOOL_DESCRIPTION_CHARS = 1_024;
 const MAX_TOOL_PARAMETERS_CHARS = 4_096;
+const TOOL_PARAMETERS_OVER_CAP_MESSAGE = `tool parameters exceed ${MAX_TOOL_PARAMETERS_CHARS} serialized characters`;
 const MAX_TOOL_PARAMETERS_DEPTH = 8;
 
 /**
@@ -821,6 +823,12 @@ export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * app author looking for a cycle that is not there.
  */
 const toolParametersSchema = z.unknown().transform((value, ctx) => {
+  // The cap is checked before the value is serialized, without building the string. An
+  // unserializable value is left to the stringify below, so it gets that message.
+  if (measureJsonLength([value], MAX_TOOL_PARAMETERS_CHARS) === 'over') {
+    ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
+    return z.NEVER;
+  }
   let serialized: string | undefined;
   try {
     serialized = JSON.stringify(value);
@@ -841,11 +849,9 @@ const toolParametersSchema = z.unknown().transform((value, ctx) => {
     });
     return z.NEVER;
   }
+  // Already applied by the measure above; kept on the exact string that is parsed back.
   if (serialized.length > MAX_TOOL_PARAMETERS_CHARS) {
-    ctx.addIssue({
-      code: 'custom',
-      message: `tool parameters exceed ${MAX_TOOL_PARAMETERS_CHARS} serialized characters`,
-    });
+    ctx.addIssue({ code: 'custom', message: TOOL_PARAMETERS_OVER_CAP_MESSAGE });
     return z.NEVER;
   }
   const normalized: unknown = JSON.parse(serialized);
@@ -950,7 +956,7 @@ const chatToolChoiceSchema = z.union([
  *
  * 🔴 `content` IS A PLAIN STRING, and that is measured rather than read off the
  * generated type. `UserMessage.content` is typed `Array<ChatCompletionContentPart>`
- * in `@civitai/client`, but the orchestrator accepts a bare string and converts
+ * in `@civitai/orchestration-client`, but the orchestrator accepts a bare string and converts
  * it to a single text part — its own doc string on that field says so ("can be a
  * simple string or array of content parts"), and a live submit with string
  * content returned HTTP 200 and polled to `succeeded`. A string is also the only
@@ -1255,7 +1261,7 @@ export type ChatCompletionStepParams = z.infer<typeof chatCompletionParamsSchema
  * `ChatCompletionInput` with its two TOOL fields corrected.
  *
  * 🔴 THE GENERATED TYPES CANNOT EXPRESS A TOOL CALL, AND THAT IS A GENERATOR
- * ARTIFACT RATHER THAN A CONTRACT. Read off `@civitai/client`'s `types.gen.d.ts`
+ * ARTIFACT RATHER THAN A CONTRACT. Read off `@civitai/orchestration-client`'s `types.gen.d.ts`
  * at the version this repo pins:
  *
  *     ChatCompletionInput.tool_choice?: null;
@@ -1343,7 +1349,7 @@ function buildChatCompletionInput(params: ChatCompletionStepParams): ChatComplet
  * One assistant message, as this entry READS it.
  *
  * 🔴 `role` IS DELIBERATELY ABSENT, and that is a measured decision rather than
- * an omission. `AssistantMessage` in `@civitai/client` declares `role: 'assistant'`
+ * an omission. `AssistantMessage` in `@civitai/orchestration-client` declares `role: 'assistant'`
  * as REQUIRED, but the real orchestrator response carries **only `content`** on
  * `choices[].message` — no `role` at all. An extractor that keyed off `role`
  * would return nothing for every real reply: the step would charge 1 Buzz, reach

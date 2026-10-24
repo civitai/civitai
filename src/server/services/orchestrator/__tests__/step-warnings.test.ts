@@ -29,4 +29,13 @@ describe('collectStepWarnings', () => {
 
     expect(collectStepWarnings(steps)).toEqual([retiring]);
   });
+
+  it('drops deprecated-field warnings', () => {
+    const field = {
+      code: 'fieldDeprecated',
+      message: "'numImages' is deprecated; use 'quantity'.",
+    };
+
+    expect(collectStepWarnings([{ warnings: [field, retiring] }])).toEqual([retiring]);
+  });
 });

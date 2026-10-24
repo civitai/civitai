@@ -6,7 +6,7 @@ import type * as PromptModule from '~/server/services/text-scan/prompt';
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/env.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (submitWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -21,15 +21,13 @@ const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
-const { submitWorkflow } = await import('@civitai/client');
-const {
-  composeUserMessage,
-  getActiveTextScanPrompts,
-  getTextScanConfig,
-  insertTextScanPrompt,
-  setTextScanConfig,
-} = await import('~/server/services/text-scan/prompt');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
+const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
+  await import('~/server/services/text-scan/prompt');
 const { textScanContentHash } = await import('~/server/services/text-scan/submit');
+const { composeUserText, segmentUserText, MIN_SEGMENT_CHARS } = await import(
+  '~/server/services/text-scan/segment'
+);
 
 registerTextScanProfile({
   entityType: 'Post',
@@ -99,7 +97,7 @@ const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE PROMPT' },
   'label:nsfw': { id: 2, key: 'label:nsfw', content: 'NSFW DEF' },
 };
-const CONFIG = { model: 'air:test', maxInputChars: 1000, thinking: false };
+const CONFIG = { model: 'air:test', maxInputChars: 1000, maxSegments: 10, thinking: false };
 const okWorkflow = (id: string, parsed: unknown = { nsfw: { level: 'x', reason: 'r' } }) => ({
   data: {
     id,
@@ -132,7 +130,7 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(res._body()).toMatchObject({ active: PROMPTS, config: CONFIG });
   });
 
-  it('putPrompt rejects an unknown key, a missing note and a missing createdById', async () => {
+  it('putPrompt rejects an unknown key and a missing createdById', async () => {
     expect(
       (
         await call({
@@ -145,12 +143,18 @@ describe('chat-completion-scan text-scan actions', () => {
       )._status()
     ).toBe(400);
     expect(
-      (await call({ action: 'putPrompt', key: 'base', content: 'x', createdById: 5 }))._status()
-    ).toBe(400);
-    expect(
       (await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n' }))._status()
     ).toBe(400);
     expect(insertTextScanPrompt).not.toHaveBeenCalled();
+  });
+
+  it('putPrompt saves without a note', async () => {
+    vi.mocked(insertTextScanPrompt).mockResolvedValue({ id: 5, key: 'base' });
+    const res = await call({ action: 'putPrompt', key: 'base', content: 'x', createdById: 5 });
+    expect(res._status()).toBe(200);
+    expect(insertTextScanPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'base', content: 'x', note: undefined })
+    );
   });
 
   it.each(['   ', '\n\t'])('putPrompt rejects whitespace-only content %j', async (content) => {
@@ -204,6 +208,15 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(
       (await call({ action: 'putConfig', moderatorId: 5, config: { other: 1 } }))._status()
     ).toBe(400);
+    expect(
+      (
+        await call({ action: 'putConfig', moderatorId: 5, config: { maxInputChars: 999 } })
+      )._status()
+    ).toBe(400);
+    for (const maxSegments of [0, 21, 2.5, '4'])
+      expect(
+        (await call({ action: 'putConfig', moderatorId: 5, config: { maxSegments } }))._status()
+      ).toBe(400);
     expect((await call({ action: 'putConfig', config: { thinking: true } }))._status()).toBe(400);
     expect(setTextScanConfig).not.toHaveBeenCalled();
 
@@ -212,6 +225,22 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(res._status()).toBe(200);
     expect(setTextScanConfig).toHaveBeenCalledWith({ thinking: true }, { moderatorId: 5 });
     expect(res._body()).toEqual({ ...CONFIG, thinking: true });
+    const segments = await call({
+      action: 'putConfig',
+      moderatorId: 5,
+      config: { maxSegments: 20 },
+    });
+    expect(segments._status()).toBe(200);
+    expect(setTextScanConfig).toHaveBeenLastCalledWith({ maxSegments: 20 }, { moderatorId: 5 });
+    expect(
+      (
+        await call({
+          action: 'putConfig',
+          moderatorId: 5,
+          config: { maxInputChars: MIN_SEGMENT_CHARS },
+        })
+      )._status()
+    ).toBe(200);
   });
 
   it('scanEntity composes the production prompt, applies overrides, and waits', async () => {
@@ -343,7 +372,7 @@ const scanRow = (entityId: number, contentHash: string, reason = 'reason "quoted
 });
 const hashOf = (id: number) =>
   textScanContentHash({
-    user: composeUserMessage(entrySubjects.get(id)!, 1000),
+    user: composeUserText(entrySubjects.get(id)!),
     promptIds: PROMPT_IDS,
     model: 'air:test',
     thinking: false,
@@ -533,6 +562,96 @@ describe('free-text actions', () => {
     vi.mocked(getActiveTextScanPrompts).mockResolvedValue({});
   });
 
+  const words = (count: number) =>
+    Array.from({ length: count }, (_, i) => `w${String(i).padStart(4, '0')}`).join(' ');
+  const longFields = [{ heading: 'Comment', text: words(400) }];
+  const segmentedWorkflow = (id: string, outputs: unknown[]) => ({
+    data: {
+      id,
+      status: 'succeeded',
+      steps: outputs.map((parsed, segment) => ({
+        $type: 'chatCompletion',
+        name: segment ? `textScan${segment}` : 'textScan',
+        metadata: { segment },
+        status: 'succeeded',
+        output: { parsed, choices: [{ finishReason: 'stop', message: { content: '' } }] },
+      })),
+    },
+  });
+
+  it('scanTexts scans a text past the budget as one workflow of segments and merges them', async () => {
+    const n = segmentUserText(
+      { fields: longFields, declared: {} },
+      { budget: 1000, maxSegments: 10 }
+    ).segments.length;
+    const outputs = Array.from({ length: n }, (_, i) => ({
+      scam: { detected: i === n - 1, reason: `r${i}` },
+    }));
+    vi.mocked(submitWorkflow).mockResolvedValue(segmentedWorkflow('wfs', outputs) as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'long', fields: longFields }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps).toHaveLength(n);
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      ok: true,
+      segments: n,
+      inputCut: false,
+      parse: { ok: true, output: { scam: { detected: true, reason: `r${n - 1}` } } },
+      outcome: { triggeredLabels: ['scam'] },
+      flaggedSegments: { scam: [n - 1] },
+    });
+  });
+
+  it('scanTexts reports a failed segment with its index instead of a merged verdict', async () => {
+    const n = segmentUserText(
+      { fields: longFields, declared: {} },
+      { budget: 1000, maxSegments: 10 }
+    ).segments.length;
+    const workflow = segmentedWorkflow(
+      'wfs',
+      Array.from({ length: n }, () => ({ scam: { detected: false, reason: 'r' } }))
+    );
+    workflow.data.steps[1].output = {
+      parsed: undefined as never,
+      choices: [{ finishReason: 'length', message: { content: '{"scam":' } }],
+    };
+    vi.mocked(submitWorkflow).mockResolvedValue(workflow as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'long', fields: longFields }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      ok: true,
+      parse: { ok: false, reason: 'truncated', segment: 1 },
+      outcome: null,
+      rawContent: '{"scam":',
+    });
+  });
+
+  it('quoteTexts prices every segment of a long text in one whatif workflow', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 3 } } } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'long', fields: longFields }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    const n = vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps.length;
+    expect(n).toBeGreaterThan(1);
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      ok: true,
+      costTotal: 3,
+      segments: n,
+    });
+  });
+
   it('scanTexts composes like production and keeps each key', async () => {
     vi.mocked(submitWorkflow).mockResolvedValue(scamWorkflow('wf1') as never);
     const res = await call({
@@ -634,6 +753,20 @@ describe('free-text actions', () => {
     expect(res._status()).toBe(200);
   });
 
+  it('quoteTexts accepts a text of three segments at the production budget', async () => {
+    vi.mocked(getTextScanConfig).mockResolvedValue({ ...CONFIG, maxInputChars: 200_000 });
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 3 } } } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Body', text: 'word '.repeat(110_000).trim() }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps).toHaveLength(3);
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({ segments: 3 });
+  });
+
   it.each([
     {
       name: 'too many fields',
@@ -641,7 +774,7 @@ describe('free-text actions', () => {
     },
     {
       name: 'a text over its character cap',
-      texts: [{ key: 'a', fields: Array(3).fill({ heading: 'H', text: 'x'.repeat(70_000) }) }],
+      texts: [{ key: 'a', fields: Array(9).fill({ heading: 'H', text: 'x'.repeat(70_000) }) }],
     },
     {
       name: 'a request over its character cap',
@@ -732,6 +865,8 @@ describe('free-text actions', () => {
           entityId: 7,
           ok: true,
           text: '## Comment\nhello there',
+          segments: [{ chars: '## Comment\nhello there'.length }],
+          inputCut: false,
           fields: [{ heading: 'Comment', text: '  hello there ' }],
           userId: 42,
         },
@@ -758,6 +893,8 @@ describe('free-text actions', () => {
           entityId: 1,
           ok: true,
           text: '## Name\nMy LoRA',
+          segments: [{ chars: '## Name\nMy LoRA'.length }],
+          inputCut: false,
           fields: [{ heading: 'Name', text: 'My LoRA' }],
           userId: 3,
         },

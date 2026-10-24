@@ -4,17 +4,26 @@ import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
   entityType: 'Post',
-  labels: ['nsfw'],
+  labels: ['nsfw', 'csam'],
   load: async (ids) => {
     const rows = await dbWrite.post.findMany({
       where: { id: { in: ids } },
-      select: { id: true, userId: true, title: true, detail: true, nsfwLevel: true },
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        detail: true,
+        nsfwLevel: true,
+        publishedAt: true,
+      },
     });
     return new Map(
       rows.map((p) => [
         p.id,
         {
           userId: p.userId,
+          // Scheduled posts count as public, so the verdict exists by the time they go live.
+          notPublic: !p.publishedAt,
           declared: { nsfwLevel: p.nsfwLevel },
           fields: [
             { heading: 'Title', text: p.title },

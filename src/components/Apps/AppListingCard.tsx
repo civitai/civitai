@@ -11,7 +11,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
+import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -36,6 +36,7 @@ import {
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -306,10 +307,10 @@ export function AppListingCard({
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
   // and returns `null` for an unmeasurable listing. That is deliberate: this
-  // component is covered only by the REPORT-ONLY browser project, while the pure
-  // view-model is covered by the node `unit` project that reddens a `main` push. A
-  // `card.openCount != null && …` written into the JSX below would put the rule in
-  // the one tier that never goes red on its own. All this line does is carry the
+  // component is covered only by the browser project, while the pure view-model is
+  // covered by the node `unit` project. A
+  // `card.openCount != null && …` written into the JSX below would put the rule
+  // out of reach of the node tier. All this line does is carry the
   // answer to the render, and all the render does is omit a `null`.
   const playCountLabel = getPlayCountLabel(card.openCount);
 
@@ -336,6 +337,7 @@ export function AppListingCard({
     card.coverUrl == null ? 'cover' : null,
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
+  const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
 
   // 🔴 `@container` IS GONE, AND SO IS THE `hasMenu` PREDICATE THAT DROVE IT.
   // The card declared itself a query container for exactly ONE consumer: the
@@ -456,8 +458,9 @@ export function AppListingCard({
                   IT WAS, AND SAYING SO IS THE POINT. This sentence used to name the
                   creator chip "and every row of the meta block under it". The chip
                   is gone and the rollup moved out, so the meta block below the
-                  title holds only the two conditional badges — the rows the
-                  reservation actually aligns today are those badges and the
+                  title holds only the conditional badge row (Beta, the owner's
+                  Incomplete, the restricted-visibility badge) — the rows the
+                  reservation actually aligns today are that badge row and the
                   TAGLINE below the block. The action row and the stats line under
                   it are bottom-pinned by `mt="auto"`, so they were never affected
                   by title length and are not evidence for this reservation. The
@@ -487,42 +490,93 @@ export function AppListingCard({
                 {card.name}
               </TruncatedText>
             </Anchor>
-            {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape directly
-                below, with two deliberate differences: it is PUBLIC (that one is owner-only
-                — `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
-                carries no `betaMessage` to put in one. The note lives on the detail page,
-                where there is room to read it. `card.isBeta` is `false` both for "not in
-                beta" and while the manual-apply migration is outstanding. */}
-            {card.isBeta && (
-              <Badge
-                color="violet"
-                variant="light"
-                size="xs"
-                style={{ alignSelf: 'flex-start' }}
-                data-testid="apps-listing-card-beta"
+            {/* 🔴 ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES
+                TRUNCATE — it never grows a second line. Each badge used to be its own Stack
+                row, so every badge present pushed the tagline (the row the title reservation
+                aligns, measured in `AppListingCard.browser.test.tsx`) down a line.
+
+                ⚠️ A WRAPPING row was tried first and FAILED in CI: it only moves the extra
+                line to narrow cards. At xs, "Beta" is ~39px and the eye-off "Moderators only"
+                ~117px, ~160px with the gap; a card squeezed to ~191px wide leaves this column
+                ~109px (minus 32px card padding, the 40px icon and its 10px gap), so the row
+                wrapped and the tagline dropped by exactly one badge line + row gap (16 + 4 =
+                20px). Real cards hit the same thing with three badges: at the 280px four-column
+                card the column is ~198px, and an owner's Beta + Incomplete + restricted badge
+                needs ~240px.
+
+                So the row is `nowrap` and the LONG badges shrink: Mantine's badge label is
+                already `nowrap` + `text-overflow: ellipsis`, and an `overflow: hidden` flex
+                item may shrink below its content, so `flexShrink: 1` + `minWidth: 0` is all it
+                takes. "Beta" never shrinks (it is short, and it is the whole signal). A
+                truncated label loses nothing: its Tooltip carries the full explanation, and
+                the full text stays in the DOM for assistive tech. Reserving a second line on
+                every card was rejected (it costs every card a line to serve a few), and
+                icon-only at narrow widths needs a container query this card deliberately
+                dropped. Rendered only when at least one badge is, so a badge-less card's meta
+                block is unchanged. */}
+            {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
+              <Group
+                gap={4}
+                wrap="nowrap"
+                style={{ minWidth: 0 }}
+                data-testid="apps-listing-card-badges"
               >
-                Beta
-              </Badge>
-            )}
-            {showOwnerIncomplete && (
-              <Tooltip
-                label={`Missing ${missingFloorAssets.join(' and ')} — add ${
-                  missingFloorAssets.length > 1 ? 'them' : 'it'
-                } from Edit to complete your listing.`}
-                withArrow
-                multiline
-                w={220}
-              >
-                <Badge
-                  color="yellow"
-                  variant="light"
-                  size="xs"
-                  style={{ cursor: 'help', alignSelf: 'flex-start' }}
-                  data-testid="apps-listing-owner-incomplete"
-                >
-                  Incomplete
-                </Badge>
-              </Tooltip>
+                {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape, with
+                    two deliberate differences: it is PUBLIC (that one is owner-only —
+                    `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
+                    carries no `betaMessage` to put in one. The note lives on the detail
+                    page, where there is room to read it. `card.isBeta` is `false` both for
+                    "not in beta" and while the manual-apply migration is outstanding. */}
+                {card.isBeta && (
+                  <Badge
+                    color="violet"
+                    variant="light"
+                    size="xs"
+                    style={{ flexShrink: 0 }}
+                    data-testid="apps-listing-card-beta"
+                  >
+                    Beta
+                  </Badge>
+                )}
+                {/* RESTRICTED VISIBILITY. `restrictedAudience` is viewer-scoped by the server
+                    (owner, moderator, or a cohort the level admits), so this only formats
+                    it — `visibilityBadgeFor` holds the label/tooltip decisions where the
+                    blocking unit suite can reach them. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={220}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="xs"
+                      leftSection={<IconEyeOff size={10} aria-hidden />}
+                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
+                      data-testid="apps-listing-card-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
+                )}
+                {showOwnerIncomplete && (
+                  <Tooltip
+                    label={`Missing ${missingFloorAssets.join(' and ')} — add ${
+                      missingFloorAssets.length > 1 ? 'them' : 'it'
+                    } from Edit to complete your listing.`}
+                    withArrow
+                    multiline
+                    w={220}
+                  >
+                    <Badge
+                      color="yellow"
+                      variant="light"
+                      size="xs"
+                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
+                      data-testid="apps-listing-owner-incomplete"
+                    >
+                      Incomplete
+                    </Badge>
+                  </Tooltip>
+                )}
+              </Group>
             )}
           </Stack>
         </Group>

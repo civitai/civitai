@@ -19,7 +19,31 @@ import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
-import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
+import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
+import { isWebClient } from '~/server/utils/client-version-saturation';
+import {
+  clientNeedsUpdate,
+  peekFreshClientConfig,
+  peekSiteAlertsVersion,
+} from '~/server/utils/client-config';
+import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
+import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import {
+  pinResponseWriteToSuperjson,
+  responseWritesDevalue,
+  runWithResponseWriteFormat,
+} from '~/server/trpc/response-write-format';
+import { redactBlockTokens } from '~/server/logging/redact-block-token';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
+import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
+
+/**
+ * The longest input an error log line carries: in JSON characters, and in values (so the measure
+ * that checks it stays cheap next to the log line). A longer input is logged as a marker.
+ */
+const LOGGED_INPUT_MAX_CHARS = 256 * 1024;
+const LOGGED_INPUT_MAX_VALUES = 16 * 1024;
+const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} characters or ${LOGGED_INPUT_MAX_VALUES} values, not logged]`;
 
 export const config = {
   api: {
@@ -55,20 +79,38 @@ const trpcHandler = createNextApiHandler({
   // server's — which is why RAISING this is safe and lowering it below the constant is not. See
   // `getTrpcMaxBatchSize`.
   maxBatchSize: getTrpcMaxBatchSize(),
-  responseMeta: ({ ctx, type, errors }) => {
-    const headers: Record<string, string> = {};
+  responseMeta: ({ ctx, type, errors, info, paths }) => {
     // Single-sourced in `~/server/trpc/edge-cache-headers` so that tests asserting a
-    // middleware chain's cache outcome import THIS predicate instead of re-declaring it.
-    const cache = ctx?.cache;
-    if (willEdgeCache(cache) && type === 'query' && errors.length === 0) {
+    // middleware chain's cache outcome import THAT logic instead of re-declaring it. It also
+    // forces `no-store` on block-token queries, keyed on the request's procedure paths.
+    const { headers, edgeCached } = buildTrpcCacheHeaders({
+      cache: ctx?.cache,
+      type,
+      errorCount: errors.length,
+      paths: info?.calls.map((call) => call.path) ?? paths,
+    });
+    if (edgeCached) {
       ctx?.res?.removeHeader('Set-Cookie');
-      headers['Cache-Control'] = [
-        'public',
-        `max-age=${cache.browserTTL ?? 0}`,
-        `s-maxage=${cache.edgeTTL ?? 0}`,
-        `stale-while-revalidate=${cache.staleWhileRevalidate ?? 0}`,
-      ].join(', ');
-      if (cache.tags) headers['Cache-Tag'] = cache.tags.join(', ');
+      // A cached body is served to the next caller of this URL whatever client it is, so it
+      // must be superjson, the format every client reads. See response-write-format.ts.
+      pinResponseWriteToSuperjson();
+    } else if (responseWritesDevalue() && !headers['Cache-Control']) {
+      // A devalue body must never be stored by a shared cache: only a capable web bundle can
+      // read it. The proxy's api-cache middleware already sends this same private default on
+      // /api/trpc, but that lives outside this route and its matcher can change, so the route
+      // states it itself for every response it writes as devalue.
+      headers['Cache-Control'] = PRIVATE_CACHE_CONTROL;
+    }
+
+    // Set here rather than in a middleware: on a streamed batch the head is written before any
+    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    if (isWebClient(ctx?.req?.headers)) {
+      // Never on a response the edge keeps: it would reach current bundles too.
+      const client = peekFreshClientConfig();
+      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+        headers['x-update-required'] = 'true';
+      const alertsVersion = peekSiteAlertsVersion();
+      if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
 
     return Object.keys(headers).length > 0 ? { headers } : {};
@@ -103,7 +145,7 @@ const trpcHandler = createNextApiHandler({
       if (shouldSkipBatchCapLog(req, error)) return error;
 
       // Uninformative 404s. `image.getGenerationData` answers NOT_FOUND only when the image id
-      // does not exist (an image without generation metadata still returns normally). Most of
+      // does not exist or `image.get` would not show it to this viewer (an image without generation metadata still returns normally). Most of
       // that volume comes from clients calling the procedure directly to enumerate ids, and at
       // that rate its lines were most of this route's Axiom ingest, each paying
       // JSON.stringify(input) + an ingest for a line that says nothing the 404 doesn't.
@@ -164,7 +206,20 @@ const trpcHandler = createNextApiHandler({
       let axInput: string | undefined;
       if (!!input) {
         try {
-          axInput = JSON.stringify(input);
+          // Measured before it is serialized, without building the string; an input over the
+          // limits is logged as a marker instead. An unserializable one throws below, as before.
+          const meter = { visits: 0, chars: 0, scanned: 0, maxVisits: LOGGED_INPUT_MAX_VALUES };
+          if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
+            axInput = LOGGED_INPUT_OVER_LIMIT;
+          } else {
+            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Stringify first and redact only when the key appears, so only an input that carries
+            // one is serialized twice.
+            const raw = JSON.stringify(input);
+            axInput = raw?.includes('"blockToken"')
+              ? JSON.stringify(redactBlockTokens(input))
+              : raw;
+          }
         } catch {
           axInput = undefined;
         }
@@ -242,8 +297,18 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // over-cap, so a broken metric degrades to "log normally" rather than "silently suppress".
   instrumentTrpcBatchRequest(req);
 
+  // Count block-token queries still arriving as GET (token in the URL). Old published SDK dev
+  // hosts send them that way and must keep working; this is the signal that gates refusing GET
+  // later. Non-throwing, and a no-op for anything that is not a GET carrying `blockToken`.
+  recordBlockTokenGetRequest(req);
+
   // Seed the request-scoped procedure-path context so the transformer's serialize
   // step (an awaited descendant of trpcHandler) can name the offending procedure
   // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
-  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
+  //
+  // The response write format (superjson vs devalue) is decided per request from the
+  // client headers — see `~/server/trpc/response-write-format`.
+  await runWithResponseWriteFormat(req.headers, () =>
+    runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res))
+  );
 }) as NextApiHandler;

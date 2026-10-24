@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import {
   CompiledQuery,
   Kysely,
@@ -70,7 +71,15 @@ export async function applySchema(db: PGlite): Promise<void> {
  * group-scoping guard in `recordAbuseVerdict` turns on. Those guards are about WHICH ROWS MOVE, and
  * only rows can answer.
  */
-export function pgliteDialect(db: PGlite): Dialect {
+export function pgliteDialect(
+  db: PGlite,
+  /**
+   * Called before each statement with the id of the connection running it, one id per acquire.
+   * PGlite is one connection, so without it a transaction's statements and a query run beside it on
+   * the pool are indistinguishable.
+   */
+  { onQuery }: { onQuery?: (connection: number) => void } = {}
+): Dialect {
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQueryType): Promise<QueryResult<R>> {
       const result = await db.query(compiled.sql, compiled.parameters as unknown[]);
@@ -92,13 +101,22 @@ export function pgliteDialect(db: PGlite): Dialect {
     },
   };
 
+  let acquired = 0;
   /** The three lifecycle hooks PGlite has no analogue for — it is one in-process database. */
   const noop = async () => undefined;
 
   const driver: Driver = {
     init: noop,
     async acquireConnection() {
-      return connection;
+      if (!onQuery) return connection;
+      const id = ++acquired;
+      return {
+        executeQuery: (query) => {
+          onQuery(id);
+          return connection.executeQuery(query);
+        },
+        streamQuery: connection.streamQuery,
+      };
     },
     // Real transactions: `recordAbuseRun` writes a run and its findings in one, and the harness must
     // not quietly turn that into two independent writes.
@@ -130,7 +148,7 @@ export function pgliteKysely(db: PGlite): Kysely<AbuseDetectionTables> {
 
 /** A fresh in-process Postgres with the real schema applied. */
 export async function freshDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await applySchema(db);
   return db;
 }

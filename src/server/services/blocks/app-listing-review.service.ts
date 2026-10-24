@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   narrowStoreScope,
   scopeAdmitsListingKind,
@@ -310,6 +311,7 @@ export async function upsertAppListingReview(opts: {
     );
   }
   const details = trimmed.length > 0 ? trimmed : null;
+  await throwOnBlockedUserContent(details, { surface: 'app-listing-review' });
 
   // Gate 1+2: the listing must exist, be approved, and NOT be owned by the caller.
   const listing = await dbRead.appListing.findUnique({

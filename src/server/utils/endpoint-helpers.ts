@@ -20,6 +20,8 @@ import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/erro
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -27,6 +29,8 @@ import {
   REST_ERROR_CODE,
   restErrorBody,
 } from '~/server/utils/rest-error-envelope';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * The normalized route of the request this response belongs to, or `undefined`.
@@ -494,22 +498,7 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
     }
   }
 
-  if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
-
-  // Same fallback rationale as the raw `Cookie` header above: `req.query` is
-  // Next's parse, and `getServerAuthSession` reads `req.url` directly, so the two
-  // reads must both be covered or the predicate can silently narrow.
-  const queryString = req.url?.split('?')[1];
-  if (queryString && hasNonEmpty(new URLSearchParams(queryString).get('token'))) return true;
-
-  return false;
-}
-
-/** Truthy for a non-empty string, or an array containing one. */
-function hasNonEmpty(value: unknown): boolean {
-  if (typeof value === 'string') return value.length > 0;
-  if (Array.isArray(value)) return value.some((v) => typeof v === 'string' && v.length > 0);
-  return false;
+  return requestCarriesQueryToken(req);
 }
 
 export function PublicEndpoint(
@@ -683,9 +672,26 @@ export function ModEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)
       return res.status(401).json({ error: 'Unauthorized' });
+    if (!requireFullScopeSession(req, res)) return;
 
     await handler(req, res, session.user);
   });
+}
+
+/**
+ * A 429 carrying retry metadata: `Retry-After` plus the envelope with `rateLimit`. `message`
+ * (and the legacy `error`) stay the refusal's own prose, so a consumer that only reads text
+ * sees what it saw before.
+ */
+export function sendRestRateLimited(
+  res: NextApiResponse,
+  message: string,
+  rateLimit: RateLimitMeta
+) {
+  res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+  return noStore(res)
+    .status(429)
+    .json({ ...restErrorBody(REST_ERROR_CODE.TOO_MANY_REQUESTS, message), rateLimit });
 }
 
 export function handleEndpointError(res: NextApiResponse, e: unknown) {
@@ -759,6 +765,8 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
       logRestGenericizedClientFault(apiError, res);
       return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
+    const rateLimit = rateLimitMetaOf(apiError);
+    if (rateLimit) return sendRestRateLimited(res, apiError.message, rateLimit);
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s

@@ -293,16 +293,20 @@ describe('dedupe-server-chunks', () => {
     expect(parseStub(readFileSync(path.join(server, 'chunks/_2dup._.js')))).toBe('_1dup._.js');
   });
 
-  it('keeps the duplicate file mode when it writes the stub', () => {
-    write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
-    write('chunks/_b._.js', chunk('_b._.js', `1,()=>"x"`));
-    chmodSync(path.join(server, 'chunks/_b._.js'), 0o640);
+  // Windows chmod only toggles the read-only bit, so 0o640 reads back as 0o666 there.
+  it.skipIf(process.platform === 'win32')(
+    'keeps the duplicate file mode when it writes the stub',
+    () => {
+      write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
+      write('chunks/_b._.js', chunk('_b._.js', `1,()=>"x"`));
+      chmodSync(path.join(server, 'chunks/_b._.js'), 0o640);
 
-    expect(run(server).code).toBe(0);
+      expect(run(server).code).toBe(0);
 
-    expect(parseStub(readFileSync(path.join(server, 'chunks/_b._.js')))).toBe('_a._.js');
-    expect(statSync(path.join(server, 'chunks/_b._.js')).mode & 0o777).toBe(0o640);
-  });
+      expect(parseStub(readFileSync(path.join(server, 'chunks/_b._.js')))).toBe('_a._.js');
+      expect(statSync(path.join(server, 'chunks/_b._.js')).mode & 0o777).toBe(0o640);
+    }
+  );
 
   it.each([
     ['a runtime file', '[turbopack]_runtime.js', 'is a runtime file'],

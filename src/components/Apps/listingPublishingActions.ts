@@ -12,7 +12,7 @@ import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
  * **Publishing** tab (`/apps/listing/<appListingId>/edit?tab=publishing`).
  *
  * 🔴 WHY A LEDGER AND NOT JUST A FIX. PR #4154 consolidated `/apps/my-submissions` into
- * `/apps/mine` and orphaned `MySubmissionsList`, which was the only surface carrying the
+ * `/apps/mine` and orphaned `MySubmissionsList` (since deleted), which was the only surface carrying the
  * owner **Unpublish** / **Republish** controls. The new page body contained zero
  * occurrences of `unpublish`. The gap was DISCLOSED in that PR and then reviewed three
  * times without being caught, because every round asked "is the new page correct?" and
@@ -324,8 +324,8 @@ export function republishSuccessMessage(
  * The message to show after a successful `withdrawExternalRequest`.
  *
  * 🔴 A PURE FUNCTION RATHER THAN A TERNARY IN THE PANEL, so this branch is covered by the
- * BLOCKING node `unit` project — the browser-mode component suites are report-only, and
- * this particular claim is the one that matters most to get right.
+ * node `unit` project — this particular claim is the one that matters most to get
+ * right.
  *
  * 🔴 THE TWO OUTCOMES ARE NOT EQUALLY REVERSIBLE, and one sentence covered both.
  * `'deleted'` discards a draft. `'removed'` closes the review of a formerly-LIVE listing:

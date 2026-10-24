@@ -29,13 +29,14 @@ import {
   getCounterPartyBuzzTransactions,
   getTopContributors,
   getUserBuzzAccount,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import {
   getBankableAmount,
   getBankableLedger,
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
   withBankedThisMonth,
 } from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
@@ -69,6 +70,7 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { getCapForDefinition } from '~/shared/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -97,7 +99,7 @@ const createUserCapCache = () => {
     dontCacheFn: (data) => !data?.cap,
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    debounceTime: 1, // 10s debounce is too long for this cache.
+    debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
@@ -127,18 +129,45 @@ const createUserCapCache = () => {
       const peakEarningPredicate = countsCompensation
         ? PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL
         : PEAK_EARNING_PREDICATE_SQL;
+      // A month counts what a user paid the creator only beyond everything the creator sent that
+      // user in the window up to now, so Buzz passed back and forth cannot raise the peak.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
-        SELECT
-          toAccountId as id,
-          toStartOfMonth(date) as month,
-          SUM(amount) as earned
-        FROM buzzTransactions
-        WHERE ${peakEarningPredicate}
-        AND toAccountType IN (${buzzBankTypesSql})
-        AND toAccountId IN (${ids})
-        AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
-        AND toStartOfMonth(date) < toStartOfMonth(now())
-        GROUP BY month, toAccountId
+        SELECT id, month, gross - returned AS earned
+        FROM (
+          SELECT
+            toAccountId as id,
+            toStartOfMonth(date) as month,
+            SUM(amount) as gross
+          FROM buzzTransactions
+          WHERE ${peakEarningPredicate}
+          AND toAccountType IN (${buzzBankTypesSql})
+          AND toAccountId IN (${ids})
+          AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+          AND toStartOfMonth(date) < toStartOfMonth(now())
+          GROUP BY month, toAccountId
+        ) AS earnings
+        LEFT JOIN (
+          SELECT received.id AS id, received.month AS month, SUM(least(received.amount, sent.amount)) AS returned
+          FROM (
+            SELECT toAccountId AS id, toStartOfMonth(date) AS month, fromAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${peakEarningPredicate} AND ${RECEIVED_FROM_USER_SQL}
+            AND toAccountType IN (${buzzBankTypesSql})
+            AND toAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            AND toStartOfMonth(date) < toStartOfMonth(now())
+            GROUP BY id, month, counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT fromAccountId AS id, toAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${SENT_TO_USER_SQL}
+            AND fromAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            GROUP BY id, counterparty
+          ) AS sent ON sent.id = received.id AND sent.counterparty = received.counterparty
+          GROUP BY id, month
+        ) AS netted USING (id, month)
         ORDER BY earned DESC
         LIMIT 1 BY id;
       `;
@@ -261,12 +290,7 @@ export async function getCreatorRequirements(userId: number) {
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
     GREATEST(
-      COALESCE((u.meta->'scores'->>'models')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'articles')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'images')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'users')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsActioned')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsAgainst')::numeric, 0),
+      ${Prisma.raw(creatorScoreCategorySumSql('u.meta'))},
       COALESCE((meta->'scores'->'total')::numeric, 0)
     ) as score,
     (
@@ -538,7 +562,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
       if (bankable) {
         if (bankable.remaining <= 0)
           throw throwBadRequestError(
-            'You have no bankable Buzz left. Generation compensation no longer counts toward banking.'
+            'You have no bankable Buzz left. See the bankable Buzz breakdown for what counts.'
           );
         amount = Math.min(amount, bankable.remaining);
       }
@@ -673,7 +697,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
   staleWhileRevalidate: false,
-  debounceTime: 1, // 10s debounce is too long for this cache.
+  debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
@@ -928,9 +952,11 @@ export async function withdrawCash(userId: number, amount: number) {
     }
 
     if (data.transactionId) {
-      // We failed at creating the Tipalti payment. We should refund the user their buzz:
+      // We failed at creating the Tipalti payment. We should refund the user their buzz.
+      // Loaded here so the refund helper stays out of this service's import cycle.
+      const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
       await withRetries(async () => {
-        await refundTransaction(
+        await refundTransactionOnce(
           data.transactionId,
           'Failed to create Tipalti payment. Please contact support.'
         );

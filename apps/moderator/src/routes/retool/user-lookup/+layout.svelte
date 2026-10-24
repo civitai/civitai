@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { cn } from '@civitai/ui/utils.js';
   import LookupSearch from '$lib/components/LookupSearch.svelte';
+  import InvestigateButton from '$lib/components/InvestigateButton.svelte';
   import UserCard from '$lib/components/user-card/UserCard.svelte';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -52,6 +53,9 @@
           <input type="hidden" name="userId" value={data.result.identity.id} />
           <Button type="submit" size="xs" variant="outline">Force logout</Button>
         </form>
+      {/if}
+      {#if data.canInvestigate && data.result}
+        <InvestigateButton userId={data.result.identity.id} />
       {/if}
     {/snippet}
   </UserCard>

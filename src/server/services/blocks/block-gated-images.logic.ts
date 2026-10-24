@@ -134,7 +134,7 @@ export function classifyGatedImageForViewer(
   // image going back through the scanner would be reported "not decided yet" and
   // the owner projection would hand out its url, bypassing the domain ceiling a
   // SFW block is minted with. Rated first, pending second.
-  if (nsfwLevel !== 0 && !Flags.intersects(nsfwLevel, browsingLevel)) {
+  if (!isLevelWithinCeiling(nsfwLevel, browsingLevel)) {
     return { status: 'hidden' };
   }
 
@@ -153,4 +153,13 @@ export function classifyGatedImageForViewer(
   if (nsfwLevel === 0) return { status: 'pending' };
 
   return { status: 'visible' };
+}
+
+/**
+ * The level half of {@link classifyGatedImageForViewer}: an unrated image (`0`) is not refused by
+ * level, and a rated one only when no bit of it is inside `ceiling`. Exported so a label that
+ * describes where an image shows uses the same comparison the gate does.
+ */
+export function isLevelWithinCeiling(nsfwLevel: number, ceiling: number): boolean {
+  return nsfwLevel === 0 || Flags.intersects(nsfwLevel, ceiling);
 }

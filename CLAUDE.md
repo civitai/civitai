@@ -36,7 +36,7 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
@@ -69,6 +69,8 @@ pnpm run test:packages:run # packages/*      pnpm run test:apps:run   # apps/*
 pnpm run test:component    # browser mode    pnpm run test:lint-rules # convention guards
 pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 ```
+- A test earns its place only if it can catch a bug a caller would notice; what that rules out is in
+  `.claude/rules/testing.md` → What earns a test.
 - The suites cover disjoint directories; `test:unit:run` runs nothing under `packages/` or `apps/`.
 - Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-native`
   files and exits 0.

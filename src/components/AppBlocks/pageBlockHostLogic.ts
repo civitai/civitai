@@ -3,9 +3,11 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 
 export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
@@ -32,22 +34,8 @@ export function toHostGateStatus(status: PageHostStatus): HostStatus {
   return status === 'error' ? 'no_token' : status;
 }
 
-/**
- * #3/#6: the scopes the minted page JWT ACTUALLY carries — the page manifest's
- * declared scopes minus the consent-gated ones the viewer hasn't granted
- * (`missingScopes`, reported by the mint). The server signs exactly this set,
- * so this is what BLOCK_INIT / TOKEN_REFRESH must advertise to the block.
- * Posting `[]` (the old hardcode) lied to the block about its capabilities
- * (a page token carries `apps:storage:*`). Mirrors IframeHost.grantedScopes.
- */
-export function grantedPageScopes(
-  declaredScopes: string[],
-  missingScopes: string[] | undefined
-): string[] {
-  if (!missingScopes || missingScopes.length === 0) return declaredScopes;
-  const withheld = new Set(missingScopes);
-  return declaredScopes.filter((s) => !withheld.has(s));
-}
+// `grantedPageScopes` MOVED to `requestConsentGate.resolveAdvertisedScopes`, shared
+// with IframeHost, which had its own copy of the same derivation.
 
 // 🔴 `resolveUngrantableConsentNotice` + `UngrantableConsentNotice` MOVED OUT of
 // this module, to `requestConsentGate.ts`. They were never page-specific: they are
@@ -307,6 +295,109 @@ export function resolveResourcePickerRequest(raw: unknown): ResourcePickerReques
   };
 }
 
+// ── OPEN_RESOURCE_PICKER multi-select (`multiple: { max }`) ──────────────────
+//
+// A block that stacks several LoRAs asks for them in ONE picker session instead
+// of reopening the picker per resource. This is a SEPARATE resolver, read off
+// the same raw payload AFTER resolveResourcePickerRequest has accepted it, so
+// that function — and the closed {requestId, resourceType, baseModelGroup?}
+// shape its tests pin — is untouched: a request without `multiple` takes exactly
+// the path it always has.
+//
+// Wire contract (mirrored by the SDK's `useResourcePicker` `multiple` option):
+//   request  OPEN_RESOURCE_PICKER   { requestId, resourceType, baseModelGroup?, multiple?: { max } }
+//   reply    RESOURCE_PICKER_RESULT { requestId, selectedResources: SafeGenerationResource[] }
+//            — pick order; `[]` when the viewer dismissed. `selected` is NOT set.
+//   refusal  RESOURCE_PICKER_RESULT { requestId, error }
+// A single-pick request still answers { requestId, selected? } and nothing else,
+// so the two reply shapes cannot be mistaken for one another: a list reply is
+// recognisable by the `selectedResources` array, and a host that predates this
+// (which never reads `multiple`, opens a single pick and answers `selected`) is
+// recognisable by its absence.
+//
+// Rules:
+//   - `multiple` absent or null → not a multi request.
+//   - `max` above the cap is CLAMPED to PAGE_RESOURCE_PICKER_MULTI_MAX.
+//   - `multiple` that is not `{ max: <integer ≥ 1> }` → REFUSED.
+//   - a resourceType outside the LoRA family (i.e. Checkpoint) → REFUSED. A
+//     generation takes one checkpoint (`body.modelVersionId`) and a list of
+//     LoRA-family resources (`body.additionalResources`), so "several" only has
+//     a meaning for the latter.
+// A refusal is ANSWERED (with `error`) rather than dropped: only an SDK that
+// knows about multi-select can send the key, and it turns an `error` reply into
+// a thrown error — better than a block waiting on a picker that never opens. It
+// is never downgraded to a single pick, which would hand back a different
+// result shape than the one asked for.
+
+/** The LoRA family within PAGE_RESOURCE_PICKER_TYPES — the only multi-selectable types. */
+export const PAGE_RESOURCE_PICKER_MULTI_TYPES = ['LORA', 'LoCon', 'DoRA'] as const;
+
+/**
+ * Most resources ONE multi-select request can return. Equal to the page body's
+ * `additionalResources` cap (`MAX_ADDITIONAL_RESOURCES` in the block workflow
+ * schema — a parity test pins the two together), so a full batch is always one
+ * the submit path accepts.
+ */
+export const PAGE_RESOURCE_PICKER_MULTI_MAX = 5;
+
+export type ResourcePickerMultiple =
+  | { kind: 'single' }
+  | { kind: 'multiple'; max: number }
+  | { kind: 'refused'; reason: string };
+
+/**
+ * Decide whether an ALREADY-ACCEPTED OPEN_RESOURCE_PICKER payload is a
+ * multi-select request. `resourceType` is the canonical type
+ * resolveResourcePickerRequest returned for the same payload. Pure — see the
+ * section comment above for the rules.
+ */
+export function resolveResourcePickerMultiple(
+  raw: unknown,
+  resourceType: PageResourcePickerType
+): ResourcePickerMultiple {
+  const multiple =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>).multiple : undefined;
+  if (multiple === undefined || multiple === null) return { kind: 'single' };
+
+  if (!(PAGE_RESOURCE_PICKER_MULTI_TYPES as readonly string[]).includes(resourceType)) {
+    return {
+      kind: 'refused',
+      reason: `OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not ${resourceType}.`,
+    };
+  }
+  const max = typeof multiple === 'object' ? (multiple as Record<string, unknown>).max : undefined;
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+    return {
+      kind: 'refused',
+      reason: 'OPEN_RESOURCE_PICKER: multiple.max must be a whole number of at least 1.',
+    };
+  }
+  return { kind: 'multiple', max: Math.min(max, PAGE_RESOURCE_PICKER_MULTI_MAX) };
+}
+
+/**
+ * The resources a multi-select request answers with, from what the native modal
+ * handed back: pick order kept, a repeated resource collapsed onto its first
+ * occurrence, and never more than `max` entries. The modal already enforces
+ * both while the viewer is choosing; this is the belt that keeps the reply
+ * inside the request's cap whatever the modal does in future. It only ever
+ * REMOVES entries — every resource returned is one the viewer picked.
+ */
+export function capPickedResources<T extends { id: number }>(
+  picked: readonly T[],
+  max: number
+): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const resource of picked) {
+    if (out.length >= max) break;
+    if (seen.has(resource.id)) continue;
+    seen.add(resource.id);
+    out.push(resource);
+  }
+  return out;
+}
+
 // ── OPEN_CHECKPOINT_PICKER (parity with the model-slot IframeHost) ────────────
 //
 // The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER and awaits
@@ -366,12 +457,15 @@ export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRe
 //     generator uses (uploadConsumerBlob) — NO createImage, NO scan, NO SFW
 //     gate — and returns only { url, width, height }. Platform safety is
 //     preserved because the ORCHESTRATOR scans the generation OUTPUT.
+//   - 'trainingData': PRIVATE training images for a `kind:'training'` run — several
+//     files through the same consumer-blob path the Training Studio uses; returns
+//     `{ images: [{ url, air }] }`, and the host remembers each key it uploaded.
 //
 // The only wire-validation is: require a string requestId (drop otherwise, never
 // open the modal) and normalize `purpose` to the safe default when unknown. Kept
 // pure + unit-tested for the same reason as resolveResourcePickerRequest.
 
-export type BlockUploadPurpose = 'display' | 'generationSource';
+export type BlockUploadPurpose = 'display' | 'generationSource' | 'trainingData';
 
 export type ImageUploadRequest = {
   requestId: string;
@@ -384,7 +478,7 @@ export type ImageUploadRequest = {
    * push, instead of blocking the modal on the poll gate. Normalized to `true`
    * ONLY for a literal `asyncScan === true` (any other value ⇒ false), so an old
    * SDK that sends no flag keeps the byte-compatible blocking behavior, and the
-   * flag is IGNORED for generationSource (that path has no scan).
+   * flag is IGNORED for generationSource and trainingData (those paths have no scan).
    */
   asyncScan: boolean;
 };
@@ -402,7 +496,7 @@ export function resolveImageUploadRequest(raw: unknown): ImageUploadRequest | nu
   const obj = raw as Record<string, unknown>;
   if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
   const purpose: BlockUploadPurpose =
-    obj.purpose === 'generationSource' ? 'generationSource' : 'display';
+    obj.purpose === 'generationSource' || obj.purpose === 'trainingData' ? obj.purpose : 'display';
   const asyncScan = obj.asyncScan === true;
   return { requestId: obj.requestId, purpose, asyncScan };
 }
@@ -481,6 +575,54 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
     ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
+}
+
+// ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────
+// A grid app asks for the price of several generations in one message: a list of
+// workflow bodies, each the body ESTIMATE_WORKFLOW carries. The host forwards the
+// list to `blocks.estimateWorkflowBatch`; nothing is submitted.
+//
+// 🔴 THE HOST CHECKS THE LIST, NEVER A CELL. Each body is validated server-side,
+// per cell, so that one malformed body becomes that cell's error and the others
+// still price. Parsing bodies here would either duplicate the server schema or
+// fail the whole message on one bad cell — the opposite of what the batch is for.
+// What IS refused here is what the server would refuse for the whole call anyway
+// (not an array, empty, longer than the cap), so the block gets a legible error
+// without a round trip.
+
+/** The refusals the HOST itself emits for a batch estimate, before any round trip. */
+export const ESTIMATE_BATCH_HOST_ERRORS = [
+  /** `bodies` is missing, not an array, or empty. */
+  'invalid estimate batch',
+  /** `bodies` is longer than `BLOCK_ESTIMATE_BATCH_MAX_CELLS`. */
+  'estimate batch too large',
+] as const satisfies readonly string[];
+
+export type EstimateBatchHostError = (typeof ESTIMATE_BATCH_HOST_ERRORS)[number];
+
+export type EstimateBatchDecision =
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: EstimateBatchHostError }
+  | { kind: 'proceed'; request: { requestId: string; bodies: unknown[] } };
+
+/**
+ * Validate a raw ESTIMATE_WORKFLOW_BATCH payload from an untrusted iframe and
+ * decide drop / refuse / proceed. A payload with no string `requestId` is DROPPED
+ * (there is nothing to correlate a reply to — mirrors ESTIMATE_WORKFLOW); every
+ * later refusal carries a reply. `bodies` is passed through untouched.
+ */
+export function resolveEstimateBatchRequest(raw: unknown): EstimateBatchDecision {
+  if (!raw || typeof raw !== 'object') return { kind: 'drop' };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string') return { kind: 'drop' };
+  const requestId = obj.requestId;
+  if (!Array.isArray(obj.bodies) || obj.bodies.length === 0) {
+    return { kind: 'refuse', requestId, error: 'invalid estimate batch' };
+  }
+  if (obj.bodies.length > BLOCK_ESTIMATE_BATCH_MAX_CELLS) {
+    return { kind: 'refuse', requestId, error: 'estimate batch too large' };
+  }
+  return { kind: 'proceed', request: { requestId, bodies: obj.bodies as unknown[] } };
 }
 
 // ── NAVIGATE (#5209) ─────────────────────────────────────────────────────────
@@ -1177,6 +1319,57 @@ export const BLOCK_READY_TIMEOUT_MS = 10_000;
 export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 
 /**
+ * The BLOCK_READY window for the author's DEV TUNNEL only (`surface === 'dev-tunnel'`).
+ *
+ * A dev tunnel serves an unbundled dev server — one request per module — through a
+ * tunnel, so a healthy app can take seconds to ack. Measured 2026-10-23 on a good
+ * network: ready in 2.5–7.0 s against the 10 s limit above, with no headroom for a
+ * slower link. Every other surface serves a built bundle and keeps 10 s.
+ */
+export const DEV_TUNNEL_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * How a surface waits for BLOCK_READY. Produced ONLY by `readyWaitPolicyFor`.
+ *
+ *  - `readyTimeoutMs`     — the readiness window. Throughout it the init controller
+ *                           keeps re-posting BLOCK_INIT to the SAME frame.
+ *  - `autoRetryOnTimeout` — whether a `timeout` terminal schedules an automatic
+ *                           attempt. An automatic attempt RELOADS the frame (re-keys
+ *                           the iframe), which for a dev server restarts every module
+ *                           download — so on the dev tunnel the long window above IS
+ *                           the retry, and a timeout after it settles immediately.
+ *                           Other terminals (`fatal`, auth) are unaffected.
+ *  - `timeoutCopy`        — which `BlockFallback` copy a `timeout` renders.
+ */
+export type ReadyWaitPolicy = {
+  readyTimeoutMs: number;
+  autoRetryOnTimeout: boolean;
+  timeoutCopy: 'default' | 'dev-server';
+};
+
+const DEFAULT_READY_WAIT_POLICY: ReadyWaitPolicy = {
+  readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+  autoRetryOnTimeout: true,
+  timeoutCopy: 'default',
+};
+
+const DEV_TUNNEL_READY_WAIT_POLICY: ReadyWaitPolicy = {
+  readyTimeoutMs: DEV_TUNNEL_READY_TIMEOUT_MS,
+  autoRetryOnTimeout: false,
+  timeoutCopy: 'dev-server',
+};
+
+/**
+ * 🔴 THE ONE surface check for the ready wait. Every dev-tunnel render path — the
+ * `/apps/dev/<blockId>` page and the App Assistant preview pane — mounts
+ * `DevTunnelBlockHost`, which passes `surface="dev-tunnel"` to `PageBlockHost`, which
+ * reads its window, retry and copy from here and nowhere else.
+ */
+export function readyWaitPolicyFor(surface: BlockHostSurface): ReadyWaitPolicy {
+  return surface === 'dev-tunnel' ? DEV_TUNNEL_READY_WAIT_POLICY : DEFAULT_READY_WAIT_POLICY;
+}
+
+/**
  * The longest wall-clock a SUCCESSFUL launch can legitimately take, derived from
  * the constants above rather than asserted.
  *
@@ -1208,6 +1401,17 @@ export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
  * second), and a post-`timeout` attempt cannot re-pay the token wait. Both of
  * those are why the naive `3 x (15 + 10) + backoffs` = 82s over-states it, and
  * why treating every attempt as ~15s under-states it.
+ *
+ * 🔴 SCOPE: this is the bound for every surface on `BLOCK_READY_TIMEOUT_MS` — i.e.
+ * every surface EXCEPT the dev tunnel (`DEV_TUNNEL_READY_TIMEOUT_MS`, see
+ * `readyWaitPolicyFor`). A dev-tunnel launch that succeeds within its FIRST
+ * attempt (token wait + 30 s) is always inside the sample cap — a test pins that.
+ * A dev-tunnel launch that also needed an automatic attempt (an auth re-mint, or a
+ * `fatal` remount) can run past the cap; that sample is DROPPED (never clamped).
+ * Accepted: the dev tunnel's latency measures the author's own dev server and
+ * tunnel, not the platform. (This bound covers the AUTOMATIC path only on every
+ * surface — repeated manual Retry can exceed it anywhere; see
+ * `worstReachableInitPosts`.)
  */
 export function worstReachableLaunchMs(): number {
   const backoffs = AUTO_RETRY_BACKOFF_MS.slice(0, MAX_AUTO_RETRIES).reduce((a, b) => a + b, 0);
@@ -1255,6 +1459,10 @@ export function worstReachableLaunchMs(): number {
  * at `BLOCK_READY_TIMEOUT_MS`, whatever else the attempt spent waiting on a
  * token. So `TOKEN_WAIT_TIMEOUT_MS` deliberately does NOT appear here — that is
  * the one place this bound's shape differs from `worstReachableLaunchMs`'s.
+ *
+ * 🔴 Same scope as `worstReachableLaunchMs`: surfaces on `BLOCK_READY_TIMEOUT_MS`.
+ * A single 30 s dev-tunnel attempt stays under the post cap (test-pinned); a
+ * multi-attempt dev-tunnel launch can exceed it and is dropped, as documented there.
  */
 export function worstReachableInitPosts(): number {
   const attempts = MAX_AUTO_RETRIES + 1;
@@ -1309,6 +1517,8 @@ export type AutoRetryDecision =
  *
  * Returns `{kind:'none'}` — i.e. the host has SETTLED on this terminal state — when:
  *   - the status is non-terminal (loading/ready) or not auto-retryable;
+ *   - the status is `timeout` and the surface's policy says not to retry it
+ *     (`autoRetryOnTimeout:false` — the dev tunnel);
  *   - the total attempt budget is spent;
  *   - the status is an AUTH terminal and either (a) the re-mint budget is spent,
  *     or (b) no re-mint is wired (`canRemint:false`). In both cases a further
@@ -1323,9 +1533,16 @@ export function decideAutoRetry(args: {
   reminted: number;
   /** Whether the host actually has a token re-mint available (`onRetryToken`). */
   canRemint: boolean;
+  /**
+   * Whether a `timeout` terminal may be auto-retried — `readyWaitPolicyFor(surface)`.
+   * `false` on the dev tunnel, whose long ready window already was the wait.
+   * Omitted = `true` (every other surface, unchanged).
+   */
+  autoRetryOnTimeout?: boolean;
 }): AutoRetryDecision {
-  const { status, attempts, reminted, canRemint } = args;
+  const { status, attempts, reminted, canRemint, autoRetryOnTimeout = true } = args;
   if (!isAutoRetryableStatus(status)) return { kind: 'none' };
+  if (status === 'timeout' && !autoRetryOnTimeout) return { kind: 'none' };
   if (attempts >= MAX_AUTO_RETRIES) return { kind: 'none' };
 
   const remint = isAuthTerminalStatus(status);

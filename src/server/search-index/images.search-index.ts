@@ -18,6 +18,7 @@ import {
 } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
 import { imagesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -245,13 +246,13 @@ export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[n
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   // Retired: the `images_v6` Meilisearch index is no longer served (the /search/images page
   // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
-  // call sites that still queue image updates cost nothing. Restoring image search means clearing
-  // this and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  // call sites that still queue image updates cost nothing. Restoring image search means removing
+  // it from RETIRED_SEARCH_INDEXES and re-running a reset to rebuild the index. See ticket 868m4c2dn.
   // NOTE: the ban-purge flow (processUserContentRemovalQueue in server/meilisearch/util.ts)
   // intentionally has NO entry for this index anymore — with it retired, that flow's
   // getOrCreateIndex re-created the index bare and its delete tasks all failed. Re-add the
   // images entry there as part of the same change as the restoration reset.
-  retired: true,
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,

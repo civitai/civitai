@@ -321,6 +321,14 @@ const GATE_LEDGER: Record<string, string> = {
     '(b) the isSelfPurchase / isSelfSpend business-logic branch for revenue share. No ' +
     'caller is being authorised. 🔴 The stamp is deliberately never rewritten by an ' +
     'ownership transfer — see the money-invariance decision.',
+  'src/server/services/blocks/known-app-blocks.service.ts':
+    'NOT a gate — listed so the population stays closed. getApprovedAppBlockAnalytics ' +
+    'reads `app.userId` so the custom-events ingest can LABEL a row `isOwner` (team) when ' +
+    'the viewer is the app owner OR an ACCEPTED collaborator; nobody is authorised or ' +
+    'refused by it. Collaborators come from listApprovedAppBlockSeatHolders in ' +
+    'app-access.service, which shares APP_BLOCK_SEAT_LISTING_WHERE and the ACCEPTED ' +
+    'filter with resolveAccessibleAppBlockIds; app-block-team.seam.test.ts pins that the ' +
+    'two agree. Widening the label only changed rows written after it shipped.',
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +
@@ -347,6 +355,18 @@ const GATE_LEDGER: Record<string, string> = {
     'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
     'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
     'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-feedback.service.ts':
+    'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
+    '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +
+    'ACCEPTED collaborator via resolveListingAccess, keyed on the SEAT listing, so an ' +
+    'editor reads and triages the inbox exactly as the owner does (product decision) and ' +
+    'a pending/rejected invitee does not. NO mod bypass: moderators read every row through ' +
+    'the separate moderatorProcedure list, and an owner-path write by a mod would stamp ' +
+    'the mod as the developer. The writes resolve through dbWrite so a seat revoked a ' +
+    'moment ago cannot still write off a lagging replica. (2) The SUBMIT gate ' +
+    '(resolveAppFeedbackTarget) REFUSES anyone with a role — owner AND editor — because ' +
+    'people who read the inbox do not write to it. Both halves take the canonical, ' +
+    'kind-aware owner from resolveListingAccess, never the denormalized column (D5).',
   'src/server/services/blocks/user-app-surface.service.ts':
     'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
     'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +

@@ -1,3 +1,5 @@
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -50,23 +52,37 @@ export async function recordModActivityBatch(input: {
   entityIds: readonly number[];
   activity: string;
 }): Promise<void> {
-  if (!input.entityIds.length) return;
   try {
-    await dbWrite
-      .insertInto('ModActivity')
-      .values(
-        input.entityIds.map((entityId) => ({
-          userId: input.userId,
-          entityType: input.entityType,
-          entityId,
-          activity: input.activity,
-        }))
-      )
-      .onConflict((oc) => oc.doNothing())
-      .execute();
+    await insertModActivityBatch(dbWrite, input);
   } catch (e) {
     console.error('[mod-activity] failed to record batch', { ...input, error: e });
   }
+}
+
+/** `recordModActivityBatch` on a caller's transaction, and throwing: a failed insert has already
+ *  aborted that transaction, so swallowing it would only move the error to the commit. */
+export async function insertModActivityBatch(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    entityType: string | null;
+    entityIds: readonly number[];
+    activity: string;
+  }
+): Promise<void> {
+  if (!input.entityIds.length) return;
+  await db
+    .insertInto('ModActivity')
+    .values(
+      input.entityIds.map((entityId) => ({
+        userId: input.userId,
+        entityType: input.entityType,
+        entityId,
+        activity: input.activity,
+      }))
+    )
+    .onConflict((oc) => oc.doNothing())
+    .execute();
 }
 
 export type ModActivityRow = {
@@ -114,4 +130,23 @@ export async function withModerators<R extends { userId: number | null }>(rows: 
     moderatorId: userId,
     moderatorUsername: userId ? byId.get(userId)?.username ?? null : null,
   }));
+}
+
+/**
+ * The most recent `activity` recorded against one entity, and the moderator who did it — "banned by" on
+ * the user report queue. Rides `ModActivity_entityType_entityId_createdAt_idx`. Null when nothing was
+ * recorded, which is not the same as nobody: a ban made before ModActivity existed has no row.
+ */
+export async function lastModActivity(entityType: string, entityId: number, activity: string) {
+  const row = await dbRead
+    .selectFrom('ModActivity as m')
+    .leftJoin('User as u', 'u.id', 'm.userId')
+    .select(['m.userId', 'u.username', 'm.createdAt'])
+    .where('m.entityType', '=', entityType)
+    .where('m.entityId', '=', entityId)
+    .where('m.activity', '=', activity)
+    .orderBy('m.createdAt', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? { moderatorId: row.userId, moderator: row.username, at: row.createdAt } : null;
 }

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
+import type * as HatSync from '~/server/events/points/sync';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
 const { reopenRestrictions } = vi.hoisted(() => ({ reopenRestrictions: vi.fn() }));
@@ -23,6 +24,12 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   usersSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
+}));
+
+const hatSync = vi.hoisted(() => ({ owner: vi.fn() }));
+vi.mock('~/server/events/points/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof HatSync>()),
+  syncOwnerEventHats: hatSync.owner,
 }));
 
 import { restoreUser } from '~/server/services/user.service';
@@ -67,6 +74,16 @@ describe('restoreUser — restrictions closed by the deletion', () => {
         userId: USER_ID,
         message: 'db down',
       })
+    );
+  });
+});
+
+describe('restoreUser -> live event hats', () => {
+  it('puts a restored owner’s hats back after the restore commits', async () => {
+    await restore();
+    expect(hatSync.owner.mock.calls).toEqual([[USER_ID]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
     );
   });
 });

@@ -1,14 +1,23 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
+import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  TURBO_VARIANT_MODEL_TYPES,
+} from '~/shared/constants/generation.constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import {
+  metricVisibilityChoicesSchema,
+  metricVisibilityMetaFromChoices,
+} from '~/server/utils/model-metric-privacy';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
@@ -306,7 +315,7 @@ export const modelVersionUpsertSchema = z.object({
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),
   images: z
-    .array(imageSchema)
+    .array(imageInputSchema)
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
@@ -316,11 +325,54 @@ export const modelVersionUpsertSchema = z.object({
   // recipe: z.array(recipeSchema).optional(),
 });
 
+// A cleared number input submits '', which `z.coerce.number()` would read as 0.
+const blankToUndefined = (value: unknown) => (value === '' || value === null ? undefined : value);
+const rangeNumber = z.preprocess(blankToUndefined, z.coerce.number());
+
+/** A recommended value and the advisory band around it; the generator paints the band on the slider. */
+export const recommendedRangeSchema = z
+  .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
+  .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
+  .refine((r) => r.min <= r.default && r.default <= r.max, {
+    error: 'Default must be within min and max',
+    path: ['default'],
+  });
+
+/** A checkpoint's generation settings. */
+export const recommendedGenerationSettingsSchema = z.object({
+  /** The LoRA the generator's Turbo toggle starts on with this checkpoint, over the family's default. */
+  turboLora: z
+    .object({
+      id: z.number().int().positive(),
+      /** Over the LoRA's own default strength. */
+      strength: z.coerce
+        .number()
+        .min(LORA_STRENGTH_BOUNDS.min)
+        .max(LORA_STRENGTH_BOUNDS.max)
+        .nullish(),
+    })
+    .nullish(),
+});
+
+/**
+ * A LoRA's turbo block. Its presence marks the version as a turbo variant, so both ranges are
+ * required: the generator applies them whole when the LoRA is on.
+ */
+export const turboSettingsSchema = z.object({
+  steps: recommendedRangeSchema,
+  cfgScale: recommendedRangeSchema,
+});
+
+/** The model types a turbo block may be saved on. */
+export { TURBO_VARIANT_MODEL_TYPES };
+
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({
   minStrength: z.coerce.number().nullish(),
   maxStrength: z.coerce.number().nullish(),
   strength: z.coerce.number().nullish(),
+  generation: recommendedGenerationSettingsSchema.nullish(),
+  turbo: turboSettingsSchema.nullish(),
 });
 
 export const linkedComponentSettingsSchema = z.object({
@@ -530,6 +582,8 @@ export const modelVersionUpsertSchema2 = z.object({
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
   rightsAffirmed: rightsAffirmedSchema,
+  /** The creator's attestation for base models that require one; see base-model-attestation.constants. */
+  baseModelAttested: z.boolean().optional(),
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -551,7 +605,11 @@ export const modelVersionUpsertSchema2 = z.object({
       hideBuzz: z.boolean().nullish(),
       hideDownloads: z.boolean().nullish(),
       hideGenerations: z.boolean().nullish(),
+      metricVisibility: metricVisibilityChoicesSchema.optional(),
     })
+    .transform(({ metricVisibility, ...val }) =>
+      metricVisibility ? { ...val, ...metricVisibilityMetaFromChoices(metricVisibility) } : val
+    )
     .optional(),
 });
 
@@ -612,6 +670,7 @@ export type ModelVersionMeta = ModelMeta & {
   generationAlias?: GenerationAlias;
   /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
   rightsAffirmation?: RightsAffirmation;
+  baseModelAttestation?: BaseModelAttestation;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

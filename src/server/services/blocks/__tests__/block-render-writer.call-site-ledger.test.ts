@@ -21,7 +21,8 @@ import { scanSource } from '../../../../../test/source-scan';
  *
  *   1. who calls `.blockRender(` on a tracker — i.e. who writes the table at all;
  *   2. who builds the row through `blockRenderTrackerPayload` — the payload allowlist;
- *   3. who consults `isPrivateRunImpression` — the private-run gate.
+ *   3. who consults `isPrivateRunImpression` — the private-run gate (after setting aside
+ *      the one ledgered caller that writes a different table).
  *
  * Equality in all three directions is what makes a NEW writer fail here: adding one
  * lands it in (1) and, unless it also does (2) and (3), the sets diverge. Deleting a
@@ -147,15 +148,34 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     expect(callersOf('blockRenderTrackerPayload')).toEqual(WRITERS);
   });
 
+  // The custom-events ingest writes a different owner-visible table (`appBlockEvents`) and
+  // applies the same gate. It is not a `blockRenders` writer, so it is ledgered apart.
+  const OTHER_GATED_WRITERS = ['src/server/services/blocks/block-event-ingest.service.ts'];
+  const GATE_CALLERS = [...WRITERS, ...OTHER_GATED_WRITERS].sort();
+
   it('🔴 EXACTLY these files consult the private-run gate', () => {
-    expect(callersOf('isPrivateRunImpression')).toEqual(WRITERS);
+    expect(callersOf('isPrivateRunImpression')).toEqual(GATE_CALLERS);
+  });
+
+  it('EXACTLY the ledgered file inserts into the custom-events table', () => {
+    // A second writer would have to consult the gate too. This sees one that names the table
+    // through its exported constant and calls `.insert(`; a writer spelling the table as a
+    // string literal is invisible here, as string literals are stripped from the scan.
+    expect(
+      FILES.filter((f) => {
+        const code = CODE.get(f)!;
+        return code.includes('APP_BLOCK_EVENTS_TABLE') && /\.insert\s*\(/.test(code);
+      }).sort()
+    ).toEqual(OTHER_GATED_WRITERS);
   });
 
   it('🔴 the three populations are THE SAME SET', () => {
     // Redundant while the three above are equalities; load-bearing the moment any is
     // relaxed to `toContain`.
     expect(callersOf('blockRenderTrackerPayload')).toEqual(trackerWriteSites());
-    expect(callersOf('isPrivateRunImpression')).toEqual(trackerWriteSites());
+    expect(
+      callersOf('isPrivateRunImpression').filter((f) => !OTHER_GATED_WRITERS.includes(f))
+    ).toEqual(trackerWriteSites());
   });
 
   /**

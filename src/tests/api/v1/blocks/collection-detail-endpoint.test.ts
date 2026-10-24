@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as GatedImagesLogic from '~/server/services/blocks/block-gated-images.logic';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
 /**
@@ -12,10 +13,12 @@ function createMocks({
   method = 'GET',
   query = {},
 }: { method?: string; query?: Record<string, unknown> } = {}) {
-  const req = { method, query, headers: {}, socket: { remoteAddress: '203.0.113.7' } } as unknown as Record<
-    string,
-    unknown
-  >;
+  const req = {
+    method,
+    query,
+    headers: {},
+    socket: { remoteAddress: '203.0.113.7' },
+  } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
   const headers: Record<string, string> = {};
@@ -74,27 +77,52 @@ vi.mock('~/server/services/collection.service', () => ({
   getCollectionById: mockGetById,
   getCollectionItemsByCollectionId: mockItems,
 }));
-vi.mock('~/server/services/blocks/block-collections.service', () => ({
-  hydrateBlockSubject: mockHydrate,
-  getFollowedCollectionIds: mockFollowed,
-  mapImageItemToMedia: (data: any) => ({
-    mediaId: data.id,
-    type: data.type === 'video' ? 'video' : 'image',
-    url: `edge:${data.url}`,
-    width: data.width ?? null,
-    height: data.height ?? null,
-    creator: data.user ? { userId: data.user.id, username: data.user.username } : null,
-    nsfwLevel: data.nsfwLevel ?? 0,
-  }),
+vi.mock('~/server/services/blocks/block-collections.service', async () => {
+  const { classifyGatedImageForViewer } = await vi.importActual<typeof GatedImagesLogic>(
+    '~/server/services/blocks/block-gated-images.logic'
+  );
+  return {
+    hydrateBlockSubject: mockHydrate,
+    getFollowedCollectionIds: mockFollowed,
+    mapImageItemToMedia: (data: any) => ({
+      mediaId: data.id,
+      type: data.type === 'video' ? 'video' : 'image',
+      url: `edge:${data.url}`,
+      width: data.width ?? null,
+      height: data.height ?? null,
+      creator: data.user ? { userId: data.user.id, username: data.user.username } : null,
+      nsfwLevel: data.nsfwLevel ?? 0,
+    }),
+    // The REAL shared gate under a one-line wrapper; the wrapper itself is pinned against
+    // the real module in block-collections-cover.test.ts.
+    isPublicCollectionImage: (image: any, level: number) =>
+      classifyGatedImageForViewer(image, level).status === 'visible',
+  };
+});
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockRate,
 }));
-vi.mock('~/server/utils/block-catalog-rate-limit', () => ({ checkBlockCatalogRateLimit: mockRate }));
-vi.mock('~/server/utils/block-catalog-maturity', () => ({ resolveCatalogBrowsingLevel: mockMaturity }));
+vi.mock('~/server/utils/block-catalog-maturity', () => ({
+  resolveCatalogBrowsingLevel: mockMaturity,
+}));
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => ({}),
   isRegionRestricted: () => false,
 }));
 
 import handler from '~/pages/api/v1/blocks/collections/[id]/index';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
+
+/** A scanned image with no moderation flags: what `isPublicCollectionImage` serves. */
+const SCANNED = {
+  ingestion: 'Scanned',
+  needsReview: null,
+  poi: false,
+  minor: false,
+  acceptableMinor: false,
+  tosViolation: false,
+  blockedFor: null,
+} as const;
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {
@@ -203,8 +231,32 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
   it('200: threads the clamped browsingLevel, maps image/video, drops non-media, sets followed', async () => {
     mockItems.mockResolvedValueOnce({
       items: [
-        { type: 'image', data: { id: 1, url: 'i1', type: 'image', width: 512, height: 512, nsfwLevel: 1, user: { id: 100, username: 'alice' } } },
-        { type: 'image', data: { id: 2, url: 'v2', type: 'video', width: 1280, height: 720, nsfwLevel: 1, user: { id: 100, username: 'alice' } } },
+        {
+          type: 'image',
+          data: {
+            ...SCANNED,
+            id: 1,
+            url: 'i1',
+            type: 'image',
+            width: 512,
+            height: 512,
+            nsfwLevel: 1,
+            user: { id: 100, username: 'alice' },
+          },
+        },
+        {
+          type: 'image',
+          data: {
+            ...SCANNED,
+            id: 2,
+            url: 'v2',
+            type: 'video',
+            width: 1280,
+            height: 720,
+            nsfwLevel: 1,
+            user: { id: 100, username: 'alice' },
+          },
+        },
         { type: 'model', data: { id: 999 } }, // dropped — not playable media
       ],
       nextCursor: '2',
@@ -216,8 +268,14 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     // The maturity clamp is the token ceiling threaded into the item service.
     expect(mockItems).toHaveBeenCalledWith(
       expect.objectContaining({
-        input: expect.objectContaining({ collectionId: 7, browsingLevel: 3, statuses: ['ACCEPTED'] }),
+        input: expect.objectContaining({
+          collectionId: 7,
+          browsingLevel: 3,
+          statuses: ['ACCEPTED'],
+        }),
         user: expect.objectContaining({ id: 42 }),
+        // Images are read as /api/v1/blocks/images reads them: no viewer carve-outs.
+        imagesAsPublicCatalog: true,
       })
     );
     expect(body.collection).toEqual({
@@ -234,4 +292,70 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     expect(body.items[1]).toMatchObject({ mediaId: 2, type: 'video', url: 'edge:v2' });
     expect(body.nextCursor).toBe('2');
   });
+
+  // One fixture per refused state, each a clean scanned image with exactly one change.
+  it('serves only the items the shared block image gate passes — one fixture per refused state', async () => {
+    const refused = {
+      poi: { poi: true },
+      minor: { minor: true },
+      needsReview: { needsReview: 'poi' },
+      acceptableMinor: { acceptableMinor: true },
+      // No `tosViolation` case: `getAllImages` items do not carry the field, and
+      // /api/v1/blocks/images does not filter on it either.
+      blockedFor: { blockedFor: 'moderated' },
+      unscanned: { ingestion: 'Pending' },
+      unrated: { nsfwLevel: 0 },
+      aboveCeiling: { nsfwLevel: 8 },
+    } as const;
+    const image = (id: number, over: object) => ({
+      type: 'image',
+      data: { ...SCANNED, id, url: `i${id}`, type: 'image', nsfwLevel: 1, user: null, ...over },
+    });
+    mockItems.mockResolvedValueOnce({
+      items: [
+        image(1, {}),
+        ...Object.values(refused).map((over, i) => image(100 + i, over)),
+        image(2, {}),
+      ],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect((res._json() as any).items.map((i: any) => i.mediaId)).toEqual([1, 2]);
+  });
+});
+
+describe('GET /api/v1/blocks/collections/[id] — reactTicket (app reactions provenance)', () => {
+  it('each served media item carries a ticket bound to (that item, this app, this viewer)', async () => {
+    const SECRET = 'collection-endpoint-secret';
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+    const img = (id: number) => ({
+      type: 'image',
+      data: { ...SCANNED, id, url: `i${id}`, type: 'image', width: 1, height: 1, nsfwLevel: 1 },
+    });
+    mockItems.mockResolvedValueOnce({ items: [img(11), img(12)], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const items = (res._json() as any).items as Array<{ mediaId: number; reactTicket?: string }>;
+    expect(items.map((i) => i.mediaId)).toEqual([11, 12]);
+    for (const item of items) {
+      const subject = {
+        entityType: 'image' as const,
+        entityId: item.mediaId,
+        appBlockId: 'apb',
+        sub: 'user:42',
+      };
+      expect(verifyReactTicket(item.reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+      expect(
+        verifyReactTicket(item.reactTicket, { ...subject, sub: 'user:7' }, { secret: SECRET }).ok
+      ).toBe(false);
+    }
+  });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

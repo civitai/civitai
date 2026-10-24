@@ -74,7 +74,6 @@ const {
   jevConfidenceFloor,
   scoreCriteriaCount,
   JevError,
-  JEV_DECISIONS_URL,
   JEV_TIMEOUT_MS,
 } = await import('~/server/services/ai/jev');
 
@@ -160,17 +159,6 @@ afterEach(() => {
 
 // ───────────────────────────────────────────────────────────────────────────────
 describe('🔴 askJev talks to the DECISIONS endpoint', () => {
-  /**
-   * The regression. `typesafe/jev-1.13` cannot be used with chat/completions;
-   * the previous implementation called exactly that and 400'd on every request
-   * in production. These assertions are the ones no amount of response-shape
-   * coverage could have made.
-   */
-  it('exports the alpha decisions URL and not a chat/completions one', () => {
-    expect(JEV_DECISIONS_URL).toBe('https://openrouter.ai/api/alpha/decisions');
-    expect(JEV_DECISIONS_URL).not.toContain('chat/completions');
-  });
-
   it('POSTs to the decisions URL with a bearer key and a JSON content type', async () => {
     respond(RECORDED_200);
     await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });

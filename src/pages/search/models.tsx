@@ -11,6 +11,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { useEffect, useState } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -25,6 +26,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-search-filter';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -32,6 +34,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { isDefined } from '~/utils/type-guards';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export default function ModelsSearch() {
@@ -93,6 +96,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         limit={100}
         searchable
+        renderOption={renderBaseModelOption}
       />
       <ChipRefinementList
         title="Filter by Model Type"
@@ -122,7 +126,7 @@ const RenderFilters = () => {
       />
       {features.paidModelSearchFilter && (
         <Checkbox
-          label="Hide paid models"
+          label="Hide Early Access & paid models"
           checked={hidePaid}
           onChange={(event) => setHidePaid(event.currentTarget.checked)}
         />
@@ -158,7 +162,10 @@ export function ModelsHitList() {
 
   // Must stay above every early return below — a hook called after one changes the hook
   // count between the loading and loaded renders (React error #310).
-  const salesByModelId = useModelSaleBadges((items as { id: number }[]).map((x) => x.id));
+  const itemIds = (items as { id: number }[]).map((x) => x.id);
+  const salesByModelId = useModelSaleBadges(itemIds);
+  useEngagedModelsPrefetch(itemIds);
+  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Model' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -225,7 +232,7 @@ export function ModelsHitList() {
         salesByModelId={salesByModelId}
       >
         <MasonryGrid
-          data={items as any}
+          data={decorated as any}
           render={ModelCard}
           itemId={(x) => x.id}
           empty={<NoContent />}

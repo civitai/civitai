@@ -24,6 +24,9 @@ export const imageModerateInput = z.object({
   userId: z.number().int(),
   ip: z.string().optional(),
   userAgent: z.string().optional(),
+  /** The moderator holds `image.removal.confirm`, so a re-removal of an image approved on appeal
+   *  applies directly instead of being held for confirmation. Asserted by the trusted caller. */
+  canConfirmReRemoval: z.boolean().optional(),
 });
 export type ImageModerateInput = z.infer<typeof imageModerateInput>;
 

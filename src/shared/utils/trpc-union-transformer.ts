@@ -131,11 +131,16 @@ export function pickServerWriteSerialize(flag: boolean): (object: any) => any {
 }
 
 /**
- * Server-side write gate, read ONCE at module load. This is the ONLY place the
- * Phase-2 write format flips, and it flips PER POOL: a pool's Deployment sets
- * `TRPC_WRITE_DEVALUE=true` to make that pool (and ONLY that pool) write devalue
- * responses; every other pool keeps writing superjson. Rollback = unset the env
- * + restart the pod. Default (unset) = superjson everywhere = wire unchanged.
+ * Server-side write MASTER SWITCH, read ONCE at module load. Unset/false =
+ * superjson everywhere = wire unchanged. Rollback = unset the env + restart.
+ *
+ * With it on, the two server writers differ:
+ *   - tRPC HTTP responses choose PER REQUEST (`src/server/trpc/response-write-format.ts`):
+ *     devalue only for a web bundle that can decode it, on a response that is not
+ *     edge-cacheable. Non-web callers (SDKs, CLIs, scripts) and old web bundles read
+ *     only superjson, so a pool-wide flip would break them.
+ *   - SSR dehydrate uses `serverWriteSerialize` below directly: its output is only
+ *     ever hydrated by the JS bundle of the same deploy, which reads both formats.
  *
  * Reads process.env directly (module-load constant) — the client bundle never
  * evaluates this branch because the client transformer never references it.
@@ -147,11 +152,9 @@ export const serverWriteSerialize = pickServerWriteSerialize(WRITE_DEVALUE);
  * Build a complete SERVER-SIDE `CombinedDataTransformer`: union sniffer on both
  * READ slots, and the env-gated `serverWriteSerialize` on the response WRITE
  * slot. The server (`src/server/trpc.ts`) overrides `output.serialize` with an
- * instrumentation-wrapped variant (it times the response serialize — the exact
- * frame that pegs the loop on an oversized response) whose inner call is STILL
- * `serverWriteSerialize`, so the write format stays single-sourced through the
- * gate. The SSR helper uses the default (`buildTransformer()`), so SSR dehydrate
- * flips only when ITS pool sets `TRPC_WRITE_DEVALUE`.
+ * instrumentation-wrapped, per-request writer (`responseWriteSerialize` — see
+ * `WRITE_DEVALUE` above). The SSR helper uses the default (`buildTransformer()`),
+ * so SSR dehydrate flips only when ITS pool sets `TRPC_WRITE_DEVALUE`.
  *
  * `input.serialize` is set to `superjson.serialize` purely to make the object
  * complete — it is NEVER exercised server-side (the server only DESERIALIZES
@@ -159,7 +162,7 @@ export const serverWriteSerialize = pickServerWriteSerialize(WRITE_DEVALUE);
  * therefore read the union and are independent of the write gate.
  *
  * @param outputSerialize response-serialize override (server injects the
- *   instrumented wrapper). Defaults to the env-gated `serverWriteSerialize`.
+ *   instrumented per-request writer). Defaults to the env-gated `serverWriteSerialize`.
  */
 export function buildTransformer(
   outputSerialize: (object: any) => any = serverWriteSerialize
@@ -174,8 +177,8 @@ export function buildTransformer(
  * The SERVER-SIDE transformer used by the SSR helpers
  * (`src/server/utils/server-side-helpers.ts`): env-gated response WRITE (via
  * `serverWriteSerialize`), union READ. The server proper builds its own via
- * `buildTransformer(instrumentedSerialize)` in `src/server/trpc.ts` — the only
- * legitimate server-specific difference is the instrumented `output.serialize`.
+ * `buildTransformer(...)` in `src/server/trpc.ts`, whose `output.serialize` is
+ * instrumented and chooses the format per request.
  */
 export const unionTransformer: CombinedDataTransformer = buildTransformer();
 

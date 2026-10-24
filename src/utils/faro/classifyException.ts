@@ -213,10 +213,10 @@ const BARE_NETWORK_VALUE_RES = [
 // (`message?.startsWith('Your prompt was flagged')`) — matching them keeps one definition of what
 // a flagged-prompt message is, rather than a second, stricter one only this module knows about.
 //
-// `The prompt has been blocked due to mature content…` (21) is the `green`/SFW-model rewrite of
-// the `Prompt requires mature content but workflow does not allow it` message already listed
-// above — same user state, different sentence, and the tail (`…which is not supported by the
-// current model`) is left unmatched so a reworded tail cannot make this pattern go inert.
+// `The prompt has been blocked due to mature content…` (21) is the green-site / private-resource
+// rewrite of the `Prompt requires mature content but workflow does not allow it` message already
+// listed above — same user state, different sentence, and the tail is left unmatched so a
+// reworded tail cannot make this pattern go inert.
 const BIZLOGIC_VALUE_RES = [
   /\binsufficientBuzz\b/i,
   /\bGeneration services are temporarily unavailable\b/i,

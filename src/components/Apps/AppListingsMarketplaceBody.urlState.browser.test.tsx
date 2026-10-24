@@ -4,6 +4,7 @@ import { useEffect, useReducer } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -51,6 +52,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -97,22 +99,20 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
@@ -268,6 +268,65 @@ describe('(a) the search box tracks an EXTERNAL query change', () => {
     await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
     // Still exactly what was typed, after the round-trip settled.
     await expect.element(search).toHaveValue('Alpha');
+  });
+});
+
+/**
+ * (d) WHITESPACE IS NOT A DISAGREEMENT. The echo into the URL compares TRIMMED values ('Alpha '
+ * and 'Alpha' are the same search), so it skips a write when only whitespace changed. The adopt
+ * effect compared RAW values, so it read that skipped write as `router.query` having moved and
+ * reset the box to the URL: a space typed after a pause vanished, and a space deleted came back.
+ * Every one of these waits out the 300ms debounce, because that is when it happened.
+ */
+describe('(d) a space in the search box survives the URL round-trip', () => {
+  const PAST_DEBOUNCE_MS = 700;
+
+  test('🔴 a trailing space typed after a pause stays in the box', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    await search.fill('Alpha ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha ');
+  });
+
+  test('🔴 a trailing space deleted after a pause stays deleted', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha ');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha ' }));
+
+    await search.fill('Alpha');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha');
+  });
+
+  test('a leading space typed into an empty box stays', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill(' ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe(' ');
+  });
+
+  test('a Back to a genuinely different term is still adopted', async () => {
+    // The control that keeps the fix honest: ignoring whitespace must not make the box deaf to
+    // an external change.
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toHaveValue('Alpha');
+
+    navigateTo({ query: 'Bravo' });
+    await vi.waitFor(() => expect((search.element() as HTMLInputElement).value).toBe('Bravo'));
   });
 });
 

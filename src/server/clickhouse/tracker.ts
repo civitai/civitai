@@ -310,6 +310,10 @@ export const ActionType = [
   // `Feed_TagBar_Click` is the existing precedent for a type whose `details` carries the
   // discriminator (`action: 'select' | 'clear'`).
   'AppsBuild_Action',
+  // User menu v2: one row per item opened from the menu, so default pins can be chosen from use.
+  // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
+  // tracker restart in migrations/README.md); the item, group and section ride in `details`.
+  'UserMenu_Click',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -375,8 +379,19 @@ export class Tracker {
     }
   }
 
-  private async resolveSession() {
-    if (!this.sessionResolved && this.req && this.res) {
+  private sessionPending: Promise<void> | undefined;
+
+  // One session lookup per request however many track() calls, and getSession(), start before it
+  // lands: they share the pending lookup. A failed lookup clears it, so the next call retries.
+  private resolveSession() {
+    if (this.sessionResolved || !this.req || !this.res) return Promise.resolve();
+    return (this.sessionPending ??= this.fetchSession().finally(() => {
+      this.sessionPending = undefined;
+    }));
+  }
+
+  private async fetchSession() {
+    if (this.req && this.res) {
       try {
         await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
           this.session = session;
@@ -398,6 +413,12 @@ export class Tracker {
         );
       }
     }
+  }
+
+  // The request's session, resolved once and shared with every track() call on this Tracker.
+  public async getSession() {
+    await this.resolveSession();
+    return this.session;
   }
 
   constructor(

@@ -6,6 +6,7 @@ import {
   IconGavel,
   IconMail,
   IconPlugConnected,
+  IconSparkles,
 } from '@tabler/icons-react';
 
 /**
@@ -24,8 +25,8 @@ import {
  * for a section registry behind a rail, with ONE deliberate omission: there are no
  * `keywords` and no `searchAccountSections` equivalent. That search box exists because
  * eight account sections hide hundreds of individual settings, so a label-only match
- * finds nothing you did not already know the name of. `/apps` has at most SIX
- * destinations, all of which fit on screen at once; a search box over six visible links
+ * finds nothing you did not already know the name of. `/apps` has at most SEVEN
+ * destinations, all of which fit on screen at once; a search box over seven visible links
  * is chrome that answers a question nobody has.
  */
 
@@ -138,6 +139,8 @@ export type AppsNavContext = {
    * by leaving an entry pointing at a page that answers `notFound`.
    */
   canSeeStore: boolean;
+  /** May load `/apps/assistant`: the shared `canAccessAppAssistant`, plus being signed in. */
+  canUseAssistant: boolean;
 };
 
 /** No capabilities — the shape a viewer with no flags at all resolves to. */
@@ -145,6 +148,7 @@ export const NO_APPS_NAV_CAPABILITIES: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
+  canUseAssistant: false,
 };
 
 /**
@@ -211,8 +215,8 @@ export type AppsSection = {
  *   • `__tests__/appsBuildAccess.test.ts` and `__tests__/appsBuildGateCallSites.test.ts`
  *     cover the Build row behaviourally and structurally.
  * ⚠️ Invites, Revenue and Review are in NEITHER node-tier set. Their only per-row
- * behavioural pin is `AppsRailNav.browser.test.tsx`, which runs in the report-only
- * browser tier — so editing one of those three predicates is not blocked by anything.
+ * behavioural pin is `AppsRailNav.browser.test.tsx`, in the browser tier
+ * (`Component tests`).
  * If one gains a flag term, add it to `appsSectionRowsMatchPageGates.test.ts` rather
  * than relying on review.
  *
@@ -358,6 +362,14 @@ export const appsSections: AppsSection[] = [
     icon: IconCode,
     group: 'build',
     visible: (_s, c) => c.canBuild,
+  },
+  {
+    id: 'assistant',
+    path: 'assistant',
+    label: 'App Assistant',
+    icon: IconSparkles,
+    group: 'build',
+    visible: (_s, c) => c.canUseAssistant,
   },
   {
     id: 'review',

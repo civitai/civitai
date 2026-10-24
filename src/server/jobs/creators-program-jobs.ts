@@ -13,6 +13,10 @@ import {
   getUserCapCache,
   userCashCache,
 } from '~/server/services/creator-program.service';
+import {
+  getSettlementHolds,
+  splitHeldBalances,
+} from '~/server/services/creator-program-prepayout-review/hold';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -191,12 +195,35 @@ export const creatorsProgramSettleCash = createJob(
 
     const month = dayjs().subtract(1, 'months').toDate();
     const participants = await getPoolParticipantsV2(month, true);
+    const period = dayjs(month).format('YYYY-MM');
+    const { heldUserIds, clearedUserIds, reviewed, tablesExist } = await getSettlementHolds(period);
     const balances = await getAccountsBalances({
-      accountIds: participants.map((p) => p.userId),
+      accountIds: [...new Set([...participants.map((p) => p.userId), ...clearedUserIds])],
       accountTypes: ['cashPending'],
     });
 
-    const positiveBalances = balances.filter((b) => b.balance > 0);
+    // Fail open: an unreviewed batch alerts but still pays.
+    if (!reviewed)
+      await logToAxiom({
+        name: 'creator-program-prepayout-review-missing',
+        type: 'error',
+        period,
+        tablesExist,
+        message: 'Settling a batch the pre-payout review did not finish',
+      });
+
+    const { settle: positiveBalances, held } = splitHeldBalances(balances, heldUserIds);
+    if (held.length)
+      await logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
+    const participantIds = new Set(participants.map((p) => p.userId));
+    const lateCleared = positiveBalances.filter((b) => !participantIds.has(b.accountId));
+    if (lateCleared.length)
+      await logToAxiom({
+        name: 'creator-program-settle-cleared',
+        type: 'info',
+        period,
+        lateCleared,
+      });
     if (positiveBalances.length === 0) return;
 
     // Settle pending cash transactions from bank with retry

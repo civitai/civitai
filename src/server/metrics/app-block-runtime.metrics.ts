@@ -161,21 +161,15 @@ export type AppBlockEndpoint =
   // as a SET against an AST walk of `blocks.router.ts` — read it there, do not
   // re-count here.
   //
-  // MEASURED against that ledger (2026-09-24): of 17 bridge procedures, 14 are
-  // rate-limited and 11 of those charge `catalog`. Exactly FOUR call sites record
-  // a refusal — `pollWorkflow` (`poll`), `cancelWorkflow`, `estimateWorkflow` and
-  // `getMyBuzzBalance` (`catalog`). So **10 of 14 rate-limited procedures are
-  // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
-  // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
-  // self-reads that reach the limiter through `authorizeBlockBuzzRead`.
-  // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
-  // refusal branch of each limiter site", which is a third in-tree claim this
-  // count contradicts — 4 of 14, not each.
+  // WHO RECORDS, by name because the names can be grepped: `pollWorkflow` (`poll`),
+  // `cancelWorkflow`, `estimateWorkflow`, `estimateWorkflowBatch` and
+  // `getMyBuzzBalance`. Every other rate-limited bridge procedure sheds a request
+  // silently, and most of those charge `catalog` — both app-subqueue procs among
+  // them. `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called
+  // from the refusal branch of each limiter site", which this contradicts.
   //
-  // WHAT THAT MEANS FOR THE FILED FOLLOW-UP (civitai/civitai#5095): closing it
-  // delivers two of the eight. That is worth doing and does not make the
-  // `catalog` refusal series readable. Do not read this comment, or that issue,
-  // as saying the gap is shut.
+  // civitai/civitai#5095 tracks the silent `catalog` procedures. Do not read this
+  // comment as saying the gap is shut.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
@@ -203,6 +197,14 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The DOCUMENT STORE (`/api/v1/blocks/storage/…`, one catch-all route). Four labels by
+  // workload, resolved per request from method + path shape: `info` (declaration + usage),
+  // `read` (list / get / batch get), `write` (document create / put / delete — the only
+  // ones that can run content moderation and charge quota), `tally` (counters and marks).
+  | 'storage_info'
+  | 'storage_read'
+  | 'storage_write'
+  | 'storage_tally'
   // The per-viewer checkpoint override write — the REST twin of the
   // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
   // into a settings-shaped bucket: it is the only REST route that writes
@@ -416,6 +418,14 @@ export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailabl
 export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
 
 /**
+ * The viewer-confirmed quote kinds — `kind:'training'` and the confirmed pass-through
+ * step. The ONLY label of `civitai_app_block_confirmed_quote_overcharge_total`.
+ */
+export const APP_BLOCK_CONFIRMED_QUOTE_KINDS = ['training', 'step'] as const;
+
+export type AppBlockConfirmedQuoteKind = (typeof APP_BLOCK_CONFIRMED_QUOTE_KINDS)[number];
+
+/**
  * The NON-`ok` verdicts of `withBlockScope`'s approved-status gate. Kept as a code-owned
  * union (not a free string) so the `reason` label stays a bounded 4-series set.
  *
@@ -474,18 +484,20 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
 }
 
 /**
- * The two post-from-app doors whose shared preamble can refuse an unhydratable
- * token subject: `blocks.createPostFromApp` (the write) and
- * `blocks.previewPostFromApp` (the read-only dry run).
+ * The post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write),
+ * `blocks.previewPostFromApp` (the read-only dry run), and `upload` — the
+ * persist of an app's `bytes` upload, `blocks.persistAppUploadImage`.
  *
- * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
- * preamble, so a combined number would leave an operator unable to say whether a
- * spike cost anyone a real post. A refused `create` is a post the viewer intended
- * to make and did not get; a refused `preview` cost them a dialog. Those warrant
+ * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Every one of these runs the
+ * identical preamble, so a combined number would leave an operator unable to say
+ * whether a spike cost anyone a real post. A refused `create` is a post the viewer
+ * intended to make and did not get; a refused `preview` cost them a dialog; a
+ * refused `upload` cost them an image the app made, before any post. Those warrant
  * different urgency, and the label is the only thing that can tell them apart —
  * there is no per-request log to fall back on for this deployment.
  */
-export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create', 'upload'] as const;
 export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
 
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
@@ -677,14 +689,19 @@ type Bundle = {
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
   bridgeMessagesTotal: Counter<string>;
+  customEventsTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
+  confirmedQuoteOverchargeTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
   consentMarkerUnavailableTotal: Counter<string>;
+  storageManifestUnparseableTotal: Counter<string>;
+  reviewStorageCleanupTotal: Counter<string>;
+  reviewStorageSweepTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -709,7 +726,8 @@ type Bundle = {
 //          real it shows up as mass piling immediately above 0.4 — and a generic
 //          0.25→0.5→1 ladder would hide it completely.
 //   10   — BLOCK_READY_TIMEOUT_MS: the ceiling on ONE attempt's wait for
-//          BLOCK_READY once init has started.
+//          BLOCK_READY once init has started — on every surface except the
+//          author's dev tunnel, which waits DEV_TUNNEL_READY_TIMEOUT_MS (30s).
 //   15   — TOKEN_WAIT_TIMEOUT_MS: the ceiling on ONE attempt's wait for a token.
 //
 // 🔴 A `launch_total` ABOVE 15s IS REACHABLE AND LEGITIMATE — do not read the
@@ -725,7 +743,8 @@ type Bundle = {
 // auto-retry-recovered launch lands in `+Inf` with no resolution between "16s"
 // and "57s", so the histogram can say THAT a launch was slow-recovered but not
 // how slow. Deliberate: extra edges up there would cost series on every app for
-// a population that is rare by construction (it takes two failed attempts), and
+// a population that is rare by construction (it takes two failed attempts — or,
+// on the dev tunnel only, one slow attempt against its 30s window), and
 // `_sum`/`_count` still give a usable mean for it. Revisit only if that bucket
 // turns out to carry real volume.
 const APP_BLOCK_LAUNCH_BUCKETS = [0.1, 0.25, 0.4, 0.6, 0.8, 1.2, 1.8, 2.5, 4, 6, 8, 10, 15];
@@ -867,15 +886,17 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // it (the bare-count trap the `step_price_check` counter's `quoted`/`absent` pair
   // above exists to avoid). Alert on a RATIO.
   //
-  // 🔴 `no_handler` IS NOT UNIFORMLY A BUG — read it WITH `host`. A page-only
-  // message arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`,
-  // `OPEN_IMAGE_UPLOAD`, …) is an EXPECTED refusal that the parity inventory
-  // declares N/A for `IframeHost`; the same type unhandled on `PageBlockHost` is a
-  // real missing bridge. The `host` label values are the parity inventory's own
-  // file names precisely so the series joins to `INVENTORY[type][host]` with no
-  // mapping table in between.
+  // 🔴 AN UNHANDLED MESSAGE IS SPLIT BY THE PARITY INVENTORY, NOT LEFT TO THE
+  // READER. Where `INVENTORY[type][host]` is an N/A rationale — a page-only message
+  // arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`, …), or
+  // `RESIZE_IFRAME` on the full-viewport page host — the dispatcher reports
+  // `not_applicable`. `no_handler` is left for a type declared `'required'` on that
+  // host (a real missing bridge) or one the inventory does not declare. Split
+  // because a by-design drop counted as `no_handler` is indistinguishable from a
+  // missing handler and buries it. The `host` label values are still the parity
+  // inventory's own file names, so either series joins to `INVENTORY[type][host]`.
   //
-  // Cardinality: (A+1) x (47+1) x 2 x 6 ~= 29,376 at A=50 approved apps, where
+  // Cardinality: (A+1) x (49+1) x 2 x 7 = 35,700 at A=50 approved apps, where
   // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
   // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
   // which is wrong for the same reason). That is the largest App
@@ -892,7 +913,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const bridgeMessagesTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_bridge_messages_total',
-    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for the type, so a REQUEST-style message would hang to its SDK timeout (30s default / 120s workflow / 600s human-in-the-loop) — READ IT WITH `host`, because a page-only message refused by IframeHost is the DECLARED design (see hostHandlerParity INVENTORY) while the same type unhandled on PageBlockHost is a missing bridge; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
+    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for a type the hostHandlerParity INVENTORY declares 'required' on this host, or a type the INVENTORY does not declare — the missing-bridge signal (a REQUEST-style one is NACKed where the protocol defines an error reply, within a per-second NACK budget; otherwise it hangs to its SDK timeout); not_applicable = this host registers no handler and the INVENTORY declares the type N/A for this host (e.g. a page-only message on IframeHost, RESIZE_IFRAME on the full-viewport PageBlockHost) — the declared design, answered on the wire exactly as no_handler is, and counted separately so it cannot bury a real no_handler; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
     ['app_block_id', 'type', 'host', 'outcome']
   );
 
@@ -989,6 +1010,30 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_spend_cap_rejections_total',
     'App Block generation submits DENIED by the per-app aggregate spend/velocity cap, by reason (daily = the per-app daily Buzz ceiling would be exceeded; velocity = the per-app short-window gen ceiling was exceeded; unavailable = a Redis/limit-resolution error, fail-closed deny)',
     ['reason']
+  );
+
+  // ── Viewer-confirmed quote OVERCHARGES ───────────────────────────────────────
+  // One increment per DEFINITE submit of a viewer-confirmed quote (a training run or a
+  // confirmed pass-through step) that the orchestrator billed ABOVE the price the
+  // viewer confirmed. The re-quote and the real submit are separate orchestrator
+  // calls, so this cannot be prevented at submit — the charge has already happened —
+  // and the post-paid settle refund clamps at 0, so no cap counter shows it either.
+  // This series and the `block-confirmed-quote-overcharge` log line (which carries
+  // the app, step type, workflow and both amounts) are the only places it is visible.
+  //
+  // Expected to be ZERO. Any non-zero value means a viewer was charged more than they
+  // agreed to. Alert on the VALUE (e.g. `max_over_time(...[24h]) > 0`), not on
+  // `increase()`/`rate()`: the labelled child is created lazily at its first
+  // increment, so the series is born at 1 and a single event shows no 0->1 delta.
+  //
+  // 🔴 `kind` IS THE ONLY LABEL. The pass-through `$type` is caller-supplied (an open
+  // set by construction on that arm), and app/user ids would grow with traffic; all of
+  // those ride the log line instead. Two series, total, forever.
+  const confirmedQuoteOverchargeTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_confirmed_quote_overcharge_total',
+    'App Block submits of a viewer-CONFIRMED quote (kind=training: a training run; kind=step: a confirmed pass-through step) that the orchestrator billed ABOVE the price the viewer confirmed in host chrome. Expected zero; any increase is a viewer charged more than they agreed to. Detected after the charge (cannot be prevented at submit). Details (app, step type, workflow, both amounts) are on the block-confirmed-quote-overcharge log line.',
+    ['kind']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1114,6 +1159,36 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface']
   );
 
+  // The document store could not parse an APPROVED (or pending, for a review token) manifest's
+  // `storage` declaration even with every phased feature switched on, so it answered 503 rather
+  // than declaring nothing. No label: the app is in the log line (written once per app per
+  // process), and a flat zero is the steady state.
+  const storageManifestUnparseableTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_storage_manifest_unparseable_total',
+    'Document-store requests answered 503 service_unavailable because the app manifest storage declaration did not parse (apps/doc-store-access.ts). Non-zero means a reviewed manifest no longer matches the parser; the app id is in the log. A flat zero is the expected steady state',
+    []
+  );
+
+  // One increment per inline review-storage teardown (publish-request.service.ts
+  // `teardownReviewStorageForRequest`, on approve/reject/withdraw), by outcome. A `failed` one is
+  // finished by the sweep, counted below.
+  const reviewStorageCleanupTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_cleanup_total',
+    'Inline deletions of a decided publish request review namespaces, by outcome: purged (data deleted), nothing (no review data), disabled (no usable store connection), failed (left to the sweep; logged)',
+    ['outcome']
+  );
+
+  // One increment per request the review-storage sweep (jobs/sweep-review-storage.ts) tried to
+  // purge. A steady `failed` means review data is outliving its request.
+  const reviewStorageSweepTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_review_storage_sweep_total',
+    'Publish requests whose leftover review namespaces the sweep purged, by outcome: purged, failed (retried next run)',
+    ['outcome']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1219,8 +1294,9 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // learns what a call will cost:
   //
   //   estimate_quoted — the estimate got a live orchestrator quote.
-  //   estimate_absent — it could not, and fell back to the declared price. The
-  //                     block was shown a number nothing re-measured.
+  //   estimate_absent — it could not. A non-training pass-through `$type` was
+  //                     shown its declared price; a registry step, a workflow
+  //                     or a training `$type` got a failed snapshot with no price.
   //
   // 🔴 THE PAIR IS THE POINT. `estimate_absent` alone is unreadable: a flat zero
   // is indistinguishable from an estimate path that never executes. Read the
@@ -1246,7 +1322,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and the nearest series for that is civitai_app_block_customcomfy_wallclock_seconds{engine=\"passthrough\"} (one sample per pass-through workflow that reached terminal - a lower bound, not joinable to this counter per event). quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    'App Block `kind:\'step\'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:\'step\' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step="__passthrough__" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app\'s own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and the nearest series for that is civitai_app_block_customcomfy_wallclock_seconds{engine="passthrough"} (one sample per pass-through workflow that reached terminal - a lower bound, not joinable to this counter per event). quoted = the pass-through submit got a live orchestrator quote; it is absent\'s denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (pass-through only) - or a failed snapshot with no price, on a registry step id, on step="__workflow__" and for a training $type (read as a ratio against estimate_quoted, never alone)',
     ['step', 'outcome']
   );
 
@@ -1327,19 +1403,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     APP_BLOCK_LAUNCH_INIT_POST_BUCKETS
   );
 
+  // No `app_block_id` label on purpose: the per-app breakdown is the table's job, and this route
+  // is public, so the label set must not grow with anything a caller sends.
+  const customEventsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_custom_events_total',
+    'App Blocks custom-event rows received by POST /api/track/block-event, by outcome. Dispositions (one per row that passed the request schema): accepted = written as the declared event; undeclared_event = written as one `__undeclared__` row because the approved manifest does not declare the event; non_prod_skipped = validated but not written because this deployment identifies as non-production; insert_failed = the write threw, timed out, was shed because too many writes were already in flight, or no ClickHouse client is configured; rate_limited = over the per-process budget for one client address and app; unknown_app = the app is not in the approved set (which is every app while the approved-app lookup is failing); session_failed = the session could not be resolved; private_run = the viewer is privately running an app that left the approved set within the last cache lifetime. Flags (at most one of each per row, in addition to its disposition): undeclared_prop = at least one property the event does not declare was stripped; invalid_value = at least one declared property was stripped for a wrong type or an undeclared enum value; invalid_instance_id = the block instance id was not shaped like a platform id (or, for a page, was not the page id of that app) and was stored empty; unattested_address = a row of an approved app whose request carried no edge-attested client address, so it was budgeted under the one shared fallback budget; counted whether or not the budget then admitted it (the address is used for rate limiting only and is never stored). Flags are counted whether or not the row is then written, so do not sum all outcomes into a row total. accepted counts rows handed to an asynchronous insert that does not wait for the server, so it is not proof the rows were stored.',
+    ['outcome']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     bridgeMessagesTotal,
+    customEventsTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
+    confirmedQuoteOverchargeTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
     consentMarkerUnavailableTotal,
+    storageManifestUnparseableTotal,
+    reviewStorageCleanupTotal,
+    reviewStorageSweepTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1565,6 +1655,24 @@ export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): 
 }
 
 /**
+ * Fail-soft emit of one viewer-confirmed quote OVERCHARGE (see the counter). Called
+ * from the shared confirmed-quote submit after a definite submit billed above the
+ * confirmed price.
+ *
+ * 🔴 TOTAL, like every emitter here: the submit has already succeeded and been
+ * charged; a metrics error must not turn that into a 500 the block reads as "nothing
+ * happened".
+ */
+export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind): void {
+  try {
+    const { confirmedQuoteOverchargeTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    confirmedQuoteOverchargeTotal.inc({ kind });
+  } catch {
+    /* instrument-only — never let a metrics error touch a charged submit */
+  }
+}
+
+/**
  * Fail-soft emit of one revocation refusal. Called from BOTH guards that read
  * `BlockRevocation.isRevoked` — `withBlockScope` (`block-scope.middleware.ts`) and
  * `authorizeBlockBridgeToken` (`blocks/block-bridge-auth.service.ts`).
@@ -1640,6 +1748,33 @@ export function recordBlockConsentMarkerUnavailable(surface: AppBlockRevocationS
   }
 }
 
+/** One document-store request refused because its manifest's `storage` did not parse. Total. */
+export function recordStorageManifestUnparseable(): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().storageManifestUnparseableTotal.inc();
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+export type ReviewStorageCleanupOutcome = 'purged' | 'nothing' | 'disabled' | 'failed';
+
+export function recordReviewStorageCleanup(outcome: ReviewStorageCleanupOutcome): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageCleanupTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail a moderator decision */
+  }
+}
+
+export function recordReviewStorageSweep(outcome: 'purged' | 'failed'): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().reviewStorageSweepTotal.inc({ outcome });
+  } catch {
+    /* instrument-only — a metrics error must never fail the sweep */
+  }
+}
+
 /**
  * Emits one counter per scope a request actually LOST, on either seam.
  *
@@ -1674,7 +1809,13 @@ export function recordConsentStrip(
  * there and forgetting it here yields a type error at the call site rather than a silent
  * mislabel.
  */
-export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+export type AppBlockRateLimitBucket =
+  | 'catalog'
+  | 'publish'
+  | 'post'
+  | 'post-app'
+  | 'poll'
+  | 'estimate-cells';
 
 /**
  * Fail-soft emit of ONE bridge rate-limit refusal.
@@ -1794,5 +1935,37 @@ export function observeCustomComfyWallclockSeconds(
     customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
   } catch {
     /* instrument-only — never let a metrics error touch the settle path */
+  }
+}
+
+/**
+ * Every value of the `outcome` label on `civitai_app_block_custom_events_total`. A closed list:
+ * the emitter takes this type, so a caller cannot mint a label from request data. The counter's
+ * help text says what each means and which are per-row dispositions and which are flags.
+ */
+export const APP_BLOCK_CUSTOM_EVENT_OUTCOMES = [
+  'accepted',
+  'undeclared_event',
+  'undeclared_prop',
+  'invalid_value',
+  'invalid_instance_id',
+  'rate_limited',
+  'unknown_app',
+  'session_failed',
+  'unattested_address',
+  'private_run',
+  'non_prod_skipped',
+  'insert_failed',
+] as const;
+export type AppBlockCustomEventOutcome = (typeof APP_BLOCK_CUSTOM_EVENT_OUTCOMES)[number];
+
+/** Fail-soft emit of `count` custom-event rows with one outcome. Never throws. */
+export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, count = 1): void {
+  if (count <= 0) return;
+  try {
+    const { customEventsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    customEventsTotal.inc({ outcome }, count);
+  } catch {
+    /* instrument-only */
   }
 }

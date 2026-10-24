@@ -176,6 +176,31 @@ export async function readListingVisibilityMany(
 }
 
 /**
+ * {@link readListingVisibilityMany} on a RENDERING path — the store badge. Degrades to an
+ * EMPTY map (every badge `null`) on ANY error, not just the missing column, because a
+ * cosmetic label must not 500 the store grid; the same posture as
+ * `readListingBetaManyForRender`.
+ *
+ * 🔴 NEVER USE THIS FOR AN ADMISSION DECISION. An empty map means "show no badge"; on a gate
+ * it would read as "every level unset", which is the pre-feature rule and not fail-closed
+ * for a restricted `approved` listing. Admission keeps the propagating readers above.
+ *
+ * The missing-column case is swallowed silently inside `readListingVisibilityMany`, so what
+ * reaches the log here is a real fault (connection, timeout, permission), at fault rate.
+ */
+export async function readListingVisibilityManyForRender(
+  listingIds: readonly string[],
+  db: VisibilityReadClient
+): Promise<Map<string, ListingVisibilityRead>> {
+  try {
+    return await readListingVisibilityMany(listingIds, db);
+  } catch (err) {
+    noteDegradedVisibilityRead(err);
+    return new Map();
+  }
+}
+
+/**
  * Record that a read fell back to the pre-feature predicate, without letting the recording
  * break the page.
  *
@@ -183,13 +208,15 @@ export async function readListingVisibilityMany(
  * NOWHERE. The consequence was that the whole manual-apply window was UNOBSERVABLE: the
  * store silently served the pre-feature predicate with no counter, log or metric saying so,
  * which is exactly the silent-gate class `store-scope.metrics` exists for. It is now called
- * from the store list path's catch.
+ * from the store list path's catch, and from {@link readListingVisibilityManyForRender}.
  *
- * ⚠️ FROM THE LIST PATH ONLY, AND THAT IS A RATE DECISION. That catch fires at most once per
- * catalog cache MISS (one per cohort per TTL), which is a usable signal. The DETAIL path's
- * equivalent is deliberately silent: it would emit at page-view rate on a public page, which
- * is a flood rather than observability. So the window is observable, not fully audited —
- * state it that way rather than implying every degraded read is recorded.
+ * ⚠️ TWO CALLERS, TWO RATES. The list path's catch fires at most once per catalog cache MISS
+ * (one per cohort per TTL), which is a usable signal for the manual-apply window. The badge
+ * reader logs only REAL faults (the missing column is swallowed before it), on every grid
+ * request that performs the read while such a fault lasts — signed-in, moderator or
+ * non-`public`-floor traffic; an anonymous `public`-floor page skips the read entirely, so
+ * its faults are not logged here. The DETAIL path's missing-column degrade stays deliberately silent: it would emit
+ * at page-view rate on a public page. So the window is observable, not fully audited.
  *
  * `type: 'error'` because the missing-column case is swallowed UPSTREAM and never reaches
  * a caller's catch — what arrives here is the complement (connection failure, timeout,

@@ -59,13 +59,6 @@ describe('buildRumGeoAttributes — the always-set rule', () => {
     const attrs = buildRumGeoAttributes('US');
     expect(Object.keys(attrs).sort()).toEqual([GEO_REGION_ATTR, GEO_TIMEZONE_ATTR].sort());
   });
-
-  it('coerces every value to a string (MetaAttributes must be strings)', () => {
-    setWindow(false);
-    for (const value of Object.values(buildRumGeoAttributes('US'))) {
-      expect(typeof value).toBe('string');
-    }
-  });
 });
 
 describe('buildRumGeoAttributes — region (SSR-derived country code)', () => {

@@ -1,4 +1,5 @@
 import type { Context } from '~/server/createContext';
+import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
   allBrowsingLevelsFlag,
@@ -108,6 +109,21 @@ export const domainBrowsingLevelCap = ({
   canViewNsfw: boolean;
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
 
+/**
+ * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
+ * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
+ */
+export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
+  const canViewNsfw = !!ctx.features.canViewNsfw;
+  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
+  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
+}
+
+/** Every level a request may be served: its cap from `requestDomainBrowsingLevelCap`, or all. */
+export const requestServableLevels = (ctx: Pick<Context, 'user' | 'features' | 'req'>) =>
+  requestDomainBrowsingLevelCap(ctx) ?? allBrowsingLevelsFlag;
+
 /** A requested level held to a cap. Unset, or with nothing in common with it, becomes the cap. */
 export const clampToDomainCap = (requested: number | undefined, cap: number) =>
   (requested ?? 0) & cap || cap;
@@ -123,4 +139,32 @@ export function clampRequestBrowsingLevels(input: RequestBrowsingLevels, cap: nu
   input.browsingLevel = clampToDomainCap(input.browsingLevel, cap);
   if (input.preCapBrowsingLevel !== undefined)
     input.preCapBrowsingLevel = clampToDomainCap(input.preCapBrowsingLevel, cap);
+}
+
+/**
+ * Resolves a feed request's browsing levels in place:
+ *
+ * 1. A signed-in caller who sent no `browsingLevel` gets their own
+ *    (`getRequestBrowsingLevel`).
+ * 2. The domain cap then applies, as in `applyDomainFeature`.
+ *
+ * Step 1 matters where the domain caps nothing (signed in with mature content allowed):
+ * there `applyDomainFeature` leaves an omitted level `undefined`, and the models query's
+ * `("nsfwLevel" & level) != 0` filter binds it as NULL, which matches no row.
+ * Signed-out callers skip step 1: they get the cap, or no level at all for a verified
+ * crawler where nothing is capped.
+ *
+ * 🔴 Call it from a read whose query needs a level, never from the shared middleware.
+ * That middleware runs on mutations too, and a level filled in there is a value the
+ * caller never sent, which `user.updateContentSettings` would save as theirs.
+ */
+export function resolveRequestBrowsingLevels(
+  input: RequestBrowsingLevels,
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
+) {
+  if (ctx.user && input.browsingLevel === undefined)
+    input.browsingLevel = getRequestBrowsingLevel(ctx);
+
+  const cap = requestDomainBrowsingLevelCap(ctx);
+  if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
 }

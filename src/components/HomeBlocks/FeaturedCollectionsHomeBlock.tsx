@@ -9,6 +9,7 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
@@ -86,7 +87,9 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
   // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(filtered, { entity: type }) as {
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+      entity: type,
+    }) as {
       id: number;
       user?: { id: number } | null;
     }[],

@@ -22,6 +22,7 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     submissionTxId: 'tx-1',
     submissionFee: 500,
     lastApprovedAmount: 1200,
+    displayApproved: false,
     autoChecks: [{ key: 'k', label: 'l', passed: false, detail: 'd' }],
     imageHash: 'deadbeef',
     sellerShare: 40,
@@ -30,6 +31,7 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     imageMeta: { width: 512, height: 512, hasTransparency: true },
     rightsAffirmation: { userId: 5, affirmedAt: '2026-01-01', version: 1, statement: 's' },
     takedown: { reason: 'r', moderatorId: 6, at: '2026-01-02' },
+    withdrawnRefund: { trigger: 'reject', clawback: true, userId: 6, at: '2026-01-03' },
   } as unknown as CosmeticShopItemMeta;
 
   // The key-set assertions below only see what this fixture carries, so it has

@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS deps
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -52,6 +52,11 @@ ARG NODE_BUILD_MEM=8192
 # Defaults empty (commit:null) when built outside CI.
 ARG SOURCE_COMMIT=""
 ENV SOURCE_COMMIT=$SOURCE_COMMIT
+# "1" skips `next build`'s own TypeScript pass (read in next.config.mjs). Empty by default, so
+# every build that does not pass it type-checks. Only the PR-preview build passes it, because
+# that pipeline runs the full `tsc` in a parallel task already. A build ARG is visible to the RUN
+# below as an environment variable; it is deliberately NOT an ENV, so it never reaches the image.
+ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
@@ -169,7 +174,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runner
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

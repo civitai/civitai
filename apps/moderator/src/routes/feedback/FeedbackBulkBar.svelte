@@ -54,7 +54,7 @@
 <!-- A spacer, so the fixed bar cannot cover the last row or the Next button.
      🔴 IT IS PAIRED WITH THIS BAR'S OWN HEIGHT AND IS NOT THE SIBLING QUEUES' `h-20`: this bar is
      taller, carrying a refusal row and a help paragraph they do not have. The three other selection
-     bars in this app (`images/[slug]`, `images/to-ingest`, `images/tags`) each spell their own
+     bars in this app (`$lib/components/image-queue/QueueSelectionBar`, used by `/images/[slug]` and `/reports/image`; `images/to-ingest`; `images/tags`) each spell their own
      pair — if a shared shell is ever extracted it has to OWN the spacer/height pairing rather than
      inherit two magic numbers that only look like they match. -->
 <div class="h-28"></div>

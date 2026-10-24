@@ -34,6 +34,14 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['getArea', 'create'],
     why: 'Both, together: the router already requires that whoever sees the prompt can submit.',
   },
+  'app-feedback.router.ts': {
+    procedures: ['create'],
+    why: 'Private app feedback, same posture as feedback.create: its eligibility query is not email-gated, so the submit must not be either.',
+  },
+  'platform-feedback.router.ts': {
+    procedures: ['create', 'getStatus'],
+    why: 'Developer-platform feedback sent with an API token, same posture as feedback.create: reporting a broken tool, and reading that report back, must not depend on a verified email.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',
@@ -97,6 +105,11 @@ const DERIVED_BASES: Record<string, string> = {
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorProcedure: 'protectedProcedure',
   promotionProcedure: 'protectedProcedure',
+  servicesGuardedProcedure: 'guardedProcedure',
+  servicesProcedure: 'protectedProcedure',
+  storylineMemberProcedure: 'protectedProcedure',
+  storylineReadProcedure: 'publicProcedure',
+  storylineWriteProcedure: 'guardedProcedure',
 };
 
 const stripComments = (s: string) =>

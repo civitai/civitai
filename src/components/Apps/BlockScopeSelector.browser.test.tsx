@@ -5,7 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { BlockScopeSelector } from './BlockScopeSelector';
 
 /**
- * BlockScopeSelector — browser-mode render test (report-only in Tekton).
+ * BlockScopeSelector — browser-mode render test (`Component tests` in CI).
  *
  * Pins that the manifest-editor scope checklist renders the known scope
  * vocabulary, flags sensitive scopes with the shared "Sensitive" badge, toggles

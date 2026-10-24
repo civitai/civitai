@@ -6,8 +6,8 @@ import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import type * as NotificationsModule from '~/utils/notifications';
 
 /**
- * On-site (App Block) review modal — browser-mode render test (report-only in
- * Tekton). The modal was extracted from `src/pages/apps/review.tsx` to
+ * On-site (App Block) review modal — browser-mode render test (`Component tests`
+ * in CI). The modal was extracted from `src/pages/apps/review.tsx` to
  * `OnsiteReviewModal.tsx` (mirrors #3154) so it is importable WITHOUT the page's
  * `getServerSideProps` server graph — this suite is the coverage that extraction
  * unlocks. Asserts:
@@ -548,6 +548,169 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
     await expect.element(page.getByText(/justification is required/)).toBeInTheDocument();
     // …and it must NOT be announced as a working paid app, because it cannot sell.
     expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — declared analytics events are shown to the mod', () => {
+  // Every name and value below is distinct from every other and from the card's own
+  // copy, so each assertion can only be satisfied by the field it names.
+  const VALID_ANALYTICS = {
+    events: {
+      level_complete: {
+        description: 'A viewer finished a level',
+        properties: {
+          difficulty: { type: 'enum', values: ['casual_tier', 'brutal_tier'] },
+          score: { type: 'number' },
+          used_hint: { type: 'boolean' },
+        },
+      },
+      share_clicked: {},
+    },
+  };
+
+  function renderWithAnalytics(analytics: unknown) {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: { ...ONSITE_PENDING, manifest: { ...ONSITE_PENDING.manifest, analytics } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+  }
+
+  function propertyRowParts(name: string): string[] {
+    const rows = page.getByTestId('apps-review-analytics-property').elements();
+    const row = rows.find((el) => el.querySelector('code')?.textContent === name);
+    if (!row) throw new Error(`no property row for ${name}`);
+    return [...row.children].map((child) => child.textContent ?? '');
+  }
+
+  test('a valid declaration lists every event, property type and enum value, inline', async () => {
+    renderWithAnalytics(VALID_ANALYTICS);
+    await expect.element(page.getByText('Analytics events')).toBeInTheDocument();
+    await expect.element(page.getByText(/^2 events declared\./)).toBeInTheDocument();
+
+    const eventNames = page
+      .getByTestId('apps-review-analytics-event')
+      .elements()
+      .map((el) => el.querySelector('code')?.textContent);
+    expect(eventNames).toEqual(['level_complete', 'share_clicked']);
+    await expect.element(page.getByText('A viewer finished a level')).toBeInTheDocument();
+    // The harness loads no Mantine CSS, so clipping can't be observed here; pin the
+    // wrap rule that keeps a long unbroken description inside the overflow-hidden Card.
+    expect(page.getByText('A viewer finished a level').element().style.overflowWrap).toBe(
+      'anywhere'
+    );
+    await expect.element(page.getByText('No properties')).toBeInTheDocument();
+
+    expect(propertyRowParts('difficulty')).toEqual([
+      'difficulty',
+      'enum',
+      '"casual_tier"',
+      '"brutal_tier"',
+    ]);
+    // Enum values keep their whitespace on screen (CSS would otherwise collapse runs).
+    const valueEl = page.getByText('"casual_tier"', { exact: true }).element();
+    expect(getComputedStyle(valueEl).whiteSpace).toBe('pre-wrap');
+    expect(propertyRowParts('score')).toEqual(['score', 'number']);
+    expect(propertyRowParts('used_hint')).toEqual(['used_hint', 'boolean']);
+
+    // INLINE, not inside the collapsed disclosure. Mantine keeps a collapsed panel
+    // mounted under `aria-hidden`, so presence alone cannot tell the two apart.
+    const card = page.getByTestId('apps-review-analytics').element();
+    expect(card.closest('[aria-hidden="true"]')).toBeNull();
+    // Positive control for that discriminator: the raw-JSON disclosure's own content
+    // (the fixture's novel key) IS reported hidden.
+    expect(
+      page
+        .getByText(/novel-payload/)
+        .element()
+        .closest('[aria-hidden="true"]')
+    ).not.toBeNull();
+  });
+
+  test('`analytics` is not repeated in the raw "Other manifest fields" disclosure', async () => {
+    renderWithAnalytics(VALID_ANALYTICS);
+    await expect.element(page.getByTestId('apps-review-analytics')).toBeInTheDocument();
+    // The raw dump is mounted while collapsed, so a leaked key would be found here.
+    expect(page.getByText(/"analytics"/).elements()).toHaveLength(0);
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('a malformed declaration shows every error and NO event list', async () => {
+    // `level_complete` is valid on its own; `asked_prompt` declares a free-text property
+    // and `BadName` breaks the naming rule — two errors, so a list truncated to one is
+    // caught.
+    renderWithAnalytics({
+      events: {
+        level_complete: VALID_ANALYTICS.events.level_complete,
+        asked_prompt: { properties: { prompt: { type: 'string' } } },
+        BadName: {},
+      },
+    });
+    await expect
+      .element(page.getByText('Analytics declaration does not validate', { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(/^analytics\.events\.asked_prompt\.properties\.prompt\.type must be one of/)
+      )
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/^analytics\.events key "BadName" must be lowercase snake_case/))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "This declaration is invalid, so the submission can't be approved until the author fixes it.",
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    // Long unbroken error paths must wrap rather than overflow (see the description note).
+    expect(page.getByText(/^analytics\.events key "BadName"/).element().style.overflowWrap).toBe(
+      'anywhere'
+    );
+    // Parser invariant (all-or-nothing), not card logic: any error empties `events`.
+    expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
+    expect(page.getByText(/events declared/).elements()).toHaveLength(0);
+    expect(page.getByText('Declares analytics but no events.').elements()).toHaveLength(0);
+  });
+
+  test('`analytics: null` is an error, not an absent key', async () => {
+    renderWithAnalytics(null);
+    await expect
+      .element(page.getByText('Analytics declaration does not validate', { exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('analytics must be an object')).toBeInTheDocument();
+  });
+
+  test('a single event is counted in the singular', async () => {
+    renderWithAnalytics({ events: { share_clicked: {} } });
+    await expect.element(page.getByText(/^1 event declared\./)).toBeInTheDocument();
+  });
+
+  test('a valid declaration with no events says so', async () => {
+    renderWithAnalytics({ events: {} });
+    await expect.element(page.getByText('Declares analytics but no events.')).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
+    expect(page.getByText(/does not validate/).elements()).toHaveLength(0);
+  });
+
+  test('a manifest with NO analytics key renders no card', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Positive control: the modal rendered, so the zero below means "absent".
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-analytics').elements()).toHaveLength(0);
   });
 });
 

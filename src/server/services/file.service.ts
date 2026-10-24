@@ -22,6 +22,8 @@ import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model
 import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
 
@@ -41,6 +43,25 @@ export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema
   }));
 };
 
+/** File metadata only the bounty entry file check and its moderator override write. Never taken from a caller. */
+export const SERVER_FILE_METADATA_KEYS = [
+  'sha256Server',
+  'hashCheckedAt',
+  'hashAttemptedAt',
+  'hashFailCount',
+  'hashLastError',
+  'blockedReason',
+  'checkOverride',
+] as const;
+
+function callerMetadata(metadata: unknown) {
+  return Object.fromEntries(
+    Object.entries((metadata ?? {}) as Record<string, unknown>).filter(
+      ([key]) => !(SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key)
+    )
+  );
+}
+
 export const updateEntityFiles = async ({
   tx,
   entityId,
@@ -56,18 +77,27 @@ export const updateEntityFiles = async ({
 }) => {
   const updatedFiles = files.filter((f) => f.id);
 
-  if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
-          data: {
-            ...file,
-            metadata: { ...(file.metadata ?? {}), ownRights },
-          },
-        });
-      })
-    );
+  // A file saved again at the same url keeps its check result; a new url is checked afresh. The
+  // result is read inside this UPDATE, from the row as it is written, so a moderator's change to it
+  // is never written back over; read it in an earlier statement and that guarantee is gone. The
+  // server keys must be read from `f`, the row being updated, not a joined or sub-selected copy. In
+  // id order, so two saves of one item take the row locks in the same order.
+  for (const file of [...updatedFiles].sort((a, b) => (a.id as number) - (b.id as number))) {
+    const metadata = { ...callerMetadata(file.metadata), ownRights };
+    const count = await tx.$executeRaw`
+      UPDATE "File" f
+      SET name = ${file.name}, url = ${file.url}, "sizeKB" = ${file.sizeKB},
+        metadata = ${JSON.stringify(metadata)}::jsonb || CASE
+          WHEN f.url = ${file.url} AND jsonb_typeof(f.metadata) = 'object' THEN COALESCE(
+            (SELECT jsonb_object_agg(key, value) FROM jsonb_each(f.metadata)
+              WHERE key = ANY(${[...SERVER_FILE_METADATA_KEYS]}::text[])),
+            '{}'::jsonb
+          )
+          ELSE '{}'::jsonb
+        END
+      WHERE f.id = ${file.id} AND f."entityId" = ${entityId} AND f."entityType" = ${entityType}
+    `;
+    if (count !== 1) throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.
@@ -92,7 +122,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
-        metadata: { ...(file.metadata ?? {}), ownRights },
+        metadata: { ...callerMetadata(file.metadata), ownRights },
       })),
     });
   }
@@ -229,7 +259,7 @@ export const getFileForModelVersion = async ({
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
+  if (!canViewPoiModel(modelVersion.model.poi, modelVersion.model.userId, user)) {
     return { status: 'not-found' };
   }
 
@@ -304,6 +334,7 @@ export const getFileForModelVersion = async ({
     overrideName: true,
     type: true,
     metadata: true,
+    sizeKB: true,
     hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
   };
 
@@ -369,14 +400,17 @@ export const getFileForModelVersion = async ({
     versionFiles,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename, {
+    const { url, urlExpiryDate } = await resolveDownloadUrl(file.id, file.url, filename, {
       direct,
       ...attribution,
     });
     return {
       status: 'success',
       url,
+      // The legacy delivery-worker path hands this back as JSON text, not a Date.
+      urlExpiresAt: new Date(urlExpiryDate),
       fileId: file.id,
+      sizeKB: file.sizeKB,
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
@@ -459,7 +493,9 @@ type ModelVersionFileResult =
   | {
       status: 'success';
       url: string;
+      urlExpiresAt: Date;
       fileId: number;
+      sizeKB: number;
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
@@ -475,6 +511,7 @@ type FileResult = {
   name: string;
   overrideName?: string | null;
   metadata: Prisma.JsonValue;
+  sizeKB: number;
   hashes: {
     hash: string;
   }[];

@@ -32,11 +32,13 @@ const jobQueueMap = {
   [EntityType.ModelVersion]: 'modelVersionIds',
   [EntityType.Comment]: 'commentIds', // unused
   [EntityType.CommentV2]: 'commentV2Ids', // unused
+  [EntityType.CommentV3]: 'commentV3Ids', // unused
   [EntityType.User]: 'userIds', // unused
   [EntityType.UserProfile]: 'userProfileIds', // unused
   [EntityType.ResourceReview]: 'resourceReviewIds', // unused
   [EntityType.ChatMessage]: 'chatMessageIds', // unused
   [EntityType.Model3D]: 'model3dIds',
+  [EntityType.Storyline]: 'storylineIds', // unused
 } as const;
 type JobQueueMap = typeof jobQueueMap;
 type JobQueueIds = {

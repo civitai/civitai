@@ -35,6 +35,7 @@ export function PostCard({ data }: Props) {
             className="ml-auto"
             image={image}
             context="post"
+            postImageCount={data.imageCount}
             additionalMenuItems={
               isOwner ? (
                 <AddArtFrameMenuItem

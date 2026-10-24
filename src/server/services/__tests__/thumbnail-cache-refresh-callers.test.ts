@@ -85,7 +85,10 @@ describe('thumbnail-cache refresh call sites', () => {
   });
 
   it('a moderator re-rating refreshes through the parent-aware helper', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ metadata: { parentId: 500 }, postId: null });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      metadata: { parentId: 500 },
+      postId: null,
+    });
     dbMock.dbWrite.image.update.mockResolvedValue({});
 
     await updateImageNsfwLevel({ id: 77, nsfwLevel: 4, userId: 1, isModerator: true } as never);

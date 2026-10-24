@@ -6,6 +6,9 @@ import * as z from 'zod';
 // site. A second copy here would let `STAGE3_MAX_RANKED` derive from a stale
 // value the day the vendor's limit moves.
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
+import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
+import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -186,11 +189,50 @@ const contentTypeSchema = z.enum(contentTypeOptions);
 
 const distributionShape = z.record(z.string(), z.number().min(0).max(1));
 
-export const resourceIntentInputSchema = z.object({
-  prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
-  baseModel: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
-});
+/**
+ * `kind`: `'addon'` (the default, and what an absent `kind` means) asks for add-on resources;
+ * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem, one of the known
+ * base-model names), makes no vendor call and does not read the prompt for ranking
+ * (`resource-intent-checkpoint.ts`). The block route accepts `'checkpoint'` only behind
+ * `resourceIntentCheckpoint`.
+ */
+export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
+/**
+ * Every known base-model name: the set `modelVersionUpsertSchema` accepts for a version's
+ * `baseModel`, so it covers every value a checkpoint can carry.
+ */
+const knownBaseModels = new Set(baseModels);
+
+export const resourceIntentInputSchema = z
+  .object({
+    prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
+    baseModel: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
+    kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+    // Answered by the block route from the hosted-model catalog; never reaches the primitive.
+    needs: z
+      .array(z.enum(HOSTED_MODEL_CAPABILITIES))
+      .max(HOSTED_MODEL_CAPABILITIES.length)
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind !== 'checkpoint') return;
+    if (!input.baseModel) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel is required when kind is 'checkpoint'",
+      });
+    } else if (!knownBaseModels.has(input.baseModel)) {
+      // The baseModel is the only caller-chosen term of this mode's cache key (the prompt is not
+      // one), so only known names are admitted; the add-on path is left exactly as it was.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel must be a known base model when kind is 'checkpoint'",
+      });
+    }
+  });
 
 export type ResourceIntentInput = z.infer<typeof resourceIntentInputSchema>;
 
@@ -260,10 +302,12 @@ export const resourceIntentResponseSchema = z.strictObject({
    * hydration throws.
    *
    * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
-   * failed, and the invariants built on it — "fail closed, fail empty" in the
+   * failed (in checkpoint mode, which has none, the search or hydration), and the
+   * invariants built on it — "fail closed, fail empty" in the
    * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
-   * `model: 'jev-unavailable'` — all hold together. A label-read failure produces
-   * a complete, gate-passing response with a real intent and real suggestions, so
+   * `model: 'jev-unavailable'` (`'checkpoint-unavailable'` in checkpoint mode) —
+   * all hold together. A label-read failure produces a complete, gate-passing
+   * response with a real intent and real suggestions, so
    * marking it `degraded` would break that invariant for every consumer.
    *
    * It would also corrupt both shadow queries that read the flag, in opposite
@@ -293,6 +337,33 @@ export const resourceIntentResponseSchema = z.strictObject({
    * route is dark behind `resourceIntentJev`.
    */
   insightFallback: z.boolean(),
+  /**
+   * POOL_MERGE arm only (absent on the HYBRID_10 arm): no co-occurrence snapshot could be served,
+   * so the list is BASE's popularity top `min(cap, 50)`, through the same gates. Not `degraded`,
+   * for the reason `insightFallback` is not.
+   */
+  coocFallback: z.boolean().optional(),
+  /**
+   * Checkpoint mode only (absent on add-on responses): `kind: 'checkpoint'` and the arm that
+   * produced the list. There is no stage 1 in this mode, so `intent`, `criteria` and
+   * `noneProbability` are `null`; `coocFallback` rides on the `attach_bm` arm only.
+   */
+  kind: z.literal('checkpoint').optional(),
+  checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
+  /**
+   * The v1_tags arm only (absent on every other arm). `v1Fallback`: the arm could not rank this
+   * prompt (no servable tag index, no kept tag, no resolvable ecosystem, an ecosystem the index
+   * never saw, or nothing survived the gates and hydration), so the list is the POOL_MERGE arm's,
+   * with its own `coocFallback`. `ecosystems`: the top tag-derived
+   * ecosystems, best first, when the caller gave no `baseModel` and the list is v1's own; the list
+   * is restricted to the first.
+   *
+   * 🔴 Optional, not required: a required field would make every older cached blob fail to parse,
+   * and these keys are written only under v1 cache keys, which older pods never compute.
+   */
+  arm: z.literal('v1_tags').optional(),
+  v1Fallback: z.boolean().optional(),
+  ecosystems: z.array(z.string()).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

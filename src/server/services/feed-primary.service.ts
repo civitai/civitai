@@ -36,6 +36,18 @@ export const countFeedPrimary = (
 ) => requestCounter.inc({ outcome, reason: reasonLabel(reason), route });
 
 const UNMAPPED_LOG_INTERVAL_MS = 60_000;
+// A 400 is a request the mapper thought the feed could take and the feed refused: a limit the
+// two disagree on. One a minute with the feed's own reason is enough to find which.
+let refusedLoggedAt = 0;
+function logRefused(query: string, error: string | undefined, route: FeedPrimaryRoute | undefined) {
+  const now = Date.now();
+  if (now - refusedLoggedAt < UNMAPPED_LOG_INTERVAL_MS) return;
+  refusedLoggedAt = now;
+  logToAxiom(
+    { type: 'warning', name: 'feed-primary-refused', route, error, query: query.slice(0, 2000) },
+    'civitai-prod'
+  );
+}
 const unmappedLoggedAt = new Map<string, number>();
 function logUnmapped(reason: string, input: CapturableSearchInput) {
   const now = Date.now();
@@ -85,8 +97,28 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   route?: FeedPrimaryRoute;
 };
 
-/** The image query for hydrating exactly `ids`: the request's filters without its paging or
- *  period, both already applied by the feed (getAllImages would cut the period on createdAt). */
+export type DatapacketRescue = 'rescued' | 'still-empty';
+
+/**
+ * Loads the feed's ids. A DataPacket read that finds none of them is retried once on the read
+ * replica: DataPacket answers no rows for images the primary has (on 22 Oct 08:30 UTC, 21 of the
+ * 23 ids in a burst of empty gallery pages were on the read replica, published and scanned), and
+ * the search index fallback would hydrate from DataPacket again. Only an empty page pays for it.
+ */
+export async function hydrateWithReadRescue<T, Q extends { dbTarget?: string }>(
+  query: Q,
+  load: (query: Q) => Promise<T[]>,
+  onRescue?: (outcome: DatapacketRescue) => void
+): Promise<T[]> {
+  const rows = await load(query);
+  if (rows.length || query.dbTarget !== 'datapacket') return rows;
+  const rescued = await load({ ...query, dbTarget: 'read' });
+  onRescue?.(rescued.length ? 'rescued' : 'still-empty');
+  return rescued;
+}
+
+/** The image query for hydrating exactly `ids`: the request's filters without its paging,
+ *  period or jump, all applied by the feed (getAllImages would cut the period on createdAt). */
 export function feedHydrateQuery<
   T extends {
     cursor?: unknown;
@@ -95,6 +127,7 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
+    jumpTo?: string;
     modelId?: number;
     modelVersionId?: number;
     hubId?: number;
@@ -110,6 +143,7 @@ export function feedHydrateQuery<
   | 'offset'
   | 'entry'
   | 'period'
+  | 'jumpTo'
   | 'modelId'
   | 'modelVersionId'
   | 'hubId'
@@ -126,6 +160,9 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
+    // The feed bounds the month on sortAt; the hydrate's createdAt bound would drop an image
+    // created before the month and published inside it.
+    jumpTo: _jumpTo,
     // The feed already scoped these, and counts a creator's post on a version as a member where
     // the hydrate's resource join would drop it.
     modelId: _modelId,
@@ -170,7 +207,7 @@ export async function serveFromFeed<T extends { id: number }>(
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
-  const mapping = mapSearchInputToFeedQuery(input, 'primary');
+  const mapping = mapSearchInputToFeedQuery(input, 'primary', deps.route);
   if (!mapping.ok) {
     const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
@@ -188,6 +225,7 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   if (answer.status !== 200) {
     count('error', `status:${answer.status}`);
+    if (answer.status === 400) logRefused(mapping.query, answer.error, deps.route);
     return { ok: false, reason: `status:${answer.status}` };
   }
   // A feed build without the any-of sources ignores them and answers with the open feed. Only

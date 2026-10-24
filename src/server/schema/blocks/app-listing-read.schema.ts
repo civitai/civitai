@@ -2,6 +2,11 @@ import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
+import type { RestrictedListingAudience } from '~/shared/utils/app-listing-visibility';
+import {
+  LISTING_FORKS_PAGE_DEFAULT,
+  LISTING_FORKS_PAGE_MAX,
+} from '~/shared/constants/app-fork.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -283,6 +288,20 @@ export type ListingCard = {
    * than needing a backfill.
    */
   openCount: number | null;
+  /**
+   * The listing's RESTRICTED audience as THIS VIEWER may know it, for the store badge
+   * ("Testers only" / "Moderators only" / "Unlisted") — or `null`, which renders nothing.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — A DERIVED, VIEWER-SCOPED VALUE, NOT THE `visibility`
+   * COLUMN. The raw level is an owner-only setting (see `ListingVisibilityMenuModal`), so it
+   * is never projected. This is set only for the owner, a moderator, or a viewer whose cohort
+   * the level already admits — `restrictedAudienceForViewer` is the one rule. `null` covers
+   * unset, `public`, the manual-apply column being absent, and "this viewer is not told".
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it (the field is
+   * always `null` there, and adding it would change a documented contract for nothing).
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   kindData: ListingCardKindData;
 };
 
@@ -290,7 +309,8 @@ export type ListingCard = {
  * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
  * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
  * and client-side search treat it like any other card; `contentRating` is the stricter of
- * parent and item. `runHref` is built server-side under the parent's run route; there is no
+ * parent and item. `runHref` is built server-side: under the parent's run route, or, for an
+ * off-site parent (`external`), from the parent's moderator-set link template. There is no
  * author-supplied URL.
  *
  * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
@@ -310,9 +330,26 @@ export type SubListingCard = {
   creator: ListingCreatorChip;
   parent: { id: string; slug: string; name: string; iconUrl: string | null };
   runHref: string;
+  /** `runHref` leaves Civitai: open it in a new tab, whether or not the viewer can open pages. */
+  external?: true;
 };
 
 export type StoreGridItem = ListingCard | SubListingCard;
+
+/**
+ * Drop the viewer-scoped fields from a store DTO before it crosses the public REST boundary.
+ *
+ * `GET /api/v1/apps` and `/api/v1/apps/{slug}` are a hand-documented published contract and
+ * always read as an anonymous, floor-`public` viewer, so `restrictedAudience` is `null` there
+ * by construction. Serving a key that can only ever be `null` would change the documented
+ * response shape for nothing, so both handlers strip it.
+ */
+export function withoutViewerScopedFields<T extends { restrictedAudience: unknown }>(
+  dto: T
+): Omit<T, 'restrictedAudience'> {
+  const { restrictedAudience: _viewerScoped, ...rest } = dto;
+  return rest;
+}
 
 export type ListingGalleryScreenshot = {
   url: string;
@@ -574,7 +611,71 @@ export type ListingDetail = {
    * the MANUAL-APPLY migration is outstanding.
    */
   betaMessage: string | null;
+  /**
+   * Same viewer-scoped restricted audience as `ListingCard.restrictedAudience`, for the
+   * detail header's badge. 🔴 `private` admits no cohort, so it may reach only the owner and
+   * moderators — `restrictedAudienceForViewer` decides, not this read's caller.
+   * Stripped from the public REST `GET /api/v1/apps/{slug}` response, like the card's.
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;
+  /**
+   * The author's opt-in: "Let others fork this app's source". Read by the Fork action, which
+   * offers itself only on a forkable on-site app. `false` while the manual-apply migration is
+   * outstanding (`app-fork.service.ts`).
+   */
+  forkable: boolean;
+  /**
+   * Fork provenance, or `null` for an app that is not a fork. Shown as "Forked from …" whenever
+   * it is set — provenance is not behind the fork rollout flag.
+   *
+   * 🔴 VIEWER-SCOPED IN THE ONLY DIRECTION THAT MATTERS: the parent's name and slug are present
+   * only when THIS viewer may see the parent's store page. A hidden parent and a deleted one both
+   * read `{ visible: false }`, so this field cannot disclose a hidden listing's name or existence.
+   */
+  forkOf: ListingForkOf | null;
+};
+
+/**
+ * Where a fork came from, as the store page may disclose it. See `ListingDetail.forkOf`.
+ * JSON-safe: this DTO also crosses the public REST boundary.
+ */
+export type ListingForkOf = { visible: true; slug: string; name: string } | { visible: false };
+
+/**
+ * The published forks of one listing, newest first. Keyset-paginated on the listing id
+ * (`apl_<ULID>`, so id order is creation order); `cursor` is the last id of the previous page.
+ */
+export const listListingForksSchema = z.object({
+  listingId: z.string().min(1).max(64),
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(LISTING_FORKS_PAGE_MAX)
+    .optional()
+    .default(LISTING_FORKS_PAGE_DEFAULT),
+});
+export type ListListingForksInput = z.infer<typeof listListingForksSchema>;
+
+/** `appListings.startFork` — the PARENT listing to fork. Nothing else: the server picks the rest. */
+export const startForkSchema = z.object({ listingId: z.string().min(1).max(64) });
+
+/** `appListings.getForkSession` — the fork slug the App Assistant page was sent to. */
+export const getForkSessionSchema = z.object({ forkSlug: z.string().min(3).max(40) });
+
+/** One fork in a parent's fork list — only what the list renders. */
+export type ListingForkItem = { id: string; slug: string; name: string };
+
+/**
+ * A page of a listing's PUBLISHED forks. `totalCount` counts the same set the pages walk: forks
+ * this viewer could open in the store (approved, store-visible, not a revision draft).
+ */
+export type ListingForksPage = {
+  totalCount: number;
+  items: ListingForkItem[];
+  nextCursor: string | null;
 };

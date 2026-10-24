@@ -1,6 +1,8 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isCrucibleHiddenByScan } from '~/server/services/crucible.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  isCrucibleBlockedForViewer,
+  isCrucibleHiddenByScan,
+} from '~/server/services/crucible.service';
 import {
   isPrismaUniqueViolation,
   throwBadRequestError,
@@ -15,11 +17,13 @@ export async function toggleCrucibleFollow({
   crucibleId,
   userId,
   isModerator,
+  blockedCreatorIds,
   setTo,
 }: {
   crucibleId: number;
   userId: number;
   isModerator?: boolean;
+  blockedCreatorIds?: number[];
   setTo?: boolean;
 }): Promise<boolean> {
   const row = { type: NOTIFY, crucibleId, userId };
@@ -52,11 +56,7 @@ export async function toggleCrucibleFollow({
   // user to, a crucible that page hides from them.
   if (isCrucibleHiddenByScan(crucible, { viewerId: userId, isModerator }))
     throw throwNotFoundError('Crucible not found');
-  if (
-    !isModerator &&
-    crucible.userId !== userId &&
-    (await amIBlockedByUser({ userId, targetUserId: crucible.userId }))
-  )
+  if (isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
     throw throwNotFoundError('Crucible not found');
 
   if (!CRUCIBLE_FOLLOWABLE_STATUSES.includes(crucible.status))

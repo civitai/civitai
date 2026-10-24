@@ -1,4 +1,4 @@
-/** OpenAI handler for the form-graph lane — gpt-image 1/1.5/2/2.5, create/edit. */
+/** OpenAI handler for the form-graph lane — gpt-image 1.5/2/2.5, create/edit. */
 
 import type {
   ImageGenStepTemplate,
@@ -8,7 +8,7 @@ import type {
   OpenAiGpt15EditImageInput,
   OpenAiGpt2CreateImageInput,
   OpenAiGpt2EditImageInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   OpenAiGpt25FlareCreateImageInput,
   OpenAiGpt25FlareEditImageInput,
@@ -20,14 +20,15 @@ import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.gr
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
+// gpt-image-1 is retired by OpenAI; nothing here may emit it.
 type OpenAIModel =
-  | 'gpt-image-1'
   | 'gpt-image-1.5'
   | 'gpt-image-2'
   | 'gpt-image-2.5-flare'
   | 'gpt-image-2.5-sunburst';
 const versionIdToModel = new Map<number, OpenAIModel>([
-  [openaiVersionIds.v1, 'gpt-image-1'],
+  // The graph already remaps v1 to v1.5; this covers a caller that skips it.
+  [openaiVersionIds.v1, 'gpt-image-1.5'],
   [openaiVersionIds['v1.5'], 'gpt-image-1.5'],
   [openaiVersionIds.v2, 'gpt-image-2'],
   [openaiVersionIds['v2.5-flare'], 'gpt-image-2.5-flare'],
@@ -46,7 +47,7 @@ export const createOpenAIInput = defineHandler<EcosystemData<'OpenAI'>, [ImageGe
     const quantity = Math.min(data.quantity ?? 1, 10);
 
     const model: OpenAIModel =
-      (data.model?.id != null ? versionIdToModel.get(data.model.id) : undefined) ?? 'gpt-image-1';
+      (data.model?.id != null ? versionIdToModel.get(data.model.id) : undefined) ?? 'gpt-image-1.5';
 
     const { width, height } = data.aspectRatio ?? { width: 1024, height: 1024 };
     const hasImages = !!data.images?.length;

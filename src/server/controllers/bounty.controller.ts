@@ -34,7 +34,7 @@ import {
   isBountyFlagAppealable,
   resolveFlagScanReasons,
 } from '~/server/services/text-scan/flag-snapshot';
-import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
@@ -243,9 +243,7 @@ export const getBountyEntriesHandler = async ({
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        reactions: {
-          select: getReactionsSelectV2,
-        },
+        reactions: viewerReactionsSelect(ctx.user?.id),
         stats: {
           select: {
             likeCountAllTime: true,

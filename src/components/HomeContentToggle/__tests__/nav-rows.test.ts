@@ -44,19 +44,17 @@ describe('settings modal rows agree with the rendered nav', () => {
   });
 
   /**
-   * The modal is the ONLY way to reach Posts and Events now that their feature flags are deleted.
-   * Gating those rows on anything would make them unreachable.
+   * The modal is the ONLY way to reach Posts now that its feature flag is deleted. Gating that row
+   * on anything would make it unreachable.
    */
-  it('keeps Posts and Events ungated, because the modal is now their only route back', () => {
-    for (const key of ['posts', 'events'] as const)
-      expect(navRegistry.find((entry) => entry.key === key)?.visible).toBeUndefined();
+  it('keeps Posts ungated, because the modal is now its only route back', () => {
+    expect(navRegistry.find((entry) => entry.key === 'posts')?.visible).toBeUndefined();
   });
 
   it('offers every registry item as a row, switched off where it defaults to hidden', () => {
     const rows = seedRows(undefined);
     expect(rows.map((r) => r.key).sort()).toEqual(navRegistry.map((e) => e.key).sort());
     expect(rows.find((r) => r.key === 'posts')?.hidden).toBe(true);
-    expect(rows.find((r) => r.key === 'events')?.hidden).toBe(true);
   });
 
   it('marks home locked and nothing else', () => {
@@ -90,6 +88,13 @@ describe('settings modal rows agree with the rendered nav', () => {
       r.key === 'shop' ? { ...r, group: 'more' as const } : r
     );
     expect(matchesDefaults(moved, true)).toBe(false);
+  });
+
+  it('persists the keep-profile-labels setting and counts it as a change', () => {
+    const rows = seedRows(undefined);
+    expect(rowsToConfig(rows, true, true).keepProfileLabels).toBe(true);
+    expect('keepProfileLabels' in rowsToConfig(rows, true)).toBe(false);
+    expect(matchesDefaults(rows, true, true)).toBe(false);
   });
 
   /**

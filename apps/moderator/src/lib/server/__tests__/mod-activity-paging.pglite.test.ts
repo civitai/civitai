@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { activityGroup } from '$lib/mod-activity';
@@ -61,7 +62,7 @@ const ENFORCEMENT = [7, 5, 9, 4, 2, 8, 6, 1, 3];
 let db: PGlite;
 
 beforeAll(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });

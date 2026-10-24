@@ -56,6 +56,18 @@ describe('per-call read options reach the transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  // Creator Services reads the prefix listing while holding an auto-renewing lock.
+  it('passes read options through on the multi-transaction listing', async () => {
+    const client = createBuzzClient({ endpoint: ENDPOINT });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+
+    await client.listMultiTransactions({ externalTransactionIdPrefix: 'p' }, { timeoutMs: 1000 });
+    await client.listMultiTransactions({ externalTransactionIdPrefix: 'p' });
+
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    expect(fetchMock.mock.calls[1][1]?.signal).toBeUndefined();
+  });
+
   it('keeps allow404 when per-call options are passed', async () => {
     const client = createBuzzClient({ endpoint: ENDPOINT });
     fetchMock.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });

@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
-import { getWorkflow } from '@civitai/client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from './db';
 import {
   getManagerWorkflow,
@@ -437,6 +437,11 @@ export type TrainingVersionDetail = {
   workflowId: string | null;
   jobId: string | null;
   trainingResults: TrainingResults;
+  /** Set only for a Training Studio run, whose dataset is per-item blobs on this workflow (its
+   *  `Training Data` row points at the trained model). Read from model meta, not file metadata,
+   *  which the owner can edit, and must match this version's own run: the model's other versions
+   *  may be ordinary zip runs. */
+  studioWorkflowId: string | null;
 };
 
 /**
@@ -458,15 +463,21 @@ export async function getTrainingVersionDetail(
       'm.name as modelName',
       'u.id as userId',
       'u.username',
+      sql<string | null>`m.meta->>'trainingStudioWorkflowId'`.as('modelStudioWorkflowId'),
     ])
     .where('mv.id', '=', versionId)
     .executeTakeFirst();
   if (!version) return null;
 
   const trainingResults = await getTrainingResults(versionId);
+  const { modelStudioWorkflowId, ...rest } = version;
 
   return {
-    ...version,
+    ...rest,
+    studioWorkflowId:
+      modelStudioWorkflowId && trainingResults?.workflowId === modelStudioWorkflowId
+        ? modelStudioWorkflowId
+        : null,
     workflowId: trainingResults?.workflowId ?? null,
     jobId: trainingResults?.jobId ?? null,
     trainingResults: trainingResults ?? {},

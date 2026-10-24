@@ -4,16 +4,14 @@
  * The kind-aware PRIMARY-ACTION logic for the unified listing detail
  * (`AppListingDetailBody`), extracted into a pure function so the correctness
  * coverage lives in the node `unit` project — the fast, deterministic suite,
- * which CI runs `continue-on-error` on every PR, whereas the browser-mode
- * component suites run only in the PR preview pipeline, report-only and behind a
- * preview build that fails intermittently. Neither BLOCKS a merge; this is simply
+ * which CI runs `continue-on-error` on every PR; the browser-mode component suites
+ * run as `Component tests`. Neither BLOCKS a merge; this is simply
  * where the detail action matrix is actually pinned, mirroring
  * `appListingCardView`.
  *
- * DARK / parallel-run: consumed by the mod-only `/apps/store-preview/<slug>`
- * detail surface (`AppListingDetailBody`) AND by `MySubmissionsList`'s owner
- * "open the running app" affordance, which reuses this same matrix. Both
- * callsites already degrade gracefully to text when an action carries no href.
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
+ * detail surface (`AppListingDetailBody`), which degrades gracefully to text when
+ * an action carries no href.
  *
  * 🔴 `/apps/[appBlockId]` IS RETIRED (#3493) — nothing here may link to it.
  * It is now a `getServerSideProps`-only route with two terminal branches (see
@@ -272,7 +270,7 @@ function hasOffsitePermissionSignal(
  * the viewer, and it is FALSE of a listing with an OAuth app connected — that
  * app can be granted account access, which is the whole point of connecting it.
  * Inline in `AppListingDetailBody` it was unreachable by the blocking node
- * `unit` project, and the report-only browser suite asserted it nowhere at all,
+ * `unit` project, and the browser suite asserted it nowhere at all,
  * so deleting the condition — printing "no account access" over every off-site
  * listing — was a change no test could catch. Here it is a pure function with
  * its own truth-table tests.

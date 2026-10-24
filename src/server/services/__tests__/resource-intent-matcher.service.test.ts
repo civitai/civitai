@@ -37,6 +37,7 @@ const {
   buildResourceIntentFilter,
   expandShortlist,
   findResourceIntentCandidates,
+  findRankedCandidates,
 } = await import('~/server/services/resource-intent-matcher.service');
 // The two floors live in the leaf, not in the module under test, and are imported from
 // there rather than through a re-export — see that module's header for why there is one
@@ -991,5 +992,123 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
     });
     expect(result.insightFallback).toBe(true);
     expect(result.basePool.map((e) => e.versionId)).toEqual([11]);
+  });
+});
+
+describe('🔴 findRankedCandidates — the request-time gates on a ranked list (v1_tags, attach_bm)', () => {
+  // Not the anonymous default, so a gate that ignored the request's coverage would show.
+  const coverage = { next: true, member: true };
+  const opts = {
+    modelTypes: ['LORA', 'DoRA'] as const,
+    baseModel: 'SDXL 1.0',
+    browsingLevel: 3,
+    coverage,
+    cap: 50,
+    maxModels: 50,
+  };
+  const doc = (
+    id: number,
+    versions: { id: number; baseModel?: string; canGenerate?: boolean; canGenerateNext?: boolean }[]
+  ) =>
+    shortlistHit({
+      id,
+      versions: versions.map((v) => ({
+        name: 'v',
+        baseModel: v.baseModel ?? 'SDXL 1.0',
+        canGenerate: v.canGenerate ?? true,
+        // What `versionGeneratableFor` reads under this block's coverage.
+        canGenerateNext: v.canGenerateNext ?? v.canGenerate ?? true,
+        ...v,
+      })),
+    });
+
+  it("asks the index for the candidates under the matcher's own filter, unsorted, as wide as the list", async () => {
+    const { and, inArray } = await import('~/shared/utils/meili-filter');
+    await findRankedCandidates({ ...opts, modelIds: [7, 3, 9] });
+    expect(meiliArgsOf()).toEqual({
+      filter: and(
+        buildResourceIntentFilter({
+          modelTypes: ['LORA', 'DoRA'],
+          baseModels: ['SDXL 1.0'],
+          browsingLevel: 3,
+          coverage,
+        }),
+        inArray('id', [7, 3, 9])
+      ),
+      limit: 3,
+    });
+  });
+
+  it('keeps candidate rank, drops what the index filtered out, and takes one gate-passing version per model', async () => {
+    searchWithSignal.mockResolvedValue({
+      hits: [
+        // Generatable only for this block's audience.
+        doc(9, [{ id: 91, canGenerate: false, canGenerateNext: true }]),
+        doc(7, [
+          { id: 71, baseModel: 'Pony' },
+          { id: 72, canGenerate: false },
+          { id: 73 },
+          { id: 74 },
+        ]),
+      ],
+    });
+    const entries = await findRankedCandidates({ ...opts, modelIds: [7, 3, 9] });
+    expect(entries.map((e) => [e.modelId, e.versionId])).toEqual([
+      [7, 73],
+      [9, 91],
+    ]);
+  });
+
+  it('is at most min(cap, maxModels) models wide, and makes no query without candidates', async () => {
+    const ids = Array.from({ length: 70 }, (_, i) => 1000 + i);
+    searchWithSignal.mockResolvedValue({ hits: ids.map((id) => doc(id, [{ id: id * 10 }])) });
+    expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 255 })).toHaveLength(50);
+    expect(
+      await findRankedCandidates({ ...opts, modelIds: ids, cap: 255, maxModels: 20 })
+    ).toHaveLength(20);
+    expect(await findRankedCandidates({ ...opts, modelIds: ids, cap: 7 })).toHaveLength(7);
+    searchWithSignal.mockClear();
+    expect(await findRankedCandidates({ ...opts, modelIds: [] })).toEqual([]);
+    expect(searchWithSignal).not.toHaveBeenCalled();
+  });
+
+  it('under a per-type gate, a version must carry a base model its own type admits', async () => {
+    const gate = new Map([
+      ['LORA', ['Krea 2 Turbo', 'Krea 2']],
+      ['DoRA', ['Krea 2 Turbo']],
+    ] as const);
+    searchWithSignal.mockResolvedValue({
+      hits: [
+        doc(7, [{ id: 71, baseModel: 'Krea 2' }]),
+        { ...doc(8, [{ id: 81, baseModel: 'Krea 2' }]), type: 'DoRA' },
+        doc(9, [{ id: 91, baseModel: 'SDXL 1.0' }]),
+      ],
+    });
+    const entries = await findRankedCandidates({ ...opts, baseModel: gate, modelIds: [7, 8, 9] });
+    expect(entries.map((e) => e.versionId)).toEqual([71]);
+    expect(meiliArgsOf().filter).toContain(
+      '(type = "LORA" AND versions.baseModel IN ["Krea 2 Turbo", "Krea 2"]) OR (type = "DoRA" AND versions.baseModel IN ["Krea 2 Turbo"])'
+    );
+  });
+
+  it('a gated type with no base model gets no clause, not a bare type', async () => {
+    const gate = new Map([
+      ['LORA', ['Krea 2']],
+      ['DoRA', []],
+    ] as const);
+    await findRankedCandidates({
+      ...opts,
+      baseModel: gate,
+      modelTypes: ['LORA', 'DoRA'],
+      modelIds: [7],
+    });
+    expect(meiliArgsOf().filter).not.toContain('type = "DoRA"');
+    expect(meiliArgsOf().filter).toContain('(type = "LORA" AND versions.baseModel IN ["Krea 2"])');
+  });
+
+  it('an empty gate makes no query rather than one with no type clause', async () => {
+    const gate = new Map([['LORA', []]] as const);
+    expect(await findRankedCandidates({ ...opts, baseModel: gate, modelIds: [7] })).toEqual([]);
+    expect(searchWithSignal).not.toHaveBeenCalled();
   });
 });

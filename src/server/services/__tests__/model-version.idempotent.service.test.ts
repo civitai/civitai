@@ -248,6 +248,258 @@ describe('mergeVersions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// mergeVersions file remaps touch only files of the versions being merged
+// ---------------------------------------------------------------------------
+describe('mergeVersions file remaps', () => {
+  const OWNER = 7;
+  const MODEL = 1;
+  const TARGET = 100;
+  const SOURCE = 101;
+  const OTHER_OF_SAME_MODEL = 102;
+  const FILE = 900;
+
+  // Everything after step 1 is out of scope here: the transaction client knows only the two file
+  // methods, so reaching any later step stops the run with this marker.
+  const PAST_REMAP = 'reached the steps after the file remap';
+  const fileFindMany = vi.fn();
+  const fileUpdateMany = vi.fn();
+  const versionRows = vi.fn(async () =>
+    [TARGET, SOURCE].map((id) => ({
+      id,
+      name: `v${id}`,
+      status: 'Published',
+      trainingStatus: null,
+    }))
+  );
+  const tx = new Proxy(
+    { $queryRaw: versionRows, modelFile: { findMany: fileFindMany, updateMany: fileUpdateMany } },
+    {
+      get(target, key) {
+        if (key in target) return target[key as keyof typeof target];
+        throw new Error(PAST_REMAP);
+      },
+    }
+  );
+
+  const merge = (fileTypeMappings: { fileId: number; type?: string; metadata?: object }[]) =>
+    mergeVersions({
+      modelId: MODEL,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      fileTypeMappings,
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+
+  const storedFile = (overrides: Record<string, unknown> = {}) => ({
+    id: FILE,
+    type: 'Model',
+    metadata: { fp: 'fp16' },
+    modelVersion: { uploadType: 'Created', trainingStatus: null },
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    fileFindMany.mockReset().mockResolvedValue([storedFile()]);
+    fileUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE, OTHER_OF_SAME_MODEL].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: 'Published',
+        monetization: null,
+        meta: null,
+      })),
+    });
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  const inMerge = {
+    modelVersionId: { in: [TARGET, SOURCE] },
+    modelVersion: { modelId: MODEL, model: { userId: OWNER } },
+  };
+
+  it('looks the mapped files up only among the merged versions of the caller’s model', async () => {
+    await expect(merge([{ fileId: FILE, type: 'VAE' }])).rejects.toThrow(PAST_REMAP);
+
+    expect(fileFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [FILE] }, ...inMerge } })
+    );
+  });
+
+  // The lookup above returns nothing for a file outside the merge: another owner's file, or a
+  // version of this model that is not being merged.
+  it('refuses a file that is not part of the merge, writing nothing', async () => {
+    fileFindMany.mockResolvedValue([]);
+
+    await expect(merge([{ fileId: 4242, type: 'VAE', metadata: { fp: 'bf16' } }])).rejects.toThrow(
+      'A file to update is not part of this merge.'
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('writes a remap scoped to the merge, merging the stored metadata', async () => {
+    await expect(
+      merge([{ fileId: FILE, type: 'VAE', metadata: { size: 'pruned' } }])
+    ).rejects.toThrow(PAST_REMAP);
+
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge },
+      data: { type: 'VAE', metadata: { fp: 'fp16', size: 'pruned' } },
+    });
+  });
+
+  // The file can leave the merge between the lookup and the write (moved, deleted).
+  it('refuses when the scoped write does not land on exactly that file', async () => {
+    fileUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(merge([{ fileId: FILE, type: 'VAE' }])).rejects.toThrow(
+      'A file to update is not part of this merge.'
+    );
+  });
+
+  it.each([
+    { uploadType: 'Trained', trainingStatus: 'Approved' },
+    { uploadType: 'Created', trainingStatus: null },
+  ])('refuses turning a file into training data (%o)', async (modelVersion) => {
+    fileFindMany.mockResolvedValue([storedFile({ modelVersion })]);
+
+    await expect(merge([{ fileId: FILE, type: 'Training Data' }])).rejects.toThrow(
+      "A file can't be changed to training data. Upload the dataset as training data instead."
+    );
+    expect(fileUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('still applies other type changes on a trained version', async () => {
+    fileFindMany.mockResolvedValue([
+      storedFile({ modelVersion: { uploadType: 'Trained', trainingStatus: 'Approved' } }),
+    ]);
+
+    await expect(merge([{ fileId: FILE, type: 'Pruned Model' }])).rejects.toThrow(PAST_REMAP);
+    expect(fileUpdateMany).toHaveBeenCalledWith({
+      where: { id: FILE, ...inMerge },
+      data: { type: 'Pruned Model' },
+    });
+  });
+});
+
+describe('mergeVersions training runs', () => {
+  const OWNER = 7;
+  const MODEL = 1;
+  const TARGET = 100;
+  const SOURCE = 101;
+
+  // Reaching the first write means every check before it passed.
+  const PAST_CHECKS = 'reached the file move';
+  const versionRows = vi.fn();
+  const datasetFindFirst = vi.fn();
+  const fileMove = vi.fn(() => {
+    throw new Error(PAST_CHECKS);
+  });
+  const tx = {
+    $queryRaw: versionRows,
+    modelFile: { findFirst: datasetFindFirst, updateMany: fileMove },
+  };
+
+  const row = (id: number, status: string, trainingStatus: string | null) => ({
+    id,
+    name: `v${id}`,
+    status,
+    trainingStatus,
+  });
+  const stored = (
+    source: { status?: string; trainingStatus: string | null },
+    target: { status?: string; trainingStatus?: string | null } = {}
+  ) =>
+    versionRows.mockResolvedValue([
+      row(TARGET, target.status ?? 'Draft', target.trainingStatus ?? null),
+      row(SOURCE, source.status ?? 'Draft', source.trainingStatus),
+    ]);
+
+  const merge = () =>
+    mergeVersions({
+      modelId: MODEL,
+      targetVersionId: TARGET,
+      sourceVersionIds: [SOURCE],
+      appendDescriptions: false,
+      userId: OWNER,
+    } as any);
+
+  beforeEach(() => {
+    versionRows.mockReset();
+    datasetFindFirst.mockReset().mockResolvedValue({ modelVersionId: SOURCE });
+    fileMove.mockClear();
+    mockDbRead.model.findUniqueOrThrow.mockResolvedValue({
+      userId: OWNER,
+      modelVersions: [TARGET, SOURCE].map((id) => ({
+        id,
+        name: `v${id}`,
+        description: '',
+        status: 'Draft',
+        monetization: null,
+        meta: null,
+      })),
+    });
+    mockDbWrite.paidAccess.findMany.mockResolvedValue([]);
+    mockDbWrite.$transaction.mockImplementation(async (fn: (client: unknown) => unknown) => fn(tx));
+  });
+
+  it.each(['Submitted', 'Processing', 'Paused', 'Denied'])(
+    'refuses a source whose run is %s, moving nothing',
+    async (trainingStatus) => {
+      stored({ trainingStatus });
+
+      await expect(merge()).rejects.toThrow(
+        `Version "v101" has a training run in progress, under review or denied, and can't be merged.`
+      );
+      expect(fileMove).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['InReview', 'Approved'])(
+    'refuses moving a %s source dataset onto a version that takes a new dataset',
+    async (trainingStatus) => {
+      stored({ trainingStatus }, { status: 'Draft', trainingStatus: null });
+
+      await expect(merge()).rejects.toThrow(
+        `Version "v101" has a finished training run, so its training data can't move to a version that still accepts new training data.`
+      );
+      expect(datasetFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { modelVersionId: { in: [SOURCE] }, type: 'Training Data' },
+        })
+      );
+      expect(fileMove).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['into a published target', { trainingStatus: 'InReview' }, { status: 'Published' }],
+    [
+      'into a target with its own started run',
+      { trainingStatus: 'Approved' },
+      { trainingStatus: 'InReview' },
+    ],
+    ['from a source that never trained', { trainingStatus: null }, {}],
+    ['from a source whose run failed', { trainingStatus: 'Failed' }, {}],
+  ] as const)('merges %s', async (_, source, target) => {
+    stored(source, target);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  it('merges a trained source that has no training data', async () => {
+    stored({ trainingStatus: 'InReview' });
+    datasetFindFirst.mockResolvedValue(null);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Complexity review §1a — a SCHEDULED early-access version must materialize endsAt
 // ---------------------------------------------------------------------------
 // The scheduled-publishing job flips status here WITHOUT passing publishedAt (it set it at schedule
@@ -279,7 +531,10 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
     await publishModelVersionsWithEarlyAccess({ modelVersionIds: [1], continueOnError: true });
 
     // The bug: this call never happened. The publishedAt write itself must NOT run (anti-bump).
-    expect(mockMaterialize).toHaveBeenCalledWith(1, version().publishedAt, mockDbWrite);
+    // No write, so it may only fill a NULL endsAt.
+    expect(mockMaterialize).toHaveBeenCalledWith(1, version().publishedAt, mockDbWrite, {
+      pendingOnly: true,
+    });
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -305,7 +560,20 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
     });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite);
+    expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite, {
+      pendingOnly: false,
+    });
+  });
+
+  it('with a modelId, loads only that model’s versions to publish', async () => {
+    mockDbWrite.modelVersion.findMany.mockResolvedValueOnce([]);
+
+    await publishModelVersionsWithEarlyAccess({ modelVersionIds: [1, 9], modelId: 2 });
+
+    expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1, 9] }, modelId: 2 } })
+    );
+    expect(mockDbWrite.modelVersion.update).not.toHaveBeenCalled();
   });
 });
 

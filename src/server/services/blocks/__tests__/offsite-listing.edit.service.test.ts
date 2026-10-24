@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
 import {
@@ -96,7 +97,23 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
@@ -684,6 +701,7 @@ describe('approveExternalRequest (revision apply)', () => {
           slug: 'cool-app',
           status: 'approved',
           kind: 'offsite',
+          contentRating: 'pg13',
         } as Row,
       })
     );
@@ -791,6 +809,15 @@ describe('approveExternalRequest (revision apply)', () => {
     // The shadow is retired (guarded to a revision row).
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', revisionOfId: { not: null } },
+    });
+    // The live PARENT's rating is the "before", not the shadow's declared 'pg'.
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_parent',
+      slug: 'cool-app',
+      before: 'pg13',
+      after: 'r',
+      actorUserId: MOD,
     });
   });
 
@@ -2138,5 +2165,98 @@ describe('🔴 NEW-2 — updateRevisionDraft evaluates the note/flag rule agains
       .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
       .find((a) => a?.select && 'isBeta' in a.select);
     expect(betaRead?.where).toEqual({ id: 'apl_parent' });
+  });
+});
+
+describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const requestRow = (
+    id: string,
+    status: string,
+    contentRating: string | null,
+    kind = 'offsite'
+  ) => ({
+    id,
+    appListingId: `apl_${id}`,
+    slug: `app-${id}`,
+    kind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status,
+      kind,
+      // Every row carries an app row declaring G; only an on-site listing may read it.
+      appBlock: { contentRating: 'g' },
+      contentRating,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: 'A tagline',
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  it('an approved on-site listing raised to R is reported; a PG-13 one and a draft R one on the same page are not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_hidden', 'approved', 'r', 'onsite'),
+        requestRow('r_sfw', 'approved', 'pg13', 'onsite'),
+        requestRow('r_draft', 'draft', 'r', 'onsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems)).toEqual([
+      [
+        {
+          code: 'hidden-mature-rating',
+          severity: 'advisory',
+          label:
+            'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+        },
+      ],
+      [],
+      [],
+    ]);
+  });
+
+  it('🔴 each asset carries its own level into the civitai.com media problems', async () => {
+    const levels: Record<number, number> = { 41: 4, 53: 1, 61: 8, 62: 2 };
+    mockRead.image.findMany.mockImplementation((async (args: {
+      where?: { id?: { in?: number[] } };
+    }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        ingestion: 'Scanned',
+        nsfwLevel: levels[id],
+      }))) as never);
+    const row = requestRow('r_media', 'approved', 'pg13');
+    row.appListing.screenshots = [{ imageId: 61 }, { imageId: 62 }] as never;
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Icon R → the icon problem (not the PG cover's); the X and PG-13 screenshots raise none.
+    expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
+      ['sfw-slot-mature', 'Your icon is rated R'],
+    ]);
+  });
+
+  it('an ON-SITE row is compared against its app’s declared rating; the off-site row beside it is not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'approved', 'r', 'onsite'),
+        requestRow('r_off', 'approved', 'r'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems.map((p) => p.label))).toEqual([
+      [
+        'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      ],
+      [],
+    ]);
   });
 });

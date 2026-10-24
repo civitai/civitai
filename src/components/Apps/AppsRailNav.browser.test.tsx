@@ -72,24 +72,44 @@ const ALL: AppsNavSummary = {
  * Sees the store, may reach `/apps/build`, and may AUTHOR (mod, or a non-mod holding
  * `appBlocksAuthor`) — today's live moderator / `app-dev-testers` shape.
  */
-const AUTHOR: AppsNavContext = { isAuthor: true, canBuild: true, canSeeStore: true };
+const AUTHOR: AppsNavContext = {
+  isAuthor: true,
+  canBuild: true,
+  canSeeStore: true,
+  canUseAssistant: false,
+};
 /**
  * A store-visible NON-author who may still reach `/apps/build`: `canAccessAppsBuild`'s
  * `appBlocksGetStarted` disjunct. The cohort the recruiting pitch (state A) exists for.
  */
-const BUILDER: AppsNavContext = { isAuthor: false, canBuild: true, canSeeStore: true };
+const BUILDER: AppsNavContext = {
+  isAuthor: false,
+  canBuild: true,
+  canSeeStore: true,
+  canUseAssistant: false,
+};
 /**
  * The widened store-visibility tester cohort: sees the store, cannot author and cannot
  * build (no `appBlocksGetStarted`). This is the LIVE `< 2` collapse cohort — Marketplace
  * is the only row that qualifies for them.
  */
-const NOT_AUTHOR: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: true };
+const NOT_AUTHOR: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: true,
+  canUseAssistant: false,
+};
 /**
  * No store access at all. `canBuild` is `false` here BY CONSTRUCTION, not by choice:
  * `canAccessAppsBuild` ANDs `hasAppsStoreAccess`, so `{canBuild: true, canSeeStore:
  * false}` is a shape the container cannot produce.
  */
-const NO_STORE: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: false };
+const NO_STORE: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: false,
+  canUseAssistant: false,
+};
 
 /**
  * 🔴 THE DATA HOOK IS STUBBED; THE LAYOUT AND THE RAIL ARE REAL. That split is what lets
@@ -419,6 +439,37 @@ describe('Build is gated on canBuild', () => {
     await renderNav(NONE, BUILDER, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
     expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+  });
+});
+
+describe('App Assistant is gated on canUseAssistant', () => {
+  const ASSISTANT: AppsNavContext = { ...AUTHOR, canUseAssistant: true };
+
+  test('App Assistant is HIDDEN without canUseAssistant, even for a full author', async () => {
+    await renderNav(ALL, AUTHOR, '/apps');
+    await expect.element(link('Review')).toBeInTheDocument();
+    expect(renderedSections()).not.toContain('App Assistant');
+  });
+
+  test('App Assistant is VISIBLE with canUseAssistant, links to /apps/assistant, and sits after Build', async () => {
+    await renderNav(ALL, ASSISTANT, '/apps');
+    await expect.element(link('App Assistant')).toBeInTheDocument();
+    expect(link('App Assistant').element().getAttribute('href')).toBe('/apps/assistant');
+    expect(renderedSections()).toEqual([
+      'Marketplace',
+      'Activity',
+      'Invites',
+      'Revenue',
+      'Build',
+      'App Assistant',
+      'Review',
+    ]);
+  });
+
+  test('App Assistant is lit on its own route', async () => {
+    await renderNav(NONE, ASSISTANT, '/apps/assistant');
+    await expect.element(link('App Assistant')).toBeInTheDocument();
+    expect(link('App Assistant').element().getAttribute('aria-current')).toBe('page');
   });
 });
 

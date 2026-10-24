@@ -48,6 +48,9 @@ import { wasLastReviewARejection } from '../creator-shop.data';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
 );
@@ -177,6 +180,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action,
       rejectionReason: 'reopened on appeal',
     });
@@ -202,6 +206,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'reopened on appeal',
     });
@@ -238,6 +243,7 @@ describe('an item that was only sent back for changes still moves', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'one more pass please',
     });

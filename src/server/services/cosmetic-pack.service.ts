@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -21,7 +20,29 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
-import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwBadRequestError,
+  withRetries,
+} from '~/server/utils/errorHandling';
+import { isEventShopItemData } from '~/server/events/event-shop-item';
+import {
+  assertConfirmedPrice,
+  beginShopPurchase,
+  chargeForShopPurchase,
+  chargeRetryOptions,
+  claimShopPurchase,
+  markClaimPaid,
+  purchaseStateUnknown,
+  refundCallOptions,
+  refundClaimedCharge,
+  resumeShopPurchase,
+  runPurchaseChecks,
+  type ShopPurchaseClaim,
+  type ShopPurchaseStart,
+} from '~/server/services/shop-purchase-charge';
+import { countShopItemSaleAfterGrant } from '~/server/services/cosmetic-shop-sale-count';
+import { lockItemHolder } from '~/server/services/item-holder-lock';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -156,20 +177,28 @@ export const packBlueBuzzVeto = (members: PackMemberListing[]) =>
  * or one whose creator the buyer has blocked. The pack's own status says nothing
  * about any of that.
  */
-export const assertPackPurchasable = async ({
-  userId,
-  members,
-  memberCount,
-  packCreatorId,
-  stickersEnabled,
-}: {
+type PackPurchaseGateInput = {
   userId: number;
   members: PackMemberListing[];
   /** How many members the pack was built with (`meta.packMemberCount`). */
   memberCount: number | undefined;
   packCreatorId?: number | null;
   stickersEnabled?: boolean;
-}) => {
+};
+
+export const assertPackPurchasable = async (input: PackPurchaseGateInput) => {
+  await assertPackSellableTo(input);
+  assertPackMembersOnSale(input.members);
+};
+
+/** Whether this pack may be sold to this buyer at all, whatever today's stock. */
+const assertPackSellableTo = async ({
+  userId,
+  members,
+  memberCount,
+  packCreatorId,
+  stickersEnabled,
+}: PackPurchaseGateInput) => {
   // The single purchase refuses a creator buying their own cosmetic; this is the
   // same rule one level up. Pricing it instead — charging only what is owed to
   // others — made an all-own pack free, and a free purchase is not merely a
@@ -188,6 +217,11 @@ export const assertPackPurchasable = async ({
   if (!stickersEnabled && members.some((m) => m.type === CosmeticType.Sticker))
     throw throwBadRequestError('This pack is not available');
 
+  // Event items are gated per buyer (event window, team, paid Buzz only) at the
+  // single purchase; a pack would grant them past all three.
+  if (members.some((m) => isEventShopItemData(m.data)))
+    throw throwBadRequestError('This pack is not available');
+
   const creatorIds = members
     .flatMap((m) => [m.createdById, m.addedById])
     .filter((id): id is number => id != null);
@@ -197,7 +231,10 @@ export const assertPackPurchasable = async ({
     if (creatorIds.some((id) => blockedPairIds.includes(id)))
       throw throwBadRequestError('This pack is not available');
   }
+};
 
+/** Today's stock and sale window of every member. */
+const assertPackMembersOnSale = (members: PackMemberListing[]) => {
   const now = new Date();
   for (const member of members) {
     if (member.availableQuantity !== null && member.soldCount >= member.availableQuantity)
@@ -456,6 +493,9 @@ export const packOwnerResaleShares = async (
 
 export const purchaseCosmeticPack = async ({
   userId,
+  idempotencyKey,
+  start,
+  expectedAmount,
   shopItem,
   members,
   payWith = 'default',
@@ -463,6 +503,12 @@ export const purchaseCosmeticPack = async ({
   stickersEnabled,
 }: {
   userId: number;
+  /** The buyer's purchase intent. A retry under the same key is answered from its claim (shop-purchase-charge.ts). */
+  idempotencyKey?: string;
+  /** The claim the caller already read under this key, so it is read once per purchase. */
+  start?: ShopPurchaseStart;
+  /** The amount due the buyer was shown. A different one is refused before anything is claimed. */
+  expectedAmount?: number;
   shopItem: {
     id: number;
     title: string;
@@ -476,13 +522,33 @@ export const purchaseCosmeticPack = async ({
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
 }) => {
-  await assertPackPurchasable({
+  // The buyer's key when they sent one, so a retry of the same intent is
+  // recognised; otherwise random rather than a timestamp: a pack is repeatable (a
+  // consumable member tops up), so two calls in the same millisecond would share
+  // an external id — and a duplicate reads as "the money already moved". The
+  // claim is read before the checks below, unless the caller already read it.
+  const { transactionId, existingClaim, pendingClaim, chargedBefore } =
+    start ??
+    (await beginShopPurchase({
+      kind: 'pack',
+      userId,
+      shopItemId: shopItem.id,
+      idempotencyKey,
+      amount: shopItem.unitAmount,
+    }));
+  const claimContext = (amount: number) => ({
+    shopItemId: shopItem.id,
     userId,
-    members,
-    memberCount: shopItem.memberCount,
-    packCreatorId: shopItem.addedById,
-    stickersEnabled,
+    transactionId,
+    amount,
   });
+
+  // What the buyer is charged for, which bounds what they receive without
+  // equalling it — an already-owned durable is in here and is still skipped. A
+  // member they authored was subtracted from the price, so granting it would
+  // hand over a consumable balance nobody paid for, repeatable forever since an
+  // uncapped listing never sells out.
+  const paidFor = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
   // The discount is part of the price, not a label. Computed here, on the
   // writer, rather than trusted from the client — and from the same helper the
@@ -491,7 +557,7 @@ export const purchaseCosmeticPack = async ({
     where: { userId, cosmeticId: { in: members.map((m) => m.cosmeticId) } },
     select: { cosmeticId: true },
   });
-  const { amountDue: amountCharged } = computePackAmountDue({
+  const { amountDue } = computePackAmountDue({
     packPrice: shopItem.unitAmount,
     members: members.map((m) => ({
       cosmeticId: m.cosmeticId,
@@ -505,52 +571,86 @@ export const purchaseCosmeticPack = async ({
     packCreatorId: shopItem.addedById,
   });
 
-  // AND across members, not the pack's own flag: the pack listing's
-  // acceptsBlueBuzz is a request, and one member's opt-out vetoes it.
-  if (payWith !== 'default') {
-    if (!shopItem.meta.acceptsBlueBuzz || packBlueBuzzVeto(members).length)
-      throw throwBadRequestError('This pack does not accept Blue Buzz');
-  }
+  // Whether this pack may be sold to this buyer, and whether they still need
+  // anything in it. Asked again on a retry, as state unknown: a kill switch or a
+  // block still wins, and if a different purchase granted the rest meanwhile,
+  // resuming could charge again for what they already hold, so that claim is
+  // settled by hand instead.
+  await runPurchaseChecks(pendingClaim, async () => {
+    await assertPackSellableTo({
+      userId,
+      members,
+      memberCount: shopItem.memberCount,
+      packCreatorId: shopItem.addedById,
+      stickersEnabled,
+    });
+
+    // AND across members, not the pack's own flag: the pack listing's
+    // acceptsBlueBuzz is a request, and one member's opt-out vetoes it.
+    if (payWith !== 'default') {
+      if (!shopItem.meta.acceptsBlueBuzz || packBlueBuzzVeto(members).length)
+        throw throwBadRequestError('This pack does not accept Blue Buzz');
+    }
+
+    // Ahead of both pricing guards, because an empty pack reaches them with an
+    // empty `paidFor` and would be told the pack is the buyer's own work. Only a
+    // pack recorded as built with zero members gets past assertPackSellableTo to
+    // here.
+    if (!members.length) throw throwBadRequestError('This pack has nothing left in it');
+
+    // Both fire on an all-own pack priced at the floor, so this one goes first: an
+    // empty `paidFor` names the input, while a zero price is an outcome several
+    // different inputs reach. The buyer may hold none of these members — telling
+    // them they already own it all is false in the case it is most likely to hit.
+    if (!paidFor.length)
+      throw throwBadRequestError(
+        "Everything in this pack is your own work, so there's nothing here for you to buy"
+      );
+
+    if (amountDue <= 0) throw throwBadRequestError('You already own everything in this pack');
+  });
+
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
-  // What the buyer is charged for, which bounds what they receive without
-  // equalling it — an already-owned durable is in here and is still skipped. A
-  // member they authored was subtracted from the price, so granting it would
-  // hand over a consumable balance nobody paid for, repeatable forever since an
-  // uncapped listing never sells out.
-  const paidFor = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
+  // Today's member stock and sale windows, and today's amount due. A claim that
+  // was charged passed them when it was made and is charged at its own amount;
+  // any other request is held to them, a retry of an uncharged claim included
+  // (as state unknown, so it must also still be at today's amount).
+  await runPurchaseChecks(pendingClaim, async () => {
+    if (chargedBefore) return;
+    assertPackMembersOnSale(members);
 
-  // Ahead of both pricing guards, because an empty pack reaches them with an
-  // empty `paidFor` and would be told the pack is the buyer's own work. Only a
-  // pack recorded as built with zero members gets past assertPackPurchasable to
-  // here.
-  if (!members.length) throw throwBadRequestError('This pack has nothing left in it');
-
-  // Both fire on an all-own pack priced at the floor, so this one goes first: an
-  // empty `paidFor` names the input, while a zero price is an outcome several
-  // different inputs reach. The buyer may hold none of these members — telling
-  // them they already own it all is false in the case it is most likely to hit.
-  if (!paidFor.length)
-    throw throwBadRequestError(
-      "Everything in this pack is your own work, so there's nothing here for you to buy"
-    );
-
-  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
-
-  // Random rather than a timestamp: a pack is repeatable (a consumable member
-  // tops up), so two calls in the same millisecond would share an external id —
-  // and a duplicate reads as "the money already moved".
-  const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
-  const transaction = await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes,
-    toAccountId: 0,
-    amount: amountCharged,
-    type: TransactionType.Purchase,
-    description: `Cosmetic pack purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: transactionId,
+    // The buyer confirmed a number on a button, and the amount due moves with
+    // the pack's price and with what they own. Refused here, before the claim
+    // is written, so a stale price leaves nothing behind for a retry to resume.
+    assertConfirmedPrice({ existingClaim, expectedAmount, amountDue });
   });
+
+  // A resumed claim charges what it claimed; its expected amount is checked
+  // against that.
+  const claim: ShopPurchaseClaim = existingClaim
+    ? await resumeShopPurchase(claimContext(existingClaim.amount), existingClaim, expectedAmount)
+    : await claimShopPurchase(claimContext(amountDue), expectedAmount);
+  const amountCharged = claim.amount;
+  const chargeContext = { shopItemId: shopItem.id, userId, transactionId, amount: amountCharged };
+  const transaction = await chargeForShopPurchase(
+    () =>
+      createMultiAccountBuzzTransaction(
+        {
+          fromAccountId: userId,
+          fromAccountTypes,
+          toAccountId: 0,
+          amount: amountCharged,
+          type: TransactionType.Purchase,
+          description: `Cosmetic pack purchase - ${shopItem.title}`,
+          externalTransactionIdPrefix: transactionId,
+        },
+        chargeRetryOptions
+      ),
+    chargeContext,
+    claim
+  );
   // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered
   // and created nothing, which is AMBIGUOUS — the charge may have happened. The
   // sticker purchase flow now reads a 4xx as "nothing was charged, retry as a
@@ -568,6 +668,9 @@ export const purchaseCosmeticPack = async ({
 
   try {
     await dbWrite.$transaction(async (tx) => {
+      await markClaimPaid(tx, transactionId);
+      await lockItemHolder(tx, userId);
+
       await tx.userCosmeticShopPurchases.create({
         data: {
           userId,
@@ -602,38 +705,30 @@ export const purchaseCosmeticPack = async ({
       });
 
       await grantPackMembers({ tx, userId, members: paidFor, claimKey: transactionId });
-
-      await tx.cosmeticShopItem.update({
-        where: { id: shopItem.id },
-        data: {
-          meta: {
-            ...shopItem.meta,
-            purchases: (shopItem.meta.purchases ?? 0) + 1,
-          } as Prisma.InputJsonValue,
-        },
-      });
     });
   } catch (error) {
-    // The only path where the buyer is actually out of pocket, so it must leave
-    // a trace: a failing refund used to discard the grant error and surface its
-    // own instead, recording nothing. Retried like the payout, and logged with
-    // the transaction id, which is what makes it reconcilable by hand.
-    try {
-      await withRetries(
-        () =>
-          refundMultiAccountTransaction({
+    // With a client key, a unique violation here means a request with the same
+    // key recorded this purchase first; the prefix is shared with it, so it is
+    // not refunded from here.
+    if (idempotencyKey && isPrismaUniqueViolation(error))
+      throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
+
+    // Charged and not fully refunded is "state unknown", logged for
+    // reconciliation; only a refund known to cover the charge reaches the
+    // refusal below.
+    await refundClaimedCharge(
+      () =>
+        refundMultiAccountTransaction(
+          {
             externalTransactionIdPrefix: transactionId,
             description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
-          }),
-        3
-      );
-    } catch (refundError) {
-      logToAxiom({
-        level: 'error',
-        message: 'Failed to refund a failed pack purchase',
-        data: { shopItemId: shopItem.id, userId, transactionId, error: refundError },
-      });
-    }
+            // So the refund can be traced to its claim.
+            details: { claim: transactionId },
+          },
+          refundCallOptions
+        ),
+      { ...chargeContext, error }
+    );
     logToAxiom({
       level: 'error',
       message: 'Failed to grant a pack purchase',
@@ -733,6 +828,9 @@ export const purchaseCosmeticPack = async ({
       data: { shopItemId: shopItem.id, userId, transactionId, error: e },
     });
   }
+
+  // After the payouts: a wait on the listing row must not delay paying the creators.
+  await countShopItemSaleAfterGrant(shopItem.id);
 
   return {
     transactionId,

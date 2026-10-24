@@ -23,6 +23,7 @@ import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-s
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   workflowConfigByKey,
+  getRequiredFeatureFlagForWorkflow,
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
 } from '~/shared/generation/config/workflows';
@@ -38,6 +39,16 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
 import { REMIX_RESET } from './remix-reset';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import {
+  AVATAR_DEEP_LINK_PARAMS,
+  avatarDeepLinkFields,
+} from '~/shared/generation/avatar-deep-link';
+import {
+  GENERATOR_DEEP_LINK_PARAMS,
+  generatorDeepLinkFields,
+  type GeneratorDeepLinkFields,
+} from '~/shared/generation/generator-deep-link';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
@@ -76,7 +87,7 @@ export function useGenerationIngestion(store: GenerationStore) {
   // purpose: model pages use the same param to pick a version, and the panel
   // mounts there too — without the guard, opening a model page would yank the
   // generator open. Yields to a `?gen=` handoff, which has already queued
-  // data by the time this runs.
+  // data by the time this runs. May also carry form fields (`&resolution=2k&thinkingMode=ultra`).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!window.location.pathname.startsWith('/generate')) return;
@@ -85,7 +96,10 @@ export function useGenerationIngestion(store: GenerationStore) {
     const raw = url.searchParams.get('modelVersionId');
     if (!raw) return;
 
+    const fields = generatorDeepLinkFields(url.searchParams);
+
     url.searchParams.delete('modelVersionId');
+    for (const param of GENERATOR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
     window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 
     if (useGenerationGraphStore.getState().data) return;
@@ -93,7 +107,16 @@ export function useGenerationIngestion(store: GenerationStore) {
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) return;
 
-    generationGraphPanel.open({ type: 'modelVersion', id });
+    if (!Object.keys(fields).length) {
+      generationGraphPanel.open({ type: 'modelVersion', id });
+      return;
+    }
+    void openWithDeepLinkFields(
+      store,
+      () => generationGraphPanel.open({ type: 'modelVersion', id }),
+      fields
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
   }, []);
 
   // `/generate?air=…&workflowId=…&name=…` deep link — the Training Studio's
@@ -131,6 +154,34 @@ export function useGenerationIngestion(store: GenerationStore) {
     seedRawAirResource({ air, workflowId, name });
   }, [features.generationAirResources]);
 
+  // `/generate?workflow=…` deep link for landing pages (avatar may also carry style and starter).
+  // Strips the params before applying, like the links above, and yields to already-queued data.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const workflow = url.searchParams.get('workflow');
+    if (!workflow) return;
+
+    const avatarFields = workflow === AVATAR_WORKFLOW ? avatarDeepLinkFields(url.searchParams) : {};
+
+    url.searchParams.delete('workflow');
+    for (const param of AVATAR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (useGenerationGraphStore.getState().data) return;
+    if (!workflowConfigByKey.has(workflow)) return;
+    const flag = getRequiredFeatureFlagForWorkflow(workflow);
+    if (flag && features[flag as keyof typeof features] !== true) return;
+
+    store.set({ workflow });
+    // After the workflow, so the avatar fields exist to receive the values.
+    if (Object.keys(avatarFields).length) store.set(avatarFields);
+    generationGraphPanel.setView('generate');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
+  }, [store]);
+
   // Sync generation graph store data into the form
   // - Remix/Replay: full override (reset + set)
   // - Run/Patch: partial update (set only)
@@ -149,6 +200,27 @@ export function useGenerationIngestion(store: GenerationStore) {
     // Subscribe to future changes
     return useGenerationGraphStore.subscribe(applyStoreData);
   }, [store]);
+}
+
+/**
+ * Opens the generator on a model, then sets the link's fields. Only once the model has landed, so
+ * a load that fails, or that another open replaces while in flight, leaves the form as it was.
+ */
+export async function openWithDeepLinkFields(
+  store: GenerationStore,
+  open: () => Promise<void>,
+  fields: GeneratorDeepLinkFields,
+  openSequence = () => useGenerationGraphStore.getState().openSequence
+) {
+  const pending = open();
+  const sequence = openSequence();
+  try {
+    await pending;
+  } catch {
+    return;
+  }
+  if (openSequence() !== sequence) return;
+  store.set(fields);
 }
 
 type GenerationData = NonNullable<ReturnType<typeof useGenerationGraphStore.getState>['data']>;
@@ -343,13 +415,17 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
     const existingResources = (snap.resources ?? []) as ResourceData[];
     const incomingIds = new Set(split.resources.map((r) => r.id));
 
+    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    // An empty resource list is compatible with every ecosystem, so it can't be the reason
+    // to keep the current one over an ecosystem the caller named (the workflow picker).
+    const switchesEcosystem = !!incomingEcosystem && data.resources.length === 0;
+
     // Preserve the current ecosystem when ALL incoming resources are
     // compatible with it; switch only on a truly incompatible resource.
     const currentEcosystem = snap.ecosystem as string | undefined;
     const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
-    const allCompatible = currentEco && areResourcesCompatible(currentEco.id, data.resources);
-
-    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    const allCompatible =
+      !switchesEcosystem && currentEco && areResourcesCompatible(currentEco.id, data.resources);
 
     const currentWorkflow = snap.workflow as string | undefined;
     const currentWorkflowConfig = currentWorkflow
@@ -387,7 +463,7 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
 
     // No current ecosystem and incoming resources fit several — let the
     // user choose rather than silently picking one.
-    if (!currentEco && !allCompatible) {
+    if (!currentEco && !allCompatible && !switchesEcosystem) {
       const resolvedWorkflow = targetWorkflow ?? currentWorkflow ?? 'txt2img';
       const workflowEcosystemIds = getEcosystemsForWorkflow(resolvedWorkflow);
       const compatibleEcosystemIds = workflowEcosystemIds.filter((ecoId) =>
@@ -469,6 +545,13 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ...(split.upscaler && { upscaler: split.upscaler }),
       ...(split.vae && { vae: split.vae }),
     };
+    // Discriminators first, for the reasons on `applyRemix`.
+    if (switchesEcosystem) {
+      store.set({
+        ecosystem: incomingEcosystem,
+        ...(targetWorkflow && { workflow: targetWorkflow }),
+      });
+    }
     store.set(values);
   }
 

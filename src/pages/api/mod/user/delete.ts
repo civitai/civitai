@@ -4,22 +4,21 @@ import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
+import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 
 export default defineModeratorEndpoint('user.delete', {
   summary: "Delete an account on its owner's behalf, for a data-subject erasure request.",
   returns: '{ deleted: true, userId, auditRecorded }',
   notes: [
     'Calls the same `deleteUser` service the self-serve path uses — one definition of deletion.',
-    'Refuses a delegated token that is not full-scope. A cookie session carries no scope and is unaffected.',
     'Requires the moderator app permission `user.deleteAccount`: held by `moderator:admin`, and by any role granted it on the moderator app’s `/admin`.',
     '`username` is REQUIRED for any account that has one — it is the only check that catches a mistyped id landing on another live account. Accounts with a null username, and already-deleted rows, do not ask for it.',
     'Refuses an account that is already deleted rather than re-running the scrub.',
+    'Refuses an account under a legal hold, with no override.',
     'Images are kept for the 7-day grace period unless you send `removeImages: true`. An erasure asking for immediate removal needs that flag set deliberately, and THE CHOICE IS ONE-SHOT: once the account is deleted this endpoint refuses it. Getting it wrong costs a 7-day delay, not permanent retention — the purge still runs on day 7.',
     'Records a `deleteAccount` ModActivity row against the acting moderator. `auditRecorded: false` means the deletion succeeded and that row did not land.',
   ],
@@ -60,24 +59,6 @@ export default defineModeratorEndpoint('user.delete', {
       .describe('True deletes the images now. Default keeps them for the 7-day grace period.'),
   }),
   async handler(input, ctx) {
-    // A DELEGATED TOKEN MAY NOT REACH FURTHER HERE THAN IT REACHES THROUGH tRPC. `user.delete` there
-    // is `requiredScope: TokenScope.Full`, so a narrowly-scoped token cannot delete even its own
-    // account; without this, one scoped for something unrelated could delete anybody's.
-    //
-    // It is a CEILING on delegated tokens, not a floor on everyone: `enforceTokenScope` runs its
-    // check only when the scope is not Full, and an un-delegated request resolves to Full — so a
-    // cookie-authenticated moderator is not scope-checked there or here. This buys SCOPE parity and
-    // not AUTHORITY parity: tRPC can only erase the caller's own account, a Full token here erases
-    // anyone's. `Flags.hasFlag` rather than a restated comparison, so it cannot drift from
-    // `enforceTokenScope`.
-    if (!Flags.hasFlag(ctx.tokenScope, TokenScope.Full))
-      // FORBIDDEN, not UNAUTHORIZED: re-authenticating does not widen a token's scope, so telling
-      // the caller to sign in again cannot help.
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Your API key does not have the required scope for this action',
-      });
-
     // Checked here as well as in the moderator app's form action, so every caller of this endpoint
     // is held to the same grant.
     if (!(await hasModeratorGrant(ctx.actor, 'user.deleteAccount')))
@@ -135,13 +116,20 @@ export default defineModeratorEndpoint('user.delete', {
         `That username does not belong to user ${input.userId}. Check the id and try again.`
       );
 
-    await deleteUser({
-      id: input.userId,
-      // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
-      username: target.username ?? undefined,
-      removeModels: input.removeModels,
-      removeImages: input.removeImages,
-    });
+    try {
+      await deleteUser({
+        id: input.userId,
+        // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
+        username: target.username ?? undefined,
+        removeModels: input.removeModels,
+        removeImages: input.removeImages,
+      });
+    } catch (e) {
+      // No moderator override: a hold is released by Legal, not here.
+      if (e instanceof LegalHoldError)
+        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      throw e;
+    }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in
     // `apps/moderator/src/lib/server/user-actions.service.ts`. Most `defineModeratorEndpoint`s leave

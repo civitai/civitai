@@ -71,7 +71,7 @@ export const CIVITAI_CLI_RELEASES_URL = 'https://github.com/civitai/cli/releases
 // --- Author / run / submit ---
 /** Bare `civitai app create` (the submit CTA's form). */
 export const CLI_CREATE_COMMAND = 'civitai app create';
-/** With-sample-name form the quickstart uses. */
+/** With-sample-name form the manual setup uses. */
 export const CLI_CREATE_SAMPLE_COMMAND = 'civitai app create my-app';
 // The CLI does NOT install deps on `create`; its own next-step prompt is
 // `cd <dir> && npm install && npm run dev:harness`. `dev:harness` serves a MOCK

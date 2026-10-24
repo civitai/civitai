@@ -5,9 +5,11 @@ import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
+import { PrivacyPreferencesFooterLink } from '~/components/Consent/PrivacyPreferencesFooterLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
+import { ShellButton, ShellLink } from '~/components/AppLayout/ShellDs/ShellDs';
+import { ShellSocialLinks, SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { SupportMenu } from '~/components/Support/SupportMenu';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -93,6 +95,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
 
 export function AppFooter() {
   const features = useFeatureFlags();
+  const ds = !!features.shellDesignSystemMarkup;
   const domain = useDomainColor();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const footerRef = useRef<HTMLElement | null>(null);
@@ -159,15 +162,29 @@ export function AppFooter() {
           are offsets from the same edge, so both pay. */}
       <div className="absolute bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] right-[calc(0.5rem+var(--safe-area-inset-right))] group-[.no-scroll]:right-[calc(1rem+var(--safe-area-inset-right))]">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">
-          <Button
-            px="xs"
-            onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-            className={'transition-transform'}
-            style={showFooter ? { transform: 'translateY(140%)' } : undefined}
-            aria-label="Scroll to top"
-          >
-            <IconArrowUp size={20} stroke={2.5} />
-          </Button>
+          {ds ? (
+            <ShellButton
+              variant="filled"
+              size="sm"
+              onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+              // Mantine's `px="xs"`: `--mantine-spacing-xs`, 10px at scale 1.
+              className="px-[var(--mantine-spacing-xs)] transition-transform"
+              style={showFooter ? { transform: 'translateY(140%)' } : undefined}
+              aria-label="Scroll to top"
+            >
+              <IconArrowUp size={20} stroke={2.5} />
+            </ShellButton>
+          ) : (
+            <Button
+              px="xs"
+              onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+              className={'transition-transform'}
+              style={showFooter ? { transform: 'translateY(140%)' } : undefined}
+              aria-label="Scroll to top"
+            >
+              <IconArrowUp size={20} stroke={2.5} />
+            </Button>
+          )}
           <AssistantButton />
         </div>
       </div>
@@ -194,9 +211,16 @@ export function AppFooter() {
         )}
         style={{ scrollbarWidth: 'thin' }}
       >
-        <Text className="select-none text-nowrap font-bold">
-          &copy; Civitai {new Date().getFullYear()}
-        </Text>
+        {ds ? (
+          // Mantine `Text`'s own declarations (`size="md"`, `margin: 0`), as utilities.
+          <p className="m-0 select-none text-nowrap p-0 text-[length:var(--mantine-font-size-md)] font-bold leading-[var(--mantine-line-height-md)]">
+            &copy; Civitai {new Date().getFullYear()}
+          </p>
+        ) : (
+          <Text className="select-none text-nowrap font-bold">
+            &copy; Civitai {new Date().getFullYear()}
+          </Text>
+        )}
         <div className="flex items-center">
           {footerLinks
             .filter(
@@ -209,14 +233,31 @@ export function AppFooter() {
             )
             .map(({ features, key, indicator, ...props }, i) => {
               const showIndicator = indicator && (key === 'issues' ? showBugDot : true);
-              let button = (
+              const className = clsx('px-2.5 @max-sm:px-1', {
+                'pr-3.5': showIndicator,
+              });
+              let button = ds ? (
+                // `color` is dropped, not forwarded: on the Mantine path below the explicit
+                // `color="gray"` overrides any per-link colour, so every footer link is gray.
+                <ShellLink
+                  key={key ?? i}
+                  // Every entry in `footerLinks` is a string literal; the declared type is
+                  // Mantine-polymorphic `NextLink` props, which also admit a `UrlObject`.
+                  href={props.href as string}
+                  target={props.target}
+                  rel={props.rel}
+                  className={className}
+                  size="xs"
+                  variant="subtle-gray"
+                >
+                  {props.children}
+                </ShellLink>
+              ) : (
                 <Button
                   key={key ?? i}
                   component={(props.target === '_blank' ? 'a' : Link) as typeof Link}
                   {...props}
-                  className={clsx('px-2.5 @max-sm:px-1', {
-                    'pr-3.5': showIndicator,
-                  })}
+                  className={className}
                   size="xs"
                   variant="subtle"
                   color="gray"
@@ -239,7 +280,8 @@ export function AppFooter() {
               return button;
             })}
           <ManageConsentFooterLink />
-          <SocialLinks />
+          <PrivacyPreferencesFooterLink />
+          {ds ? <ShellSocialLinks /> : <SocialLinks />}
         </div>
         <div className="ml-auto flex items-center gap-1">
           <SupportMenu />

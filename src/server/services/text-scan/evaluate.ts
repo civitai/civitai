@@ -62,6 +62,12 @@ export function evaluateTextScan(
         if (output.scam.detected) outcome.triggeredLabels.push('scam');
         break;
       }
+      case 'csam': {
+        if (!output.csam) break;
+        outcome.csam = { detected: output.csam.detected, reason: output.csam.reason };
+        if (output.csam.detected) outcome.triggeredLabels.push('csam');
+        break;
+      }
     }
   }
   return outcome;

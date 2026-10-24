@@ -10,7 +10,12 @@ import {
   effectiveSubListingRating,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
+  isValidSubListingExternalId,
+  isValidSubListingLinkTemplate,
   isValidSubListingSubPath,
+  APP_SUB_LISTING_LINK_TEMPLATE_MAX,
+  APP_SUB_LISTING_LINK_TEMPLATE_PREFIX_RE,
+  subListingExternalHref,
   subListingRunHref,
 } from '~/shared/constants/app-sub-listing.constants';
 import { newAppSubListingId } from '~/server/utils/app-block-ids';
@@ -135,5 +140,84 @@ describe('subListingRunHref', () => {
     expect(subListingRunHref('custom-generators', 'g/ABC', 'asl_X')).toBe(
       '/apps/run/custom-generators/g/ABC?sl=asl_X'
     );
+  });
+});
+
+describe('link_template ⟺ catalog-sync migration', () => {
+  const catalogSql = readFileSync(
+    path.resolve(
+      __dirname,
+      '../../../../../packages/civitai-db-schema/prisma/migrations/20261015120000_app_sub_listing_catalog_sync/migration.sql'
+    ),
+    'utf8'
+  );
+
+  it('the CHECK uses the same prefix pattern and bound as the code', () => {
+    const prefix = [...catalogSql.matchAll(/"link_template" ~ '([^']+)'/g)].map((m) => m[1]);
+    expect(prefix).toEqual([APP_SUB_LISTING_LINK_TEMPLATE_PREFIX_RE.source.replace(/\\\//g, '/')]);
+    expect(catalogSql).toContain(
+      `char_length("link_template") <= ${APP_SUB_LISTING_LINK_TEMPLATE_MAX}`
+    );
+    expect(catalogSql).toContain("replace(\"link_template\", '{id}', ''))) = 4");
+  });
+});
+
+describe('isValidSubListingLinkTemplate', () => {
+  it.each([
+    'https://games.civitai.com/?game={id}',
+    'https://games.example.com:8443/g/{id}/play',
+    'https://a.b/{id}',
+  ])('accepts %s', (t) => expect(isValidSubListingLinkTemplate(t)).toBe(true));
+
+  it.each([
+    ['http', 'http://games.example.com/?game={id}'],
+    ['no path', 'https://games.example.com?game={id}'],
+    ['no placeholder', 'https://games.example.com/'],
+    ['two placeholders', 'https://games.example.com/{id}/{id}'],
+    ['userinfo', 'https://user@games.example.com/{id}'],
+    ['too long', `https://games.example.com/${'a'.repeat(300)}{id}`],
+  ])('refuses %s', (_label, t) => expect(isValidSubListingLinkTemplate(t)).toBe(false));
+
+  it('accepts exactly 300 characters and refuses 301', () => {
+    const base = 'https://g.example.com/{id}';
+    const at = base + 'a'.repeat(300 - base.length);
+    expect(at).toHaveLength(300);
+    expect(isValidSubListingLinkTemplate(at)).toBe(true);
+    expect(isValidSubListingLinkTemplate(at + 'a')).toBe(false);
+  });
+});
+
+describe('subListingExternalHref', () => {
+  const T = 'https://games.example.com/?game={id}';
+
+  it('fills the id into the template', () => {
+    expect(subListingExternalHref(T, 'neon-drift')).toBe(
+      'https://games.example.com/?game=neon-drift'
+    );
+    expect(subListingExternalHref('https://g.example.com/play/{id}', 'A_1')).toBe(
+      'https://g.example.com/play/A_1'
+    );
+  });
+
+  it('encodes the id, so it cannot leave the template’s origin or path', () => {
+    expect(subListingExternalHref('https://g.example.com/{id}', '@evil.example/x')).toBe(
+      'https://g.example.com/%40evil.example%2Fx'
+    );
+    expect(subListingExternalHref('https://g.example.com/{id}', '//evil.example')).toBe(
+      'https://g.example.com/%2F%2Fevil.example'
+    );
+  });
+
+  it('is null for a missing or invalid template', () => {
+    expect(subListingExternalHref(null, 'x')).toBeNull();
+    expect(subListingExternalHref('http://g.example.com/{id}', 'x')).toBeNull();
+    expect(subListingExternalHref('https://g.example.com/', 'x')).toBeNull();
+  });
+
+  it('matches the item id the catalog accepts', () => {
+    expect(isValidSubListingExternalId('neon-drift_2')).toBe(true);
+    for (const bad of ['', 'a/b', 'a.b', 'a%b', 'x'.repeat(65)]) {
+      expect(isValidSubListingExternalId(bad)).toBe(false);
+    }
   });
 });

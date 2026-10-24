@@ -12,6 +12,7 @@ import {
   Paper,
   UnstyledButton,
   useMantineTheme,
+  useMatches,
 } from '@mantine/core';
 import { useState } from 'react';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -24,6 +25,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   useEquipProfileDecoration,
+  useQueryStickerBalances,
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -44,6 +46,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
+import { canPurchaseShopCosmetic } from '~/components/CosmeticShop/shop-item-purchasable';
 import { stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 
 const { charged, free } = stickerSurfaceLabels();
@@ -142,12 +145,22 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // See CosmeticShopItemPurchaseCompleteModal: packs have their own modal.
   const cosmetic = shopItem.cosmetic as NonNullable<CosmeticShopItemGetById['cosmetic']>;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  // Same breakpoint as the Grid below: the columns sit side by side from `md`.
+  const isTwoColumn = useMatches({ base: false, md: true });
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
+  const isSticker = cosmetic.type === CosmeticType.Sticker;
+  const { data: stickerBalances, isLoading: isLoadingBalances } = useQueryStickerBalances({
+    enabled: isSticker,
+  });
   const hasCosmetic = Object.values(userCosmetics ?? {})
     .flat()
     .some(({ id }) => id === cosmetic.id);
-  const canPurchase = cosmetic.type === CosmeticType.ContentDecoration || !hasCosmetic;
+  const canPurchase = canPurchaseShopCosmetic({
+    type: cosmetic.type,
+    owned: hasCosmetic,
+    stickerRemaining: stickerBalances?.find((b) => b.cosmeticId === cosmetic.id)?.remaining,
+  });
   const isAvailable =
     (shopItem.availableQuantity === null || shopItem.availableQuantity > 0) &&
     (shopItem.availableFrom === null || dayjs(shopItem.availableFrom).isBefore(dayjs()));
@@ -216,15 +229,9 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   };
 
   return (
-    <Modal
-      {...dialog}
-      size="xl"
-      withCloseButton={false}
-      radius="lg"
-      classNames={{ body: 'p-0', content: 'overflow-hidden' }}
-    >
+    <Modal {...dialog} size="xl" withCloseButton={false} radius="lg" classNames={{ body: 'p-0' }}>
       <Grid classNames={{ inner: 'my-0' }}>
-        <Grid.Col span={{ base: 12, md: 5 }} p="lg">
+        <Grid.Col span={{ base: 12, md: 5 }} p="lg" pb={0}>
           <Stack gap="lg" px="md" h="100%">
             <Group justify="space-between" wrap="nowrap">
               <Text className="text-black dark:text-white" size="sm">
@@ -235,91 +242,103 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
-              {shopItem.title}
-            </Text>
-            {/* A sticker is sold by the use, so how many you get is the offer —
-                without it the price has nothing to be judged against. */}
-            {stickerTerms && (
-              <Text size="sm" c="dimmed">
-                {stickerTerms.usesLabel}
-                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+            {/* Side by side, a tall preview image makes the modal taller than the
+                viewport: pinning this block to the modal's bottom edge keeps the price
+                and Purchase button on screen. Stacked, it already sits above the preview,
+                and pinned it would cover the header's close button on a short screen. */}
+            <Stack
+              gap="lg"
+              mt="auto"
+              pb="lg"
+              className={isTwoColumn ? 'sticky bottom-0 z-10' : undefined}
+              bg="var(--mantine-color-body)"
+            >
+              <Text className="text-black dark:text-white" fw="bold" size="lg">
+                {shopItem.title}
               </Text>
-            )}
-            {isLoading && (
-              <Center>
-                <Loader type="bars" />
-              </Center>
-            )}
-            {!isLoading && (
-              <>
-                {isResale && (
-                  <Paper withBorder radius="md" p="sm">
-                    <Text size="xs" c="dimmed" mb={4}>
-                      You&apos;re buying from a reseller — this sale splits:
-                    </Text>
-                    <Group justify="space-between">
-                      <Text size="xs">Reseller earns</Text>
-                      <Text size="xs" fw={600}>
-                        {numberWithCommas(resellerAmount)} Buzz
+              {/* A sticker is sold by the use, so how many you get is the offer —
+                without it the price has nothing to be judged against. */}
+              {stickerTerms && (
+                <Text size="sm" c="dimmed">
+                  {stickerTerms.usesLabel}
+                  {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+                </Text>
+              )}
+              {(isLoading || (isSticker && isLoadingBalances)) && (
+                <Center>
+                  <Loader type="bars" />
+                </Center>
+              )}
+              {!isLoading && !(isSticker && isLoadingBalances) && (
+                <>
+                  {isResale && (
+                    <Paper withBorder radius="md" p="sm">
+                      <Text size="xs" c="dimmed" mb={4}>
+                        You&apos;re buying from a reseller — this sale splits:
                       </Text>
-                    </Group>
-                    <Group justify="space-between">
-                      <Text size="xs">Original creator earns</Text>
-                      <Text size="xs" fw={600}>
-                        {numberWithCommas(creatorAmount)} Buzz
-                      </Text>
-                    </Group>
-                  </Paper>
-                )}
-                {canPurchase ? (
-                  <Stack gap={6}>
-                    {acceptsBlue && isAvailable && (
-                      <PayWithSelector
-                        value={payWith}
-                        onChange={setPayWith}
-                        domainType={domainType}
+                      <Group justify="space-between">
+                        <Text size="xs">Reseller earns</Text>
+                        <Text size="xs" fw={600}>
+                          {numberWithCommas(resellerAmount)} Buzz
+                        </Text>
+                      </Group>
+                      <Group justify="space-between">
+                        <Text size="xs">Original creator earns</Text>
+                        <Text size="xs" fw={600}>
+                          {numberWithCommas(creatorAmount)} Buzz
+                        </Text>
+                      </Group>
+                    </Paper>
+                  )}
+                  {canPurchase ? (
+                    <Stack gap={6}>
+                      {acceptsBlue && isAvailable && (
+                        <PayWithSelector
+                          value={payWith}
+                          onChange={setPayWith}
+                          domainType={domainType}
+                        />
+                      )}
+                      <BuzzTransactionButton
+                        disabled={purchasingShopItem || !isAvailable}
+                        loading={purchasingShopItem}
+                        buzzAmount={shopItem.unitAmount}
+                        radius="xl"
+                        onPerformTransaction={handlePurchaseShopItem}
+                        label="Purchase"
+                        accountTypes={accountTypes}
+                        showTypePct={acceptsBlue && payWith === 'blue-first'}
                       />
-                    )}
-                    <BuzzTransactionButton
-                      disabled={purchasingShopItem || !isAvailable}
-                      loading={purchasingShopItem}
-                      buzzAmount={shopItem.unitAmount}
-                      radius="xl"
-                      onPerformTransaction={handlePurchaseShopItem}
-                      label="Purchase"
-                      accountTypes={accountTypes}
-                      showTypePct={acceptsBlue && payWith === 'blue-first'}
-                    />
-                  </Stack>
-                ) : cosmetic.type === CosmeticType.Sticker ? (
-                  <Text size="sm" align="center" c="dimmed">
-                    You already own this sticker — it&apos;s in your sticker picker.
-                  </Text>
-                ) : (
-                  <Stack gap={4}>
-                    <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
-                      Equip now
-                    </Button>
+                    </Stack>
+                  ) : cosmetic.type === CosmeticType.Sticker ? (
                     <Text size="sm" align="center" c="dimmed">
-                      You already own this cosmetic
+                      You already own this sticker — it&apos;s in your sticker picker.
                     </Text>
-                  </Stack>
-                )}
-              </>
-            )}
-            {cosmetic.type === CosmeticType.ContentDecoration && (
-              <Group gap="xs" wrap="nowrap">
-                <Text c="yellow">
-                  <IconAlertTriangleFilled />
-                </Text>
+                  ) : (
+                    <Stack gap={4}>
+                      <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
+                        Equip now
+                      </Button>
+                      <Text size="sm" align="center" c="dimmed">
+                        You already own this cosmetic
+                      </Text>
+                    </Stack>
+                  )}
+                </>
+              )}
+              {cosmetic.type === CosmeticType.ContentDecoration && (
+                <Group gap="xs" wrap="nowrap">
+                  <Text c="yellow">
+                    <IconAlertTriangleFilled />
+                  </Text>
 
-                <Text size="xs" c="yellow" lh={1.3}>
-                  This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u> piece
-                  of content at a time.
-                </Text>
-              </Group>
-            )}
+                  <Text size="xs" c="yellow" lh={1.3}>
+                    This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u>{' '}
+                    piece of content at a time.
+                  </Text>
+                </Group>
+              )}
+            </Stack>
           </Stack>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="  bg-gray-0 dark:bg-dark-8">

@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { recordsFor } from '../test-cache/core.mjs';
 import TestCacheReporter from '../test-cache/reporter.mjs';
 import TestCacheSequencer from '../test-cache/sequencer.mjs';
 
@@ -45,10 +46,22 @@ function write(rel: string, content = rel) {
 
 function testModule(
   rel: string,
-  { passed = true, deps = [] as string[], reads = [] as string[], setupFiles = [] as string[] } = {}
+  {
+    passed = true,
+    deps = [] as string[],
+    reads = [] as string[],
+    setupFiles = [] as string[],
+    edges = {} as Record<string, string[]>,
+    loaded = undefined as string[] | undefined,
+    loadedSelf = true,
+  } = {}
 ) {
   const abs = fwd(join(root, rel));
-  const graph = graphOf({ [abs]: deps.map((d) => fwd(join(root, d))) });
+  const at = (r: string) => (r.startsWith('/') || /^[A-Za-z]:/.test(r) ? r : fwd(join(root, r)));
+  const graph = graphOf({
+    [abs]: deps.map(at),
+    ...Object.fromEntries(Object.entries(edges).map(([from, tos]) => [at(from), tos.map(at)])),
+  });
   return {
     moduleId: abs,
     project: {
@@ -56,7 +69,10 @@ function testModule(
       config: { setupFiles: setupFiles.map((s) => fwd(join(root, s))) },
       vite: { environments: { ssr: { moduleGraph: graph } } },
     },
-    meta: () => ({ testCacheReads: reads.map((r) => join(root, r)) }),
+    meta: () => ({
+      testCacheReads: reads.map((r) => join(root, r)),
+      ...(loaded ? { testCacheLoaded: [...(loadedSelf ? [abs] : []), ...loaded.map(at)] } : {}),
+    }),
     diagnostic: () => ({}),
     state: () => (passed ? 'passed' : 'failed'),
     children: {
@@ -178,6 +194,112 @@ describe('recording a pass', () => {
     write('helper.ts', "const cp = process.getBuiltinModule('node:child_process');");
     run([testModule('a.test.ts', { deps: ['helper.ts'] })]);
     expect(records('a.test.ts')).toBe(0);
+  });
+});
+
+/** The entries of the one record for `rel`. */
+function entriesOf(rel: string): string[] {
+  const found = (recordsFor as (d: string, p: string, t: string) => { entries: string[] }[])(
+    cacheDir,
+    'unit',
+    rel
+  );
+  expect(found).toHaveLength(1);
+  return found[0].entries;
+}
+
+describe('modules the file never loaded', () => {
+  // The graph is shared by the whole run: m.ts carries c.ts because ANOTHER file loaded it for real.
+  // This file replaced m.ts with a vi.mock factory, so its runner never started m.ts.
+  const shape = { deps: ['a.ts', 'm.ts'], edges: { 'a.ts': ['b.ts'], 'm.ts': ['c.ts'] } };
+  const files = () => ['a.test.ts', 'a.ts', 'b.ts', 'm.ts', 'c.ts'].forEach((f) => write(f));
+
+  it('keys the mocked module but not the subtree a sibling loaded under it', () => {
+    files();
+    run([testModule('a.test.ts', { ...shape, loaded: ['a.ts', 'b.ts'] })]);
+    expect(entriesOf('a.test.ts').sort()).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'm.ts']);
+  });
+
+  // The control for the case above, and the fallback: a tracker that reported nothing (an older
+  // tree, a vitest without the internal) must key exactly as before, on the whole subtree.
+  it('walks the whole graph when the file reported nothing about what it loaded', () => {
+    files();
+    run([testModule('a.test.ts', shape)]);
+    expect(entriesOf('a.test.ts').sort()).toEqual(['a.test.ts', 'a.ts', 'b.ts', 'c.ts', 'm.ts']);
+  });
+
+  // Windows hands the same file back with a different drive-letter or segment case.
+  it('matches what the file loaded regardless of case', () => {
+    files();
+    run([
+      testModule('a.test.ts', {
+        ...shape,
+        loaded: ['a.ts', 'b.ts', 'M.TS'].map((r) => fwd(join(root, r)).toUpperCase()),
+      }),
+    ]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // A list that does not name the test file itself cannot be a record of what loaded: a vitest whose
+  // module-state fields changed would report nothing loaded, and narrow every key to direct imports.
+  it('walks the whole graph when the report does not include the test file itself', () => {
+    files();
+    run([testModule('a.test.ts', { ...shape, loaded: [], loadedSelf: false })]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // `?raw` and `?url` imports.
+  it('matches a loaded id that carries a query', () => {
+    files();
+    run([testModule('a.test.ts', { ...shape, loaded: ['a.ts', 'b.ts', 'm.ts?raw'] })]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // node_modules is the lockfile's job and is never in what the runner reports in a usable form; a
+  // first-party file reached through it must still be found.
+  it('still walks through modules outside the repo', () => {
+    files();
+    run([
+      testModule('a.test.ts', {
+        deps: ['node_modules/pkg/index.js'],
+        edges: { 'node_modules/pkg/index.js': ['c.ts'] },
+        loaded: [],
+      }),
+    ]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // setup.ts's vi.mock factories `await import` packages, and once any file runs one, the shared
+  // graph hangs them under setup.ts for every file. Unlike a mocked import of the test's own, a
+  // setup child this file never loaded is dropped, not kept as a leaf: no import of this file's
+  // names it.
+  describe('under the setup file', () => {
+    const setupShape = {
+      setupFiles: ['setup.ts'],
+      edges: { 'setup.ts': ['env.mock.ts', 'pkg-client.ts'], 'pkg-client.ts': ['pkg-dep.ts'] },
+    };
+    const all = ['a.test.ts', 'env.mock.ts', 'pkg-client.ts', 'pkg-dep.ts', 'setup.ts'];
+    const setupFiles = () => all.forEach((f) => write(f));
+
+    it('drops a module a setup factory loaded for another file', () => {
+      setupFiles();
+      run([testModule('a.test.ts', { ...setupShape, loaded: ['setup.ts', 'env.mock.ts'] })]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(['a.test.ts', 'env.mock.ts', 'setup.ts']);
+    });
+
+    it('keys a module a setup factory loaded for this file, and what it imports', () => {
+      setupFiles();
+      run([
+        testModule('a.test.ts', { ...setupShape, loaded: all.filter((f) => f !== 'a.test.ts') }),
+      ]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(all);
+    });
+
+    it('walks the whole setup closure when the file reported nothing about what it loaded', () => {
+      setupFiles();
+      run([testModule('a.test.ts', setupShape)]);
+      expect(entriesOf('a.test.ts').sort()).toEqual(all);
+    });
   });
 });
 

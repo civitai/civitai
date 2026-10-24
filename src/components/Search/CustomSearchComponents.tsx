@@ -13,7 +13,7 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MultiSelectProps } from '@mantine/core';
 import {
   Accordion,
   Box,
@@ -113,8 +113,9 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 
 export function SearchableMultiSelectRefinementList({
   title,
+  renderOption,
   ...props
-}: RefinementListProps & { title: string }) {
+}: RefinementListProps & { title: string; renderOption?: MultiSelectProps['renderOption'] }) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -194,6 +195,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
+            renderOption={renderOption}
             nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>

@@ -101,7 +101,7 @@ describe('ImageReactorsList', () => {
 
     expect(state.useQuery).toHaveBeenCalledWith({ id: IMAGE_ID });
     expect(html).toContain('Newest accounts first');
-    expect(html).toContain('No reactions yet.');
+    expect(html).toContain('No one to show.');
     expect(html).toContain(`href="${CREATOR_STUDIO_URL}/analytics/content/image/${IMAGE_ID}"`);
   });
 });

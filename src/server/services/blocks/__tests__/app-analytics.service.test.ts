@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppCustomEventsModule from '../app-custom-events.service';
 
 /**
  * Coverage for the Phase 0 author-analytics service. The security-critical
@@ -42,6 +43,13 @@ vi.mock('../app-views.service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../app-views.service')>();
   return { ...actual, getAppViews: (...args: unknown[]) => mockGetAppViews(...args) };
 });
+
+// Custom events have their own procedure; this payload must never read them.
+const { mockGetAppCustomEvents } = vi.hoisted(() => ({ mockGetAppCustomEvents: vi.fn() }));
+vi.mock('../app-custom-events.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppCustomEventsModule>()),
+  getAppCustomEvents: (...args: unknown[]) => mockGetAppCustomEvents(...args),
+}));
 
 // `Prisma.sql` / `Prisma.join` are used by the service to build the raw
 // queries. Provide a minimal shim that records the static SQL strings so
@@ -683,5 +691,14 @@ describe('getMyAppAnalytics (installs applicability wiring)', () => {
     const notEntitled = emptyAnalytics(range, false, 'notEntitled');
     expect(notEntitled.unavailable).toBe('notEntitled');
     expect('notApplicable' in notEntitled.installs).toBe(false);
+  });
+});
+
+describe('getMyAppAnalytics does not read custom events', () => {
+  it('for a single owned app: no appBlockEvents read and no customEvents key', async () => {
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+    expect(result.views).toBeDefined();
+    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
+    expect('customEvents' in result).toBe(false);
   });
 });

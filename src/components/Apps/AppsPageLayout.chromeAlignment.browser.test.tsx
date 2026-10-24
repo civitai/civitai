@@ -62,8 +62,7 @@
  * why the @2560 numbers below no longer match this column.)
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
- * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY, non-blocking, and RED on this
+ * Vitest browser-mode `component` project (`Component tests` in CI), and was RED on this
  * branch for reasons that have nothing to do with `/apps`. The failing files are outside
  * `src/components/Apps` and their subtrees are byte-identical to `origin/main` here; one
  * of them (`RemixGallery/RemixGallerySubmitModal`) fails to IMPORT, which reports as
@@ -82,8 +81,9 @@
  * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
  * `required_status_checks: null` — there is NO required check on this branch, so NO
  * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
- * `geometry:` job says the same thing in its own comment. "Report-only" therefore
- * describes every tier here, and a local run is the only real gate.
+ * `geometry:` job says the same thing in its own comment. "Non-blocking" therefore
+ * describes every tier here: `Component tests` goes red on a PR, `geometry` and `unit`
+ * report as a green job with a red step, and none is a required check.
  *
  * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
  * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the
@@ -92,10 +92,8 @@
  * taxonomy). They are just not enforcement. This file exists because they pin STRUCTURE
  * and only a real browser can pin PIXELS.
  *
- * (Of the browser tiers, only `geometry` is RUN by that workflow at all — report-only on
- * a PR, a real red on a push to `main`. `component`, which collects this file, matches no
- * project selector there. A new rendered-pixel claim is therefore worth more in
- * `geometry`; see `AppsRailHeaderRow.geometry.test.tsx`.)
+ * (That workflow runs both browser tiers: `geometry` report-only on a PR and a real red
+ * on a push to `main`, and `component`, which collects this file, as `Component tests`.)
  *
  * 🔴 WHY THIS FILE LOADS `@mantine/core/styles.css` AND MOST SIBLINGS MUST NOT.
  * The shared component scaffold deliberately omits Mantine's stylesheet, so the
@@ -114,6 +112,7 @@ import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { AppsMeasure } from './appsPageWidths';
 
@@ -133,7 +132,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // module-mock) — see the sibling browser tests for why.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } } },
+  trpc: makeTrpcProxy({ 'blocks.getNavSummary': { useQuery: () => ({ data: undefined }) } }),
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
@@ -278,7 +277,7 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined, collapsed: b
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 12 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
@@ -294,6 +293,7 @@ describe('the /apps route set that renders the shared chrome', () => {
       // repointed ('a' < 'b', where 'i' > 'b'), so the position moving is not a second
       // change to review.
       '/apps/activity',
+      '/apps/assistant',
       '/apps/build',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
@@ -304,13 +304,8 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 13 times. 6/7 since
-    // `/apps/review` gave up its 1368 cap and joined the full-container list. `/apps/build`
-    // joins it too — its workbench state renders the submissions table, whose 1424px scroll
-    // floor the readable band's 1368 ceiling cannot clear — while `/apps/get-started`, which
-    // WAS measured, left with the merge. Net: the full-container half holds at 6 (one in,
-    // one out) and the measured half drops from 7 to 6.
-    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
+    // measure-free branch of the layout rather than one of them 13 times.
+    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(7);
     expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
 });
@@ -322,7 +317,7 @@ describe.each(VIEWPORTS)(
       const railWidth = collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH;
       const railChrome = appsRailChromeWidth(collapsed);
 
-      test('nav left AND width are the same on all 12 routes', async () => {
+      test('nav left AND width are the same on all 13 routes', async () => {
         await page.viewport(width, height);
         const seen: Record<string, [number, number]> = {};
         const container: Record<string, [number, number]> = {};
@@ -418,7 +413,7 @@ describe.each(VIEWPORTS)(
         expect(bodyLefts.size, `the body starts at ${[...bodyLefts]} across routes`).toBe(1);
 
         // And the measured routes are genuinely DISTINCT widths, so the fixture varies
-        // the dimension under test instead of feeding one value 12 times. TWO classes
+        // the dimension under test instead of feeding one value 13 times. TWO classes
         // since the narrow-table cap was deleted.
         const measuredWidths = new Set(
           ROUTES.filter((r) => r.measure !== undefined).map((r) => seen[r.route][1])

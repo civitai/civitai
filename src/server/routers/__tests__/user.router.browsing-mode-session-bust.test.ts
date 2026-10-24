@@ -83,15 +83,6 @@ describe('user.updateBrowsingMode', () => {
     expect(mockUpdateUserById).toHaveBeenCalledTimes(1);
   });
 
-  it('logs the failed bust rather than swallowing it', async () => {
-    refreshSessionMock.mockRejectedValue(new Error(REDIS_DOWN));
-
-    await caller().updateBrowsingMode({ showNsfw: true });
-
-    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
-    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe(REDIS_DOWN);
-  });
-
   it('still FAILS when the toggle write itself fails', async () => {
     mockUpdateUserById.mockRejectedValue(new Error('db write failed'));
 

@@ -42,6 +42,7 @@ const baseCtx = (): ModelVersionSubmitContext => ({
   showClipSkip: true,
   genMode: 'bundled',
   requiresRightsAffirmation: false,
+  requiresBaseModelAttestation: false,
   isDirty: true,
   versionId: 10,
   storedPaidAccessConfig: null,
@@ -275,6 +276,26 @@ describe('decideModelVersionSubmit: refusals and skip', () => {
       message: 'You must confirm you hold the rights to monetize this model',
       field: 'rightsAffirmed',
     });
+  });
+
+  it('refuses an unticked base-model attestation when one is required', () => {
+    expect(decide({ baseModel: 'MiniMax H3' }, { requiresBaseModelAttestation: true })).toEqual({
+      kind: 'refuse',
+      code: 'base_model_attestation_required',
+      title: 'Confirmation required',
+      message: 'Confirm you have the right to train and share this MiniMax H3 model',
+      field: 'baseModelAttested',
+    });
+  });
+
+  it('sends the ticked attestation through to the server', () => {
+    const d = submitOf(
+      decide(
+        { baseModel: 'MiniMax H3', baseModelAttested: true },
+        { requiresBaseModelAttestation: true }
+      )
+    );
+    expect(d.payload.baseModelAttested).toBe(true);
   });
 
   it('skips a clean save of an existing version', () => {

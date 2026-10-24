@@ -5,6 +5,9 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
+// Held text is personal data; 30 days leaves time to escalate a decided hold.
+export const CSAM_HOLD_TEXT_RETENTION_DAYS = 30;
+
 export const TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES: TextScanEntityType[] = [
   'ChatMessage',
   'Comment',
@@ -36,12 +39,15 @@ async function deleteInBatches(
 
 export async function cleanupTextScanRows({
   graduatedEntityTypes,
+  graduatedWebSearchEntityTypes = [],
   cleanRowEntityTypes = TEXT_SCAN_CLEAN_ROW_ENTITY_TYPES,
   olderThanDays,
   batchSize = 1000,
   maxBatches = 50,
 }: {
   graduatedEntityTypes: TextScanEntityType[];
+  /** Only their `:search-shadow` rows are deleted; the main `:shadow` rows follow `graduatedEntityTypes`. */
+  graduatedWebSearchEntityTypes?: TextScanEntityType[];
   cleanRowEntityTypes?: TextScanEntityType[];
   olderThanDays: number;
   batchSize?: number;
@@ -49,10 +55,14 @@ export async function cleanupTextScanRows({
 }) {
   const cutoff = decreaseDate(new Date(), olderThanDays, 'days');
 
-  const shadow = graduatedEntityTypes.length
+  const shadowRowTypes = [
+    ...graduatedEntityTypes.map((t) => textScanEmEntityType(t, 'shadow')),
+    ...graduatedWebSearchEntityTypes.map((t) => textScanEmEntityType(t, 'shadow', 'web-search')),
+  ];
+  const shadow = shadowRowTypes.length
     ? await deleteInBatches(
         {
-          entityType: { in: graduatedEntityTypes.map((t) => textScanEmEntityType(t, 'shadow')) },
+          entityType: { in: shadowRowTypes },
           updatedAt: { lt: cutoff },
         },
         batchSize,
@@ -75,9 +85,34 @@ export async function cleanupTextScanRows({
       )
     : { deleted: 0, exhausted: false };
 
+  // Dismissed only: a Confirmed hold's text may be evidence, and its retention is not decided yet. A
+  // migration-superseded duplicate was never reviewed, so it goes only once the hold that replaced it is
+  // dismissed too (a missing one keeps it); it keeps its marker, which the hold writer and the queue read
+  // to tell it from a ruling.
+  const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_TEXT_RETENTION_DAYS, 'days').toISOString();
+  const holdTextCleared = await dbWrite.$executeRaw`
+    UPDATE "TextScanHold" h SET
+      "text" = '',
+      "meta" = CASE WHEN h."meta"->>'decision' = 'superseded'
+        THEN jsonb_build_object('decision', 'superseded', 'superseded', true,
+          'supersededBy', h."meta"->'supersededBy')
+        END,
+      "updatedAt" = now()
+    WHERE h."label" = 'csam' AND h."status" = 'Dismissed' AND h."text" <> ''
+      AND h."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')
+      AND (h."meta"->>'decision' IS DISTINCT FROM 'superseded' OR EXISTS (
+        SELECT 1 FROM "TextScanHold" k
+        -- Only a plain integer is cast: one bad value must not abort the whole sweep.
+        WHERE k."id" = CASE WHEN h."meta"->>'supersededBy' ~ '^[0-9]{1,9}$'
+            THEN (h."meta"->>'supersededBy')::int END
+          AND k."status" = 'Dismissed'
+          AND k."decidedAt" < (${holdCutoff}::timestamptz AT TIME ZONE 'UTC')))
+  `;
+
   return {
     shadowDeleted: shadow.deleted,
     cleanDeleted: clean.deleted,
+    holdTextCleared,
     exhausted: shadow.exhausted || clean.exhausted,
   };
 }

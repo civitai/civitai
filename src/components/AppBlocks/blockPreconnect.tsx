@@ -67,7 +67,7 @@ export function blockPreconnectOrigin(iframeSrc: string | null | undefined): str
  * Returns the ELEMENT rather than rendering it, so the page can place it inside
  * `next/head` (which inspects its children's `type` and only accepts real head
  * tags — a wrapper component would be dropped) while the attributes stay
- * assertable in the node unit project, which is the tier CI runs.
+ * assertable in the node unit project without a browser.
  */
 export function blockPreconnectHint(
   iframeSrc: string | null | undefined

@@ -243,16 +243,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     if (tool.name === 'search_models') {
-      const { query, types, baseModels, limit, sort, period, supportsGeneration } =
-        args.data as {
-          query?: string;
-          types?: string[];
-          baseModels?: string[];
-          limit?: number;
-          sort?: string;
-          period?: string;
-          supportsGeneration?: boolean;
-        };
+      const { query, types, baseModels, limit, sort, period, supportsGeneration } = args.data as {
+        query?: string;
+        types?: string[];
+        baseModels?: string[];
+        limit?: number;
+        sort?: string;
+        period?: string;
+        supportsGeneration?: boolean;
+      };
       // The `Math.min` is redundant TODAY — `searchModelsArgs.limit` is already
       // `.max(MAX_TOOL_RESULT_ITEMS)`, so a larger value is rejected before it
       // reaches here. It stays deliberately: it is the last bound before a value
@@ -300,6 +299,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
             limit: sortedQuery ? TOOL_SORTED_QUERY_CANDIDATES : effectiveLimit,
             browsingLevel,
             types,
+            baseModels,
+            supportsGeneration,
           });
           searchIds = meili.searchIds;
         }
@@ -357,6 +358,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           nsfwImagePassthrough: false,
           user: undefined,
           baseUrlOrigin,
+          // As on `blocks/models.ts`: Public-availability versions only. Without it a text query
+          // (which hands getModelsRaw an id list, and so turns its own private-version filter
+          // off) can surface a Private version as the model's latest.
+          publicVersionsOnly: true,
         }
       );
 

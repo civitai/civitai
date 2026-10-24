@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
-import type { AppealResult } from './minor-flag.service';
+import type { AppealResult, RulingReason } from './minor-flag.service';
 import { callModEndpoint } from './user-actions.service';
 
 export type BountyPoiVerdict = {
@@ -51,11 +51,12 @@ export async function getBountyPoiAppeals({
 // The grant records the text hash it covers, which only the main app can compute.
 export async function resolveBountyPoiAppeal(
   bountyId: number,
-  uphold: boolean
+  uphold: boolean,
+  reason: RulingReason
 ): Promise<AppealResult> {
   const result = await callModEndpoint(
     'bounty-poi/resolve-appeal',
-    { bountyId, uphold },
+    { bountyId, uphold, ...reason },
     uphold ? 'Uphold flag' : 'Overturn flag'
   );
   if (!result.ok) return result;

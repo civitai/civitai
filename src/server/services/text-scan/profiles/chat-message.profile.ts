@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { getTextScanCsamMode } from '~/server/services/text-scan/mode';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 import { scamEligibleAuthors, scamSubject } from '~/server/services/text-scan/profiles/scam-text';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
@@ -10,7 +11,10 @@ export const CHAT_WINDOW_LOOKBACK_MS = 86_400_000;
 export const CHAT_WINDOW_MIN_CHARS = 20;
 export const CHAT_WINDOW_SCAN_ROWS = 500;
 
-async function loadChatWindow(newestId: number): Promise<TextScanSubject | undefined> {
+async function loadChatWindow(
+  newestId: number,
+  csamReview: () => Promise<boolean>
+): Promise<TextScanSubject | undefined> {
   const newest = await dbWrite.chatMessage.findUnique({
     where: { id: newestId },
     select: {
@@ -30,7 +34,9 @@ async function loadChatWindow(newestId: number): Promise<TextScanSubject | undef
     newest.deletedAt
   )
     return undefined;
-  if (!(await scamEligibleAuthors([newest.userId])).has(newest.userId)) return undefined;
+  const scamEligible = (await scamEligibleAuthors([newest.userId])).has(newest.userId);
+  // csam has no account-age window: every sender is scanned for it once its gate is in review.
+  if (!scamEligible && !(await csamReview())) return undefined;
 
   // Bounds the backward walk in a busy chat where this sender said little. `deletedAt: null` is what
   // lets the partial (chatId, id) index serve it.
@@ -67,21 +73,23 @@ async function loadChatWindow(newestId: number): Promise<TextScanSubject | undef
 
   return scamSubject(
     newest.userId,
-    // Newest first: `maxInputChars` keeps the start of the composed message and cuts the end.
     [{ heading: 'Messages, newest first', text: kept.map((m) => m.text).join('\n') }],
     {
       chatId: newest.chatId,
       senderId: newest.userId,
       messageIds: kept.map((m) => m.id),
       contentAt: (newest.editedAt ?? newest.createdAt).toISOString(),
+      ...(scamEligible ? {} : { scamIneligible: true }),
     }
   );
 }
 
 export async function loadChatWindows(newestIds: number[]) {
   const windows = new Map<number, TextScanSubject>();
+  let review: Promise<boolean> | undefined;
+  const csamReview = () => (review ??= getTextScanCsamMode().then((mode) => mode === 'review'));
   for (const id of newestIds) {
-    const subject = await loadChatWindow(id);
+    const subject = await loadChatWindow(id, csamReview);
     if (subject) windows.set(id, subject);
   }
   return windows;
@@ -89,7 +97,8 @@ export async function loadChatWindows(newestIds: number[]) {
 
 registerTextScanProfile({
   entityType: 'ChatMessage',
-  labels: ['scam'],
+  labels: ['scam', 'csam'],
   minChars: CHAT_WINDOW_MIN_CHARS,
   load: loadChatWindows,
+  labelsFor: (subject) => (subject.meta?.scamIneligible ? ['csam'] : ['scam', 'csam']),
 });

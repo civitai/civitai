@@ -106,19 +106,21 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
     })),
     {
       name: 'judge-playground',
-      version: 3,
+      version: 4,
       migrate: (persistedState, version) => {
         // Migration history:
         //   v0 -> v1: x-ai/grok-4.1-fast deprecated 2026-05-15
         //   v1 -> v2: Qwen orchestrator endpoint not ready; fall back to gpt-5-nano
         //   v2 -> v3: gpt-5-nano returned empty content on generateArticle; use gpt-4o-mini
+        //   v3 -> v4: Qwen 35B retired from the orchestrator
         const state = persistedState as Partial<PlaygroundState> | undefined;
-        const stale = [
-          'x-ai/grok-4.1-fast',
-          'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
-          'openai/gpt-5-nano',
-        ];
+        const retiredQwen35b =
+          'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar';
+        const stale = ['x-ai/grok-4.1-fast', retiredQwen35b, 'openai/gpt-5-nano'];
         if ((version ?? 0) < 3 && state?.aiModel && stale.includes(state.aiModel)) {
+          state.aiModel = 'openai/gpt-4o-mini';
+        }
+        if ((version ?? 0) < 4 && state?.aiModel === retiredQwen35b) {
           state.aiModel = 'openai/gpt-4o-mini';
         }
         return state;

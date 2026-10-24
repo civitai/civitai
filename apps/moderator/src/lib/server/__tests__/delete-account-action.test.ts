@@ -159,6 +159,12 @@ describe('deleteAccount — the audit row belongs to the endpoint', () => {
   // The control. `recordModActivity` is mocked and observable, so the assertion above is capable of
   // failing — a neighbouring action that DOES log proves the spy is wired to the real call site.
   it('while its neighbour purgeAllContent still does', async () => {
+    // Purge checks the hold first; one answer serves the check and the purge.
+    respond = () =>
+      new Response(JSON.stringify({ userId: TARGET, held: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     await purgeAllContent({ userId: TARGET, moderatorId: 990000007 });
 
     expect(recordModActivity).toHaveBeenCalledWith({

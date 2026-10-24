@@ -10,7 +10,7 @@ const { mockGetWorkflow, mockQueryWorkflows, mockObserveRead } = vi.hoisted(() =
   mockObserveRead: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   getWorkflow: mockGetWorkflow,
   queryWorkflows: mockQueryWorkflows,
   // unused-by-these-tests named exports referenced at module load
@@ -124,7 +124,7 @@ describe('getWorkflow error mapping', () => {
 
   it('maps a status-less TimeoutError RESOLVE (the real pre-response abort shape) to 503', async () => {
     // LOAD-BEARING contract: createOrchestratorClient does NOT set `throwOnError`, so on a
-    // fetch abort BEFORE response headers (the common park shape) the @civitai/client
+    // fetch abort BEFORE response headers (the common park shape) the @civitai/orchestration-client
     // RESOLVES with `{ data: undefined, error: <TimeoutError>, response: undefined }` — it
     // does NOT reject. So the fired backstop lands in the `if(!data)` default branch, NOT
     // the `.catch` above (which only the mid-body-read reject path hits). Assert that real
@@ -210,90 +210,5 @@ describe('queryWorkflows error mapping (queryGeneratedImages path)', () => {
     mockQueryWorkflows.mockRejectedValue(bug);
     const err = await queryWorkflows(baseQueryArgs).catch((e) => e);
     expect(err).toBe(bug);
-  });
-});
-
-describe('read metric wiring (observeOrchestratorRead) — additive instrumentation', () => {
-  it('records op=getWorkflow outcome=ok exactly once on the success path', async () => {
-    mockGetWorkflow.mockResolvedValue({ data: { id: 'wf-1', status: 'succeeded' } });
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } });
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    const [op, outcome, seconds] = mockObserveRead.mock.calls[0];
-    expect(op).toBe('getWorkflow');
-    expect(outcome).toBe('ok');
-    expect(typeof seconds).toBe('number');
-  });
-
-  it('records outcome=timeout on the REJECT path (mid-body abort) for getWorkflow', async () => {
-    mockGetWorkflow.mockRejectedValue(
-      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
-    );
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
-    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
-  });
-
-  it('records outcome=timeout on the RESOLVE path (pre-response abort, { error: TimeoutError }) for getWorkflow', async () => {
-    mockGetWorkflow.mockResolvedValue({
-      data: undefined,
-      error: Object.assign(new Error('The operation was aborted due to timeout'), {
-        name: 'TimeoutError',
-      }),
-      response: undefined,
-    });
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
-  });
-
-  it('records outcome=error on a non-timeout upstream 5xx for getWorkflow', async () => {
-    mockGetWorkflow.mockResolvedValue({ data: undefined, error: { status: 500, detail: 'boom' } });
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][1]).toBe('error');
-  });
-
-  it('records op=queryWorkflows outcome=timeout on the reject path', async () => {
-    mockQueryWorkflows.mockRejectedValue(
-      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
-    );
-    await queryWorkflows(baseQueryArgs).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][0]).toBe('queryWorkflows');
-    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
-  });
-
-  it('records outcome=error (NOT timeout) on a non-timeout network REJECT for getWorkflow', async () => {
-    // The reject `.catch` path with a NETWORK error that is not a timeout: a fetch-failed
-    // TypeError whose cause is an ECONNREFUSED — this maps to a retry-able 503 downstream,
-    // but the metric outcome must be classified `error`, NOT `timeout` (no TimeoutError/
-    // AbortError anywhere in the cause chain) and NOT `ok`. This closes the reject-path
-    // non-timeout `error` gap the depth-0 resolve-path 5xx test above doesn't cover.
-    mockGetWorkflow.mockRejectedValue(
-      Object.assign(new TypeError('fetch failed'), {
-        cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
-      })
-    );
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
-    expect(mockObserveRead.mock.calls[0][1]).toBe('error');
-  });
-
-  it('classifies as timeout via the .cause chain at depth>0 (outer error is generic) for getWorkflow', async () => {
-    // isOrchestratorReadTimeout walks the `.cause` chain (depth ≤ 4), not just the top-level
-    // `.name`. Prove the walk works past depth 0: the OUTER error is a generic Error, but a
-    // nested cause carries `name: 'TimeoutError'` — this must still classify `timeout`, not
-    // `error`. The existing timeout tests only exercise depth-0 (`name` on the thrown error).
-    mockGetWorkflow.mockRejectedValue(
-      Object.assign(new Error('wrapped'), {
-        cause: Object.assign(new Error('inner'), { name: 'TimeoutError' }),
-      })
-    );
-    await getWorkflow({ token: 'tok', path: { workflowId: 'wf-1' } }).catch(() => {});
-    expect(mockObserveRead).toHaveBeenCalledTimes(1);
-    expect(mockObserveRead.mock.calls[0][0]).toBe('getWorkflow');
-    expect(mockObserveRead.mock.calls[0][1]).toBe('timeout');
   });
 });

@@ -13,9 +13,11 @@ import {
   readLastModerationAction,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { readListingForkable } from '~/server/services/blocks/app-fork.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import type {
   AppRole,
   ListingCapability,
@@ -647,6 +649,49 @@ export async function assertAppEditAccess(args: {
   if (!seated) deny();
 }
 
+/**
+ * The listing half of "this seat reaches an AppBlock" (why both conditions:
+ * {@link resolveAccessibleAppBlockIds}). Shared with {@link listApprovedAppBlockSeatHolders} so
+ * panel access and the ingest's team stay one set; `app-block-team.seam.test.ts` pins that.
+ */
+export const APP_BLOCK_SEAT_LISTING_WHERE = {
+  kind: 'onsite',
+  appBlockId: { not: null },
+} as const;
+
+/**
+ * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs, under
+ * the same seat conditions as {@link resolveAccessibleAppBlockIds}. The owner is not included.
+ * Degrades to empty only when the table is missing; any other failure propagates.
+ */
+export async function listApprovedAppBlockSeatHolders(): Promise<
+  Array<{ appBlockId: string; userId: number }>
+> {
+  const listings = (await dbRead.appListing.findMany({
+    where: { ...APP_BLOCK_SEAT_LISTING_WHERE, appBlock: { status: 'approved' } },
+    select: { id: true, appBlockId: true },
+  })) as Array<{ id: string; appBlockId: string | null }>;
+  const blockByListing = new Map<string, string>();
+  for (const listing of listings) {
+    if (listing.appBlockId) blockByListing.set(listing.id, listing.appBlockId);
+  }
+  if (blockByListing.size === 0) return [];
+  const seats = await safeCollaboratorQuery(
+    () =>
+      dbRead.appCollaborator.findMany({
+        where: { appListingId: { in: [...blockByListing.keys()] }, status: ACCEPTED },
+        select: { appListingId: true, userId: true },
+      }),
+    [] as Array<{ appListingId: string; userId: number }>
+  );
+  const pairs: Array<{ appBlockId: string; userId: number }> = [];
+  for (const seat of seats) {
+    const appBlockId = blockByListing.get(seat.appListingId);
+    if (appBlockId) pairs.push({ appBlockId, userId: seat.userId });
+  }
+  return pairs;
+}
+
 export type AccessibleAppBlocks = {
   /** AppBlock ids the caller OWNS (via `OauthClient.userId`). */
   ownedIds: string[];
@@ -708,6 +753,8 @@ export type AccessibleAppBlocks = {
  * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
+  // `status: ACCEPTED` is repeated in `listApprovedAppBlockSeatHolders`: change both
+  // (`app-block-team.seam.test.ts`).
   const [owned, seats] = await Promise.all([
     dbRead.appBlock.findMany({ where: { app: { userId } }, select: { id: true } }),
     safeCollaboratorQuery(
@@ -729,7 +776,7 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
   const seatListingIds = seats.map((s: { appListingId: string }) => s.appListingId);
   const seatBlocks = seatListingIds.length
     ? await dbRead.appListing.findMany({
-        where: { id: { in: seatListingIds }, kind: 'onsite', appBlockId: { not: null } },
+        where: { id: { in: seatListingIds }, ...APP_BLOCK_SEAT_LISTING_WHERE },
         select: { appBlockId: true },
       })
     : [];
@@ -1004,6 +1051,10 @@ export type AppListingAuthoringContext = Omit<
    * that refusal remains authoritative.
    */
   visibilityAvailable: boolean;
+  /** The author's fork opt-in ("Let others fork this app's source"), off the PARENT listing. */
+  forkable: boolean;
+  /** `false` ⇒ the fork migration is not applied here; the setting must not be offered. */
+  forkableAvailable: boolean;
   /**
    * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
    *
@@ -1095,6 +1146,8 @@ async function hydrateMyAppListings(
       description: true,
       tagline: true,
       category: true,
+      contentRating: true,
+      appBlock: { select: { contentRating: true } },
       _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
     },
     orderBy: { serialId: 'desc' },
@@ -1188,6 +1241,8 @@ async function hydrateMyAppListings(
       description?: string | null;
       tagline?: string | null;
       category?: string | null;
+      contentRating?: string | null;
+      appBlock?: { contentRating: string | null } | null;
       _count?: { screenshots: number } | null;
     }) => {
       const kind = r.kind as ListingKind;
@@ -1225,6 +1280,13 @@ async function hydrateMyAppListings(
           tagline: r.tagline ?? null,
           category: r.category ?? null,
           assetScans: scansByListingId.get(r.id) ?? [],
+          status: r.status,
+          contentRating: r.contentRating ?? null,
+          declaredContentRating: declaredListingRating({
+            kind,
+            appRating: r.appBlock?.contentRating,
+            listingRating: r.contentRating,
+          }),
         }).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.
@@ -1507,6 +1569,14 @@ export async function getAppListingAuthoringContext(opts: {
    * those would turn an outage into a silently wrong audience.
    */
   const visibilityRead = await readListingVisibility(access.seatListingId, dbRead);
+  /**
+   * The fork opt-in, for the Details tab's "Let others fork this app's source" setting. Keyed on
+   * the PARENT for the same reason the level is: the opt-in lives on the live listing only. Same
+   * offer-here/grant-there split — this only decides whether the box shows ticked, and whether it
+   * shows at all (`forkableAvailable: false` ⇒ the migration is not applied here, and the panel
+   * says so instead of offering a write the server would refuse). The write re-checks everything.
+   */
+  const forkRead = await readListingForkable(access.seatListingId, dbRead);
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
@@ -1523,6 +1593,8 @@ export async function getAppListingAuthoringContext(opts: {
     capabilities: capabilitiesForKind(access.kind),
     visibility: visibilityRead.visibility,
     visibilityAvailable: visibilityRead.available,
+    forkable: forkRead.forkable,
+    forkableAvailable: forkRead.available,
   };
 }
 

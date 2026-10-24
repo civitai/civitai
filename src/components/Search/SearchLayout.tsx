@@ -16,7 +16,7 @@ import { createContext, useContext, useEffect, useMemo, useState, useCallback } 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -24,10 +24,10 @@ import {
   useSearchAvailabilityStore,
 } from '~/components/Search/search-availability.store';
 import Link from 'next/link';
-import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
+import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { useRouter } from 'next/router';
@@ -48,11 +48,7 @@ import { emptySearchClient } from '~/components/Search/emptySearchClient';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
 // Wrap the Meili client so a backend outage/blip degrades to an empty result set
 // (with a "temporarily unavailable" banner) instead of throwing an uncaught
@@ -237,7 +233,7 @@ export function SearchLayout({
         future={{ preserveSharedStateOnUnmount: true }}
         initialUiState={initialUiState}
       >
-        <Configure hitsPerPage={50} attributesToHighlight={[]} />
+        <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
           renderSearchComponent={renderSearchComponent}

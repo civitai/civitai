@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
+import { useMilestoneLanding } from '~/components/CreatorJourney/useMilestoneLanding';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,
@@ -15,7 +16,7 @@ import {
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { parseScoreTierSlug } from '~/shared/constants/creator-journey.constants';
+import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -24,19 +25,23 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
-      const milestone = parseScoreTierSlug(ctx.query.milestone);
+      // Prefetch under the route's own spelling, not the slugified `username`: the layout queries
+      // `router.query.username` as-is, and a lowercased key misses for `/user/JustMaier`, so the
+      // server render (and every crawler's og:image) falls back to the empty profile meta.
+      const routeUsername = ctx.params?.username as string;
+      const milestone = parseMilestoneShareToken(ctx.query.milestone);
       const [, profile] = await Promise.all([
-        ssg?.user.getCreator.prefetch({ username }),
+        ssg?.user.getCreator.prefetch({ username: routeUsername }),
         milestone
-          ? ssg?.userProfile.get.fetch({ username }).catch(() => null)
-          : ssg?.userProfile.get.prefetch({ username }).then(() => null),
-        ssg?.userProfile.overview.prefetch({ username }),
+          ? ssg?.userProfile.get.fetch({ username: routeUsername }).catch(() => null)
+          : ssg?.userProfile.get.prefetch({ username: routeUsername }).then(() => null),
+        ssg?.userProfile.overview.prefetch({ username: routeUsername }),
       ]);
       // Crawlers read og:image from the server render, so whether `?milestone=` swaps it is decided here.
       if (ssg && milestone && profile)
         await ssg.creatorJourney.isMilestoneShareable.prefetch({
           userId: profile.id,
-          slug: milestone,
+          milestone,
         });
     }
 
@@ -54,6 +59,8 @@ function ProfileOverview() {
     username,
   });
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
+
+  useMilestoneLanding(user);
 
   const sections = useMemo(
     () =>

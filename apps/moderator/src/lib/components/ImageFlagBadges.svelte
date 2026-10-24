@@ -20,6 +20,7 @@
     minor = false,
     acceptableMinor = false,
     poi = false,
+    approvedAppeal = null,
   }: {
     tosViolation?: boolean;
     /** Passed where the caller has it: `'Blocked'` is what actually hides the image, and `blockedFor`
@@ -30,6 +31,9 @@
     minor?: boolean;
     acceptableMinor?: boolean;
     poi?: boolean;
+    /** The image's latest approved appeal. History, not a flag: a removal for the reason it overturned
+     *  is held for a second moderator. */
+    approvedAppeal?: { approvedAt: Date | string; approvedByUsername: string | null } | null;
   } = $props();
 
   const blocked = $derived(ingestion === 'Blocked' || (ingestion === undefined && !!blockedFor));
@@ -43,3 +47,10 @@
 {#if needsReview}<Badge variant="secondary">{needsReview}</Badge>{/if}
 {#if acceptableMinor}<Badge variant="secondary">acceptable minor</Badge>{/if}
 {#if poi}<Badge variant="secondary">POI</Badge>{/if}
+{#if approvedAppeal}
+  <Badge class="bg-sky-500/15 text-sky-300">
+    appeal approved {new Date(approvedAppeal.approvedAt).toLocaleDateString()}{approvedAppeal.approvedByUsername
+      ? ` by ${approvedAppeal.approvedByUsername}`
+      : ''}
+  </Badge>
+{/if}

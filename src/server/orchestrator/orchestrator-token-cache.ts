@@ -119,6 +119,15 @@
  * Waiting ≥ `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` is an acceptable
  * alternative to (a) for non-urgent cases.
  *
+ * ⚠️ (b) is NOT immediate: the bearer path caches system keys' rows
+ * (`src/server/auth/api-key-principal-cache.ts`), and a delete made by
+ * hand never evicts them, so a deleted token keeps authenticating for up
+ * to `API_KEY_PRINCIPAL_TTL_SECONDS` (30 s). For immediate effect, delete
+ * through `deleteApiKeys({ userId: X, type: 'System', name:
+ * 'generation-token' })` in `src/server/services/api-key.service.ts`,
+ * which tombstones every row it deletes. No endpoint or script exposes it
+ * today; it has to run in app code.
+ *
  * KNOWN BEHAVIOR (mint timeout)
  * -----------------------------
  * `mint()` is wrapped in `Promise.race` against a configurable timeout

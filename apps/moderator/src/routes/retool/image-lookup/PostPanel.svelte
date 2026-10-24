@@ -104,6 +104,7 @@
       needsReview={item.needsReview}
       minor={item.minor}
       poi={item.poi}
+      approvedAppeal={item.approvedAppeal}
     />
   </div>
   <a class="mt-2 block text-xs {LINK_CLASS}" href="?q={item.id}">

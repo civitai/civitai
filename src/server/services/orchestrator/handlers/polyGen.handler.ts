@@ -14,7 +14,12 @@
  * `generate3DWhatIf` tRPC mutations.
  */
 
-import type { ImageBlob, Model3dBlob, PolyGenOutput, Workflow } from '@civitai/client';
+import type {
+  ImageBlob,
+  Model3dBlob,
+  PolyGenOutput,
+  Workflow,
+} from '@civitai/orchestration-client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { env } from '~/env/server';
@@ -102,7 +107,9 @@ export async function handlePolyGenWorkflowResult(
   // ---------------------------------------------------------------------------
   const blobs: { format: string; variant: string; blob: Model3dBlob }[] = [];
   const pushBlob = (variant: string, blob: Model3dBlob | undefined | null) => {
-    if (!blob) return;
+    // An unavailable blob has nothing to copy — e.g. the placeholder GLB older
+    // Tripo quad (FBX-only) workflows carry.
+    if (!blob || !blob.available) return;
     blobs.push({ format: normalizeFormat(blob.format), variant, blob });
   };
 
@@ -433,11 +440,7 @@ function contentTypeForFormat(format: string): string {
  * encode the variant into the filename so downloaded files don't
  * collide when an owner saves the whole bundle to disk.
  */
-export function deriveFileName(
-  workflowId: string,
-  format: string,
-  variant: string = 'primary'
-): string {
+export function deriveFileName(workflowId: string, format: string, variant = 'primary'): string {
   if (variant === 'primary') return `${workflowId}.${format}`;
   return `${workflowId}.${variant}.${format}`;
 }

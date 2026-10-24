@@ -17,6 +17,9 @@ export enum ReportEntity {
   Model3DReview = 'model3dReview',
   Announcement = 'announcement',
   Crucible = 'crucible',
+  GameFrameGame = 'gameFrameGame',
+  Storyline = 'storyline',
+  ServiceOffering = 'serviceOffering',
 }
 
 /**
@@ -48,4 +51,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Model3DReview]: '3D review',
   [ReportEntity.Announcement]: 'Announcement',
   [ReportEntity.Crucible]: 'Crucible',
+  [ReportEntity.GameFrameGame]: 'Game',
+  [ReportEntity.Storyline]: 'Storyline',
+  [ReportEntity.ServiceOffering]: 'Service',
 };

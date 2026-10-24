@@ -44,6 +44,7 @@ import {
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -65,13 +66,21 @@ export const generationRouter = router({
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
-    .query(({ input, ctx }) =>
-      getGenerationData({
+    .query(async ({ input, ctx }) => {
+      const data = await getGenerationData({
         query: input,
         user: ctx.user,
         browsingLevel: getRequestBrowsingLevel(ctx),
-      })
-    ),
+        mediaViewer: ctx,
+      });
+      if (input.type !== 'modelVersion' && input.type !== 'modelVersions') return data;
+      return {
+        ...data,
+        resources: data.resources.filter((r) =>
+          canViewPoiModel(r.model.poi, r.model.userId, ctx.user)
+        ),
+      };
+    }),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(checkResourcesCoverageSchema)
@@ -157,12 +166,14 @@ export const generationRouter = router({
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) =>
-      getResourceData(input.ids, {
-        user: ctx.user,
-        withPreview: true,
-        browsingLevel: getRequestBrowsingLevel(ctx),
-      })
+    .query(async ({ input, ctx }) =>
+      (
+        await getResourceData(input.ids, {
+          user: ctx.user,
+          withPreview: true,
+          browsingLevel: getRequestBrowsingLevel(ctx),
+        })
+      ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

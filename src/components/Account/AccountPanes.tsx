@@ -3,6 +3,7 @@ import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
+import { CatalogItemsCard } from '~/components/Account/CatalogItemsCard';
 import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { DeleteCard } from '~/components/Account/DeleteCard';
@@ -92,6 +93,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {features.apiKeys && <ApiKeysCard flat />}
           {features.oauthApps && <OAuthAppsCard flat />}
           {features.oauthApps && <ConnectedAppsCard flat />}
+          {features.oauthApps && <CatalogItemsCard flat />}
         </SettingsStack>
       );
 

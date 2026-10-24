@@ -8,20 +8,21 @@ import { trpc } from '~/utils/trpc';
  * Two separate surfaces in one bar now need the same listing row: F2's app-name
  * crumb popover (full name + recommend rollup + "View in App Store") and F4's
  * review entry points (the listing `id` to review, plus the `creator`/`kind` the
- * eligibility gate reads). React Query dedupes by KEY, so two call sites are one
- * network request only while their inputs serialise identically — and "identically"
+ * eligibility gate reads). A third reads it per row: each "Recently run" item's
+ * icon (`ChromeRecentAppIcon`), the server-gated `iconUrl` for that app's slug.
+ * React Query dedupes by KEY, so two call sites are one network request only while their inputs serialise identically — and "identically"
  * is a property of two pieces of code that nothing checks. A second call site
  * written as `useQuery({ slug }, { retry: false, enabled: true })`, or one that
  * passes `{ slug, kind: undefined }`, or one that simply forgets `retry: false`,
  * still compiles, still renders, still looks right, and doubles the chrome's
  * traffic on a surface that renders on every model page carrying a block.
  *
- * So there is exactly ONE call site, here, and both surfaces reach the query
+ * So there is exactly ONE call site, here, and every surface reaches the query
  * through it. The key cannot drift because there is nothing to drift from.
  * `__tests__/chromeListingQueryIsSingleSourced.test.ts` pins that: it fails if a
  * second `getAppDetail.useQuery(` appears anywhere in the chrome's sources.
  *
- * 🔴 CALL IT LAZILY — it carries NO `enabled` flag on purpose. Both callers mount
+ * 🔴 CALL IT LAZILY — it carries NO `enabled` flag on purpose. Every caller mounts
  * it inside a floating surface Mantine does not render until the user opens it
  * (`Popover.Dropdown` / `Menu.Dropdown`, neither `keepMounted`), so a closed chrome
  * issues no request at all. That is the same structural-laziness decision F2 made

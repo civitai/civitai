@@ -9,7 +9,7 @@ import type {
   HappyHorseV11ReferenceToVideoInput,
   HappyHorseV11TextToVideoInput,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { happyHorseVersionIds } from '~/shared/generation/version-ids';
 import { defineHandler } from '../handlers/handler-factory';

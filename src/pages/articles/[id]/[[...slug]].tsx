@@ -40,7 +40,7 @@ import {
 import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -347,9 +347,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: article.coverImage?.url
-      ? getEdgeUrl(article.coverImage.url, { width: 1200 })
-      : undefined,
+    image: safeSchemaImageUrl(article.coverImage, { width: 1200 }),
     author:
       article.user.username && !article.user.deletedAt
         ? {
@@ -485,6 +483,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
             </AlertWithIcon>
           )}
+          {article.scheduledAt && isOwner && (
+            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
+              <div>
+                This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your
+                time. It stays hidden until then.
+              </div>
+            </AlertWithIcon>
+          )}
           {article.status === ArticleStatus.UnpublishedViolation && (
             <ArticleUnpublishedAlert
               reason={article.metadata?.unpublishedReason}
@@ -498,7 +504,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          <OwnerRatingControls entityType="Article" entityId={article.id} isOwner={!!isActualOwner} />
+          <OwnerRatingControls
+            entityType="Article"
+            entityId={article.id}
+            isOwner={!!isActualOwner}
+          />
           {article.status === ArticleStatus.Published && (
             <FirstPublishCard
               entityType="article"
@@ -530,7 +540,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         <>
                           <RoutedDialogLink
                             name="imageDetail"
-                            state={{ imageId: image.id, withoutPost: true }}
+                            state={{ imageId: image.id }}
                             className="block size-full cursor-pointer"
                           >
                             <Center className="size-full">

@@ -23,6 +23,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -30,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 export const CACHE_FORMAT = 2;
 export const MODES = ['off', 'shadow', 'on'];
-export const RECORDS_PER_TEST = 8;
+export const RECORDS_PER_TEST = 32;
 
 // Read once, at load: the daemon's checkout can pull mid-run, and a record must be salted with the
 // code that made it, not with whatever is on disk when the run ends.
@@ -199,8 +200,42 @@ export function shadowCandidates(rel) {
   return out;
 }
 
-/** Transitive imports in one vite environment's module graph. null when the root is absent. */
-export function closureOf(graph, id) {
+/** `toRel`, with an id it cannot parse read as "not a file in this repo". */
+export function relOrNull(id, root) {
+  try {
+    return toRel(id, root);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which modules a test file's key walk may descend into: first-party modules its runner actually
+ * loaded (`loaded`, from fs-tracker.mjs), and anything that is not a repo file. The rest of the
+ * shared graph is what OTHER files loaded. Everything, as before, when `loaded` is missing or does
+ * not name the test file itself: a list that omits the one module certain to have loaded is not a
+ * record of what loaded. Case-insensitive, because Windows can hand the same file back in a
+ * different case. `relOf` is `relOrNull` bound to the root, memoised by the caller.
+ */
+export function expandOnlyLoaded(loaded, testRel, relOf) {
+  if (!Array.isArray(loaded)) return () => true;
+  const ran = new Set(loaded.map((id) => relOf(id)?.toLowerCase()));
+  if (!ran.has(testRel.toLowerCase())) return () => true;
+  return (id) => {
+    const r = relOf(id);
+    return isCoveredElsewhere(r) || ran.has(r.toLowerCase());
+  };
+}
+
+/**
+ * Transitive imports in one vite environment's module graph. null when the root is absent.
+ *
+ * The graph is shared by every test file in the run, so a module one file replaces with a
+ * `vi.mock` factory still carries the imports another file loaded it with. `expand(id)` false keeps
+ * that module in the closure but stops the walk there: measured, a test that factory-mocks
+ * image.service was keyed on 9 modules run alone and 983 beside one real importer.
+ */
+export function closureOf(graph, id, expand = () => true) {
   const root = graph.getModuleById(id);
   if (!root) return null;
   const out = new Set();
@@ -211,7 +246,7 @@ export function closureOf(graph, id) {
       if (!dep?.id || seen.has(dep)) continue;
       seen.add(dep);
       out.add(dep.id);
-      stack.push(dep);
+      if (expand(dep.id)) stack.push(dep);
     }
   }
   return out;
@@ -393,7 +428,7 @@ export function cacheDir(root) {
 }
 
 /**
- * Every recorded pass for one test file, newest first. More than one so two worktrees on different
+ * Every recorded pass for one test file, most recently written or hit first. More than one so two worktrees on different
  * versions of the same code can BOTH stay fast, instead of evicting each other's record.
  */
 export function recordsFor(dir, project, testRel) {
@@ -412,6 +447,20 @@ export function recordsFor(dir, project, testRel) {
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+/**
+ * A record that just answered a lookup moves to the front of the eviction order. Eviction goes by
+ * mtime, so without this a record that every tree on the current main keeps hitting is dropped as
+ * soon as enough newer branch records are written.
+ */
+export function markHit(dir, project, testRel, key) {
+  const now = new Date();
+  try {
+    utimesSync(join(dir, 'rec', identity(project, testRel), `${key}.json`), now, now);
+  } catch {
+    /* evicted between the lookup and now: nothing to keep */
+  }
 }
 
 export function writeRecord(dir, project, testRel, record) {

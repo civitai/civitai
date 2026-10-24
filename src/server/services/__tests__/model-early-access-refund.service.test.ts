@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
@@ -603,7 +605,7 @@ describe('unpublishModelById — early access refund gate', () => {
   // statuses. These read the SQL itself, because the two properties that matter — that meta is
   // MERGED rather than replaced, and that the WHERE picks the transitioning rows — live entirely in
   // the static template segments. An assertion on the interpolated payload is byte-identical under
-  // `meta = COALESCE(meta,'{}') || payload` and under `meta = payload`, which is the bug this code
+  // `meta = meta || payload` and under `meta = payload`, which is the bug this code
   // exists to prevent.
   // The take-down is the first $executeRaw in the transaction; the Post metadata update is the
   // second. Found by its SQL rather than by position, so reordering cannot silently repoint these.
@@ -611,9 +613,13 @@ describe('unpublishModelById — early access refund gate', () => {
     mockTx.$executeRaw.mock.calls.find(([strings]) =>
       (strings as unknown as string[]).join('').includes('UPDATE "ModelVersion"')
     );
-  const takeDownSql = () =>
-    ((takeDownCall()?.[0] ?? []) as unknown as string[]).join('?').replace(/\s+/g, ' ');
-  const takeDownParams = () => takeDownCall()?.slice(1) ?? [];
+  // Prisma.sql inlines a nested fragment (the meta merge base) and keeps only the bound values.
+  const takeDown = () => {
+    const call = takeDownCall();
+    return call ? Prisma.sql(call[0] as unknown as string[], ...call.slice(1)) : Prisma.empty;
+  };
+  const takeDownSql = () => takeDown().sql.replace(/\s+/g, ' ');
+  const takeDownParams = () => takeDown().values;
 
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });
@@ -628,7 +634,7 @@ describe('unpublishModelById — early access refund gate', () => {
     });
 
     expect(takeDownSql()).toContain(
-      `SET "status" = ?::"ModelStatus", "meta" = COALESCE("meta", '{}'::jsonb) ||`
+      `SET "status" = ?::"ModelStatus", "meta" = ${asJsonbObject('"meta"')} ||`
     );
     // Every key the notification and the audit trail read, not just the one that is easiest to find.
     expect(JSON.parse(takeDownParams()[1] as string)).toEqual({

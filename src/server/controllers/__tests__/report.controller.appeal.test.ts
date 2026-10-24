@@ -3,13 +3,19 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ReportService from '~/server/services/report.service';
 
-const { mockGetImageById, mockGetLatestAppeal, mockCreateEntityAppeal, mockReopenAppeal } =
-  vi.hoisted(() => ({
-    mockGetImageById: vi.fn(),
-    mockGetLatestAppeal: vi.fn(),
-    mockCreateEntityAppeal: vi.fn(),
-    mockReopenAppeal: vi.fn(),
-  }));
+const {
+  mockGetImageById,
+  mockGetLatestAppeal,
+  mockCreateEntityAppeal,
+  mockReopenAppeal,
+  mockIsAppealBlockedByHoldMarker,
+} = vi.hoisted(() => ({
+  mockGetImageById: vi.fn(),
+  mockGetLatestAppeal: vi.fn(),
+  mockCreateEntityAppeal: vi.fn(),
+  mockReopenAppeal: vi.fn(),
+  mockIsAppealBlockedByHoldMarker: vi.fn(),
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -23,10 +29,12 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   getLatestAppeal: mockGetLatestAppeal,
   createEntityAppeal: mockCreateEntityAppeal,
   reopenAppeal: mockReopenAppeal,
+  isAppealBlockedByHoldMarker: mockIsAppealBlockedByHoldMarker,
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockModelFindUnique = dbMock.dbRead.model.findUnique;
 const mockModel3DFindUnique = dbMock.dbRead.model3D.findUnique;
@@ -48,6 +56,7 @@ beforeEach(() => {
   mockGetLatestAppeal.mockResolvedValue(null);
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
+  mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -300,6 +309,104 @@ describe('createEntityAppealHandler — Bounty', () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Rejected', resolvedAt: new Date() });
     await createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() });
     expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 8, message: 'Fictional.' });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+});
+
+describe('createEntityAppealHandler — Storyline', () => {
+  const storylineInput = {
+    entityId: 31,
+    entityType: EntityType.Storyline,
+    message: 'The title names a fictional character.',
+  } as const;
+  const mockStorylineFindUnique = dbMock.dbRead.storyline.findUnique;
+  const scanTakenDown = {
+    userId: 602767,
+    tosViolationByScan: true,
+    tosViolationByModerator: false,
+  };
+
+  it('404s a missing storyline and refuses a non-owner', async () => {
+    mockStorylineFindUnique.mockResolvedValue(null);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    mockStorylineFindUnique.mockResolvedValue({ ...scanTakenDown, userId: 1 } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('refuses a storyline the title scan has not taken down', async () => {
+    mockStorylineFindUnique.mockResolvedValue({
+      ...scanTakenDown,
+      tosViolationByScan: false,
+    } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/title scan/) });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Granting would lift only the scan's takedown, so the storyline would stay down; a moderator's
+  // own takedown is not a scan error to overturn here.
+  it("refuses while a moderator's takedown holds, even with the scan's too", async () => {
+    mockStorylineFindUnique.mockResolvedValue({
+      ...scanTakenDown,
+      tosViolationByModerator: true,
+    } as never);
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringMatching(/moderator/) });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it('creates a fee-free appeal the first time', async () => {
+    mockStorylineFindUnique.mockResolvedValue(scanTakenDown as never);
+    await createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() });
+    expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, skipFee: true })
+    );
+  });
+
+  it('refuses while one is pending, and reopens the row after a denial', async () => {
+    mockStorylineFindUnique.mockResolvedValue(scanTakenDown as never);
+    mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Pending', resolvedAt: null });
+    await expect(
+      createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockReopenAppeal).not.toHaveBeenCalled();
+
+    mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Rejected', resolvedAt: new Date() });
+    await createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() });
+    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, userId: 602767 })
+    );
+    expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 8, message: storylineInput.message });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
+});
+
+// A hold marker's kept image reads as a moderator block. The image cases above are the control.
+describe('createEntityAppealHandler — an image under a hold marker', () => {
+  it('refuses, before any charge, in the usual words', async () => {
+    mockGetImageById.mockResolvedValue({
+      id: 99,
+      userId: 602767,
+      blockedFor: 'moderated',
+      needsReview: null,
+    });
+    mockIsAppealBlockedByHoldMarker.mockResolvedValue(true);
+
+    await expect(
+      createEntityAppealHandler({
+        input: { entityId: 99, entityType: EntityType.Image, message: 'Please review again.' },
+        ctx: ctxUser(602767),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: IMAGE_NOT_APPEALABLE });
+    expect(mockIsAppealBlockedByHoldMarker).toHaveBeenCalledWith({ imageId: 99, userId: 602767 });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

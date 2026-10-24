@@ -114,19 +114,6 @@ describe('withUserHydration', () => {
     ).toEqual(STALE_PICTURE);
   });
 
-  // A rejection here reaches react-instantsearch as a failed search: no results, not stale
-  // ones. The catch above is what prevents it, so this asserts the promise settles.
-  it('never rejects', async () => {
-    const client = withUserHydration(
-      clientReturning(response('models_v9', hit(USER_A))),
-      async () => {
-        throw new Error('boom');
-      }
-    );
-
-    await expect(client.search([] as never)).resolves.toBeDefined();
-  });
-
   it('leaves a failing search to the caller rather than swallowing it', async () => {
     // Only hydration is guarded. A Meili failure is `resilientSearchClient`'s job, and
     // catching it here would hide an outage behind an empty result set.

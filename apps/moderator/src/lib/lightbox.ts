@@ -6,6 +6,8 @@ export type LightboxItem = {
   id: string;
   /** Shown under the large view. Carries provenance, so it is not decoration — see the note there. */
   caption: string;
+  /** Defaults to `image`. A video plays in the large view with controls. */
+  type?: 'image' | 'video';
 };
 
 /**

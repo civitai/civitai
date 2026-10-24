@@ -63,6 +63,7 @@ const PARENT: ListingCard = {
   recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
   reviewCount: 0,
   openCount: 0,
+  restrictedAudience: null,
   kindData: { kind: 'onsite', appBlockId: 'ab_P', hasPage: true, liveUrl: 'https://x.civit.ai' },
 };
 

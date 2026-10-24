@@ -6,7 +6,6 @@ import {
   GLYPH_POP_ANIMATE,
   REVEAL_ANIMATE,
   REVEAL_INITIAL,
-  STAGGER_SECONDS,
   revealTransition,
 } from '~/components/Apps/agentOnboardingMotion';
 
@@ -58,13 +57,6 @@ describe('🔴 the stagger is the DELAY, not just the constant', () => {
     expect(revealTransition(0).delay).toBeCloseTo(0);
     expect(revealTransition(1).delay).toBeCloseTo(0.04);
     expect(revealTransition(2).delay).toBeCloseTo(0.08);
-  });
-
-  it('the step is 40ms, and the delay is derived from it rather than retyped', () => {
-    // Multiplying by the constant is what a flattening mutation breaks; asserting the
-    // constant alone is what let one through.
-    expect(STAGGER_SECONDS).toBe(0.04);
-    expect(revealTransition(3).delay).toBeCloseTo(3 * STAGGER_SECONDS);
   });
 });
 

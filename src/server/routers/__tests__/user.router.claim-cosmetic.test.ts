@@ -26,6 +26,9 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   usersSearchIndex: { queueUpdate: mockQueueUpdate },
 }));
+vi.mock('~/server/search-index/users.search-index', () => ({
+  usersSearchIndex: { queueUpdate: mockQueueUpdate },
+}));
 
 import { userRouter } from '~/server/routers/user.router';
 import { awardTrophyCosmetic } from '~/server/services/user.service';

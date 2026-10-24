@@ -8,6 +8,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
 const baseUrl = getBaseUrl();
+// Subscribers get a non-Public file's download link, never its storage url (see ownerOnlyFileUrls).
 export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
@@ -60,6 +61,7 @@ export const modelWebhooks = createWebhookProcessor({
               ...version,
               files: castedFiles.map((file) => ({
                 ...file,
+                url: file.visibility === 'Public' ? file.url : undefined,
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
@@ -126,6 +128,7 @@ export const modelWebhooks = createWebhookProcessor({
               ...version,
               files: castedFiles.map((file) => ({
                 ...file,
+                url: file.visibility === 'Public' ? file.url : undefined,
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

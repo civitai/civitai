@@ -138,7 +138,7 @@ contest collection can still see the old flash.
 Run `node scripts/ad-request-check.mjs [origin]`.
 
 **This cannot be verified locally.** `adsEnabled` is hard-`false` when `isDev`
-([`AdsProvider.tsx:125`](../src/components/Ads/AdsProvider.tsx#L125)), so a dev server never
+(the `adsEnabled` expression in [`AdsProvider.tsx`](../src/components/Ads/AdsProvider.tsx)), so a dev server never
 requests ads at all and would pass the gated check for the wrong reason. Point the script at
 a preview or production deploy.
 

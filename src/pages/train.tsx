@@ -1,6 +1,7 @@
 import { Accordion, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconRocket, IconWand } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
+import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import classes from '~/pages/train.module.scss';
@@ -97,6 +98,7 @@ export default function TrainPage() {
           'private AI model',
         ]}
         imageUrl="/images/training-landing/og-train.jpg"
+        imageNsfwLevel={NsfwLevel.PG}
         schema={schema}
       />
 

@@ -91,14 +91,16 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    // Audio outputs aren't supported by the post system — filter them out.
-    const postable = selected.filter((image) => image.mediaType !== 'audio');
+    // Audio outputs aren't supported by the post system, and some workflows' outputs can't be posted.
+    const postable = selected.filter(
+      (image) => image.mediaType !== 'audio' && image.canUse('post')
+    );
     const skipped = selected.length - postable.length;
 
     if (postable.length === 0) {
       showErrorNotification({
         title: 'Cannot create post',
-        error: new Error('Audio outputs cannot be added to a post'),
+        error: new Error('None of the selected outputs can be added to a post'),
       });
       return;
     }
@@ -106,7 +108,7 @@ export function GeneratedImageActions({
     if (skipped > 0) {
       showWarningNotification({
         title: 'Some outputs were skipped',
-        message: `${skipped} audio output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
+        message: `${skipped} selected output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
       });
     }
 
@@ -238,8 +240,14 @@ function BulkWorkflowMenu({
   const { setSelected } = useActions();
 
   // Split selected by media type
-  const selectedImages = useMemo(() => selected.filter((s) => s.type === 'image'), [selected]);
-  const selectedVideos = useMemo(() => selected.filter((s) => s.type === 'video'), [selected]);
+  const selectedImages = useMemo(
+    () => selected.filter((s) => s.type === 'image' && s.canUse('derive')),
+    [selected]
+  );
+  const selectedVideos = useMemo(
+    () => selected.filter((s) => s.type === 'video' && s.canUse('derive')),
+    [selected]
+  );
 
   // Get workflows for each type
   const imageWorkflows = useGeneratedItemWorkflows({ outputType: 'image', filterBy: 'input' });

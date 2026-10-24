@@ -1,4 +1,7 @@
-import { Box, Group, Stack } from '@mantine/core';
+import { Box, Button, Group, Stack } from '@mantine/core';
+import { IconCalendarEvent } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 
@@ -20,6 +23,7 @@ import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
+import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -56,6 +60,7 @@ function UserPostsPage() {
   // images and videos tabs; the server authorizes this independently in
   // `post.service.ts` and does not trust the control being rendered.
   const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
+  const features = useFeatureFlags();
 
   const [section, setSection] = useState<'published' | 'draft'>(
     canViewDrafts ? querySection ?? 'published' : 'published'
@@ -86,6 +91,17 @@ function UserPostsPage() {
                   }}
                 />
               )}
+              {selfView && features.postPlanner && (
+                <Button
+                  component={Link}
+                  href="/user/schedule"
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconCalendarEvent size={14} />}
+                >
+                  Open planner
+                </Button>
+              )}
               {!selfView && <ActiveTagFilter tagIds={query.tags ?? []} />}
               <Group gap={8} ml="auto" wrap="nowrap">
                 {/* Drafts are a publish queue with a fixed order (see post-sort.ts), so there is
@@ -101,6 +117,7 @@ function UserPostsPage() {
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
                   showScheduled={canViewDrafts}
+                  jumpToSort={viewingDraft ? undefined : sort}
                   size="compact-sm"
                 />
               </Group>
@@ -115,6 +132,7 @@ function UserPostsPage() {
                 draftOnly: viewingDraft,
                 pending: true,
               }}
+              emptyMessage={viewingDraft ? undefined : jumpToEmptyMessage(query.jumpTo, sort)}
             />
           </Stack>
         </MasonryContainer>

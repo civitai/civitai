@@ -70,7 +70,10 @@ import { getPostHandler } from '~/server/controllers/post.controller';
 
 const POST_ID = 31107522;
 const AUTHOR_ID = 5;
-const VIEWER = { id: 77, isModerator: false } as never;
+// A viewer who opted into PG and R (5 — distinct from every browsing-level constant), on a
+// request whose features admit NSFW, so `getRequestBrowsingLevel` returns the saved level.
+const VIEWER = { id: 77, isModerator: false, showNsfw: true, browsingLevel: 5 } as never;
+const VIEWER_LEVEL = 5;
 const HOST = 'civitai.com';
 
 const CHIP = { slug: 'custom-generators', name: 'Custom Generators', iconUrl: null };
@@ -108,7 +111,12 @@ const selected = () => ({
 });
 
 const ctx = (over: Record<string, unknown> = {}) =>
-  ({ user: VIEWER, req: { headers: { host: HOST } }, ...over } as never);
+  ({
+    user: VIEWER,
+    features: { canViewNsfw: true },
+    req: { headers: { host: HOST } },
+    ...over,
+  } as never);
 
 beforeEach(() => {
   mockGetPostDetail.mockReset();
@@ -163,7 +171,24 @@ describe('the chip is resolved AFTER authorisation, for the right post and viewe
       postId: POST_ID,
       user: VIEWER,
       host: HOST,
+      viewerBrowsingLevel: VIEWER_LEVEL,
     });
+  });
+
+  it('passes the REQUEST browsing level, so the chip icon follows the red-host media rule', async () => {
+    // A request that may not view NSFW collapses a saved mature level to SFW; an anonymous one is
+    // the public floor. Both come from the shared request rule, not from the saved level alone.
+    await getPostHandler({
+      input: { id: POST_ID },
+      ctx: ctx({ features: { canViewNsfw: false } }),
+    });
+    expect(mockReadPostAppChip).toHaveBeenLastCalledWith(
+      expect.objectContaining({ viewerBrowsingLevel: 3 })
+    );
+    await getPostHandler({ input: { id: POST_ID }, ctx: ctx({ user: undefined }) });
+    expect(mockReadPostAppChip).toHaveBeenLastCalledWith(
+      expect.objectContaining({ viewerBrowsingLevel: 1 })
+    );
   });
 
   it('does NOT resolve a chip for a post the viewer is blocked from', async () => {
@@ -185,6 +210,7 @@ describe('the chip is resolved AFTER authorisation, for the right post and viewe
       postId: POST_ID,
       user: VIEWER,
       host: '',
+      viewerBrowsingLevel: VIEWER_LEVEL,
     });
   });
 

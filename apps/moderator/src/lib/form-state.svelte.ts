@@ -11,6 +11,8 @@ import type { ActionResult, SubmitFunction } from '@sveltejs/kit';
 export class FormState {
   /** The refusal from the last submit, or null. */
   error = $state<string | null>(null);
+  /** A `warning` the last successful submit returned: it worked, with something to know. */
+  warning = $state<string | null>(null);
   /** True between submit and response — for disabling this form's own controls, not the page's. */
   submitting = $state(false);
 
@@ -87,6 +89,7 @@ export class FormState {
     if (cancelled) return;
 
     this.submitting = true;
+    this.warning = null;
     return async ({ result, update }) => {
       // Reset on success ONLY. Clearing the fields after a refusal throws away what the operator
       // typed, on the one path where they need it back to fix and resubmit.
@@ -98,6 +101,8 @@ export class FormState {
         result.type === 'failure'
           ? (result.data?.error as string | undefined) ?? 'Something went wrong.'
           : null;
+      const warning = result.type === 'success' ? result.data?.warning : undefined;
+      this.warning = typeof warning === 'string' ? warning : null;
       if (result.type === 'success') this.opts.onSuccess?.(result.data);
       this.opts.onSettled?.(result);
       this.submitting = false;

@@ -192,6 +192,26 @@ export const videoStillEdgeOptions = {
   transcode: true,
 } satisfies Omit<EdgeUrlProps, 'src'>;
 
+/**
+ * The `original=true` form of an image-CDN delivery URL, e.g. the resized variant a page
+ * shows and a drag hands over. A variant's re-encode drops a PNG's generation text chunks,
+ * so a reader of generation metadata needs the stored file. Video variants (`transcode`,
+ * `skip`) are frames of an MP4 whose original is not an image, and pass through, as does
+ * any URL not on the image CDN.
+ */
+export function toOriginalEdgeUrl(url: string) {
+  const base = env.NEXT_PUBLIC_IMAGE_LOCATION;
+  if (!base || !url.startsWith(`${base}/`)) return url;
+
+  const [path] = url.slice(base.length + 1).split(/[?#]/);
+  const segments = path.split('/');
+  if (segments.length < 2 || segments.length > 3 || segments.some((s) => !s)) return url;
+
+  const [key, params, name] = segments.length === 3 ? segments : [segments[0], '', segments[1]];
+  if (/(^|,)(transcode=true|skip=)/.test(params)) return url;
+  return [base, key, 'original=true', name].join('/');
+}
+
 export function getEdgeUrl(
   src: string,
   {

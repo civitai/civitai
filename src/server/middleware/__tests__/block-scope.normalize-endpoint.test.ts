@@ -375,6 +375,9 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'resource-intent',
       'set',
       'shared-storage',
+      // `v1/blocks/storage/[[...path]].ts` — the document store, ONE optional catch-all, so
+      // `storage` is its only static segment; every later segment is a value.
+      'storage',
       'sub-listings',
       'submit',
       'tip',

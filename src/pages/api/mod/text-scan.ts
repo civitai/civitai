@@ -1,23 +1,8 @@
 import {
   runTextScanHarnessAction,
   textScanHarnessSchema,
-  type TextScanHarnessInput,
 } from '~/server/services/text-scan/harness';
-import { TRPCError } from '@trpc/server';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
-
-// The only actions a narrowly-scoped token may call: they read prompts or scan caller-supplied text,
-// so none writes live prompts or config or returns an entity's text (or a verdict's reason or the
-// model's raw reply about it). Any other action, including one added later, needs full scope.
-const NARROW_SCOPE_ACTIONS: ReadonlySet<string> = new Set<TextScanHarnessInput['action']>([
-  'getPrompts',
-  'quoteEntities',
-  'scanTexts',
-  'quoteTexts',
-]);
-export const needsFullScope = (action: string) => !NARROW_SCOPE_ACTIONS.has(action);
 
 // The harness's own caps bound a request at ~1M characters, which multibyte text can take past the
 // 1mb default.
@@ -28,20 +13,19 @@ export default defineModeratorEndpoint('textScan.harness', {
     'Text-scan operator actions: prompts, config, rollout modes, dry-run scans, shadow samples, quotes.',
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
-    'putPrompt/putConfig/putModes are attributed to the signed-in moderator; ids in the body are ignored.',
+    'putPrompt/putConfig/putModes/putWebSearchModes are attributed to the signed-in moderator; ids in the body are ignored.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
+    'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
-    'Only getPrompts, quoteEntities, scanTexts and quoteTexts serve a delegated token that is not full-scope; every other action refuses it. A cookie session carries no scope and is unaffected.',
+    "scanEntity/batchEntities/scanTexts/quoteEntities/quoteTexts take pass: 'main' (default; every profile label, no tools) or 'web-search' (only poi/minor, with the civitai:web_search tool, as production's Model web-search pass runs them; other entity types are refused). Run both passes for a full picture: results carry pass, labels and, for scans, costTotal.",
+    'literalModelRules matches texts against the saved Model rules (no LLM, no workflow, nothing billed); its ruleOverrides (lab only) apply to that action alone: a positive id replaces that Model rule, a negative id adds an unsaved one, enabled:false drops it. Every other action ignores ruleOverrides.',
+    'suggestModelRuleAliases { subject, description?, existingAliases? } submits ONE billed orchestrator chat completion with web search (never retried) and waits at most a few seconds: { ok: true, status: "pending", workflowId } while it runs, { ok: true, status: "done", suggestions: [{ alias, kind, note?, source? }], costTotal } when it finished, or { ok: false, error }.',
+    'aliasSuggestionResult { workflowId, subject, existingAliases? } reads that search back (only workflows suggestModelRuleAliases created): { ok: true, status: "pending" }, { ok: true, status: "done", suggestions, costTotal } with the subject, existing aliases and terms the matcher would ignore already removed, { ok: true, status: "failed", error }, or { ok: false, error } when the workflow cannot be read.',
   ],
   rateLimit: { max: 120, windowSeconds: 60 },
   input: textScanHarnessSchema,
-  auditExclude: ['content', 'promptOverrides', 'texts'],
+  auditExclude: ['content', 'promptOverrides', 'ruleOverrides', 'texts'],
   async handler(input, ctx) {
-    if (needsFullScope(input.action) && !Flags.hasFlag(ctx.tokenScope, TokenScope.Full))
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'Your API key does not have the required scope for this action',
-      });
     const result = await runTextScanHarnessAction(input, { moderatorId: ctx.actor.id });
     return result.kind === 'csv' ? { csv: result.body } : (result.body as Record<string, unknown>);
   },

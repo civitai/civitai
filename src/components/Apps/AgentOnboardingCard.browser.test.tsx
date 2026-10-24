@@ -320,20 +320,20 @@ describe('AgentOnboardingCard — tone', () => {
       .element(page.getByRole('heading', { name: 'Let your agent build it' }))
       .toBeInTheDocument();
 
-    // `inline` sits inside `/apps/build`'s first-app body and inside the workbench's
-    // collapsed strip — neither has a heading hierarchy for an `h3` to belong to, so it uses
-    // emphasised text instead of inventing one.
+    // `inline` sits inside the workbench's collapsed strip, which has no heading hierarchy
+    // for an `h3` to belong to, so it uses emphasised text instead of inventing one.
     await rerender(<AgentOnboardingCard tone="inline" />);
-    await expect.element(page.getByText('Or let your agent do it')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Let your agent do it', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByRole('heading', { name: 'Let your agent build it' }).elements()).toHaveLength(
       0
     );
   });
 
   test('🔴 BOTH tones disclose what the prompt makes an agent do', async () => {
-    // `inline` is what both signed-in placements render, so it is the variant most readers
-    // see — and both hand the agent byte-identical instructions. A short variant that says
-    // only "it runs the setup" describes none of it.
+    // Both tones hand the agent byte-identical instructions. A short variant that says only
+    // "it runs the setup" describes none of it.
     const { rerender } = await renderWithProviders(<AgentOnboardingCard tone="prominent" />);
     for (const phrase of ['installs the Civitai CLI', 'MCP servers', 'log in']) {
       await expect.element(page.getByText(phrase, { exact: false })).toBeInTheDocument();

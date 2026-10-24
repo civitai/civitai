@@ -75,16 +75,26 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     "Read this app's shared, community-wide data (e.g. everyone's posts + vote counts)",
   'apps:storage:shared:write':
     "Post + vote in this app's shared, community-wide data — visible to all users of the app",
+  'apps:storage':
+    "Keep your data in this app's own store, and read, mark and count the entries it shares with all its users",
+  'apps:storage:publish':
+    // Not "under your username": the username is shown only on collections whose reviewed
+    // declaration sets `showAuthor`, so the sentence claims authorship, not display.
+    "Add and edit entries in this app's shared data as you — every user of the app can read them",
   'collections:read:self':
     'Browse and read public Civitai collections, and your own public collections',
   'collections:write:self': 'Bookmark (follow) collections on your behalf',
   'collections:read:private': 'Read your private collections',
   'posts:write:self':
-    "Publish posts to your profile from this app's own results — you approve each one",
+    "Upload images this app makes and publish posts to your profile from them or from this app's results — you approve each post",
   'goods:read:self': "See which of this app's items you already own",
   'goods:purchase:self': "Buy this app's items with your Buzz",
   'apps:store:items:write':
     'List items you made in this app in the Civitai App Store, under your name',
+  // There is no per-reaction confirm, so this one grant is all the viewer is asked; the
+  // sentence says so rather than implying a later prompt.
+  'social:react:self':
+    'React to images this app shows you, as you — reactions appear on Civitai like your own, without asking each time',
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

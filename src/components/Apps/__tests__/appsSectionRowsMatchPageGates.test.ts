@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  canAccessAppAssistant,
   canAccessAppsActivity,
   canAccessAppsBuild,
   hasAppsStoreAccess,
@@ -56,8 +57,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `appsSections` is exported, but
  * it pulls `@tabler/icons-react` and the rail that renders it pulls React, Mantine and
  * tRPC, so importing either into the node `unit` project — the tier that actually blocks
- * — is not what this guard should depend on. The browser
- * tier that could mount it is report-only. `appsMenuEntry.test.ts` solves the identical
+ * — is not what this guard should depend on. `appsMenuEntry.test.ts` solves the identical
  * problem the identical way, for the same reason.
  *
  * 🔴 AND IT IS BEHAVIOURAL, NOT A SPELLING CHECK. The predicate is EXTRACTED from the real
@@ -489,5 +489,28 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
         'Give the row the predicate its page enforces — see `canAccessAppsBuild` for the ' +
         'shared-predicate pattern.'
     ).toEqual([]);
+  });
+});
+
+// The page's own gate is pinned behaviourally in `src/tests/pages/apps/assistant-page.test.ts`.
+describe('App Assistant row', () => {
+  const rows = parseRows(code(read(SUBNAV)));
+
+  it('is visible exactly when the shared gate admits the viewer', () => {
+    const row = rows.find((r) => r.href === '/apps/assistant');
+    expect(row, 'the App Assistant row is missing from appsSections').toBeDefined();
+    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
+      for (const appBlocks of [false, true])
+        for (const appAssistant of [false, true]) {
+          const admits = canAccessAppAssistant({ appBlocks, appAssistant });
+          const visible = evaluate(row!.visible, summary, {
+            ...context({ store: true, author: true, getStarted: true }),
+            canUseAssistant: admits,
+          });
+          expect(visible, `appBlocks=${appBlocks} appAssistant=${appAssistant}`).toBe(admits);
+        }
+    // Positive control: the gate is not constant.
+    expect(canAccessAppAssistant({ appBlocks: true, appAssistant: true })).toBe(true);
+    expect(canAccessAppAssistant({ appBlocks: true })).toBe(false);
   });
 });

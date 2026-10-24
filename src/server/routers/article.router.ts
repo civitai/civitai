@@ -22,10 +22,10 @@ import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  getOfficialArticleTag,
   setArticleOfficial,
   getArticleScanStatus,
   isArticleProcessing,
-  getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
   rescanArticle,
@@ -67,15 +67,23 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getInfiniteArticlesSchema)
     .query(({ input, ctx }) =>
-      getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
+      getArticles({
+        ...input,
+        sessionUser: ctx?.user,
+        include: ['cosmetics'],
+        // Uncached per viewer, so a flagged viewer may see decorations before launch.
+        eventDecorationViewer: ctx?.user,
+      })
     ),
   getCivitaiNews: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
-  getEvents: publicProcedure
+  // `tag.getAll` hides adminOnly tags from non-admins; the feed's chip row needs this one's id.
+  getOfficialTag: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
-    .query(() => getCivitaiEvents()),
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(() => getOfficialArticleTag()),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)

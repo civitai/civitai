@@ -13,10 +13,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { getGenerationRestrictions, saveSuspiciousMatches } = vi.hoisted(() => ({
-  getGenerationRestrictions: vi.fn(),
-  saveSuspiciousMatches: vi.fn(),
-}));
+const { getGenerationRestrictions, getRestrictionFacets, getRemixSources, saveSuspiciousMatches } =
+  vi.hoisted(() => ({
+    getGenerationRestrictions: vi.fn(),
+    getRestrictionFacets: vi.fn(),
+    getRemixSources: vi.fn(),
+    saveSuspiciousMatches: vi.fn(),
+  }));
 const { resolveRestriction, setBanned, banConfirmed } = vi.hoisted(() => ({
   resolveRestriction: vi.fn(),
   setBanned: vi.fn(),
@@ -28,6 +31,8 @@ const { resolveRestriction, setBanned, banConfirmed } = vi.hoisted(() => ({
 vi.mock('$lib/server/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-restriction.service')>()),
   getGenerationRestrictions,
+  getRestrictionFacets,
+  getRemixSources,
   saveSuspiciousMatches,
 }));
 vi.mock('$lib/server/user-actions.service', () => ({
@@ -47,7 +52,16 @@ const { RESTRICTION_TYPES, RULINGS_WIRED_FOR, unwiredRulingReason } = await impo
   '$lib/restriction-types'
 );
 
-type LoadResult = { type: string; items: unknown[] };
+type LoadResult = {
+  type: string;
+  filters: { status: string; origin: string; sort: string };
+  facets: unknown;
+  items: { id: number }[];
+  pinned: { id: number } | null;
+  selectedMissing: number | null;
+  sources: Record<number, unknown>;
+  sourcesNotLoaded: number[];
+};
 const runLoad = (search = '') =>
   (load as unknown as (e: { url: URL }) => Promise<LoadResult>)({
     url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
@@ -80,6 +94,8 @@ const row = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   getGenerationRestrictions.mockResolvedValue({ items: [], totalCount: 0 });
+  getRestrictionFacets.mockResolvedValue({ status: {}, origin: {} });
+  getRemixSources.mockResolvedValue([]);
   resolveRestriction.mockResolvedValue({ ok: true });
   setBanned.mockResolvedValue({ ok: true });
   banConfirmed.mockResolvedValue(true);
@@ -128,6 +144,147 @@ describe('generator-restrictions load — type', () => {
         page: 3,
       })
     );
+  });
+});
+
+describe('generator-restrictions load — filters', () => {
+  it('resolves the sort to the status default and reports the origin as all', async () => {
+    expect((await runLoad()).filters).toEqual({ status: 'Pending', origin: 'all', sort: 'oldest' });
+    expect((await runLoad('?status=Upheld&origin=typed')).filters).toEqual({
+      status: 'Upheld',
+      origin: 'typed',
+      sort: 'newest',
+    });
+    expect((await runLoad('?origin=nonsense&sort=sideways')).filters).toEqual({
+      status: 'Pending',
+      origin: 'all',
+      sort: 'oldest',
+    });
+  });
+
+  it('asks the root layout for the edge-to-edge page with an inline header', async () => {
+    expect(await runLoad()).toMatchObject({ fullBleed: true, headerInline: true });
+  });
+
+  // Counts are decoration: a failed count query must leave the list up, not turn the page into a 500.
+  it('still serves the list when the facet counts fail', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    getGenerationRestrictions.mockResolvedValue({ items: [row({ id: 5 })], totalCount: 1 });
+    getRestrictionFacets.mockRejectedValue(new Error('timeout'));
+
+    const data = await runLoad();
+
+    expect(data.items).toHaveLength(1);
+    expect(data.facets).toBeUndefined();
+  });
+});
+
+describe('generator-restrictions load — deep link', () => {
+  const onPage = [row({ id: 5 }), row({ id: 6 })];
+
+  it('does not look anything up when the selection is on the page', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: onPage, totalCount: 2 });
+
+    const data = await runLoad('?selected=6');
+
+    expect(getGenerationRestrictions).toHaveBeenCalledTimes(1);
+    expect(data.pinned).toBeNull();
+    expect(data.selectedMissing).toBeNull();
+  });
+
+  it('fetches a selection that is not on the page by id', async () => {
+    getGenerationRestrictions.mockImplementation(async (q: { restrictionId?: number }) =>
+      q.restrictionId
+        ? { items: [row({ id: 99, type: 'bot-account' })], totalCount: 1 }
+        : { items: onPage, totalCount: 2 }
+    );
+
+    const data = await runLoad('?type=bot-account&selected=99');
+
+    expect(getGenerationRestrictions).toHaveBeenCalledWith(
+      expect.objectContaining({ restrictionId: 99, type: 'any', limit: 1 })
+    );
+    expect(data.pinned?.id).toBe(99);
+    expect(data.items.map((i) => i.id)).toEqual([5, 6]);
+    expect(data.selectedMissing).toBeNull();
+  });
+
+  // The other queue's rows are not reachable by putting an id in the URL.
+  it('does not open a selection from a queue this page does not own', async () => {
+    getGenerationRestrictions.mockImplementation(async (q: { restrictionId?: number }) =>
+      q.restrictionId
+        ? { items: [row({ id: 99, type: 'scam' })], totalCount: 1 }
+        : { items: onPage, totalCount: 2 }
+    );
+
+    const data = await runLoad('?selected=99');
+
+    expect(data.pinned).toBeNull();
+    expect(data.selectedMissing).toBe(99);
+  });
+
+  // The pinned row must not contradict the filter the moderator chose.
+  it('does not pin a row of another type than the page is filtered to', async () => {
+    getGenerationRestrictions.mockImplementation(async (q: { restrictionId?: number }) =>
+      q.restrictionId
+        ? { items: [row({ id: 99, type: 'bot-account' })], totalCount: 1 }
+        : { items: onPage, totalCount: 2 }
+    );
+
+    const data = await runLoad('?type=generation&selected=99');
+
+    expect(data.pinned).toBeNull();
+    expect(data.selectedMissing).toBe(99);
+  });
+
+  it('reports a selection that does not exist', async () => {
+    getGenerationRestrictions.mockImplementation(async (q: { restrictionId?: number }) =>
+      q.restrictionId ? { items: [], totalCount: 0 } : { items: onPage, totalCount: 2 }
+    );
+
+    const data = await runLoad('?selected=404');
+
+    expect(data.pinned).toBeNull();
+    expect(data.selectedMissing).toBe(404);
+  });
+
+  it.each(['?selected=abc', '?selected=0', '?selected=-3', '?selected='])(
+    'ignores a malformed selection (%s)',
+    async (search) => {
+      const data = await runLoad(search);
+
+      expect(getGenerationRestrictions).toHaveBeenCalledTimes(1);
+      expect(data.pinned).toBeNull();
+      expect(data.selectedMissing).toBeNull();
+    }
+  );
+
+  it('reads the remix source of the pinned restriction too', async () => {
+    getGenerationRestrictions.mockImplementation(async (q: { restrictionId?: number }) =>
+      q.restrictionId
+        ? { items: [row({ id: 99, triggers: [{ prompt: 'p', remixOfId: 77 }] })], totalCount: 1 }
+        : { items: onPage, totalCount: 2 }
+    );
+
+    await runLoad('?selected=99');
+
+    expect(getRemixSources).toHaveBeenCalledWith([77]);
+  });
+});
+
+describe('generator-restrictions load — remix sources', () => {
+  it('names the source ids it left out of the lookup', async () => {
+    const triggers = Array.from({ length: 320 }, (_, i) => ({ prompt: 'p', remixOfId: i + 1 }));
+    getGenerationRestrictions.mockResolvedValue({
+      items: [row({ triggers })],
+      totalCount: 1,
+    });
+
+    const data = await runLoad();
+
+    expect(getRemixSources.mock.calls[0][0]).toHaveLength(300);
+    expect(data.sourcesNotLoaded).toHaveLength(20);
+    expect(data.sourcesNotLoaded[0]).toBe(301);
   });
 });
 
@@ -416,5 +573,77 @@ describe('generator-restrictions actions — ruling reason', () => {
     expect(result.status).toBe(400);
     expect(result.data.error).toMatch(/Pick a reason/);
     expect(setBanned).not.toHaveBeenCalled();
+  });
+});
+
+describe('generator-restrictions load — origin and sources', () => {
+  type TriageResult = {
+    filters: { origin: string };
+    sources: Record<number, unknown>;
+    sourcesFailed: boolean;
+  };
+  const run = (search = '') =>
+    (load as unknown as (e: { url: URL }) => Promise<TriageResult>)({
+      url: new URL(`https://moderator.example/audit/generator-restrictions${search}`),
+    });
+
+  it('passes a known origin filter to the list and to the facets', async () => {
+    const data = await run('?origin=remix');
+
+    expect(data.filters.origin).toBe('remix');
+    expect(getGenerationRestrictions).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: 'remix' })
+    );
+    expect(getRestrictionFacets).toHaveBeenCalledWith(expect.objectContaining({ origin: 'remix' }));
+  });
+
+  it.each(['?origin=nonsense', '?origin='])(
+    'drops %s rather than filtering on it',
+    async (search) => {
+      const data = await run(search);
+
+      expect(data.filters.origin).toBe('all');
+      expect(getGenerationRestrictions.mock.calls[0][0].origin).toBeUndefined();
+    }
+  );
+
+  it('looks the remix sources of the whole page up by the recorded id, then the legacy one', async () => {
+    getGenerationRestrictions.mockResolvedValue({
+      items: [
+        row({
+          triggers: [
+            {
+              key: 'a',
+              prompt: 'p',
+              origin: { remix: { imageId: 11, verified: true, promptMatch: 'edited' } },
+            },
+            { key: 'b', prompt: 'p', remixOfId: 12 },
+          ],
+        }),
+      ],
+      totalCount: 1,
+    });
+    getRemixSources.mockResolvedValue([
+      { id: 11, url: 'u', type: 'image', nsfwLevel: 1, prompt: 'x' },
+    ]);
+
+    const data = await run();
+
+    expect(getRemixSources).toHaveBeenCalledWith([11, 12]);
+    expect(Object.keys(data.sources)).toEqual(['11']);
+    expect(data.sourcesFailed).toBe(false);
+  });
+
+  it('reports a failed source lookup instead of failing the queue or hiding it', async () => {
+    getGenerationRestrictions.mockResolvedValue({
+      items: [row({ triggers: [{ key: 'a', prompt: 'p', remixOfId: 12 }] })],
+      totalCount: 1,
+    });
+    getRemixSources.mockRejectedValue(new Error('down'));
+
+    const data = await run();
+
+    expect(data.sourcesFailed).toBe(true);
+    expect(data.sources).toEqual({});
   });
 });

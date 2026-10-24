@@ -158,7 +158,12 @@ export function createSignalsDebug(deps: SignalsDebugDeps) {
       } (hub: ${hubState ?? 'no connection'})`;
       if (connectionState === 'connected') add('connection', 'ok', stateDetail);
       else if (connectionState === 'reconnecting')
-        add('connection', 'warn', stateDetail, 'SignalR is retrying; watch log() for progress');
+        add(
+          'connection',
+          'warn',
+          stateDetail,
+          'the worker retries on its backoff (watch log()); __signals.reconnect() skips the wait'
+        );
       else add('connection', 'fail', stateDetail, '__signals.reconnect()');
 
       if (connectionState === 'connected' && hubState !== 'Connected')

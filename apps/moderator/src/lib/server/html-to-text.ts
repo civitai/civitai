@@ -123,6 +123,28 @@ export type HtmlText = { text: string; complete: boolean };
 export const htmlToText = (input: string): string => convertHtml(input).text;
 
 /**
+ * Stored HTML as at most `limit` characters of text, and whether that is all of it — the shape every
+ * preview of an author's text renders (a model's description, a bounty's). Null when there is no text.
+ * `ellipsis` marks a cut made here; a stop inside the converter is already reported by `truncated`.
+ */
+export function cappedText(
+  html: string | null | undefined,
+  limit: number,
+  { ellipsis = false }: { ellipsis?: boolean } = {}
+): { text: string; truncated: boolean } | null {
+  const source = html?.trim();
+  if (!source) return null;
+  const { text, complete } = convertHtml(source);
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const cut = trimmed.length > limit;
+  return {
+    text: cut ? `${trimmed.slice(0, limit)}${ellipsis ? '…' : ''}` : trimmed,
+    truncated: cut || !complete,
+  };
+}
+
+/**
  * 🔴 `complete` IS THE ONLY HONEST ANSWER TO "IS THIS THE WHOLE MESSAGE?" — the scan stops early for
  * three reasons (the input cap, the output cap, a tag cut off by the end), and a caller re-deriving
  * any one of them from the input misses the other two.

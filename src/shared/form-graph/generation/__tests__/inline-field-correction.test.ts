@@ -87,13 +87,6 @@ const ROWS: Row[] = [
     expected: 'high',
   },
   {
-    name: 'sora resolution',
-    pin: { workflow: 'txt2vid', ecosystem: 'Sora2', prompt: 'a cat' },
-    field: 'resolution',
-    bad: '4320p',
-    expected: '720p',
-  },
-  {
     name: 'veo3 version',
     pin: { workflow: 'txt2vid', ecosystem: 'Veo3', prompt: 'a cat' },
     field: 'version',

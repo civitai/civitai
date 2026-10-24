@@ -23,8 +23,10 @@ import {
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -33,9 +35,13 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { domainSpendType } from '~/server/utils/buzz-helpers';
+import { contentRestriction } from '~/server/common/content-restriction';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -94,6 +100,9 @@ export const createPostHandler = async ({
   try {
     const { ip } = ctx;
     const today = new Date();
+    // The storyline router's flag, for the one storyline write that goes through posts.
+    if ((input.storylineId || input.parentChapterId) && !ctx.features.storylines)
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     const post = await createPost({
       ...input,
@@ -173,8 +182,16 @@ export const createPostWithImagesHandler = async ({
     // 2) Attach each image in order.
     const sortedImages = [...images].sort((a, b) => a.index - b.index);
     const attachedImageIds: number[] = [];
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
+    const assertPostOwnedBy = createPostOwnerCheck();
     for (const image of sortedImages) {
-      const attached = await addPostImage({ ...image, postId: post.id, user: ctx.user });
+      const attached = await addPostImage({
+        ...image,
+        postId: post.id,
+        user: ctx.user,
+        assertPostOwnedBy,
+      });
       attachedImageIds.push(attached.id);
     }
 
@@ -223,7 +240,7 @@ export const createPostWithImagesHandler = async ({
 };
 
 export const updatePostHandler = async ({
-  input: { collectionTagId, ...input },
+  input: { collectionTagId, expectedPrice, ...input },
   ctx,
 }: {
   input: PostUpdateInput;
@@ -341,7 +358,22 @@ export const updatePostHandler = async ({
       }
     }
 
-    const updatedPost = await updatePost({ ...input, user: ctx.user });
+    const updatedPost = await updatePost({
+      ...input,
+      user: ctx.user,
+      // `placement.submitStorylineContinuation`'s procedure guards, for the continuation a
+      // storyline draft submits as it is published (its rate limit is on `post.update` itself).
+      // An owner's draft is held to the owner's own standing in the service.
+      storyline: ctx.features.storylines
+        ? {
+            expectedPrice,
+            spendType: domainSpendType(ctx.features),
+            submitRefusal: contentRestriction(ctx.user),
+            // `post.update` asks a token only for MediaWrite, and a continuation spends Buzz.
+            canSpend: isSessionOrFullUserKey(ctx),
+          }
+        : undefined,
+    });
     const collection = updatedPost.collectionId
       ? await getCollectionById({
           input: { id: updatedPost.collectionId },
@@ -541,6 +573,8 @@ export const updatePostHandler = async ({
         );
       }
     }
+
+    if ('storyline' in updatedPost) return { storyline: updatedPost.storyline };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -570,8 +604,10 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
     // the id of the row that was actually RETURNED — never on `input.id`. The
     // resolver takes the post as already-admitted for this viewer and does not
     // re-derive its visibility, so handing it an unvetted id would disclose
-    // whether that post was app-published. Fail-open by construction (`null` on
-    // any error), so it cannot take the post page down.
+    // whether that post was app-published. The chip READ is fail-open (`null` on any
+    // error inside `readPostAppChip`), so a failed read cannot take the post page down.
+    // Its `viewerBrowsingLevel` argument is computed HERE, outside that try: it is a pure
+    // read of `ctx.features` and `ctx.user`, and a throw from it would fail this handler.
     //
     // `host` drives the store's maturity gate and is fail-closed on absence: a
     // missing host refuses a mature app, i.e. under-links rather than over-links.
@@ -579,6 +615,9 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       postId: post.id,
       user: ctx.user,
       host: ctx.req?.headers?.host ?? '',
+      // The chip icon follows the store's listing-media rule, which on a red-capable host
+      // admits the viewer's opted-in levels on top of the non-red ceiling.
+      viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
     return { ...post, publishedWithApp };
@@ -613,6 +652,12 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({ ...input });
     if (result) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: result.deletedImageIds,
+        ownerId: ctx.user.id,
+      });
       await ctx.track.post({
         type: 'Delete',
         nsfw: !getIsSafeBrowsingLevel(result.nsfwLevel),

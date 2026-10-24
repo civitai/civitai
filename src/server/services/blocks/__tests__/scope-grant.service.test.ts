@@ -1408,6 +1408,9 @@ describe('scope-grant.service', () => {
     it('is exactly the documented exempt set — bump this literal deliberately', async () => {
       const { consentExemptScopeList } = await import('../scope-grant.service');
       expect(consentExemptScopeList()).toEqual([
+        // The document store's base scope: this app's own store, bounded by its reviewed
+        // `storage` declaration. Its `apps:storage:publish` sibling is deliberately NOT here.
+        'apps:storage',
         'apps:storage:read',
         'apps:storage:shared:read',
         'apps:storage:shared:write',

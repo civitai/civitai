@@ -14,9 +14,9 @@ import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosu
  * pending set was already approved. Twenty CI checks were green throughout. The server
  * projection was well covered; "the client half has no tests" was the actual gap.
  *
- * Browser tier is REPORT-ONLY in CI, so this cannot gate a merge — the stranded-client
- * case is *also* pinned at the node tier in `__tests__/appListingConnectScopes.test.ts`,
- * which is blocking. What only this tier can assert is what a viewer SEES.
+ * No check in this repo blocks a merge, and the stranded-client case is *also* pinned
+ * at the node tier in `__tests__/appListingConnectScopes.test.ts`. What only this tier can assert
+ * is what a viewer SEES.
  */
 describe('ConnectScopesDisclosure', () => {
   test('renders nothing at all when there are no scopes — not an empty box', async () => {

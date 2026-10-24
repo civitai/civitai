@@ -13,6 +13,7 @@ import { getClickhouse } from '../clickhouse';
 import { dbRead } from '../db';
 import { getModeratorDb } from '../moderator-db';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
+import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -34,12 +35,25 @@ type ModAction<T = any> = {
 // the spoke services; the moderator UI always sends one id, but the batch shape is preserved.
 const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   schema: imageModerateInput,
-  handler: async ({ ids, reviewAction, userId, ip, userAgent }) => {
+  handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
+    const held: HeldRemoval[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
       if (reviewAction === 'unblock') await acceptImage({ imageId, userId, restoreRemoved: true });
-      else await blockImage({ imageId, userId, ip, userAgent });
+      else {
+        const result = await blockImage({
+          imageId,
+          userId,
+          ip,
+          userAgent,
+          source: 'site.imageModerate',
+          skipAppealCheck: canConfirmReRemoval,
+        });
+        if (result.held) held.push(result.held);
+      }
     }
+    // A 409 so the main app shows the moderator why the image is still up.
+    if (held.length) throw Object.assign(new Error(heldRemovalMessage(held)), { status: 409 });
     return { count: ids.length };
   },
 };

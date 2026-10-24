@@ -4,7 +4,7 @@ import type {
   TrainingModerationStatus,
   TrainingOutput,
   Workflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getTrainingStep } from '~/server/services/orchestrator/training/publish-from-workflow';
@@ -12,9 +12,9 @@ import type { AnyEpoch } from '~/server/services/orchestrator/training/training-
 import { finishedEpochCheckpoints } from '~/server/services/orchestrator/training/training-epoch-blobs';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
+import { getConsumerBlobId, parseJobAssetUrl } from '~/shared/orchestrator/blob-url';
 
-// A typed literal rather than the client's runtime enum object: `@civitai/client` is mocked in the
+// A typed literal rather than the client's runtime enum object: `@civitai/orchestration-client` is mocked in the
 // unit test setup, so a value import from it is undefined there.
 const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
   ImageResouceTrainingModerationStatus;
@@ -27,8 +27,9 @@ const TRAINING_RUN_UNAVAILABLE_MESSAGE = "This model version's training run coul
 /**
  * Throws unless `requestedUrl` names a finished epoch checkpoint of `workflow`'s training step and
  * that step reports an `approved` training-data moderation status (every other status, and a step
- * with none, is refused). Returns the workflow's own URL for that checkpoint: `requestedUrl` only
- * selects which one, and is never fetched.
+ * with none, is refused). A blob URL names a checkpoint by blob id, a job-asset URL by job and file.
+ * Returns the workflow's own URL for that checkpoint: `requestedUrl` only selects which one, and is
+ * never fetched.
  */
 export function resolveApprovedTrainingCheckpoint(
   workflow: Workflow,
@@ -39,11 +40,16 @@ export function resolveApprovedTrainingCheckpoint(
   if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
     throw throwBadRequestError(TRAINING_NOT_APPROVED_MESSAGE);
 
+  const checkpoints = finishedEpochCheckpoints((output.epochs ?? []) as AnyEpoch[]);
   const blobId = getConsumerBlobId(requestedUrl);
+  const jobAsset = blobId ? undefined : parseJobAssetUrl(requestedUrl);
   const checkpoint = blobId
-    ? finishedEpochCheckpoints((output.epochs ?? []) as AnyEpoch[]).find((c) =>
-        c.keys.includes(blobId)
-      )
+    ? checkpoints.find((c) => c.keys.includes(blobId))
+    : jobAsset
+    ? checkpoints.find((c) => {
+        const own = c.url ? parseJobAssetUrl(c.url) : undefined;
+        return own?.jobId === jobAsset.jobId && own.assetName === jobAsset.assetName;
+      })
     : undefined;
   if (!checkpoint?.url) throw throwBadRequestError(NOT_A_RUN_CHECKPOINT_MESSAGE);
   return checkpoint.url;

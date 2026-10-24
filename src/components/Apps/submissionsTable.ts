@@ -1,9 +1,8 @@
 /**
- * App Store Listings (W13) — /apps/my-submissions table view-model logic (PURE,
- * no React). Shared by BOTH lists (onsite `MySubmissionsList` + offsite
- * `OffsiteSubmissionsList`) so the text filter, the column comparators, and the
- * per-app version-collapse behave IDENTICALLY across them. Extracted so each piece
- * is unit-testable without mounting a table.
+ * App Store Listings (W13) — submissions-table view-model logic (PURE, no React):
+ * the text filter, the column comparators, the per-app version-collapse and the
+ * currently-published version. Extracted so each piece is
+ * unit-testable without mounting a table.
  *
  * The two row shapes differ (onsite has a block id + version; offsite has a slug +
  * external URL), so every helper here is GENERIC over the row type `T` and reads
@@ -15,8 +14,12 @@
 // ── layout ─────────────────────────────────────────────────────────────────────
 
 /**
- * The horizontal floor (px) for BOTH /apps/my-submissions tables, handed to
+ * The horizontal floor (px) for the /apps/my-submissions table, handed to
  * Mantine's `Table.ScrollContainer` as `minWidth`.
+ *
+ * ⚠ The onsite table it was measured on (`MySubmissionsList`) has been deleted; the
+ * prose below is the history of that measurement, and the value now serves only the
+ * offsite table, whose own natural width has never been measured.
  *
  * Why it exists: both lists render `<Table>` inside `<Card withBorder p={0}>`, and
  * Mantine's `.mantine-Card-root` sets `overflow: hidden`. The onsite row's action

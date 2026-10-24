@@ -1,12 +1,10 @@
-import { Alert, Box, Code, Stack, Text, Title, useComputedColorScheme } from '@mantine/core';
-import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
+import { useRouter } from 'next/router';
+import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
 import { Meta } from '~/components/Meta/Meta';
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
-import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
-import { BlockRegistry } from '~/server/services/block-registry.service';
+import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 /**
@@ -34,25 +32,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  *     here, or this summary goes stale on the first edit that adds one.
  */
 
-interface DevTunnelProps {
-  appBlockId: string;
-  blockId: string;
-  appId: string;
-  appName: string;
-  pageTitle: string;
-  status: string;
-  trustTier: 'unverified' | 'verified' | 'internal';
-  sandbox: string;
-  scopes: string[];
-  /** Set ONLY when an active tunnel exists — `https://<dev-host>/?dev=<token>`. */
-  iframeSrc: string | null;
-  /** manifest.bootSkeleton — carried so the dev tunnel matches production. */
-  bootSkeleton: boolean;
-  /** The assigned dev host (for the "no active tunnel" copy). */
-  host: string | null;
-}
-
-export const getServerSideProps = createServerSideProps<DevTunnelProps>({
+export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
     // GATE FIRST, fail-closed. Author capability + the dev-tunnel kill-switch.
@@ -68,8 +48,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
         },
       };
     }
-    const { isAppBlocksDevTunnelEnabled, isAppBlocksDevTunnelUnsubmittedSpendEnabled } =
-      await import('~/server/services/app-blocks-flag');
+    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
     if (!(await isAppBlocksDevTunnelEnabled({ user }))) {
       return { notFound: true };
     }
@@ -79,39 +58,15 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
       typeof rawBlockId === 'string' ? rawBlockId : Array.isArray(rawBlockId) ? rawBlockId[0] : '';
     if (!blockId) return { notFound: true };
 
-    // Resolve the caller's active tunnel FIRST — a BRAND-NEW (unsubmitted) app's
-    // `declaredScopes` come from the session's CLI-declared `grantedScopes`, gated by
-    // the dedicated unsubmitted-spend flag. Passing both into the resolver keeps the
-    // block's advertised `declaredScopes` byte-identical to what the block-token mint
-    // will grant (both derive from `resolveDevPageBlockForAuthor`).
-    const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
-    const { signDevTunnelAccessToken, isValidDevHost } = await import(
-      '~/server/services/blocks/dev-tunnel-session'
+    // null (foreign or absent app) → the same notFound, no oracle.
+    const { resolveDevTunnelFrame } = await import(
+      '~/server/services/blocks/dev-tunnel-frame.service'
     );
-    const { env } = await import('~/env/server');
+    const frame = await resolveDevTunnelFrame(user, blockId);
+    if (!frame) return { notFound: true };
+    const { host } = frame;
 
-    const tunnel = await getActiveDevTunnel(user.id, blockId);
-    const unsubmittedSpendAllowed = await isAppBlocksDevTunnelUnsubmittedSpendEnabled({ user });
-
-    // Ownership-scoped resolve (any status). null for a foreign/absent app → the
-    // SAME notFound (no oracle). This can NEVER resolve a deployed bundle host.
-    const app = await BlockRegistry.resolveDevPageBlockForAuthor(blockId, user.id, {
-      sessionGrantedScopes: tunnel?.grantedScopes,
-      unsubmittedSpendAllowed,
-    });
-    if (!app) return { notFound: true };
-
-    let iframeSrc: string | null = null;
-    let host: string | null = null;
-    if (tunnel && isValidDevHost(tunnel.host, env.APPS_DOMAIN)) {
-      host = tunnel.host;
-      // Mint a FRESH short-TTL, author-bound entry token and inject it into the
-      // iframe src. The `*.civit.ai` edge forwardAuth verifies it on the ENTRY
-      // document (T3). A fresh token is minted on every SSR render so the live
-      // iframe never serves a stale one.
-      const token = signDevTunnelAccessToken({ userId: user.id, host });
-      iframeSrc = `https://${host}/?dev=${encodeURIComponent(token)}`;
-
+    if (host) {
       // ROUTE-SCOPED CSP (T7). `setHeader` REPLACES, and this is the only
       // `Content-Security-Policy`-setting site in `src/` — next.config's
       // `headers()` sets a CSP on `/gift-cards` alone, which this route never
@@ -154,184 +109,100 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
       );
     }
 
-    return {
-      props: {
-        appBlockId: app.appBlockId,
-        blockId: app.blockId,
-        appId: app.appId,
-        appName: app.name,
-        pageTitle: app.pageTitle,
-        status: app.status,
-        trustTier: app.trustTier,
-        sandbox: app.sandbox,
-        scopes: app.scopes,
-        iframeSrc,
-        bootSkeleton: app.bootSkeleton,
-        host,
-      },
-    };
+    return { props: frame };
   },
 });
 
-export default function DevTunnelPage(props: DevTunnelProps) {
-  const {
-    appBlockId,
-    blockId,
-    appId,
-    appName,
-    iframeSrc,
-    bootSkeleton,
-    sandbox,
-    trustTier,
-    scopes,
-    host,
-  } = props;
-  const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-  const colorScheme = useComputedColorScheme('dark');
-  const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
+/**
+ * The host this document's CSP lets it frame. It is fixed when the document is loaded, so it is
+ * read from the document's own data, never from props, which client-side navigation replaces.
+ */
+function documentFrameHost(propsHost: string | null): string | null {
+  if (typeof window === 'undefined') return propsHost;
+  const doc = (window as { __NEXT_DATA__?: { page?: string; props?: { pageProps?: unknown } } })
+    .__NEXT_DATA__;
+  // Loaded as another page, the document carries no route-scoped CSP to conflict with.
+  if (doc?.page !== '/apps/dev/[blockId]') return null;
+  const host = (doc.props?.pageProps as { host?: unknown } | undefined)?.host;
+  return typeof host === 'string' ? host : null;
+}
 
-  // Synthetic page instance id — same shape as the prod page mint path.
-  const blockInstanceId = `page_${appBlockId}`;
+/**
+ * The scaffold's `dev:tunnel` script serves on the port `civitai app dev-tunnel` tunnels by default,
+ * and sends the headers this page needs to frame the app.
+ */
+const DEV_TUNNEL_COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
 
-  const install = useMemo<BlockInstall>(
-    () => ({
-      blockInstanceId,
-      blockId,
-      appId,
-      appBlockId,
-      manifest: {
-        name: appName,
-        scopes,
-        iframe: {
-          src: iframeSrc ?? '',
-          minHeight: 200,
-          maxHeight: null,
-          resizable: true,
-          sandbox,
-        },
-      },
-      publisherSettings: {},
-      enabled: true,
-      renderMode: 'iframe',
-      trustTier,
-    }),
-    [appBlockId, appId, appName, blockId, blockInstanceId, iframeSrc, sandbox, scopes, trustTier]
-  );
-
-  const context = useMemo<PageContext>(
-    () => ({
-      slotId: 'app.page',
-      entityType: 'none',
-      slug: blockId,
-      subPath: '',
-      viewerUserId: currentUser?.id ?? null,
-      viewerUsername: currentUser?.username ?? null,
-      theme,
-    }),
-    [blockId, currentUser, theme]
-  );
-
-  const {
-    token,
-    expiresAt,
-    kind,
-    needsConsent,
-    missingScopes,
-    domain,
-    maxBrowsingLevel,
-    effectiveBrowsingLevel,
-    error,
-    // `terminal` = the mint failed, nothing usable is left, AND the hook's
-    // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
-    // down a running page — a transient refresh blip sets it while recovery is
-    // still under way — so the mid-session escalation keys on this instead.
-    terminal,
-    refresh,
-  } = useBlockToken(install, context);
-
-  const viewer = currentUser
-    ? { id: currentUser.id, username: currentUser.username ?? null }
-    : null;
+export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
+  const { appName, blockId } = app;
+  const router = useRouter();
+  // Props naming a host other than the one this document may frame (the tunnel restarted, or
+  // this page was reached client-side) need a fresh document to frame it.
+  const [servedHost] = useState(() => documentFrameHost(host));
+  const hostChanged = !!servedHost && !!host && host !== servedHost;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  useEffect(() => {
+    if (hostChanged) routerRef.current.reload();
+  }, [hostChanged]);
 
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {!iframeSrc ? (
+        {hostChanged ? null : dnsPending ? (
+          <Box style={{ height: '60vh' }}>
+            <DevTunnelDnsGate
+              key={blockId}
+              blockId={blockId}
+              // Re-runs the server props, which sign the entry URL once the host resolves.
+              onSettled={() => router.replace(router.asPath, undefined, { scroll: false })}
+            />
+          </Box>
+        ) : !iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
-              Start your local dev server and open a tunnel for <Code>{blockId}</Code>, then reload
-              this page:
+              In your app&apos;s folder, start the dev server in one terminal and open a tunnel for{' '}
+              <Code>{blockId}</Code> in another, then reload this page:
             </Text>
-            <Code block>civitai app dev:tunnel</Code>
+            <Code block>{DEV_TUNNEL_COMMANDS}</Code>
+            <Text size="sm">
+              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: it serves on the
+              port the tunnel uses and sends the headers this page needs to show your app.
+            </Text>
             <Alert color="yellow" variant="light">
               This page renders your LOCAL app inside the real Civitai host. Only you can see it —
               the tunnel is bound to your account.
             </Alert>
           </Stack>
-        ) : error != null ? (
-          // DEV-ROUTE-SCOPED auth-failure copy. The dev tunnel mints a self-bound,
-          // forced-SFW token for the OWNER of an app at any status (approved,
-          // suspended, pending, deprecated). If the mint still fails here, the app
-          // isn't runnable in the tunnel — most likely it isn't yours or the tunnel
-          // dropped. This replaces the public host's generic "Couldn't authenticate
-          // this app" (which we deliberately do NOT change) with a message that
-          // makes sense for the dev route. Scoped to THIS route only.
-          <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
-            <Title order={3}>Can’t run this app in the dev tunnel</Title>
-            <Alert color="red" variant="light">
-              We couldn’t mint a dev token for <Code>{blockId}</Code>. This app isn’t runnable in
-              the dev tunnel — it may be suspended, pending review, or not owned by your account. If
-              you just started the tunnel, reload the page.
-            </Alert>
-            <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
-            <Code block>civitai app dev:tunnel</Code>
-          </Stack>
         ) : (
-          <PageBlockHost
-            appBlockId={appBlockId}
-            blockId={blockId}
-            appId={appId}
-            blockInstanceId={blockInstanceId}
-            appName={appName}
+          <DevTunnelBlockHost
+            // A freshly signed entry URL is a fresh mount, so the host re-runs its handshake.
+            key={iframeSrc}
+            {...app}
             iframeSrc={iframeSrc}
-            bootSkeleton={bootSkeleton}
-            // 🔴 The author dev tunnel. `resolveDevPageBlockForAuthor` applies NO
-            // status filter, so this mounts ARBITRARY UNPUBLISHED code that no
-            // query can enumerate. `blockInitFragmentEnabled` refuses this
-            // surface unconditionally — no allowlist entry can turn it on.
-            surface="dev-tunnel"
-            sandbox={sandbox}
-            trustTier={trustTier}
-            slug={blockId}
-            token={token}
-            expiresAt={expiresAt}
-            tokenKind={kind}
-            declaredScopes={scopes}
-            missingScopes={missingScopes}
-            needsConsent={needsConsent}
-            domain={domain}
-            maxBrowsingLevel={maxBrowsingLevel}
-            effectiveBrowsingLevel={effectiveBrowsingLevel}
-            tokenError={error != null}
-            tokenTerminal={terminal}
-            viewer={viewer}
-            theme={theme}
-            onConsentGranted={refresh}
-            onRetryToken={refresh}
-            // The chrome's "Recently run" menu links to `/apps/run/<blockId>`,
-            // which 404s unless the VIEWER has BOTH `appBlocks` and
-            // `appBlocksPages` — this route's own author/dev-tunnel gate says
-            // nothing about `appBlocksPages`, so read the target route's full
-            // predicate rather than assuming. Today the `appBlocks` half is
-            // redundant here (this page's own getServerSideProps already 404s
-            // without it, above), but writing the conjunction out keeps the menu
-            // gate self-contained instead of depending on a distant invariant in
-            // another function, and keeps all four mounters on ONE greppable
-            // shape.
-            canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+            fit="viewport"
+            // The app reloaded itself (Vite live reload): re-run the server props in place,
+            // as the DNS gate does, for a freshly signed entry URL.
+            onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
+            tokenErrorFallback={
+              // Owner-specific copy: the public host's generic "Couldn't authenticate
+              // this app" would mislead here.
+              <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
+                <Title order={3}>Can’t run this app in the dev tunnel</Title>
+                <Alert color="red" variant="light">
+                  We couldn’t mint a dev token for <Code>{blockId}</Code>. This app isn’t runnable
+                  in the dev tunnel — it may be suspended, pending review, or not owned by your
+                  account. If you just started the tunnel, reload the page.
+                </Alert>
+                <Text size="sm">
+                  Restart your tunnel (Ctrl-C, then run it again) and reload if the problem
+                  persists:
+                </Text>
+                <Code block>civitai app dev-tunnel</Code>
+              </Stack>
+            }
           />
         )}
       </Box>

@@ -1,3 +1,4 @@
+import type { OutputUse } from '~/shared/generation/config/types';
 import {
   Accordion,
   ActionIcon,
@@ -123,6 +124,8 @@ export type ImageSelectModalProps = {
   importedUrls: string[];
   videoAllowed: boolean;
   selectSource?: ImageSelectSource;
+  /** What the picked outputs are for; outputs that can't be used for it aren't listed. */
+  outputUse?: OutputUse;
 };
 
 export default function ImageSelectModal({
@@ -131,6 +134,7 @@ export default function ImageSelectModal({
   importedUrls,
   videoAllowed,
   selectSource = 'generation',
+  outputUse = 'post',
 }: ImageSelectModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -194,10 +198,13 @@ export default function ImageSelectModal({
         // have no sensible representation here.
         wf.succeededOutput.filter(
           (x): x is TrainingGenerationBlob =>
-            x.available && x.type !== 'model3d' && matchesMarkerTags(x, markerTags)
+            x.available &&
+            x.type !== 'model3d' &&
+            matchesMarkerTags(x, markerTags) &&
+            x.canUse(outputUse)
         )
       ),
-    [generationData, markerTags]
+    [generationData, markerTags, outputUse]
   );
 
   const uploadedMedia = useMemo(

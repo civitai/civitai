@@ -81,8 +81,9 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
  * superset — additive DROP+ADD CHECK), `message-owner` by
  * `20260824120000_app_listing_mod_action_message_owner`, `purge-user-storage` by
- * `20260912120000_app_listing_mod_action_purge_user_storage`, and `set-visibility` by
- * `20261004120000_app_listing_mod_action_set_visibility`. A drift here would let a proc
+ * `20260912120000_app_listing_mod_action_purge_user_storage`, `set-visibility` by
+ * `20261004120000_app_listing_mod_action_set_visibility`, and `rating-change` by
+ * `20261010130000_app_listing_mod_action_rating_change`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
  *
@@ -171,6 +172,26 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // transition because that is what it changed; this one changes none, so a `status` key
   // would describe a transition that did not happen.
   'set-visibility',
+  // The listing's content rating moved without anyone setting it by hand: a go-live or
+  // asset edit floored it at its media, a review replaced it, or a moderator re-rated one of
+  // its images (`app-listing-rating.ts` is the only writer). Changes no `status`.
+  //
+  // `reason` — the owner-facing sentence, e.g. "Rating changed G → R: store imagery was
+  //            rated R." The owner history shows only this, so it carries both values.
+  // `detail` — the cause, a `ListingRatingChangeCause`.
+  // `before` — { contentRating }.   `after` — { contentRating }.
+  'rating-change',
+  // App Blocks DOCUMENT STORE takedown (`apps.mod.docStore.*`): a moderator hid, unhid,
+  // hard-deleted, or dismissed the reports on, one SHARED document in an app's store. Like `purge-user-storage` it changes
+  // no listing state and acts on content a USER authored, so it is withheld from the owner's
+  // history. `reason` is the moderator's rationale; `before` is the document snapshot
+  // (collection, key, author user id, report count, hidden state, size, md5 of the data —
+  // never the data); `after` is the outcome. `doc-store-moderation.service.ts` writes them.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  // Reviewed and kept: the document's open reports were dismissed (later reports re-open it).
+  'storage-doc-dismiss',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

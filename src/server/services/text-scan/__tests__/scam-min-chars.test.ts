@@ -16,13 +16,14 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(async () => ({
     model: 'air:test',
     maxInputChars: 1000,
+    maxSegments: 10,
     thinking: false,
   })),
 }));
 
 await import('~/server/services/text-scan/profiles/chat-message.profile');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 const { CHAT_WINDOW_MIN_CHARS } = await import(
   '~/server/services/text-scan/profiles/chat-message.profile'
 );

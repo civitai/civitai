@@ -1,6 +1,11 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
 import { coveragePair, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
-import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  CustomComfyStepTemplate,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
@@ -10,6 +15,8 @@ import {
   splitPassThroughStep,
 } from './steps';
 import type { TrainedEpoch } from './steps';
+import { isRepeatStepType } from './workflow-graph';
+import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -25,10 +32,12 @@ import { getImagesLimit } from '~/shared/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import type {
+  BlockModel3dOutput,
   BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
+  BlockWorkflowStepSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
 
 // Map orchestrator-internal states the block contract doesn't expose to the
@@ -104,12 +113,10 @@ export function snapshotFromWorkflow(
      * will incur that the orchestrator's own cost does not include — today only
      * the App Blocks per-generation AUTHOR FEE, on the two ESTIMATE arms.
      *
-     * 🔴 IT WIDENS THE NUMBER, NEVER THE WIRE SHAPE. `cost` stays `{ total }`:
-     * adding an itemised `authorFee` field would publish a cost breakdown to
-     * every third-party app, which is the thing this projection deliberately
-     * does not do, and it would also be INERT — an itemised field discloses
-     * nothing until each third-party author writes a renderer for it, whereas a
-     * corrected total is read by every app that already displays a price.
+     * `cost.total` includes it, and the same amount is reported beside it as
+     * `cost.authorFee`. Passing this argument at all — `0` included — is what
+     * makes `authorFee` appear: `0` tells the block "no fee on this request",
+     * while omitting the argument leaves the total un-itemised.
      *
      * 🔴 AND IT IS AN ESTIMATE-ONLY ARGUMENT. A SUBMIT must not pass it: there
      * the orchestrator's realized `cost.total` is the generation's own price and
@@ -128,101 +135,49 @@ export function snapshotFromWorkflow(
   const imageUrls: string[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
+  // `kind:'workflow'` only: which steps that submit named, read back from the
+  // workflow's own metadata. `null` for every other kind.
+  const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
+  const steps: BlockWorkflowStepSnapshot[] = [];
   for (const step of workflow.steps ?? []) {
-    // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
-    // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
-    // its own extraction, otherwise its rendered panorama is silently dropped.
-    if (step.$type === 'customComfy') {
-      const blobs = (
-        step as unknown as {
-          output?: { blobs?: Array<{ url?: string | null; available?: boolean }> };
-        }
-      ).output?.blobs;
-      for (const blob of blobs ?? []) {
-        if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
-          imageUrls.push(blob.url);
-        }
+    const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
+    if (member) {
+      // A `repeat` step's own output is a copy of the child steps it generated,
+      // and those are steps of this workflow in their own right — each handled
+      // below as a member. Extracting the copy too would publish every child
+      // image twice.
+      const extracted = isRepeatStepType(step.$type)
+        ? EMPTY_STEP_EXTRACT
+        : extractSnapshotStep(step, true);
+      if (!member.suppressOutput) {
+        imageUrls.push(...extracted.media);
+        // Labels only for urls that are in `imageUrls` — see the field's own doc.
+        model3dOutputs.push(...extracted.model3d);
       }
+      trainedEpochs.push(...extracted.trainedEpochs);
+      const error = stepFailureReason(step);
+      steps.push({
+        name: step.name,
+        $type: step.$type,
+        status: ORCH_STATUS_MAP[step.status] ?? 'pending',
+        ...(!member.suppressOutput && extracted.media.length > 0
+          ? { imageUrls: extracted.media }
+          : {}),
+        ...(extracted.rest !== undefined ? { output: extracted.rest } : {}),
+        ...(error ? { error } : {}),
+      });
       continue;
     }
-    // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
-    // in its registry entry, because the output key is step-type-specific —
-    // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
-    // native `$type` filter below `continue`s on every registered step and its
-    // result is unreachable: the caller is charged, the workflow reaches
-    // `succeeded`, and `imageUrls` is absent on every poll.
-    //
-    // 🔴 ADDITIVE BY CONSTRUCTION. A registry entry may not claim one of the
-    // natively-extracted `$type` values (`NATIVELY_EXTRACTED_STEP_TYPES`,
-    // enforced at registry load), so this branch cannot shadow the customComfy /
-    // textToImage / imageGen / comfy behaviour below — it only reaches `$type`s
-    // that used to fall through to `continue`.
-    const registeredStep = getStepByOrchestratorType(step.$type);
-    if (registeredStep) {
-      // 🔴 POSTURE-GATED, and this is the THIRD enforcement of the one
-      // media-XOR-text rule (`stepOutputShape`), not a redundant null check. A
-      // text-posture step publishes through `attachModeratedStepTextOutputs`
-      // and ONLY through it; `StepOutputMedia.url` is a bare string that reaches
-      // this array without ever meeting the scan, so reading a media extractor
-      // off a text entry is exactly the smuggling channel the registry's
-      // clause 8-ii and `TextOutputSurface.extractOutput?: never` exist to
-      // close. Keying on the POSTURE rather than on `extractOutput != null`
-      // means this holds even if a future cast puts one there.
-      if (postureProducesMedia(registeredStep.moderationPosture)) {
-        for (const media of registeredStep.extractOutput?.(step) ?? []) {
-          imageUrls.push(media.url);
-        }
-      }
-      continue;
-    }
-    // 🔴 THE CONSTANT, NOT A RESTATED TRIPLE. The false branch of this test used
-    // to `continue` — dropping the step silently — and now forwards the step's
-    // output to the app, so a fifth native `$type` added to
-    // `NATIVELY_EXTRACTED_STEP_TYPES` without editing a literal in THIS file
-    // would start publishing that type's output through the unmoderated
-    // pass-through channel. Reading the constant removes the second edit.
-    if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
-      // A PASS-THROUGH step (`kind:'step'` with a bare `$type`): not native, not
-      // registered, so there is no declared extractor to ask.
-      //
-      // 🔴 GATED ON THE SERVER-STAMPED STEP NAME, NOT ON "the `$type` is
-      // unrecognised". Those are different sets: an unrecognised `$type` is
-      // anything nobody extracts, which includes a step the ORCHESTRATOR put on
-      // the workflow. Forwarding one of those would publish a platform step's
-      // output to an app through a channel with no moderation posture, and it
-      // would do it for `textToImage` and `customComfy` workflows too — neither
-      // of which this arm has anything to do with. `BLOCK_STEP_NAME` is stamped
-      // by the submit and echoed back on a required response field, so it says
-      // "this bridge submitted this step". Anything else keeps the pre-existing
-      // behaviour: dropped.
-      //
-      // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
-      // image this arm produces on the one channel the publish path and the
-      // per-viewer gated read already own; see `stepOutputs` in
-      // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
-      // `splitPassThroughStep` drops it.
-      if (step.name !== BLOCK_STEP_NAME) continue;
-      const {
-        media,
-        rest,
-        trainedEpochs: epochs,
-      } = splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output);
-      for (const m of media) imageUrls.push(m.url);
-      trainedEpochs.push(...epochs);
-      // A step with no output yet — the submit reply — would otherwise get an
-      // entry saying nothing.
-      if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
-      continue;
-    }
-    const stepOutput = (
-      step as unknown as {
-        output?: { images?: Array<{ url?: string | null; available?: boolean }> };
-      }
-    ).output;
-    for (const img of stepOutput?.images ?? []) {
-      if (img.available && typeof img.url === 'string' && img.url.length > 0) {
-        imageUrls.push(img.url);
-      }
+    const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
+    imageUrls.push(...extracted.media);
+    trainedEpochs.push(...extracted.trainedEpochs);
+    // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
+    model3dOutputs.push(...extracted.model3d);
+    // A step with no output yet — the submit reply — would otherwise get an
+    // entry saying nothing.
+    if (extracted.rest !== undefined) {
+      stepOutputs.push({ $type: step.$type, output: extracted.rest });
     }
   }
   const orchestratorTotal = workflow.cost?.total;
@@ -240,12 +195,16 @@ export function snapshotFromWorkflow(
   // with nothing objecting. (`isInteger` implies `isFinite`, which is why that
   // leg is gone rather than kept alongside.)
   const additional = extra?.additionalCostBuzz;
+  // What actually goes into the total: 0 for an addend the guard above rejects.
+  const addedAuthorFee =
+    additional === undefined
+      ? undefined
+      : typeof additional === 'number' && Number.isInteger(additional) && additional > 0
+      ? additional
+      : 0;
   const total =
-    typeof orchestratorTotal === 'number' &&
-    typeof additional === 'number' &&
-    Number.isInteger(additional) &&
-    additional > 0
-      ? orchestratorTotal + additional
+    typeof orchestratorTotal === 'number' && addedAuthorFee !== undefined
+      ? orchestratorTotal + addedAuthorFee
       : orchestratorTotal;
   const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   // #3520 — prefer the CALLER-SUPPLIED record (the submit/estimate reply, where
@@ -273,7 +232,9 @@ export function snapshotFromWorkflow(
     // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
     status,
-    ...(typeof total === 'number' ? { cost: { total } } : {}),
+    ...(typeof total === 'number'
+      ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
+      : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(stepOutputs.length > 0 ? { stepOutputs } : {}),
@@ -286,13 +247,228 @@ export function snapshotFromWorkflow(
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when none.
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`.
+    ...(steps.length > 0 ? { steps } : {}),
   };
+}
+
+/**
+ * Where a `kind:'workflow'` submit records the steps it named, on the
+ * orchestrator workflow's own `metadata` (the same carrier
+ * `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY` uses, for the same reason: a poll
+ * rebuilds the snapshot from a freshly fetched workflow and has no request
+ * context). The single-step arms answer "did this bridge submit this step" with
+ * one constant step name; N app-named steps cannot, so the list is recorded here.
+ *
+ * A block cannot write it: workflow metadata is set with the viewer's own
+ * orchestrator token, which a block never holds.
+ */
+export const WORKFLOW_METADATA_BLOCK_STEPS_KEY = 'blockWorkflowSteps';
+
+/** One recorded step. `suppressOutput` is stored only when it is set. */
+export type BlockWorkflowStepRecord = { name: string; suppressOutput?: true };
+
+/** The value a `kind:'workflow'` submit writes under the key above. */
+export function buildBlockWorkflowStepsMetadata(
+  steps: ReadonlyArray<{ name: string; suppressOutput: boolean }>
+): BlockWorkflowStepRecord[] {
+  return steps.map((step) => ({
+    name: step.name,
+    ...(step.suppressOutput ? { suppressOutput: true as const } : {}),
+  }));
+}
+
+/**
+ * The recorded steps keyed by name, or `null` when the workflow carries no
+ * well-formed record — which is every workflow another kind submitted.
+ */
+function readBlockWorkflowSteps(
+  metadata: unknown
+): Map<string, { suppressOutput: boolean }> | null {
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const raw = (metadata as Record<string, unknown>)[WORKFLOW_METADATA_BLOCK_STEPS_KEY];
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const steps = new Map<string, { suppressOutput: boolean }>();
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) return null;
+    const { name, suppressOutput } = entry as { name?: unknown; suppressOutput?: unknown };
+    if (typeof name !== 'string' || name.length === 0) return null;
+    steps.set(name, { suppressOutput: suppressOutput === true });
+  }
+  return steps;
+}
+
+/**
+ * The recorded step an orchestrator step belongs to: itself, or — for a child a
+ * `repeat` step generated, which the orchestrator names `<repeat name>.<n>` — its
+ * recorded ancestor. `null` for a step this bridge did not submit.
+ *
+ * A recorded name can never contain a `.` (`resolveBlockWorkflowGraph` refuses
+ * one), so a child name cannot collide with a recorded one.
+ */
+function resolveBlockWorkflowStep(
+  submitted: Map<string, { suppressOutput: boolean }>,
+  stepName: unknown
+): { suppressOutput: boolean } | null {
+  if (typeof stepName !== 'string') return null;
+  const own = submitted.get(stepName);
+  if (own) return own;
+  const child = /^([^.]+)((?:\.\d+)+)$/.exec(stepName);
+  return child ? submitted.get(child[1]) ?? null : null;
+}
+
+/** Orchestrator step statuses for which a failure reason is worth reporting. */
+const UNSUCCESSFUL_STEP_STATUSES: ReadonlySet<string> = new Set(['failed', 'expired', 'canceled']);
+
+/**
+ * The orchestrator's reason for a step that did not succeed — the first of its
+ * jobs to give one — and only when it is plain prose (`safeQuoteReason`).
+ */
+function stepFailureReason(step: NonNullable<Workflow['steps']>[number]): string | undefined {
+  if (!UNSUCCESSFUL_STEP_STATUSES.has(step.status)) return undefined;
+  // The SDK stopped declaring `jobs` on a step at 0.2.0-beta.125; the response may still carry them.
+  const jobs = (step as { jobs?: Array<{ reason?: unknown }> | null }).jobs;
+  for (const job of jobs ?? []) {
+    const reason = job.reason;
+    if (typeof reason !== 'string' || reason.length === 0) continue;
+    return safeQuoteReason(reason, '');
+  }
+  return undefined;
+}
+
+type SnapshotStepExtract = {
+  /** Available media urls, in the order the step produced them. */
+  media: string[];
+  /** A pass-through step's non-blob output; `undefined` for every other step. */
+  rest?: unknown;
+  trainedEpochs: TrainedEpoch[];
+  /** A pass-through step's 3D models, labelled; every url is also in `media`. */
+  model3d: BlockModel3dOutput[];
+};
+
+const EMPTY_STEP_EXTRACT: SnapshotStepExtract = { media: [], trainedEpochs: [], model3d: [] };
+
+/**
+ * What ONE orchestrator step contributes to a snapshot. `bridgeSubmitted` says
+ * whether this bridge submitted the step; it only matters for a `$type` nobody
+ * extracts (see the note at that branch).
+ */
+function extractSnapshotStep(
+  step: NonNullable<Workflow['steps']>[number],
+  bridgeSubmitted: boolean
+): SnapshotStepExtract {
+  const media: string[] = [];
+  const trainedEpochs: TrainedEpoch[] = [];
+  // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
+  // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
+  // its own extraction, otherwise its rendered panorama is silently dropped.
+  if (step.$type === 'customComfy') {
+    const blobs = (
+      step as unknown as {
+        output?: { blobs?: Array<{ url?: string | null; available?: boolean }> };
+      }
+    ).output?.blobs;
+    for (const blob of blobs ?? []) {
+      if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
+        media.push(blob.url);
+      }
+    }
+    return { media, trainedEpochs, model3d: [] };
+  }
+  // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
+  // in its registry entry, because the output key is step-type-specific —
+  // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
+  // native `$type` filter below skips every registered step and its
+  // result is unreachable: the caller is charged, the workflow reaches
+  // `succeeded`, and `imageUrls` is absent on every poll.
+  //
+  // 🔴 ADDITIVE BY CONSTRUCTION. A registry entry may not claim one of the
+  // natively-extracted `$type` values (`NATIVELY_EXTRACTED_STEP_TYPES`,
+  // enforced at registry load), so this branch cannot shadow the customComfy /
+  // textToImage / imageGen / comfy behaviour below — it only reaches `$type`s
+  // that used to be dropped.
+  const registeredStep = getStepByOrchestratorType(step.$type);
+  if (registeredStep) {
+    // 🔴 POSTURE-GATED, and this is the THIRD enforcement of the one
+    // media-XOR-text rule (`stepOutputShape`), not a redundant null check. A
+    // text-posture step publishes through `attachModeratedStepTextOutputs`
+    // and ONLY through it; `StepOutputMedia.url` is a bare string that reaches
+    // this array without ever meeting the scan, so reading a media extractor
+    // off a text entry is exactly the smuggling channel the registry's
+    // clause 8-ii and `TextOutputSurface.extractOutput?: never` exist to
+    // close. Keying on the POSTURE rather than on `extractOutput != null`
+    // means this holds even if a future cast puts one there.
+    if (postureProducesMedia(registeredStep.moderationPosture)) {
+      for (const entry of registeredStep.extractOutput?.(step) ?? []) {
+        media.push(entry.url);
+      }
+    }
+    return { media, trainedEpochs, model3d: [] };
+  }
+  // 🔴 THE CONSTANT, NOT A RESTATED TRIPLE. The false branch of this test used
+  // to `continue` — dropping the step silently — and now forwards the step's
+  // output to the app, so a fifth native `$type` added to
+  // `NATIVELY_EXTRACTED_STEP_TYPES` without editing a literal in THIS file
+  // would start publishing that type's output through the unmoderated
+  // pass-through channel. Reading the constant removes the second edit.
+  if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+    // A PASS-THROUGH step (`kind:'step'` with a bare `$type`): not native, not
+    // registered, so there is no declared extractor to ask.
+    //
+    // 🔴 GATED ON "THIS BRIDGE SUBMITTED IT", NOT ON "the `$type` is
+    // unrecognised". Those are different sets: an unrecognised `$type` is
+    // anything nobody extracts, which includes a step the ORCHESTRATOR put on
+    // the workflow. Forwarding one of those would publish a platform step's
+    // output to an app through a channel with no moderation posture, and it
+    // would do it for `textToImage` and `customComfy` workflows too — neither
+    // of which this arm has anything to do with. `bridgeSubmitted` is the
+    // caller's answer to "did this bridge submit this step": the server-stamped
+    // `BLOCK_STEP_NAME` for a single-step submit, or membership of the name
+    // list a `kind:'workflow'` submit recorded on the workflow's metadata. Both
+    // are echoed back by the orchestrator. Anything else keeps the pre-existing
+    // behaviour: dropped.
+    //
+    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
+    // image this arm produces on the one channel the publish path and the
+    // per-viewer gated read already own; see `stepOutputs` in
+    // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
+    // `splitPassThroughStep` drops it.
+    if (!bridgeSubmitted) return { media, trainedEpochs, model3d: [] };
+    const split = splitPassThroughStep(
+      step.$type,
+      (step as unknown as { output?: unknown }).output
+    );
+    for (const m of split.media) media.push(m.url);
+    return {
+      media,
+      rest: split.rest,
+      trainedEpochs: split.trainedEpochs,
+      model3d: split.model3d,
+    };
+  }
+  const stepOutput = (
+    step as unknown as {
+      output?: { images?: Array<{ url?: string | null; available?: boolean }> };
+    }
+  ).output;
+  for (const img of stepOutput?.images ?? []) {
+    if (img.available && typeof img.url === 'string' && img.url.length > 0) {
+      media.push(img.url);
+    }
+  }
+  return { media, trainedEpochs, model3d: [] };
 }
 
 /** True when the workflow carries a training step THIS bridge submitted. */
 function hasBlockTrainingStep(workflow: Workflow): boolean {
+  const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   return (workflow.steps ?? []).some(
-    (step) => step.name === BLOCK_STEP_NAME && isTrainingStepType(step.$type)
+    (step) =>
+      isTrainingStepType(step.$type) &&
+      (step.name === BLOCK_STEP_NAME ||
+        (submittedSteps !== null && resolveBlockWorkflowStep(submittedSteps, step.name) !== null))
   );
 }
 
@@ -356,6 +532,8 @@ export function appBlockTag(appId: string): string {
  *           pass-through training run has a ready checkpoint.
  *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
+ *   model3dOutputs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.model3dOutputs`. Every url is also in `images`.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -371,6 +549,7 @@ export type AppWorkflow = {
   createdAt: string;
   trainedEpochs?: TrainedEpoch[];
   publishedModel?: BlockPublishedModel;
+  model3dOutputs?: BlockModel3dOutput[];
 };
 
 /**
@@ -381,7 +560,23 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
+  const model3dOutputs: BlockModel3dOutput[] = [];
+  // Mirrors `snapshotFromWorkflow`'s member-step handling.
+  const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   for (const step of workflow.steps ?? []) {
+    const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
+    if (member && isRepeatStepType(step.$type)) continue;
+    if (member?.suppressOutput) {
+      // Still report a suppressed training step's ready epochs: `suppressOutput`
+      // hides images, and a checkpoint is never one.
+      if (isTrainingStepType(step.$type)) {
+        trainedEpochs.push(
+          ...splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output)
+            .trainedEpochs
+        );
+      }
+      continue;
+    }
     // A `customComfy` step surfaces its outputs as `output.blobs`
     // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
     // rating the image steps carry. Extract it here so the app subqueue read
@@ -450,14 +645,15 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       // from the same split the snapshot uses, so a block listing its runs can
       // offer an approved one to the publish wizard.
       //
-      // Same `BLOCK_STEP_NAME` gate as `snapshotFromWorkflow` — see the note
-      // there for why "unrecognised `$type`" is the wrong set.
-      if (step.name !== BLOCK_STEP_NAME) continue;
+      // Same "this bridge submitted it" gate as `snapshotFromWorkflow` — see the
+      // note there for why "unrecognised `$type`" is the wrong set.
+      if (step.name !== BLOCK_STEP_NAME && !member) continue;
       const split = splitPassThroughStep(
         step.$type,
         (step as unknown as { output?: unknown }).output
       );
       trainedEpochs.push(...split.trainedEpochs);
+      model3dOutputs.push(...split.model3d);
       for (const m of split.media) {
         images.push({
           url: m.url,
@@ -512,6 +708,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     createdAt: workflow.createdAt,
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
+    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
   };
 }
 
@@ -1274,7 +1471,7 @@ export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
  * Orchestrator step name stamped on BOTH `kind:'step'` arms' submissions.
  *
  * 🔴 IT LIVES HERE, NOT IN `blocks.router`, BECAUSE THE EXTRACTORS READ IT. The
- * pass-through branch in `snapshotFromWorkflow` / `projectAppWorkflow` keys on
+ * pass-through branch of `extractSnapshotStep` / `projectAppWorkflow` keys on
  * it to tell "a step THIS BRIDGE submitted" from "some other step that ended up
  * on the workflow", and a second copy of that literal is how the stamp and the
  * read stop agreeing. `WorkflowStep.name` is a REQUIRED field on the
@@ -1325,7 +1522,7 @@ export function createBlockCustomComfyStep(
 // The orchestrator's `GET /v2/consumer/workflows/{id}` accepts `?wait=<seconds>`
 // and holds the response until the workflow reaches a terminal status, replying
 // 202 with the current snapshot if the hold elapses first
-// (`GetWorkflowData.query.wait`, `@civitai/client`). civitai already uses it on
+// (`GetWorkflowData.query.wait`, `@civitai/orchestration-client`). civitai already uses it on
 // four non-blocks paths (`orchestrator.service.ts`, `comics/orchestrator-chat`,
 // `product-badge.service`, `training.service`); the blocks poll did not.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1356,6 +1553,13 @@ export function createBlockCustomComfyStep(
 export const MAX_BLOCK_POLL_WAIT_SECONDS = 15;
 
 /**
+ * Concurrent held polls per (install, viewer). The rate bucket alone allows ~300 at once by Little's
+ * law; past this cap a poll is answered without a hold, i.e. today's short poll, never refused. 4
+ * covers a viewer watching a few generations; a larger batch degrades to short polls.
+ */
+export const MAX_BLOCK_POLL_CONCURRENT_HOLDS = 4;
+
+/**
  * Normalize a caller-supplied `waitSeconds` into a value safe to hand the
  * orchestrator.
  *
@@ -1383,3 +1587,11 @@ export function resolveBlockPollWaitSeconds(waitSeconds?: number): number | unde
   if (floored <= 0) return undefined;
   return Math.min(floored, MAX_BLOCK_POLL_WAIT_SECONDS);
 }
+
+/**
+ * The wire schema for `waitSeconds` on `blocks.pollWorkflow` and its REST twin. It never rejects: a
+ * missing, `null`, non-number or non-finite value becomes `undefined`, and every finite number is
+ * left for `resolveBlockPollWaitSeconds` to floor and cap. A
+ * rejected poll reaches the block as a failed generation, which a tuning value must not cause.
+ */
+export const blockPollWaitSecondsInput = z.number().optional().catch(undefined);

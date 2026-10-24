@@ -3,7 +3,7 @@ import type {
   TrainingOutputEpochResult,
   Workflow,
   WorkflowStatus,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import { parseAIRSafe } from '~/shared/utils/air';
 
@@ -83,8 +83,11 @@ export function finishedEpochCheckpoints(epochs: AnyEpoch[]): EpochCheckpoint[] 
       const keys = [epoch.model.id, url ? getConsumerBlobId(url) : undefined];
       checkpoints.push({ keys: keys.filter((key): key is string => !!key), url });
     }
-    const legacyKey = epoch.blobUrl ? getConsumerBlobId(epoch.blobUrl) : undefined;
-    if (legacyKey) checkpoints.push({ keys: [legacyKey], url: epoch.blobUrl ?? undefined });
+    // A job-asset `blobUrl` has no blob key but is still a checkpoint — see parseJobAssetUrl.
+    if (epoch.blobUrl) {
+      const legacyKey = getConsumerBlobId(epoch.blobUrl);
+      checkpoints.push({ keys: legacyKey ? [legacyKey] : [], url: epoch.blobUrl });
+    }
   }
   return checkpoints;
 }

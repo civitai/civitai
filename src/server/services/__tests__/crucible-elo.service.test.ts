@@ -147,6 +147,7 @@ describe('initializeEntryElo and getAllEntryElos', () => {
   it('passes the whole crucible map back unchanged', async () => {
     getAllElos.mockResolvedValue({ 1: 1520, 2: 1480 });
     expect(await getAllEntryElos(4)).toEqual({ 1: 1520, 2: 1480 });
+    expect(getAllElos).toHaveBeenCalledWith(4);
   });
 });
 

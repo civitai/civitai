@@ -67,6 +67,15 @@ describe('applyModelNsfwTextScan', () => {
     );
   });
 
+  it('never touches nsfw for an outcome that did not ask for it (the web-search pass)', async () => {
+    await applyModelNsfwTextScan({
+      ...args(false),
+      outcome: { triggeredLabels: ['poi'], nsfwLevel: null },
+    });
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('is silent on redelivery: the model is now locked', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       model({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] })

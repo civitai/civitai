@@ -47,6 +47,7 @@ import {
   FRESH_CURSOR_KEY as FRESH_KEY,
   BACKLOG_CURSOR_KEY as BACKLOG_KEY,
 } from '~/server/jobs/remove-deleted-user-images';
+import { legalHoldUserIdsSql } from '~/server/utils/legal-hold';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockSysRedis = redisMock.sysRedis;
@@ -71,6 +72,10 @@ type Fixture = {
   csamReports?: CsamReport[];
   /** `CsamReport` rows the primary holds, when a report lands after the worklist read. */
   primaryCsamReports?: CsamReport[];
+  /** Named as the secondary user on a report that holds. */
+  heldAsSecondary?: boolean;
+  /** Comes under a hold in the window between the job's image read and its delete. */
+  holdAfterRead?: boolean;
   /** One of the account's images carries the moderator-only review flag, as the replica sees it. */
   csamFlagged?: boolean;
   /** The flag as the primary holds it, when it lands after the worklist read. */
@@ -115,8 +120,6 @@ const SKIPS_BLOCKED = `ingestion <> 'Blocked'`;
 const TAKES_BLOCKED = `ingestion = 'Blocked'`;
 /** The parenthesised form of the choice check on the destructive path. */
 const IMMEDIATE_PREDICATE = /\((u\.meta->>'[^']*' IS NULL OR u\.meta->>'[^']*' = '[^']*')\)/;
-/** The report subquery's own condition, past the owner check every spelling of it carries. */
-const CSAM_CONDITION = /AND \(([^)]+)\)/;
 
 const AI_NOT_VERIFIED = 'AiNotVerified';
 
@@ -168,54 +171,55 @@ function modeExpression(sql: string) {
   return (fixture: Fixture) => (metaHolds(condition, fixture.meta) ? whenTrue : whenFalse);
 }
 
-/** Lifts the report subquery out of a statement by balancing its parentheses. */
-function csamSubquery(sql: string) {
-  const anchor = sql.indexOf('FROM "CsamReport" c');
-  if (anchor < 0) return undefined;
-  const open = sql.lastIndexOf('(', anchor);
-  let depth = 0;
-  let close = open;
-  while (close < sql.length) {
-    if (sql[close] === '(') depth++;
-    else if (sql[close] === ')' && --depth === 0) break;
-    close++;
-  }
-  return { negated: /NOT\s+EXISTS\s*$/.test(sql.slice(0, open)), body: sql.slice(open + 1, close) };
-}
-
-/** Whether a report answers the subquery's own condition, or all of them if it carries none. */
-function matchesReportSubquery(body: string, report: CsamReport) {
-  const condition = CSAM_CONDITION.exec(body)?.[1];
-  if (!condition) return true;
-  return condition.split(/\s+OR\s+/).some((atom) => {
-    const column = /c\."(\w+)" IS NULL/.exec(atom)?.[1];
-    if (column !== 'reportSentAt' && column !== 'archivedAt')
-      throw new Error(`unrecognized CsamReport atom: ${atom}`);
-    return report[column] == null;
-  });
-}
+const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+/** A report holds while unsent, unarchived, or sent within the last year. */
+const reportHolds = (report: CsamReport) =>
+  report.reportSentAt == null ||
+  report.archivedAt == null ||
+  report.reportSentAt.getTime() > Date.now() - YEAR_MS;
+const isLegalHold = (value: unknown) =>
+  typeof (value as { sql?: unknown })?.sql === 'string' &&
+  (value as { sql: string }).sql.includes(legalHoldUserIdsSql.sql);
 
 /**
- * Answers the report exclusion off the statement that carries it — whether it is negated, and
- * which timestamps it names — rather than assuming one spelling, so dropping either timestamp
- * reads here as a report the job counts as finished and inverting it excludes the wrong accounts.
- * A statement carrying no subquery at all is answered as unguarded.
+ * Answers the shared legal hold off the statement that carries it, as the `NOT <hold>` fragment the
+ * job embeds. Which users the fragment covers is run against Postgres in the hold-guard behavior
+ * test; here a report or secondary naming that holds stands in for it. A statement carrying no hold
+ * is answered as unguarded, so dropping it from the job shows up as the fixture handing back rows.
  */
-function blockedByCsamReport(sql: string, reports: CsamReport[] | undefined) {
-  const subquery = csamSubquery(sql);
-  if (!subquery) return false;
-  const matched = (reports ?? []).some((report) => matchesReportSubquery(subquery.body, report));
-  return subquery.negated ? matched : !matched;
+function blockedByLegalHold(
+  sql: string,
+  values: unknown[],
+  reports: CsamReport[] | undefined,
+  heldAsSecondary = false
+) {
+  const at = values.findIndex(isLegalHold);
+  if (at < 0) return false;
+  const held = heldAsSecondary || (reports ?? []).some(reportHolds);
+  return /NOT\s*$/.test(sql.split('?')[at]) ? held : !held;
+}
+
+/** The same, for a `deleteImages` `onlyWhere`, which arrives as one flattened fragment. */
+function keptByOnlyWhere(onlyWhere: { sql: string } | undefined, fixture: Fixture) {
+  if (!onlyWhere || !isLegalHold(onlyWhere)) return false;
+  const held =
+    !!fixture.heldAsSecondary ||
+    (reportsOnPrimary(fixture) ?? []).some(reportHolds) ||
+    blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
+  return /^\s*NOT\b/.test(onlyWhere.sql) ? held : !held;
 }
 
 /** What the primary sees, which is what every gate on a write is answered from. */
 const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
 
-/** The per-account review-flag exclusion, as every statement that carries it spells it. */
+/** The per-account review-flag hold, as the account hold carried in a statement spells it. */
 const REVIEW_FLAG_HOLD =
-  /NOT EXISTS \(\s*SELECT 1 FROM "Image" f\s+WHERE f\."userId" = (?:\?|u\.id) AND f\."needsReview" = 'csam'\s*\)/;
-const blockedByReviewFlag = (sql: string, flagged: boolean | undefined) =>
-  !!flagged && REVIEW_FLAG_HOLD.test(sql);
+  /SELECT 1 FROM "Image" hr WHERE hr\."userId" = (?:\?(?:::int)?|u\.id) AND hr\."needsReview" = 'csam'/;
+const blockedByReviewFlag = (sql: string, values: unknown[], flagged: boolean | undefined) =>
+  !!flagged &&
+  [sql, ...values.filter(isLegalHold).map((v) => (v as { sql: string }).sql)].some((text) =>
+    REVIEW_FLAG_HOLD.test(text.replace(/\s+/g, ' '))
+  );
 const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
@@ -317,7 +321,8 @@ function applyImageUpdate(sql: string, values: unknown[]) {
   const userId = values[joined + 1] as number;
   const fixture = fixtures[userId];
   if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
-  if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return [];
+  if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
+    return [];
 
   const row = parseSetClause(sql, values);
   // Only the WHERE clause selects rows; the SET clause names the same columns.
@@ -397,8 +402,11 @@ function seed(next: Record<number, Fixture>) {
     return Promise.resolve(
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
-        .filter((id) => !blockedByCsamReport(sql, fixtures[id].csamReports))
-        .filter((id) => !blockedByReviewFlag(sql, fixtures[id].csamFlagged))
+        .filter(
+          (id) =>
+            !blockedByLegalHold(sql, values, fixtures[id].csamReports, fixtures[id].heldAsSecondary)
+        )
+        .filter((id) => !blockedByReviewFlag(sql, values, fixtures[id].csamFlagged))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -425,6 +433,7 @@ function seed(next: Record<number, Fixture>) {
       const sql = strings.join('?');
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
+      if (sql.includes('to_regclass')) return Promise.resolve([{ present: false }]);
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
@@ -454,8 +463,9 @@ function seed(next: Record<number, Fixture>) {
         imageLimits.push(limit);
         if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
           return Promise.resolve([]);
-        if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve([]);
-        if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
+        if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
+          return Promise.resolve([]);
+        if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -463,6 +473,7 @@ function seed(next: Record<number, Fixture>) {
         }));
         pagedImageIds.push(...page.map((row) => row.id));
         for (const id of fixture.blockAfterRead ?? []) (fixture.ingestion ??= {})[id] = 'Blocked';
+        if (fixture.holdAfterRead) fixture.heldAsSecondary = true;
         return Promise.resolve(page);
       }
       if (sql.includes('FROM "Post"'))
@@ -481,7 +492,8 @@ function seed(next: Record<number, Fixture>) {
         const fixture = fixtures[userId];
         if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored)
           return Promise.resolve(0);
-        if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
+        if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
+          return Promise.resolve(0);
         const excluded = sql.includes('IS DISTINCT FROM') ? (values[1] as string) : null;
         const eligible = fixture.images.filter(
           (id) => ingestionOf(fixture, id) === 'Blocked' && blockedForOf(fixture, id) !== excluded
@@ -496,8 +508,9 @@ function seed(next: Record<number, Fixture>) {
       const fixture = fixtures[userId];
       if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
-      if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
-      if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve(0);
+      if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
+        return Promise.resolve(0);
+      if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -505,11 +518,17 @@ function seed(next: Record<number, Fixture>) {
     }
   );
 
-  mockDeleteImages.mockImplementation(async (ids: number[]) => {
-    for (const fixture of Object.values(fixtures))
-      fixture.images = fixture.images.filter((id) => !ids.includes(id));
-    return ids.map((id) => ({ id }));
-  });
+  mockDeleteImages.mockImplementation(
+    async (ids: number[], _updatePosts?: boolean, opts?: { onlyWhere?: { sql: string } }) => {
+      const deleted: number[] = [];
+      for (const fixture of Object.values(fixtures)) {
+        if (keptByOnlyWhere(opts?.onlyWhere, fixture)) continue;
+        deleted.push(...fixture.images.filter((id) => ids.includes(id)));
+        fixture.images = fixture.images.filter((id) => !ids.includes(id));
+      }
+      return deleted.map((id) => ({ id }));
+    }
+  );
 }
 
 const ids = (count: number, offset = 0) => Array.from({ length: count }, (_, i) => offset + i + 1);
@@ -1401,7 +1420,7 @@ describe('an image carrying the moderator-only review flag', () => {
   });
 });
 
-describe('unfinished CSAM reports', () => {
+describe('legal holds', () => {
   const UNFINISHED: CsamReport[] = [{ reportSentAt: null, archivedAt: null }];
 
   it('keeps an account with an unfinished report out of both worklists', async () => {
@@ -1444,7 +1463,7 @@ describe('unfinished CSAM reports', () => {
     expect(result.deletedImages).toBe(0);
   });
 
-  it('processes an account whose report is finished', async () => {
+  it('keeps an account whose report was sent and archived within the last year', async () => {
     seed({
       7: {
         deletedAt: NEWER,
@@ -1456,8 +1475,45 @@ describe('unfinished CSAM reports', () => {
 
     const result = await run();
 
-    // The evidence is off the CDN and into the archive by then; holding the account past that
-    // point retains the images forever against a deletion request.
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+  });
+
+  it('keeps an account named as the secondary user on a report that holds', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], heldAsSecondary: true } });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+  });
+
+  it('stops the delete itself for a hold placed after the image read', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], holdAfterRead: true } });
+
+    const result = await run();
+
+    expect(mockDeleteImages).toHaveBeenCalled();
+    expect(result.deletedImages).toBe(0);
+    expect(deletedPostIds).toEqual([]);
+  });
+
+  it('processes an account whose report is past its year', async () => {
+    const yearAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+    seed({
+      7: {
+        deletedAt: NEWER,
+        images: ids(10),
+        posts: [900],
+        csamReports: [{ reportSentAt: yearAgo, archivedAt: yearAgo }],
+      },
+    });
+
+    const result = await run();
+
+    // Holding the account past the hold retains the images forever against a deletion request.
     expect(result.deletedImages).toBe(10);
     expect(deletedPostIds).toEqual([900]);
     expect(result.deletedUsers).toBe(1);

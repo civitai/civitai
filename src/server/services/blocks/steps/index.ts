@@ -400,7 +400,7 @@ export type OrchestratorStepTemplate = {
 //
 // The concrete case, because it is coming: the orchestrator's `chatCompletion`
 // input takes `model: string` — a plain provider id ("gpt-4o"), NOT an AIR
-// (`ChatCompletionInput` in the generated `@civitai/client` types). Such an
+// (`ChatCompletionInput` in the generated `@civitai/orchestration-client` types). Such an
 // entry would declare `'none'` TRUTHFULLY and pass clause 7, while forwarding
 // an arbitrary model name from an untrusted iframe. There is also no
 // orchestrator-side model validation to catch it — a fabricated name quotes
@@ -479,7 +479,7 @@ const AIR_SCAN_MAX_DEPTH = 128;
  * ORCHESTRATOR'S OWN SCHEMA. `ImageJobParams.additionalNetworks` is typed
  * `{ [key: string]: ImageJobNetworkParams }` and its doc comment reads "Use the
  * AIR of the network as the key"; `WorkflowCost.fees` is likewise keyed by
- * resource AIR (both in the generated `@civitai/client` types). A scan over
+ * resource AIR (both in the generated `@civitai/orchestration-client` types). A scan over
  * `Object.values` alone therefore misses the single most likely real-world
  * placement of an AIR in a submitted step, and returns a confident
  * `noResourceReference` for `{ additionalNetworks: { 'urn:air:…': {…} } }` — a
@@ -639,7 +639,7 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  * shape of problem because `'promptAudit'` is implemented and so that entry
  * would at least be registrable once someone notices.
  *
- * Enumerated from the generated `@civitai/client` `$type` literals, not from
+ * Enumerated from the generated `@civitai/orchestration-client` `$type` literals, not from
  * `src/**` usage — the same correction the registry's Tranche 1 note records:
  * grepping usage enumerates what is CALLED, not what EXISTS.
  */
@@ -784,7 +784,8 @@ interface BlockStepBase<P> {
    * `canonicalOutputFor` makes the output shape explicit rather than inferred.
    *
    * 🔴 AND IT CANNOT BE SATISFIED BY RETURNING NOTHING. `auditPromptServer`
-   * RETURNS EARLY on an empty prompt, so `() => ({ prompt: '' })` would be a
+   * audits no prompt text when the prompt is empty (it returns early unless a
+   * negative prompt is present), so `() => ({ prompt: '' })` would be a
    * declared posture that audits nothing and reports success — the same defect
    * class as an `extractOutput` satisfiable by `() => []`, which is why that
    * field got a probe. This one gets the same treatment: the load-time invariant
@@ -839,10 +840,9 @@ interface BlockStepBase<P> {
    * canonical params of each variant (clause 5, and the price-equals-estimate
    * clause) and nothing re-checks at request time.
    *
-   * What estimate and submit DO share is the BOUND: `estimateStepBuzz` and
-   * `planStepSpend` both resolve through `resolveStepVariant` before dispatching
-   * to a billing-mode handler, so an out-of-set resolution fails identically on
-   * both. Before that they did not, and an entry whose variant is its model
+   * What estimate and submit DO share is the BOUND: both resolve through
+   * `resolveStepVariant` and then `planStepSpend`, so an out-of-set resolution
+   * fails identically on both. Before that they did not, and an entry whose variant is its model
    * would have answered an out-of-set model with HTTP 200 and
    * `cost: { total: undefined }` on estimate while the submit threw.
    *
@@ -1112,8 +1112,8 @@ export type AnyBlockStep = BlockStep<any>;
 // Spend planning — the money-path dispatch.
 //
 // 🔴 estimate / submit / settle dispatch on `billingMode`, NEVER on `kind` and
-// never on the step id. The router calls `planStepSpend` / `estimateStepBuzz`
-// and reads the returned plan; it contains no per-step and no per-mode branch.
+// never on the step id. The router calls `planStepSpend` and reads the returned
+// plan; it contains no per-step and no per-mode branch.
 // Adding a capability is register-an-entry; adding a MODE is add-a-handler
 // here — neither is router surgery. That is the whole point of the RFC.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1312,10 +1312,7 @@ function unimplementedMode(mode: StepBillingMode): BillingModeHandler {
 const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
   prepaidFixed: {
     // The display estimate is computed from the PARAMS — the variant is not an
-    // input to it, and this handler deliberately does not destructure one. What
-    // the bound buys this path is that `estimateStepBuzz` already threw on an
-    // out-of-set resolution before reaching here, so estimate can no longer
-    // answer 200 where submit throws.
+    // input to it, and this handler deliberately does not destructure one.
     estimateBuzz: ({ step, params }) => step.estimateBuzz(params),
     planSpend: ({ step, variant }) => {
       const entry = step as PrepaidFixedStep<unknown>;
@@ -1349,9 +1346,7 @@ export function isBillingModeImplemented(mode: StepBillingMode): boolean {
  * The display estimate for a step, dispatched on its declared billing mode.
  *
  * Resolves the variant through `resolveStepVariant` before dispatching — see
- * `planStepSpend` below for why the resolution lives in the dispatcher, and note
- * that this is what makes an out-of-set resolution fail IDENTICALLY on estimate
- * and on submit.
+ * `planStepSpend` below for why the resolution lives in the dispatcher.
  */
 export function estimateStepBuzz(
   step: AnyBlockStep,
@@ -1431,7 +1426,7 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 //
 // 🔴 The RFC named Tranche 1 as "background removal, upscale, convert". Only
 // CONVERT made it. Enumerating the orchestrator's real `$type` values from the
-// generated `@civitai/client` types found that the other two DO exist —
+// generated `@civitai/orchestration-client` types found that the other two DO exist —
 // `imageBackgroundRemoval` and `imageUpscaler` — but neither is `prepaidFixed`:
 //   - `imageBackgroundRemoval`: the client's own doc string says it "builds a
 //     ComfyUI graph under the hood and runs it as a comfy job", i.e. GPU work
@@ -1755,8 +1750,8 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     }
 
     // (5a) THE NON-VACUITY PROBE for `auditableText`, the moderation analogue of
-    // clause 8's extraction probe. `auditPromptServer` RETURNS EARLY on an empty
-    // prompt, so an entry that declares `'promptAudit'` and returns `''` would
+    // clause 8's extraction probe. `auditPromptServer` audits no prompt text on an
+    // empty prompt, so an entry that declares `'promptAudit'` and returns `''` would
     // pass clause 1a, run the audit, and audit nothing — reporting success. The
     // declaration alone is therefore not enough; it has to produce real text for
     // params the entry itself calls canonical.
@@ -1767,7 +1762,7 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
         throw new Error(
           `${vWhere}: auditableText() returned no prompt text for canonicalParamsFor() — ` +
-            'auditPromptServer returns early on an empty prompt, so this posture would ' +
+            'auditPromptServer audits no prompt text on an empty prompt, so this posture would ' +
             'audit NOTHING while reporting success'
         );
       }

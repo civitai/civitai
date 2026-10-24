@@ -94,14 +94,15 @@ services:
     entrypoint: >
       /bin/sh -c "/usr/bin/mc alias set minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb --ignore-existing minio/modelshare && /usr/bin/mc anonymous set public minio/modelshare && /usr/bin/mc mb --ignore-existing minio/images && /usr/bin/mc anonymous set public minio/images && exit 0"
 
-  maildev:
-    image: maildev/maildev
+  # Local SMTP catcher. UI is remapped to :1080, where maildev served it.
+  mailpit:
+    image: axllent/mailpit:v1.31.3
     environment:
-      - MAILDEV_SMTP_PORT=1025
-      - MAILDEV_WEB_PORT=1080
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
     ports:
       - "1025:1025"
-      - "1080:1080"
+      - "1080:8025"
     restart: unless-stopped
 
   clickhouse:

@@ -10,13 +10,19 @@ import {
   reorderListingScreenshotsSchema,
   setListingCoverSchema,
   setListingIconSchema,
+  setListingRedMediaSchema,
   updateListingScreenshotCaptionSchema,
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  getForkSessionSchema,
   listAllListingsForModerationSchema,
   listAppListingsSchema,
+  listListingForksSchema,
+  startForkSchema,
+  type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
 import {
   getMyAppListingReviewSchema,
   listAppListingReviewsSchema,
@@ -64,6 +70,7 @@ import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-mess
 import {
   listSubListingQueueSchema,
   moderateSubListingSchema,
+  withdrawMyCatalogSubListingSchema,
 } from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -72,6 +79,8 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+// TYPE-only: the service itself stays a lazy `await import()` in every proc below.
+import type { ListingViewer } from '~/server/services/blocks/app-listing.service';
 import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
@@ -92,7 +101,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { isHostForColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
@@ -188,11 +197,11 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  *   1. MOD-BYPASSING, via `app-listing-assets::loadOwnedListing`, which short-circuits
  *      the ownership check for `user.isModerator` — disagreement D1 in
  *      `app-access.call-site-ledger.test.ts`, where sibling gates deliberately disagree
- *      about the bypass. Reached by `setIcon`, `setCover`, `addScreenshot`,
- *      `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and by
- *      `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
+ *      about the bypass. Reached by `setIcon`, `setCover`, `setRedMedia`,
+ *      `addScreenshot`, `reorderScreenshots` (directly / via `resolveOwnerAssetEditTarget`) and
+ *      by `updateScreenshotCaption`, `removeScreenshot` (via `resolveOwnerScreenshotTarget`).
  *      `getAssetScanStatuses` carries its OWN equivalent (`user.isModerator ? {} :
- *      { userId: user.id }`). Seven members.
+ *      { userId: user.id }`). Eight members.
  *   2. NO LISTING GATE AT ALL, caller-bound: `persistAssetImage`,
  *      `ingestAssetFromDataUri` create an `Image` owned by the caller and take no
  *      listing id. No bypass to have.
@@ -321,8 +330,7 @@ const enforceAppListingsWriteFlag = middleware(async ({ ctx, next }) => {
  * Mirrors `blocks.router`'s `isRedCapableRequest`.
  */
 function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
-  const host = ctx.req?.headers?.host ?? '';
-  return host !== '' && isHostForColor(host, 'red');
+  return isRedCapableHost(ctx.req?.headers?.host);
 }
 
 /**
@@ -390,6 +398,17 @@ function applyStoreGates(
     rawFloor as string | undefined
   );
   return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/**
+ * The viewer the store reads use for the viewer-scoped `restrictedAudience` field. Read
+ * from the server-stamped session only — `isModerator` is the same flag
+ * `resolveViewerAudienceFloor` trusts.
+ */
+function listingViewerFromCtx(ctx: {
+  user?: { id: number; isModerator?: boolean | null };
+}): ListingViewer {
+  return { userId: ctx.user?.id ?? null, isModerator: ctx.user?.isModerator === true };
 }
 
 /** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
@@ -554,7 +573,7 @@ export const appListingsRouter = router({
   // -------------------------------------------------------------------------
   // OWNER ASSET MUTATIONS.
   //
-  // 🔴 ALL SIX MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
+  // 🔴 ALL SEVEN MAP THROUGH `mapOffsiteError`. Under LAZY shadow-revision minting each
   // of these calls `resolveOwnerAssetEditTarget` → `beginListingRevision`, which
   // throws a typed `OffsiteRequestError` (a plain `Error` subclass, NOT a
   // `TRPCError`) — e.g. `INVALID_REVISION` when a moderator delists the listing
@@ -590,6 +609,34 @@ export const appListingsRouter = router({
       );
       try {
         return await setListingCover(input, ctx.user);
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * Set or clear the civitai.red-only icon / cover override (`setListingRedMedia`): the same
+   * owner / revision / moderator rules as `setIcon` / `setCover`.
+   *
+   * Called by the author's listing media editor (`ListingAssetStep`'s civitai.red section) and by
+   * the CLI (`civitai app listing set-icon|set-cover --red`, `clear-red`).
+   *
+   * Annotated with `listingMediaCliScope` on the basis that set's header states: it is shape 1
+   * (`loadOwnedListing`, moderator bypass), the same gate as `setIcon` / `setCover`, and unlike the
+   * withdrawn `getAssets` it ADDS something no annotated proc carries — the only write to these
+   * two slots. It returns only the slot, the image id the caller sent and a scan flag; it reads
+   * no override back, so admitting the token discloses no civitai.red media.
+   */
+  setRedMedia: protectedProcedure
+    .meta(listingMediaCliScope)
+    .use(enforceAppBlocksAuthorFlag)
+    .input(setListingRedMediaSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { setListingRedMedia } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      try {
+        return await setListingRedMedia(input, ctx.user);
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -832,6 +879,17 @@ export const appListingsRouter = router({
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      // FORK OPT-IN — turning it ON is behind the `app-blocks-fork` rollout flag (fail-closed),
+      // CLI token included. Turning it OFF never is: an author who opted in while the flag was on
+      // must still be able to withdraw consent after a rollback. Evaluated only when the patch
+      // turns it on, so no other edit pays for a flag eval. Ownership is still the service's gate
+      // (`loadOwnedEditableListing`: owner or accepted collaborator).
+      if (input.patch.forkable === true) {
+        const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+        if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: FORK_SETTING_DISABLED_MESSAGE });
+        }
+      }
       const { updateListing } = await import('~/server/services/blocks/offsite-listing.service');
       try {
         return await updateListing({
@@ -1169,7 +1227,7 @@ export const appListingsRouter = router({
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
    *
    * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
-   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * the only surface carrying `problems[]` (the listing-problems advisory) plus
    * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
    * proc that can tell an author what is wrong with their listing. The set it returns is
    * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,
@@ -1332,6 +1390,7 @@ export const appListingsRouter = router({
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
+          mediaSplit: input.mediaSplit,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1828,6 +1887,36 @@ export const appListingsRouter = router({
     return { count: await countSubListingQueue() };
   }),
 
+  /**
+   * The signed-in user's own catalog items: what off-site platforms listed under their name
+   * (account settings). Not behind the `app-store-sub-listings` flag, which gates only the store
+   * grid; the platforms sync and moderators review without it.
+   */
+  listMyCatalogSubListings: protectedProcedure.query(async ({ ctx }) => {
+    const { listMyCatalogSubListings } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    try {
+      return await listMyCatalogSubListings(ctx.user.id);
+    } catch (err) {
+      throw mapSubListingError(err);
+    }
+  }),
+
+  /** Withdraw one of the caller's own catalog items. Someone else's item is NOT_FOUND. */
+  withdrawMyCatalogSubListing: protectedProcedure
+    .input(withdrawMyCatalogSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { withdrawMyCatalogSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await withdrawMyCatalogSubListing({ userId: ctx.user.id, id: input.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
   /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
   moderateSubListing: moderatorProcedure
     .input(moderateSubListingSchema)
@@ -1899,6 +1988,7 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
         // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
         // `SubListingCard` just because the viewer has the flag.
         includeSubListings:
@@ -1997,6 +2087,90 @@ export const appListingsRouter = router({
       });
     }),
 
+  /**
+   * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
+   *
+   * Behind the `app-blocks-fork` rollout flag: off (or absent, or Flipt down) → `null`, and the
+   * page renders no fork section. Same read gates as `getAppDetail`, applied twice: the PARENT
+   * must be a listing this viewer could open (`getStoreVisibleListingSummary` → else `null`, so
+   * this cannot probe a hidden listing), and each FORK is counted and listed only when this viewer
+   * could find it in the store (`listListingForks`). "Forked from …" attribution is NOT here — it
+   * rides `getAppDetail` and is not behind the flag.
+   */
+  listForks: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(listListingForksSchema)
+    .query(async ({ ctx, input }): Promise<ListingForksPage | null> => {
+      const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
+      if (scope === 'none') return null;
+      const redCapable = isRedCapableRequest(ctx);
+      const { getStoreVisibleListingSummary } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      const parent = await getStoreVisibleListingSummary(
+        { id: input.listingId },
+        { redCapable, scope, floor }
+      );
+      if (!parent) return null;
+      const [{ listListingForks }, { dbRead }] = await Promise.all([
+        import('~/server/services/blocks/app-listing-forks.service'),
+        import('~/server/db/client'),
+      ]);
+      return listListingForks(dbRead, {
+        parentListingId: parent.id,
+        cursor: input.cursor ?? null,
+        limit: input.limit,
+        scope,
+        floor,
+        redCapable,
+      });
+    }),
+
+  /**
+   * FORK — start a fork of a listing for the caller: picks the fork's slug, records the server-side
+   * fork session (the ONLY source of the fork's provenance) and returns the seed the App Assistant
+   * page hands to the sandbox service. Every gate lives in `startAppFork` (App Assistant access,
+   * the `app-blocks-fork` flag, a publicly visible and forkable parent with an approved commit,
+   * the per-user rate limit); the store scope comes from the same middleware every store read uses.
+   */
+  startFork: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .input(startForkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { scope } = applyStoreGates(ctx, 'trpc-fork-start');
+      const { startAppFork } = await import('~/server/services/blocks/app-fork-start.service');
+      return startAppFork({
+        user: ctx.user,
+        listingId: input.listingId,
+        scope,
+        redCapable: isRedCapableRequest(ctx),
+        req: ctx.req,
+      });
+    }),
+
+  /**
+   * FORK — the caller's own fork session by slug, for the App Assistant page (`?fork=<slug>`).
+   * `null` for a slug that is not the caller's, missing or expired; `seed: null` once the seed URL
+   * has expired. Behind the same rollout flag as `startFork`.
+   */
+  getForkSession: protectedProcedure.input(getForkSessionSchema).query(async ({ ctx, input }) => {
+    const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+    const { getForkSessionForUser } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    return getForkSessionForUser({ userId: ctx.user.id, forkSlug: input.forkSlug });
+  }),
+
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
     .use(enforceAppListingsReadFlag)
@@ -2018,6 +2192,9 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
+        // For the per-image media gate on a red-capable host (the list read passes the same).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;

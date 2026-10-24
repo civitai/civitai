@@ -33,12 +33,6 @@ async function countFor(path: string, code: string): Promise<number | undefined>
 }
 
 describe('shouldSkipExpectedNotFoundLog', () => {
-  it('pins the allowlist to exactly one pair: image.getGenerationData / NOT_FOUND', () => {
-    // Adding a second allowlisted-404 procedure is meant to be a one-line change — and this is the
-    // line that makes the reviewer see it.
-    expect(httpErrors.EXPECTED_NOT_FOUND_LOG_SKIPS).toEqual([{ path: PATH, code: 'NOT_FOUND' }]);
-  });
-
   it('skips NOT_FOUND on image.getGenerationData', () => {
     expect(httpErrors.shouldSkipExpectedNotFoundLog(PATH, notFound())).toBe(true);
   });

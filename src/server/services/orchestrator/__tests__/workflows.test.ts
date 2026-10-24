@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { WorkflowTemplate } from '@civitai/client';
+import type { WorkflowTemplate } from '@civitai/orchestration-client';
 
 // Mock throwBadRequestError from errorHandling to test error propagation
 vi.mock('~/server/utils/errorHandling', () => ({
@@ -15,8 +15,8 @@ vi.mock('~/server/logging/client', () => ({
   safeError: vi.fn((e) => e),
 }));
 
-// Mock @civitai/client
-vi.mock('@civitai/client', () => ({
+// Mock @civitai/orchestration-client
+vi.mock('@civitai/orchestration-client', () => ({
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
@@ -53,7 +53,7 @@ import {
   deleteWorkflow as clientDeleteWorkflow,
   refreshBlob,
   submitWorkflow as clientSubmitWorkflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 
 describe('shouldRefreshBlobUrl', () => {
   it('should return false for standard non-blob URLs', () => {

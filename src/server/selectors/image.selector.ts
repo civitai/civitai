@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 
 import { simpleTagSelect } from './tag.selector';
 
@@ -93,6 +94,18 @@ const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: n
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
   post: publishedPostWhere(),
+});
+
+/**
+ * `publishedImageWhere`, and the post is not Private: the Prisma form of the App Store's
+ * `IMAGE_POST_PUBLIC_SQL` (`app-sub-listing-store.service.ts`), which a SQL fragment cannot share
+ * code with. Not identical at one instant: this keeps `publishedAt <= now`, the store's fragment
+ * `publishedAt < now()`, so a post published at exactly the instant of this query is listed here
+ * and would be refused by a store check run at that same instant (any later check accepts it).
+ */
+export const publicPostImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { ...publishedPostWhere(), availability: { not: Availability.Private } },
 });
 
 /** An entered image's post may be scheduled for its crucible's end; only unpublishing takes it out. */

@@ -63,6 +63,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 // unit under test (default SFW / non-red).
 vi.mock('~/server/utils/server-domain', () => ({
   isHostForColor: () => false,
+  isRedCapableHost: () => false,
 }));
 
 import { appListingsRouter } from '../app-listings.router';
@@ -280,6 +281,65 @@ describe('appListings.listAvailable — the sub-listing response-shape flag', ()
     expect(mockListAvailableListings).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ viewerBrowsingLevel: expected })
+    );
+  });
+});
+
+// The detail read gates each listing image by the viewer's level on a red-capable host, so it
+// needs the same request browsing level the list read gets. Dropping it would leave every
+// detail page on a red host at the anonymous floor, with every service test still green.
+describe('appListings.getAppDetail — the request browsing level reaches the media gate', () => {
+  it.each([
+    ['mature on, nsfw domain', { showNsfw: true, browsingLevel: 7 }, { canViewNsfw: true }, 7],
+    ['mature off, nsfw domain', { showNsfw: false, browsingLevel: 7 }, { canViewNsfw: true }, 1],
+    ['sfw domain', { showNsfw: true, browsingLevel: 28 }, { canViewNsfw: false }, 3],
+  ])('passes it (%s)', async (_label, prefs, flags, expected) => {
+    const caller = appListingsRouter.createCaller(
+      fakeCtx({ ...modUser, ...prefs }, flags) as never
+    );
+    await caller.getAppDetail({ slug: 'foo' });
+    expect(mockGetListingDetail).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewerBrowsingLevel: expected })
+    );
+  });
+});
+
+describe('the viewer handed to the store reads (for the viewer-scoped `restrictedAudience`)', () => {
+  // The service derives the badge from this viewer; a proc that dropped it, or hardcoded
+  // `isModerator`, would silently fall back to anonymous with every service test still green.
+  it('listAvailable passes the session user id + moderator flag', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.listAvailable({ limit: 20 });
+    expect(mockListAvailableListings).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: 1, isModerator: true } })
+    );
+  });
+
+  it('listAvailable: a signed-in NON-moderator is passed as such', async () => {
+    publicExternal = true;
+    const caller = appListingsRouter.createCaller(fakeCtx(normalUser) as never);
+    await caller.listAvailable({ limit: 20 });
+    expect(mockListAvailableListings).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: 2, isModerator: false } })
+    );
+  });
+
+  it('getAppDetail passes the session viewer; anonymous is { userId: null, isModerator: false }', async () => {
+    const mod = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await mod.getAppDetail({ slug: 'foo' });
+    expect(mockGetListingDetail).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: 1, isModerator: true } })
+    );
+    publicExternal = true;
+    const anon = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await anon.getAppDetail({ slug: 'ext' });
+    expect(mockGetListingDetail).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: null, isModerator: false } })
     );
   });
 });

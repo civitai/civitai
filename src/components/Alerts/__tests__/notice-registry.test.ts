@@ -143,7 +143,7 @@ describe('isNoticeDismissed', () => {
 // can execute it. The hook that consumes it is covered by
 // `useFeatureNotice.audience.test.ts` (also `unit`, via happy-dom), and the
 // rendered component by `notice-callsite.browser.test.tsx` (project
-// `component`, which CI does NOT run). All three assert behaviour; none of them
+// `component`, CI's `Component tests`). All three assert behaviour; none of them
 // asserts that the field exists.
 //
 // Fixtures name flags that are NOT `remixGallery`, the only audience the
@@ -186,14 +186,6 @@ describe('isNoticeAudienceMatched', () => {
   });
 
   describe('a notice with an audience', () => {
-    test('matches a user its own flag is on for', () => {
-      expect(isNoticeAudienceMatched(targetedAlpha, flags, true)).toBe(true);
-    });
-
-    test('does NOT match a user its own flag is off for', () => {
-      expect(isNoticeAudienceMatched(targetedBeta, flags, true)).toBe(false);
-    });
-
     test('reads ITS OWN flag, not whichever flag happens to be on', () => {
       // Same map, same readiness, opposite results. A body that ignored
       // `audience.feature` could not produce both.

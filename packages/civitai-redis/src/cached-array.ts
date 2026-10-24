@@ -20,6 +20,8 @@ export type CachedLookupOptions<T extends object> = {
   lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
   appendFn?: (results: Set<T>) => Promise<void>;
   ttl?: number;
+  // Seconds a bust holds an id back. Unset, each bust flavour keeps its own default (see
+  // NON_SWR_BUST_WINDOW and SWR_INVALIDATE_WINDOW); set, it applies to both, as it always did.
   debounceTime?: number;
   cacheNotFound?: boolean;
   // Separate TTL for negative-cache markers. When the lookupFn legitimately returns nothing for an id
@@ -35,8 +37,9 @@ export type CachedLookupOptions<T extends object> = {
   staleWhileRevalidateTtl?: number;
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
-  // LRU. An L1 hit skips the ENTIRE Redis GET fan-out for that id — the win on hot feed hydration,
-  // where packed.mGet decomposes into per-id GETs (no MGET across cluster slots).
+  // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
+  // (On a cluster packed.mGet pipelines a batch's GETs per master; see ./cluster-pipelined-get.
+  // An L1 hit still saves the Redis-side work and the decode.)
   //
   // 🔴 CORRECTNESS: the L1 is per-pod and CANNOT see a cross-pod `bust`/`refresh`, so a mutation
   // propagates with up to `localTtl` extra staleness on pods holding a copy. Enable ONLY on near-static
@@ -68,6 +71,23 @@ export type CachedLookupOptions<T extends object> = {
   // notFound marker, the debounce marker) and `T extends object`, so the 0x01 sentinel can never
   // collide with a bare-scalar msgpack payload. See ./packed-compression.
   compress?: boolean;
+};
+
+/** Per-call options for `fetch`. */
+export type CachedFetchOptions = {
+  /**
+   * `false` makes this call read-only against Redis: hits (Redis or L1) are served as usual,
+   * misses go to `lookupFn` and are returned without being cached, and stale entries are served
+   * as-is instead of being revalidated. It writes no L1 either, except on the degraded path (see
+   * backfillLocal).
+   *
+   * Misses still count in the miss metric, so a cache read this way can show a higher miss ratio
+   * while writing less; judge the effect by write volume, not miss ratio.
+   *
+   * For callers whose ids are unlikely to be read again soon (e.g. a cold back-catalogue walk),
+   * where the write only costs memory.
+   */
+  writeBack?: boolean;
 };
 
 /** The slice of the redis client this module needs. */
@@ -163,6 +183,18 @@ const UPDATE_LOCK_TTL = 5;
  * join; change both together.
  */
 const MISS_FILL_JOIN_MAX_MS = 10_000;
+
+/**
+ * Default bust window (seconds) for a non-SWR cache: how long bust()'s marker keeps every read of
+ * the id uncached. Each second costs a lookup per read of a busted id, so it is short, but well above
+ * typical replica lag, which is what it exists to outlast.
+ */
+const NON_SWR_BUST_WINDOW = 2;
+/**
+ * Default for an SWR cache's invalidate(): how long the backdated entry is still served as fresh
+ * before revalidating. Unchanged from the builder's historical 10 s default.
+ */
+const SWR_INVALIDATE_WINDOW = 10;
 type MissFillEntry = { startedAt: number };
 
 export function createCacheBuilders(deps: CacheBuilderDeps) {
@@ -175,7 +207,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     lookupFn,
     appendFn,
     ttl = deps.defaultTtl,
-    debounceTime = 10,
+    debounceTime,
     cacheNotFound = true,
     notFoundTtl,
     dontCacheFn,
@@ -225,8 +257,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // returned object cannot corrupt the shared L1 instance.
     // 🔴 INVARIANT: shallow only protects TOP-LEVEL fields — nested refs are shared with the L1 copy,
     // so consumers MUST treat returned values as read-only for nested fields. `skip` lets a caller
-    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn),
-    // so L1 never pins a value Redis chose not to persist.
+    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn).
+    // While Redis is healthy L1 never pins a value Redis chose not to persist, and a writeBack:false
+    // fetch writes no L1 at all. The degraded path (Redis read failed) is the exception: it
+    // backfills even for writeBack:false, because the L1 is what bounds the DB herd then.
     function backfillLocal(items: T[], skip?: (x: T) => boolean) {
       if (!localCache) return;
       for (const x of items) {
@@ -344,7 +378,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       });
     }
 
-    async function fetch(ids: number[]) {
+    async function fetch(ids: number[], { writeBack = true }: CachedFetchOptions = {}) {
       if (!ids.length) return [] as T[];
       let distinctIds = [...new Set(ids)];
 
@@ -393,7 +427,6 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const cacheArray = cacheResults.filter((x) => x !== null) as T[];
       const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x])) as Record<string, any>;
 
-      const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
       const cacheMisses = new Set<number>();
       const dontCache = new Set<number>();
       const debounced = new Set<number>();
@@ -405,13 +438,19 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = cache[id];
         if (cached) {
           if (cached.notFound) continue;
+          // A readable marker is inside its window by construction: bust() writes it with EX = the
+          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW), so Redis
+          // ends it and the marker needs no timestamp. Inside it the lookup is served but not
+          // written back.
           if (cached.debounce) {
             debounced.add(id);
-            if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+            dontCache.add(id);
             cacheMisses.add(id);
             continue;
           }
-          if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
+          // A read-only fetch could not write a revalidated value back, so a stale entry is
+          // served as a hit.
+          if (writeBack && staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
             toRevalidate[id] = cached;
             continue;
           }
@@ -467,7 +506,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
 
         // finally: a throwing lookupFn must not leave its ids registered as in flight.
-        const releaseMissFill = trackMissFill(cacheMisses, debounced, dontCache);
+        // A read-only lookup is never cached, so like a debounce-window lookup it registers nothing.
+        const releaseMissFill = trackMissFill(
+          cacheMisses,
+          debounced,
+          writeBack ? dontCache : cacheMisses
+        );
         try {
           const dbResults: Record<string, T> = {};
           const lookupBatches = chunk([...cacheMisses], 10000);
@@ -484,7 +528,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             const result = dbResults[id];
             if (!result) {
               if (cacheNotFound) {
-                toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+                // dontCache too: NX against the marker only guards while the marker outlives the
+                // lookup, and an in-window empty result may be replica lag.
+                if (writeBack && !dontCache.has(id))
+                  toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
                 actualMisses++;
               }
               // When cacheNotFound=false, don't count as a miss since we don't cache it.
@@ -492,7 +539,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             }
             results.add(result as T);
             actualMisses++;
-            if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
+            if (writeBack && !dontCache.has(id) && !dontCacheFn?.(result))
+              toCache[id] = { ...result, cachedAt };
           }
 
           if (actualMisses > 0) metrics.miss(key, 'cachedArray', actualMisses);
@@ -562,10 +610,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
       // Backfill L1 with the FINAL shape (post-appendFn, cachedAt stripped) so a later L1 hit is
       // byte-identical to this return. Skip exactly what the Redis write skipped.
-      backfillLocal(
-        final,
-        (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
-      );
+      if (writeBack)
+        backfillLocal(
+          final,
+          (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
+        );
       return localCache ? [...l1Hits, ...final] : final;
     }
 
@@ -579,7 +628,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           redis.packed.set(
             `${key}:${id}` as RedisKeyTemplateCache,
             { [idKey]: id, debounce: true },
-            { EX: options.debounceTime ?? debounceTime },
+            { EX: options.debounceTime ?? debounceTime ?? NON_SWR_BUST_WINDOW },
             packedOptions
           )
         )
@@ -602,7 +651,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
 
       const invaliDate = new Date(
-        Date.now() - ttl * 1000 + (options.debounceTime ?? debounceTime) * 1000
+        Date.now() -
+          ttl * 1000 +
+          (options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW) * 1000
       );
       const updates = cacheResults.filter(
         (x) => x !== null && 'cachedAt' in x && (x as AnyRecord).cachedAt !== invaliDate
@@ -769,9 +820,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
   function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
     const cachedArray = createCachedArray<T>(lookupOptions);
 
-    async function fetch(ids: number | number[]) {
+    async function fetch(ids: number | number[], options?: CachedFetchOptions) {
       if (!Array.isArray(ids)) ids = [ids];
-      const results = await cachedArray.fetch(ids);
+      const results = await cachedArray.fetch(ids, options);
       return Object.fromEntries(
         results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
       ) as Record<string, T>;
@@ -788,12 +839,12 @@ export type CacheBuilders = ReturnType<typeof createCacheBuilders>;
 // Declared structurally rather than as ReturnType<…createCachedArray> — that instantiates the generic
 // at its `object` constraint, so every consumer's element type collapses to `object`.
 export type CachedArray<T extends object> = {
-  fetch(ids: number[]): Promise<T[]>;
+  fetch(ids: number[], options?: CachedFetchOptions): Promise<T[]>;
   bust(id: number | number[], options?: { debounceTime?: number }): Promise<void>;
   refresh(id: number | number[]): Promise<void>;
   update(id: number, updater: (current: T) => T): Promise<boolean>;
   flush(): Promise<void>;
 };
 export type CachedObject<T extends object> = Omit<CachedArray<T>, 'fetch'> & {
-  fetch(ids: number | number[]): Promise<Record<string, T>>;
+  fetch(ids: number | number[], options?: CachedFetchOptions): Promise<Record<string, T>>;
 };

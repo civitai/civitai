@@ -125,6 +125,17 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // reads. (It also cannot BE the newest event on a `removed` listing: `removed` is not
   // level-eligible, so the write is refused there.)
   'set-visibility',
+  // Writes `content_rating` only. A go-live that floors the rating records this right AFTER
+  // its own status event, so it is routinely the newest event on a listing — and must not
+  // displace the status event underneath it.
+  'rating-change',
+  // Document-store takedown of ONE user-authored shared document. NEUTRAL, not a close
+  // call: it writes nothing in `app_listings` — it changes a row in the app's document
+  // store, in a different database, and records the fact here.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  'storage-doc-dismiss',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

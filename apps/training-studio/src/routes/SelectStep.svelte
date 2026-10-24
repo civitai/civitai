@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     IconBoltFilled,
+    IconSparkles,
     IconStarFilled,
     IconCheck,
     IconStack2,
@@ -38,6 +39,7 @@
     runVersion,
     runVersionLabel,
     selectionFromTotal,
+    versionOptions,
     type Run,
     type Selection,
   } from './trainingFlow';
@@ -101,7 +103,7 @@
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
   const FEATURED: Partial<Record<Media, string[]>> = {
-    image: ['zimage', 'anima', 'krea2'],
+    image: ['zimage', 'mossimage', 'flux3klein', 'anima', 'krea2'],
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
@@ -228,13 +230,6 @@
     if (i < focus) focus -= 1;
     if (focus >= runs.length) focus = runs.length - 1;
     if (runs.length === 1) sweepOpen = false;
-  }
-
-  function versionsFor(card: ModelCard) {
-    return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom' },
-    ];
   }
 
   // Radiogroup arrow-key nav (media/type/base model): Tab enters at the checked radio (roving tabindex on
@@ -470,7 +465,7 @@
             {#if card.flag}
               <div class="mt-1">
                 <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
                 </span>
               </div>
             {/if}
@@ -533,6 +528,7 @@
       {#if !multi}
         {@const card = selectedCard}
         {@const runPrice = price(primary.cardType)}
+        {@const versions = versionOptions(card)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -546,14 +542,14 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {#if versionsFor(card).length > 1}
+          {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
               aria-label={`${card.name} version`}
             >
-              {#each versionsFor(card) as v (v.key)}
+              {#each versions as v (v.key)}
                 <button
                   type="button"
                   role="radio"
@@ -648,7 +644,7 @@
                 {/if}
               </div>
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionsFor(card) as v (v.key)}
+                {#each versionOptions(card) as v (v.key)}
                   <button
                     type="button"
                     role="radio"

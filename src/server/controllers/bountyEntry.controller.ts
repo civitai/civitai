@@ -22,11 +22,12 @@ import type {
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
-import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
+import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyStarted } from '~/server/services/bounty-schedule';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 
 export const getBountyEntryHandler = async ({
@@ -46,9 +47,7 @@ export const getBountyEntryHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
-        reactions: {
-          select: getReactionsSelectV2,
-        },
+        reactions: viewerReactionsSelect(ctx.user?.id),
         stats: {
           select: {
             likeCountAllTime: true,
@@ -121,12 +120,14 @@ export const upsertBountyEntryHandler = async ({
       select: {
         userId: true,
         complete: true,
+        startsAt: true,
         entryLimit: true,
         entries: { select: { userId: true } },
       },
     });
     if (!bounty) throw throwNotFoundError('Bounty not found');
     if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+    if (!input.id) assertBountyStarted(bounty);
     if (!input.id && bounty.userId === userId)
       throw throwBadRequestError('You cannot submit entries to your own bounty.');
 

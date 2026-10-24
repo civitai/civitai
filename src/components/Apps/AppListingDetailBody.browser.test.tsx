@@ -9,8 +9,8 @@ import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * `AppListingDetailBody` component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gates are `__tests__/appListingDetailView.test.ts`,
+ * `AppListingDetailBody` component tests (`Component tests` in CI; the node-tier
+ * gates are `__tests__/appListingDetailView.test.ts`,
  * `__tests__/appListingDetailRows.test.ts` and `__tests__/appsPageWidths.test.ts`).
  *
  * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE — read before treating any result here
@@ -344,6 +344,9 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     // No declared scopes: this file is not about the permission disclosure, and an
@@ -382,6 +385,7 @@ function relatedCard(id: string, name: string): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `ab-${id}`,
@@ -1823,8 +1827,8 @@ describe('AppListingDetailBody — store-scope review seam', () => {
  * fix — which is precisely the defect class here.
  *
  * 🔴 NOT A MERGE GATE: this file is in the browser-mode `component` project, which CI
- * runs only as the preview pipeline's report-only `preview / component-tests` (the
- * same caveat `.gallery.browser.test.tsx` carries). The blocking half of this change
+ * runs as `Component tests`, and no check in this repo blocks a merge (the same
+ * caveat `.gallery.browser.test.tsx` carries). The node-tier half of this change
  * is `__tests__/appListingDescription.test.ts` in the node project — it gates the
  * renderer rule but cannot see a node's position. Both are needed; neither substitutes.
  *
@@ -2385,6 +2389,37 @@ describe('AppListingDetailBody — the beta badge + notice', () => {
     expect(
       prev.container.querySelectorAll('[data-testid="apps-listing-action-card"]'),
       'preview must still be suppressing the surfaces it is documented to omit'
+    ).toHaveLength(0);
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge in the detail header. Copy decisions are pinned in the
+ * blocking unit tier (`visibilityBadgeFor`); this pins the render. Absences via
+ * `querySelectorAll` (the negative matcher is inert — civitai/civitai#4197), after a
+ * positive control.
+ */
+describe('AppListingDetailBody — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience })} />
+    );
+    const badge = within.getByTestId('apps-listing-detail-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience: null })} />
+    );
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-detail-visibility"]')
     ).toHaveLength(0);
   });
 });

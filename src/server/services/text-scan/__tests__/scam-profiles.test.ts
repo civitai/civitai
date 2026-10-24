@@ -116,9 +116,14 @@ describe('scamEligibleAuthors', () => {
 });
 
 describe('scam profiles', () => {
-  it.each(['Comment', 'CommentV2', 'ResourceReview', 'User', 'UserProfile'])(
-    '%s requests only the scam label',
-    (entityType) => expect(getTextScanProfile(entityType)?.labels).toEqual(['scam'])
+  it.each([
+    ['Comment', ['scam', 'csam']],
+    ['CommentV2', ['scam', 'csam']],
+    ['UserProfile', ['scam', 'csam']],
+    ['ResourceReview', ['scam']],
+    ['User', ['scam']],
+  ])('%s requests %j', (entityType, labels) =>
+    expect(getTextScanProfile(entityType)?.labels).toEqual(labels)
   );
 
   it.each([

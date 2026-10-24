@@ -16,6 +16,7 @@ import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { jumpToMonthParam } from '~/shared/utils/jump-to-month';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
@@ -40,6 +41,7 @@ const postQueryParamSchema = z
     section: z.enum(['published', 'draft']),
     followed: booleanString().optional(),
     scheduled: booleanString().optional(),
+    jumpTo: jumpToMonthParam,
   })
   .partial();
 

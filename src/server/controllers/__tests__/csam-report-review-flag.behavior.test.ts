@@ -8,9 +8,9 @@ import type * as ReportService from '~/server/services/report.service';
 import type * as UserService from '~/server/services/user.service';
 
 /**
- * Filing a report hands each reported image from the moderator-only review flag to the purge hold
- * keyed on the owner's open report. Neither may lapse first: the flag must still be on until that
- * hold covers the image, and must not come off an image the hold does not cover.
+ * Filing a report hands each reported image from the moderator-only review flag to the legal hold on
+ * its owner. The flag must still be on until that hold covers the image, must not come off an image
+ * the hold does not cover, and stays on past the release cutoff on the owner's oldest open report.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -109,7 +109,7 @@ beforeEach(async () => {
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OTHER_OWNER}, now(), now()),
       (${PRIOR_REPORT_OWNER}, NULL, NULL);
-    -- Still open but older than the hold ceiling, so the purge no longer honours it.
+    -- Still open but past the release cutoff, so a new report leaves the flag on.
     INSERT INTO "CsamReport" ("userId", "createdAt") VALUES
       (${EXPIRED_HOLD_OWNER}, now() - interval '31 days'),
       (${NEAR_CEILING_OWNER}, now() - interval '29.9 days'),
@@ -167,15 +167,14 @@ describe('fileCsamReport', () => {
     expect(await flag(UNBLOCKED_HELD)).toBe('csam');
   });
 
-  // A new report on an owner whose open report is past the hold ceiling: the flag is all that still
-  // holds the image, so it must not come off.
-  it('keeps the flag when the owner hold has run out', async () => {
+  // A new report on an owner whose open report is past the release cutoff: the flag stays on.
+  it("keeps the flag when the owner's open report is past the release cutoff", async () => {
     await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
 
     expect(await flag(EXPIRED_HOLD)).toBe('csam');
   });
 
-  it('keeps the flag when the report updates an open report past the hold ceiling', async () => {
+  it('keeps the flag when the report updates an open report past the release cutoff', async () => {
     // As `createCsamReport` does for an unsent report: the row is rewritten, its createdAt is not.
     createCsamReport.mockImplementationOnce(async () => undefined);
 
@@ -184,9 +183,8 @@ describe('fileCsamReport', () => {
     expect(await flag(EXPIRED_HOLD)).toBe('csam');
   });
 
-  // Deliberate: the flag stays unless the hold has REPORT_HOLD_RELEASE_MARGIN_DAYS left, so a report
-  // filed against a nearly lapsed hold cannot be what lets the purge through hours later.
-  it('keeps the flag when the owner hold is about to run out', async () => {
+  // Deliberate: the cutoff sits REPORT_HOLD_RELEASE_MARGIN_DAYS inside CSAM_HOLD_MAX_DAYS.
+  it("keeps the flag when the owner's open report is near the release cutoff", async () => {
     await report(NEAR_CEILING_OWNER, [NEAR_CEILING]);
 
     expect(await flag(NEAR_CEILING)).toBe('csam');

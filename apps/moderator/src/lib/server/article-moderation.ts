@@ -7,6 +7,7 @@ import { getClickhouse } from './clickhouse';
 import { deleteImagesByIds } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
 type ModerateResult = { ok: true } | { ok: false; error: string };
 
@@ -15,39 +16,109 @@ const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.UnpublishedViolation,
 ];
 
-export async function moderateArticle(input: {
-  action: 'restore' | 'delete';
-  articleId: number;
-  userId: number;
-}): Promise<ModerateResult> {
+export async function moderateArticle(
+  input:
+    | { action: 'restore' | 'delete'; articleId: number; userId: number }
+    | {
+        action: 'unpublish';
+        articleId: number;
+        userId: number;
+        reason: ArticleUnpublishReason;
+        /** Shown to the author for `other`; an internal note for every other reason, as on the site. */
+        customMessage: string | null;
+      }
+): Promise<ModerateResult> {
   try {
     if (input.action === 'restore') await restoreArticle(input.articleId);
+    else if (input.action === 'unpublish')
+      await unpublishArticle(input.articleId, input.userId, input.reason, input.customMessage);
     else await deleteArticle(input.articleId);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  // An unpublished article leaves search, as the main app's `unpublishArticleById` takes it out.
   void syncSearchIndex({
     entityType: 'article',
     entityId: input.articleId,
-    action: input.action === 'delete' ? 'delete' : 'update',
+    action: input.action === 'restore' ? 'update' : 'delete',
   });
 
-  if (input.action === 'delete') void recordArticleDeleted(input.articleId, input.userId);
+  if (input.action === 'delete') void recordArticleEvent('Delete', input.articleId, input.userId);
+  if (input.action === 'unpublish')
+    void recordArticleEvent('Unpublish', input.articleId, input.userId);
 
   return { ok: true };
 }
 
-async function recordArticleDeleted(articleId: number, moderatorId: number): Promise<void> {
+async function recordArticleEvent(
+  type: 'Delete' | 'Unpublish',
+  articleId: number,
+  moderatorId: number
+): Promise<void> {
   try {
     await getClickhouse().insert({
       table: 'articles',
-      values: [{ userId: moderatorId, type: 'Delete', articleId, nsfw: false }],
+      values: [{ userId: moderatorId, type, articleId, nsfw: false }],
       format: 'JSONEachRow',
     });
   } catch (err) {
-    console.error('[article-moderation] failed to record delete event', err);
+    console.error(`[article-moderation] failed to record ${type.toLowerCase()} event`, err);
   }
+}
+
+/**
+ * The author's three article counts — every article, the SFW-only one and the public one
+ * (`src/server/redis/caches.ts`) — all count Published rows only, so a status change in either
+ * direction leaves them wrong for a day (their TTL) unless busted.
+ */
+const ARTICLE_COUNT_CACHES = ['articleCount', 'articleCount:sfw', 'articleCount:public'] as const;
+async function bustArticleCounts(userId: number): Promise<void> {
+  for (const name of ARTICLE_COUNT_CACHES)
+    await bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:${name}`, userId);
+}
+
+/**
+ * The main app's `unpublishArticleById` as a moderator runs it: always as a violation, with the reason
+ * the author's banner is drawn from. Only a Published article — the site refuses anything else, and
+ * unpublishing a draft would stamp a violation on something that was never live.
+ */
+async function unpublishArticle(
+  id: number,
+  moderatorId: number,
+  reason: ArticleUnpublishReason,
+  customMessage: string | null
+): Promise<void> {
+  const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
+    const article = await trx
+      .selectFrom('Article')
+      .select(['status', 'publishedAt', 'metadata', 'userId'])
+      .where('id', '=', id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!article) throw new Error(`No article with id ${id}`);
+    if (!article.publishedAt || article.status !== ArticleStatus.Published)
+      throw new Error('Article is not published');
+
+    const meta = {
+      ...((article.metadata as ArticleMetadata) ?? {}),
+      unpublishedReason: reason,
+      customMessage,
+      unpublishedAt: new Date().toISOString(),
+      unpublishedBy: moderatorId,
+    };
+    await trx
+      .updateTable('Article')
+      .set({
+        status: ArticleStatus.UnpublishedViolation,
+        metadata: sql`${JSON.stringify(meta)}::jsonb`,
+      })
+      .where('id', '=', id)
+      .execute();
+    return article.userId;
+  });
+
+  await bustArticleCounts(userId);
 }
 
 async function restoreArticle(id: number): Promise<void> {
@@ -190,7 +261,7 @@ async function restoreArticle(id: number): Promise<void> {
     return article.userId;
   });
 
-  await bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:articleCount`, userId);
+  await bustArticleCounts(userId);
 }
 
 async function deleteArticle(id: number): Promise<void> {

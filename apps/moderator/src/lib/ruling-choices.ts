@@ -49,3 +49,58 @@ export const appealRulingChoices = (
     },
   ];
 };
+
+export const FLAG_APPEAL_RULING_CHOICES: readonly RulingChoice<ResolutionVerdict<'flagAppeal'>>[] =
+  [
+    {
+      verdict: 'Rejected',
+      label: 'Keep flagged',
+      confirmLabel: 'Confirm: keep flagged',
+      pendingLabel: 'Keeping flag…',
+      variant: 'default',
+    },
+    {
+      verdict: 'Approved',
+      label: 'Unflag',
+      confirmLabel: 'Confirm: unflag',
+      pendingLabel: 'Unflagging…',
+      variant: 'destructive',
+    },
+  ];
+
+export const HELD_DETECTION_RULING_CHOICES: readonly RulingChoice<
+  ResolutionVerdict<'heldDetection'>
+>[] = [
+  {
+    verdict: 'Kept',
+    label: 'Flag',
+    confirmLabel: 'Confirm: flag',
+    pendingLabel: 'Flagging…',
+    variant: 'default',
+  },
+  {
+    verdict: 'Dismissed',
+    label: "Don't flag",
+    confirmLabel: "Confirm: don't flag",
+    pendingLabel: 'Clearing…',
+    variant: 'destructive',
+  },
+];
+
+export const FLAG_REVIEW_RULING_CHOICES: readonly RulingChoice<ResolutionVerdict<'flagReview'>>[] =
+  [
+    {
+      verdict: 'Kept',
+      label: 'Keep flag',
+      confirmLabel: 'Confirm: keep flag',
+      pendingLabel: 'Keeping flag…',
+      variant: 'default',
+    },
+    {
+      verdict: 'Lifted',
+      label: 'Lift flag',
+      confirmLabel: 'Confirm: lift flag',
+      pendingLabel: 'Lifting…',
+      variant: 'destructive',
+    },
+  ];

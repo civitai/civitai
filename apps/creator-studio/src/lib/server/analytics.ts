@@ -3,6 +3,7 @@ import { getClickhouse } from '$lib/server/clickhouse';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
+import { imageAudienceListable } from '$lib/server/reactors';
 import { createCache } from '$lib/server/cache';
 import { getLogger } from '$lib/server/logger';
 import { mapWithConcurrency } from '$lib/server/concurrency';
@@ -75,6 +76,8 @@ export type ImageViewDetail = {
   /** Feed impressions on this image. Empty series when the entity type carries none. */
   impressionSeries: TimePoint[];
   impressionTotal: number;
+  /** Who reacted / who collected are withheld, so the page shows a note instead of the two lists. */
+  audienceHidden: boolean;
 };
 
 // An article row on the /analytics/content Articles tab. `coverUrl` is null for an article with no cover.
@@ -216,7 +219,7 @@ export const getTopArticles = createCache({
 // Keyed on userId as well as imageId: the fetch refuses images the caller doesn't own, so a cache entry is
 // only ever valid for the owner it was fetched for.
 export const getImageViewDetail = createCache({
-  name: 'analytics:image-views:v1',
+  name: 'analytics:image-views:v2',
   fetch: ({
     userId,
     imageId,
@@ -719,7 +722,7 @@ async function fetchImageViewDetail(
     .selectFrom('Image')
     .where('id', '=', id)
     .where('userId', '=', uid)
-    .select(['id', 'url', 'nsfwLevel', 'type', 'createdAt'])
+    .select(['id', 'url', 'nsfwLevel', 'type', 'createdAt', 'ingestion', 'blockedFor'])
     .executeTakeFirst();
   if (!image?.url) return null;
 
@@ -799,6 +802,7 @@ async function fetchImageViewDetail(
     commentTotal: sum(commentSeries),
     impressionSeries,
     impressionTotal: sum(impressionSeries),
+    audienceHidden: !imageAudienceListable(image),
   };
 }
 

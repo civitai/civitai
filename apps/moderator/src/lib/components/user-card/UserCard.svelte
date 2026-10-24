@@ -11,7 +11,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
   import { LINK_CLASS, dateTime, type Jsonified } from '$lib/format';
-  import { chatAuditChatUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+  import { chatAuditChatUrl, userLookupUrl, userReportUrl, userUrl } from '$lib/entity-url';
   import { ReportEntity, reportActionPath } from '$lib/reports';
   import type { UserCard } from '$lib/server/user-lookup.service';
   import type { CsamReportRow } from '$lib/server/user-account.service';
@@ -20,6 +20,7 @@
     card,
     compact = false,
     lookupLink = false,
+    openReports = true,
     actions,
     class: className,
   }: {
@@ -30,6 +31,9 @@
     compact?: boolean;
     /** Off on User Lookup itself, where the card already sits on the account's page. */
     lookupLink?: boolean;
+    /** Off on the user-report queue, which IS the account's open reports: there the banner said "1 open
+     *  report against this account" over that report, and linked to the page it was already on. */
+    openReports?: boolean;
     actions?: Snippet;
     class?: string;
   } = $props();
@@ -171,7 +175,7 @@
 
   <!-- A report nobody has ruled on changes what everything else about the account means, so it sits
        in the card wherever the card is. -->
-  {#if identity.openReportCount > 0}
+  {#if openReports && identity.openReportCount > 0}
     <div
       class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
       role="status"
@@ -184,16 +188,24 @@
           <Badge variant="outline">filed by {identity.openReportModerators}</Badge>
         {/if}
       </span>
-      <a href="/retool/user-reports?user={identity.id}" class={LINK_CLASS}>
+      <a href={userReportUrl(identity.id)} class={LINK_CLASS}>
         Work this account's reports
       </a>
     </div>
+  {:else if identity.openReportModerators}
+    <!-- The count is redundant beside the queue; a colleague already on the account is not. -->
+    <p class="mt-3 text-sm text-amber-200" role="status">
+      <Badge variant="outline">open report filed by {identity.openReportModerators}</Badge>
+    </p>
   {/if}
 </div>
 
 {#if !compact}
   <Sheet bind:open={csamOpen}>
-    <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
+    <SheetContent
+      side="right"
+      class="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
+    >
       <SheetHeader>
         <SheetTitle>CSAM reports</SheetTitle>
       </SheetHeader>

@@ -4,6 +4,11 @@ import type {
   BountyEntryFileMeta,
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
+import {
+  assertBountyEntryFilesChecked,
+  fileCheckState,
+  isBountyEntryFileCheckOn,
+} from '~/server/services/bounty-entry-file-check.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import {
   createEntityImages,
@@ -204,6 +209,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
     logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
 
   await log('info', 'Award bounty entry started');
+  const fileCheckOn = await isBountyEntryFileCheckOn();
 
   const { entry, benefactor } = await dbWrite.$transaction(
     async (tx) => {
@@ -233,6 +239,12 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         log('error', 'Bounty is hidden pending review');
         throw throwBadRequestError('This bounty is hidden pending review and cannot be awarded.');
       }
+      await assertBountyEntryFilesChecked({
+        tx,
+        entryId: entry.id,
+        bountyId: entry.bountyId,
+        checkOn: fileCheckOn,
+      });
 
       const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
@@ -306,7 +318,15 @@ export const getBountyEntryFilteredFiles = async ({
     return dbWrite.bountyEntry.findUniqueOrThrow(bountyEntryFindArgs);
   });
 
-  const files = await getFilesByEntity({ id: bountyEntry.id, type: 'BountyEntry' });
+  const allFiles = await getFilesByEntity({ id: bountyEntry.id, type: 'BountyEntry' });
+  // A file found to be another user's model is withheld from everyone but moderators.
+  const withholdBlocked =
+    !isModerator &&
+    allFiles.some((f) => fileCheckState(f.metadata) === 'blocked') &&
+    (await isBountyEntryFileCheckOn());
+  const files = withholdBlocked
+    ? allFiles.map((f) => (fileCheckState(f.metadata) === 'blocked' ? { ...f, url: null } : f))
+    : allFiles;
 
   if (bountyEntry.userId === userId || isModerator) {
     // Owner can see all files.

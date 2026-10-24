@@ -82,6 +82,8 @@ const SUPPRESSED = 15;
 const EXPIRED_STRIKE = 16;
 const LEADERBOARD_EXCLUDED = 17;
 const OTHER = 18;
+const ONE_POINT = 19;
+const TWO_ROWS = 20;
 const SYSTEM = -1;
 
 type Flags = { muted?: boolean; deleted?: boolean; banned?: boolean; excluded?: boolean };
@@ -125,10 +127,15 @@ beforeAll(async () => {
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
     CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
-      "expiresAt" timestamp(3) NOT NULL);
+      "expiresAt" timestamp(3) NOT NULL, points int NOT NULL DEFAULT 1);
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  // The Mythic row ships in its own migration, which also needs the full Cosmetic table.
+  await holder.db.exec(`
+    INSERT INTO "CreatorMilestone" (key, track, threshold, name, "sortOrder")
+    VALUES ('score:mythic', 'score', 100000000, 'Mythic', 10);
+  `);
 });
 
 const cache = new Map<string, unknown>();
@@ -158,12 +165,20 @@ describe('good standing', () => {
     await addUser(STRUCK);
     await addUser(SUPPRESSED);
     await addUser(EXPIRED_STRIKE);
+    await addUser(ONE_POINT);
+    await addUser(TWO_ROWS);
     await addUser(LEADERBOARD_EXCLUDED, { excluded: true });
     await addUser(SYSTEM);
-    // EXPIRED_STRIKE's strike ran out after the month began but before now: it no longer counts.
+    // Standing follows the strike-mute line (2 active points), summed across rows. Expired and
+    // non-Active strikes carry points too, to prove they are not counted.
     await q(
-      `INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01'), ($2, 'Active', '2026-11-10'), ($3, 'Voided', '2026-12-01')`,
-      [STRUCK, EXPIRED_STRIKE, GOOD]
+      `INSERT INTO "UserStrike" ("userId", status, "expiresAt", points) VALUES
+        ($1, 'Active', '2026-12-01', 2),
+        ($2, 'Active', '2026-11-10', 5), ($2, 'Active', '2026-12-01', 1),
+        ($3, 'Voided', '2026-12-01', 5),
+        ($4, 'Active', '2026-12-01', 1),
+        ($5, 'Active', '2026-12-01', 1), ($5, 'Active', '2026-12-01', 1)`,
+      [STRUCK, EXPIRED_STRIKE, GOOD, ONE_POINT, TWO_ROWS]
     );
     for (const id of [
       GOOD,
@@ -175,12 +190,14 @@ describe('good standing', () => {
       EXPIRED_STRIKE,
       LEADERBOARD_EXCLUDED,
       SYSTEM,
+      ONE_POINT,
+      TWO_ROWS,
     ])
       await grant(id, 'score:legend', THIS_MONTH);
   });
 
-  it('lists only Legends in good standing, keeping a voided or expired strike', async () => {
-    expect(ids((await showcase([SUPPRESSED])).legends)).toEqual([GOOD, EXPIRED_STRIKE]);
+  it('lists only Legends below 2 active strike points, ignoring voided and expired strikes', async () => {
+    expect(ids((await showcase([SUPPRESSED])).legends)).toEqual([GOOD, EXPIRED_STRIKE, ONE_POINT]);
   });
 
   it('drops the metric-suppressed account only when it is on the list', async () => {
@@ -236,6 +253,32 @@ describe('new Supernovas this month', () => {
   it('keeps a silently granted Legend in the Hall of Fame', async () => {
     await grant(GOOD, 'score:legend', LAST_MONTH, true);
     expect(ids((await showcase()).legends)).toEqual([GOOD]);
+  });
+});
+
+describe('Mythic', () => {
+  beforeEach(async () => {
+    for (const id of [GOOD, MUTED, OTHER]) await addUser(id, { muted: id === MUTED });
+  });
+
+  it('lists every Mythic in good standing, whenever they crossed, and keeps them in the Hall of Fame', async () => {
+    for (const id of [GOOD, MUTED, OTHER]) await grant(id, 'score:legend', LAST_MONTH, true);
+    await grant(GOOD, 'score:mythic', LAST_MONTH, true);
+    await grant(MUTED, 'score:mythic', LAST_MONTH);
+    await grant(OTHER, 'score:mythic', '2026-09-01 00:00:00');
+    const rows = await showcase();
+    expect(ids(rows.mythics)).toEqual([OTHER, GOOD]);
+    expect(ids(rows.legends)).toEqual([GOOD, OTHER]);
+  });
+
+  it('dates a Mythic by the crossing and leaves a silent grant founding', async () => {
+    await grant(GOOD, 'score:mythic', LAST_MONTH, true);
+    await grant(OTHER, 'score:mythic', THIS_MONTH);
+    const { mythics } = await getCreatorShowcase({ pg, now: NOW });
+    expect(mythics.map(({ user, founding, since }) => ({ id: user.id, founding, since }))).toEqual([
+      { id: GOOD, founding: true, since: null },
+      { id: OTHER, founding: false, since: expect.any(Date) },
+    ]);
   });
 });
 
@@ -341,12 +384,12 @@ describe('cached candidates, live standing', () => {
     ['muted', () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [GOOD])],
     ['banned', () => q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [GOOD])],
     [
-      'struck',
+      'struck to the mute line',
       () =>
-        q(`INSERT INTO "UserStrike" ("userId", status, "expiresAt") VALUES ($1, 'Active', $2)`, [
-          GOOD,
-          '2027-01-01 00:00:00',
-        ]),
+        q(
+          `INSERT INTO "UserStrike" ("userId", status, "expiresAt", points) VALUES ($1, 'Active', $2, 2)`,
+          [GOOD, '2027-01-01 00:00:00']
+        ),
     ],
     ['hiding badges', () => setPrivacy(GOOD, { showBadges: false })],
     ['metric-suppressed', async () => void mocks.excluded.mockResolvedValue([GOOD])],

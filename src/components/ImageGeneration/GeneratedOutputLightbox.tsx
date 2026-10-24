@@ -150,7 +150,7 @@ export default function GeneratedOutputLightbox({
           paddingBottom: 'var(--safe-area-inset-bottom)',
         }}
       >
-        {images?.[slide] && (
+        {images?.[slide] && !images[slide].hideDetails && (
           <GenerationDetails
             label="Generation Details"
             params={{ ...images[slide].params, seed: images[slide].seed }}

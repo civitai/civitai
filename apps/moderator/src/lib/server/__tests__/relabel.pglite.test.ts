@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
@@ -47,7 +48,7 @@ const save = (labelerId: number, token: string, a: Answers = answers) =>
 
 // One instance for the file: PGlite takes seconds to boot, which is a hook timeout per test.
 beforeAll(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(SCHEMA);
   db = new Kysely<ModeratorDB>({ dialect: pgliteDialect(pg) });
 }, 60_000);

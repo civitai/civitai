@@ -9,6 +9,7 @@ import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { encodeFeedCursor, parseFeedCursor } from '~/server/common/feed-cursor';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   buildFeedRequestRow,
   type CapturableSearchInput,
@@ -74,6 +75,8 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
   AllTime: undefined,
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
+// The feed refuses a cursor id past int4, and a refused jump would fall back unbounded.
+const MAX_FEED_ID = 2_147_483_647;
 // The feed service's own ceiling on userIds.
 const MAX_USER_IDS = 10_000;
 const MAX_FOLLOWED = MAX_USER_IDS;
@@ -88,8 +91,6 @@ const MAX_HUB = {
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
-  'postId',
-  'postIds',
   'collectionId',
   'collectionTagId',
   'reviewId',
@@ -127,17 +128,45 @@ const emptied = (v: unknown) => Array.isArray(v) && v.length > 0 && ints(v).leng
 
 export type FeedQueryMapping = { ok: true; query: string } | { ok: false; reason: string };
 export type FeedQueryMode = 'shadow' | 'primary';
+/** Who is asking: the site's own pages, or the public API. A few shapes are served only to one. */
+export type FeedQueryCaller = 'website' | 'rest';
+const MAX_POST_IDS = 50;
+// The feed answers at most this many rows a page.
+export const FEED_MAX_LIMIT = 200;
 
 export { encodeFeedCursor, parseFeedCursor };
 
 /** The candidate's query for a search input, or the first reason it cannot be expressed. */
 export function mapSearchInputToFeedQuery(
   input: CapturableSearchInput,
-  mode: FeedQueryMode = 'shadow'
+  mode: FeedQueryMode = 'shadow',
+  caller: FeedQueryCaller = 'website'
 ): FeedQueryMapping {
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  // A post's media. The site's own post page shows the author's order, which the feed cannot
+  // give (the mirror has no Image.index), and the website already serves it from Postgres; the
+  // public API sorts a post's page like any other, as the search index did, and asks for one
+  // post 150k times a day. The gallery's post completion takes the requested sort too, and
+  // without this sent 10-15 requests a second to the search index from site 5.1.344 on.
+  const postIds = ints([
+    ...(Array.isArray(input.postIds) ? input.postIds : []),
+    ...(present(input.postId) ? [Number(input.postId)] : []),
+  ]);
+  if (postIds.length) {
+    const inRequestedSort = caller === 'rest' || input.postIdsInRequestedSort === true;
+    if (!inRequestedSort) return skip('input:postId');
+    if (postIds.length > MAX_POST_IDS) return skip(`postIds>${MAX_POST_IDS}`);
+    // A completion needs every row it asks for; past the feed's page it would come back short
+    // without a sign, so it stays on the search index instead.
+    if (
+      input.postIdsInRequestedSort === true &&
+      typeof input.limit === 'number' &&
+      input.limit > FEED_MAX_LIMIT
+    )
+      return skip(`postIds:limit>${FEED_MAX_LIMIT}`);
+  }
   // These only narrow a model version's gallery; without one they filter nothing.
   if (present(input.modelVersionId))
     for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
@@ -205,6 +234,15 @@ export function mapSearchInputToFeedQuery(
   else if (cursor) return skip(CURSOR_UNPARSED);
   if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
   if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
+  // A jump is the feed's own keyset cursor placed at the month edge. Once the search index has
+  // served a jumped page its offset cursor is only meaningful there, so it keeps the paging.
+  let keyset = feedCursor;
+  const jump = resolveJumpTo({ jumpTo: input.jumpTo, sort: input.sort, userId });
+  if (jump && !feedCursor) {
+    if (mode !== 'primary') return skip('jumpTo:shadow');
+    if (offset) return skip('jumpTo:offset');
+    keyset = jump.direction === 'before' ? `${jump.endMs - 1}|${MAX_FEED_ID}` : `${jump.startMs}|0`;
+  }
 
   const params = new URLSearchParams();
   params.set('levels', levels.join(','));
@@ -242,6 +280,7 @@ export function mapSearchInputToFeedQuery(
   if (techniques.length) params.set('techniques', techniques.join(','));
   const ids = ints(input.ids);
   if (ids.length) params.set('ids', ids.slice(0, 200).join(','));
+  if (postIds.length) params.set('postIds', [...new Set(postIds)].join(','));
   if (present(input.model3dId)) params.set('model3dIds', String(input.model3dId));
   if (visibility) params.set('visibility', visibility);
   params.set('sort', sort);
@@ -250,7 +289,7 @@ export function mapSearchInputToFeedQuery(
   const limit =
     typeof input.limit === 'number' && input.limit > 0 ? Math.min(input.limit, 200) : 100;
   params.set('limit', String(limit));
-  if (feedCursor) params.set('cursor', feedCursor);
+  if (keyset) params.set('cursor', keyset);
   else if (offset) params.set('offset', String(offset));
   // The site freezes a paged set at the first page's minute only for Newest; the other
   // sorts page a live set, so a cut there would compare different sets.
@@ -279,6 +318,8 @@ function mapHubSources(input: CapturableSearchInput): HubMapping {
     input.followed === true ||
     input.newCreators === true ||
     present(input.ids) ||
+    present(input.postId) ||
+    present(input.postIds) ||
     present(input.model3dId)
   )
     return skip('hub:driver');
@@ -330,6 +371,8 @@ export type FeedAnswer = {
   status: number;
   ms: number;
   ids: number[];
+  /** The feed's reason for a 400, so a request the mapper thought fine can be read back. */
+  error?: string;
   route?: string;
   estimate?: number;
   candidates?: number;
@@ -503,7 +546,11 @@ export async function fetchFeedAnswer(
     headers: { ...traceContextHeaders(), 'x-request-source': source },
   });
   const ms = Date.now() - started;
-  if (!res.ok) return { status: res.status, ms, ids: [] };
+  if (!res.ok) {
+    let error: string | undefined;
+    if (res.status === 400) error = (await res.text().catch(() => '')).slice(0, 600) || undefined;
+    return { status: res.status, ms, ids: [], error };
+  }
   const body = (await res.json()) as {
     items?: number[];
     nextCursor?: string;

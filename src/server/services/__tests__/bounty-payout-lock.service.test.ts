@@ -2,21 +2,24 @@ import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 // Every Buzz-moving bounty path against one in-memory bounty whose `FOR UPDATE` read is a real
 // mutex held until the transaction callback settles, so two paths run concurrently serialize
 // exactly as they do on Postgres. A path that skips the lock is not serialized, and the race
 // tests below then see both paths move Buzz.
 
-const { buzz, events } = vi.hoisted(() => ({
+const { buzz, events, fileCheck } = vi.hoisted(() => ({
   buzz: {
     refundMultiAccountTransaction: vi.fn(),
     refundTransaction: vi.fn(),
     createBuzzTransaction: vi.fn(),
     createBuzzTransactionMany: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
   },
   events: [] as string[],
+  fileCheck: { on: false },
 }));
 
 // Hand-listed: the real buzz.service builds HTTP clients at load; these are the calls under test.
@@ -46,6 +49,17 @@ vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
 vi.mock('~/server/email/templates', () => ({
   bountyRefundedEmail: { send: vi.fn() },
 }));
+// The entry file check flag is set here for every case, never read from a live Flipt.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    isFlipt: vi.fn(
+      async (flag: string) =>
+        flag === actual.FLIPT_FEATURE_FLAGS.BOUNTY_ENTRY_FILE_CHECK && fileCheck.on
+    ),
+  };
+});
 
 const { awardBountyEntry, deleteBountyEntry } = await import(
   '~/server/services/bountyEntry.service'
@@ -82,6 +96,7 @@ type BountyRow = {
 
 let bounty: BountyRow | null;
 let benefactors: Benefactor[];
+let entryFiles: { metadata: Record<string, unknown> }[];
 const entry = { id: 10, bountyId: 4, userId: 8 };
 
 function mutex() {
@@ -165,6 +180,7 @@ function transactionClient(held: (() => void)[]) {
       },
     },
     bounty: {
+      findUnique: async () => (bounty ? { type: 'ModelCreation' } : null),
       update: async ({ data }: { data: Partial<BountyRow> }) => {
         await tick();
         Object.assign(bounty!, data);
@@ -179,7 +195,10 @@ function transactionClient(held: (() => void)[]) {
         return deleted;
       },
     },
-    file: { deleteMany: async () => ({ count: 0 }) },
+    file: {
+      findMany: async () => entryFiles.map((f) => ({ ...f })),
+      deleteMany: async () => ({ count: 0 }),
+    },
     imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     image: { deleteMany: async () => ({ count: 0 }) },
   };
@@ -189,6 +208,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   events.length = 0;
   rowLock = mutex();
+  fileCheck.on = false;
+  entryFiles = [];
   bounty = {
     id: 4,
     userId: 5,
@@ -268,7 +289,10 @@ beforeEach(() => {
     events.push(name);
     return {};
   };
-  buzz.refundMultiAccountTransaction.mockImplementation(moved('refund'));
+  buzz.refundMultiAccountTransaction.mockImplementation(async () => {
+    events.push('refund');
+    return { refundedTransactions: [{ amount: 100 }], totalRefunded: 1 };
+  });
   buzz.refundTransaction.mockImplementation(moved('refund'));
   buzz.createBuzzTransaction.mockImplementation(moved('buzz'));
   buzz.createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => {
@@ -278,6 +302,7 @@ beforeEach(() => {
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
     { accountType: 'yellow', amount: 100 },
   ]);
+  buzz.getTransactionByExternalId.mockResolvedValue(null);
 });
 
 const moved = (name: string) => events.filter((e) => e === name).length;
@@ -399,6 +424,104 @@ describe('awardBountyEntry', () => {
     });
   });
 
+  // Bankable netting reads who funded an award from the award row, which outlives the bounty.
+  it('names the supporters who funded the award, and what each put in, on the award', async () => {
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [100],
+          supporterChargedAt: [0],
+        },
+      }),
+    ]);
+  });
+
+  it('names every supporter of a bounty several users funded, each with what they put in', async () => {
+    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix === 'bounty-4-5-1' ? 100 : 50 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 150,
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 6],
+          supporterAmounts: [100, 50],
+          supporterChargedAt: [0, 0],
+        },
+      }),
+    ]);
+  });
+
+  // Each award row is one colour, and only some colours are bankable: a supporter is named on a
+  // row for what they put in that colour, never for their whole contribution.
+  it('names on each colour of the award only what each supporter paid in that colour', async () => {
+    Object.assign(benefactors[1], { awardedToId: 10, awardedAt: new Date() });
+    benefactors[0].buzzTransactionId = ['bounty-4-5-1', 'legacy-tx'];
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) =>
+      prefix === 'bounty-4-5-1'
+        ? [{ accountType: 'green', amount: 60 }]
+        : [{ accountType: 'yellow', amount: 50 }]
+    );
+    await awardBountyEntry({ id: 10, userId: 5 });
+    const [[transactions]] = buzz.createBuzzTransactionMany.mock.calls as [
+      [{ toAccountType: string; amount: number; details: unknown }[]]
+    ];
+    expect(
+      Object.fromEntries(transactions.map((t) => [t.toAccountType, [t.amount, t.details]]))
+    ).toEqual({
+      green: [
+        60,
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [60],
+          supporterChargedAt: [0],
+        },
+      ],
+      yellow: [
+        90,
+        {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 6],
+          supporterAmounts: [40, 50],
+          supporterChargedAt: [0, 0],
+        },
+      ],
+    });
+  });
+
+  // Bankable netting counts only what was charged from its cutover: the cutover balance already
+  // reflects a charge made before it.
+  it('names when each supporter was charged, one entry per charge', async () => {
+    benefactors[0].buzzTransactionId = ['bounty-4-5-1792454400000', 'bounty-4-5-1793836800000'];
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+      { accountType: 'yellow', amount: prefix.endsWith('1792454400000') ? 30 : 70 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 100,
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5, 5],
+          supporterAmounts: [30, 70],
+          supporterChargedAt: [1792454400, 1793836800],
+        },
+      }),
+    ]);
+  });
+
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();
@@ -434,6 +557,33 @@ describe('awardBountyEntry', () => {
     await awardBountyEntry({ id: 10, userId: 5 });
     expect(buzz.createBuzzTransactionMany).not.toHaveBeenCalled();
     expect(bounty?.payoutSettledAt).toBeUndefined();
+  });
+});
+
+describe('awardBountyEntry and the entry file check', () => {
+  const checkedAt = '2026-01-01T00:00:00.000Z';
+  const blocked = { hashCheckedAt: checkedAt, blockedReason: 'owned by another user' };
+
+  it('with the check off, pays an entry whatever its files hold', async () => {
+    entryFiles = [{ metadata: blocked }];
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+  });
+
+  it('with the check on, pays an entry whose files all checked clean', async () => {
+    fileCheck.on = true;
+    entryFiles = [{ metadata: { hashCheckedAt: checkedAt } }];
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(moved('award')).toBe(1);
+    expect(find(5)?.awardedToId).toBe(10);
+  });
+
+  it('with the check on, refuses an entry with a blocked file and moves no Buzz', async () => {
+    fileCheck.on = true;
+    entryFiles = [{ metadata: blocked }];
+    await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow("can't be awarded");
+    expect(moved('award')).toBe(0);
+    expect(find(5)?.awardedToId).toBeNull();
   });
 });
 
@@ -487,11 +637,32 @@ describe('settleBountyPayout', () => {
     ]);
   });
 
-  it('treats a refund the Buzz service already made (404/409) as done', async () => {
+  it('treats a refund the Buzz service already made (409) as done', async () => {
     Object.assign(bounty!, { refunded: true });
     benefactors[0].awardedToId = null;
     buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'leg-1', accountType: 'yellow', amount: 100 },
+    ]);
+    buzz.getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
     expect(await settleBountyPayout(4)).toBe(true);
+    expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
+    expect(buzz.refundTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refunds the legs a 409 left unrefunded before settling', async () => {
+    Object.assign(bounty!, { refunded: true });
+    benefactors[0].awardedToId = null;
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new BuzzApiError(409, 'Conflict'));
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'leg-1', accountType: 'yellow', amount: 60 },
+      { transactionId: 'leg-2', accountType: 'green', amount: 40 },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation(async (extId: string) =>
+      extId === 'refund-leg-1' ? { type: 'Refund' } : null
+    );
+    expect(await settleBountyPayout(4)).toBe(true);
+    expect(buzz.refundTransaction.mock.calls.map(([id]) => id)).toEqual(['leg-2']);
     expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
   });
 });
@@ -674,7 +845,7 @@ describe('refundBountyBenefactorFunds', () => {
   it('logs a failed refund with the bounty and carries on', async () => {
     buzz.refundMultiAccountTransaction
       .mockRejectedValueOnce(new Error('buzz down'))
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ refundedTransactions: [{ amount: 100 }], totalRefunded: 1 });
     expect(await refundBountyBenefactorFunds({ bountyId: 4, currency: 'BUZZ' })).toEqual({
       refunded: [6],
       failed: [5],

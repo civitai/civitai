@@ -26,9 +26,12 @@
 
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
-import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { dbWrite } from '~/server/db/client';
+import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
+import {
+  blockTokenRefusalError,
+  resolveBlockToken,
+} from '~/server/services/blocks/block-bridge-auth.service';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
@@ -46,7 +49,8 @@ import type {
 } from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
-import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { jsonLengthWithin } from '~/server/schema/blocks/json-length';
+import { appSchemaIdent } from '~/server/utils/apps-slug';
 
 /**
  * App Blocks authoring gate: storage procedures are `publicProcedure` +
@@ -327,42 +331,72 @@ async function resolveStorageContext(
    */
   privateRun: boolean;
 }> {
-  const claims = await verifyBlockToken(blockToken);
-  if (!claims) {
-    countStorageOutcome(op, 'unauthorized');
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+  const resolved = await resolveBlockToken(blockToken, {
+    // Per-instance revocation FIRST. A token's signature and expiry say nothing about the
+    // install, so without this an uninstall or a mod toggling the instance off leaves every
+    // already-minted token reading and writing until natural expiry. A publisher ban writes
+    // one too, as of clawgate #618 — into a SEPARATE keyspace, which `isRevoked` checks
+    // alongside the install one. The install writer `revokeInstance` has two call sites
+    // (`uninstallFromModel`, `toggleEnabled(false)`, both `block-registry.service.ts`); the
+    // ban writer `revokeInstanceForBan` has one (`revokeBlockInstancesForPublisher`, called
+    // from `toggleBan`). See `block-scope.middleware.ts` for why the keyspaces are split and
+    // for what the ban leg does and does not cover. Placed before the run-for-real branch so
+    // it binds EVERY storage op, not only the approved-app ones.
+    order: 'revocation-first',
+    // 🔴 STRICTER THAN THE SHARED PREDICATE, AND THAT IS A STATEMENT ABOUT THIS TARGET
+    // RATHER THAN ABOUT APPROVAL. The run-for-real branch below is this resolver's ONLY
+    // exemption. `resolveAppBlockApprovalVerdict`
+    // (`~/server/services/blocks/block-approval.service`) — the shared predicate behind the
+    // REST middleware and the tRPC bridge — also exempts a token with no backing row and an
+    // owner running a suspended app in their own live dev tunnel; neither can apply here,
+    // because per-user KV has to resolve to a REAL Postgres schema and a plain dev token
+    // names none. `resolveSharedContext` (`apps-shared.router`) is stricter still and
+    // exempts nothing. Three rules, one policy plus two structural narrowings — ledgered
+    // with their rationales, and enforced on growth and shrink, in
+    // `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
+    approval: 'strict+reviewPreview',
+    // Every scope this resolver authorizes (`apps:storage:read` / `apps:storage:write`) is
+    // consent-exempt, so no marker can name one; ledgered as an exempt-only seam there too.
+    consent: 'exempt-only',
+    // Counted below, per op, on this service's own counter.
+    metrics: 'none',
+    slugCheck: true,
+  });
+  if (!resolved.ok) {
+    // One literal emit site per refusal, NOT a lookup table: the metrics suite counts these
+    // sites to prove every seeded outcome is reachable, and an indirection hides them from it.
+    switch (resolved.refusal) {
+      case 'invalid_token':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'invalid_slug':
+        countStorageOutcome(op, 'error');
+        break;
+      case 'revoked':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'not_found':
+        countStorageOutcome(op, 'not_found');
+        break;
+      case 'not_approved':
+        countStorageOutcome(op, 'unauthorized');
+        break;
+      case 'consent_unavailable':
+        // Cannot happen (`consent: 'exempt-only'` reads no marker). A plain Error, so the
+        // caller's fault counter records it rather than a refusal nobody counted.
+        throw new Error('app storage: consent refusal from an exempt-only resolution');
+      default:
+        resolved.refusal satisfies never;
+    }
+    throw blockTokenRefusalError(resolved.refusal);
   }
-  const slug = sanitizeAppSlug(claims.blockId);
-  if (!slug) {
-    countStorageOutcome(op, 'error');
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'block id is not a valid storage slug',
-    });
-  }
-
-  // Per-instance revocation. `verifyBlockToken` checks the signature and expiry
-  // and nothing else, so without this an uninstall or a mod toggling the instance
-  // off leaves every already-minted token reading and writing until natural
-  // expiry. A publisher ban writes one too, as of clawgate #618 — into a SEPARATE
-  // keyspace, which `isRevoked` checks alongside the install one. The install writer
-  // `revokeInstance` has two call sites (`uninstallFromModel`, `toggleEnabled(false)`,
-  // both `block-registry.service.ts`); the ban writer `revokeInstanceForBan` has one
-  // (`revokeBlockInstancesForPublisher`, called from `toggleBan`). See
-  // `block-scope.middleware.ts` for why the keyspaces are split and for what the ban leg
-  // does and does not cover.
-  // The REST `withBlockScope` middleware and
-  // `resolveSharedContext` both enforce it; this path was the remaining gap.
-  // Placed before the run-for-real branch so it binds EVERY storage op, not only
-  // the approved-app ones.
-
-  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
-  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
-  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
-  // the alternative is a silent trap pointed at unsubmitted-app storage.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
-    countStorageOutcome(op, 'unauthorized');
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
+  const { claims, slug, approval } = resolved;
+  // Cannot happen under the options above (`slugCheck: true`, a `strict` policy); the
+  // resolver's result is not narrowed by its options, so this states it instead of casting.
+  if (slug === null || approval.kind === 'admitted') {
+    throw new Error(
+      'app storage: token resolved without a storage slug or under the bridge policy'
+    );
   }
 
   // The DECLARED-scope gate (A5 / design-gaps H4). Reads need apps:storage:read;
@@ -382,7 +416,10 @@ async function resolveStorageContext(
   // approved-status check below, byte-identical to before. Cross-user shared
   // storage is untouched (apps:storage:shared:* lives in a different resolver and
   // is never granted in run-for-real).
-  if (claims.reviewRunForReal === true) {
+  //
+  // The claim itself is read by the resolver (`strict+reviewPreview`), which then skips the
+  // approved-row read and answers `review_preview`.
+  if (approval.kind === 'review_preview') {
     if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
       countStorageOutcome(op, 'unauthorized');
       throw new TRPCError({
@@ -431,30 +468,8 @@ async function resolveStorageContext(
     };
   }
 
-  // 🔴 STRICTER THAN THE SHARED PREDICATE, AND THAT IS A STATEMENT ABOUT THIS TARGET
-  // RATHER THAN ABOUT APPROVAL. The run-for-real branch above is this resolver's ONLY
-  // exemption. `resolveAppBlockApprovalVerdict`
-  // (`~/server/services/blocks/block-approval.service`) — the shared predicate behind the
-  // REST middleware and the tRPC bridge — also exempts a token with no backing row and an
-  // owner running a suspended app in their own live dev tunnel; neither can apply here,
-  // because per-user KV has to resolve to a REAL Postgres schema and a plain dev token
-  // names none. `resolveSharedContext` (`apps-shared.router`) is stricter still and
-  // exempts nothing. Three rules, one policy plus two structural narrowings — ledgered
-  // with their rationales, and enforced on growth and shrink, in
-  // `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
-  const block = await dbRead.appBlock.findUnique({
-    where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
-    select: { id: true, status: true },
-  });
-  if (!block) {
-    countStorageOutcome(op, 'not_found');
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
-  }
-  if (block.status !== 'approved') {
-    countStorageOutcome(op, 'unauthorized');
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
-  }
-  // A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
+  // From here the resolver has read the backing row and it is approved (see the
+  // `approval` option above). A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
   // ambient capability. Before touching appsDb, assert the token actually
   // carries the storage scope appropriate to the op. The scope only reaches
   // the token if it was in the manifest AND in the block's approvedScopes
@@ -492,7 +507,7 @@ async function resolveStorageContext(
     userId,
     slug,
     schema: appSchemaIdent(slug),
-    appBlockId: block.id,
+    appBlockId: approval.appBlockId,
     blockInstanceId: claims.blockInstanceId,
     reviewPreview: false,
     privateRun: claims.privateRun === true,
@@ -652,15 +667,19 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     // bypass — both byte ceilings below are enforced in the stored unit and bind
     // regardless. Tightening the per-value cap would refuse writes that succeed
     // today, so it is left alone deliberately.
-    const serialized = JSON.stringify(value ?? null);
-    const byteSize = Buffer.byteLength(serialized, 'utf8');
-    if (byteSize > PER_VALUE_BYTE_CAP) {
+    //
+    // The cap is measured before the value is serialised: a tRPC `value` arrives deserialised
+    // and can repeat one object or string many times, so its JSON can be far longer than the
+    // request. Only an under-cap value is built.
+    if (!jsonLengthWithin([value ?? null], PER_VALUE_BYTE_CAP, { unit: 'utf8' })) {
       countStorageOutcome('set', 'payload_too_large');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: `value exceeds ${PER_VALUE_BYTE_CAP / 1024}KB cap`,
       });
     }
+    const serialized = JSON.stringify(value ?? null);
+    const byteSize = Buffer.byteLength(serialized, 'utf8');
 
     const pool = requireAppsDb();
 

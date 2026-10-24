@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
+  UNLOCK_LISTED_PLACEMENT_SURFACES,
 } from '~/server/services/creator-score-unlocks.service';
 import { dailyArticleTiers } from '~/server/schema/article.schema';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
@@ -250,14 +251,25 @@ describe('groupCreatorScoreUnlocks', () => {
     const priceCaps = unlocks.filter((u) => u.key.startsWith('placement-price-cap:'));
     const threshold = priceCaps[0].minScore;
     const atThreshold = priceCaps.filter((u) => u.minScore === threshold);
-    expect(atThreshold).toHaveLength(placementSurfaces.length);
+    expect(atThreshold).toHaveLength(UNLOCK_LISTED_PLACEMENT_SURFACES.length);
 
     const groups = groupCreatorScoreUnlocks(atThreshold);
 
     expect(groups).toHaveLength(1);
-    expect(groups[0].unlocks).toHaveLength(placementSurfaces.length);
-    for (const surface of placementSurfaces)
+    expect(groups[0].unlocks).toHaveLength(UNLOCK_LISTED_PLACEMENT_SURFACES.length);
+    for (const surface of UNLOCK_LISTED_PLACEMENT_SURFACES)
       expect(groups[0].label).toContain(placementSurfaceLabel(surface));
+  });
+
+  // Literal on purpose, so the filter cannot be widened by editing one list.
+  // Storylines are flagged off until launch; this goes red if they leak onto the
+  // public unlocks page, and is the line to delete at rollout.
+  it('lists every placement surface except the unlaunched storyline one', () => {
+    expect([...UNLOCK_LISTED_PLACEMENT_SURFACES].sort()).toEqual(
+      placementSurfaces.filter((surface) => surface !== 'storyline').sort()
+    );
+    expect(placementSurfaces).toContain('storyline');
+    expect(unlocks.some((unlock) => unlock.label.includes('storylines'))).toBe(false);
   });
 
   it('keeps different privileges and different thresholds apart', () => {

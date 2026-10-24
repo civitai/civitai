@@ -1,4 +1,6 @@
 export const LINK_CLASS = 'text-blue-4 hover:underline';
+export const LINK_BUTTON =
+  'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
 /** A secondary link beside a primary one — an external "↗" next to the row's own link. */
 export const MUTED_LINK_CLASS = 'text-dark-2 text-xs hover:underline';
 
@@ -36,6 +38,12 @@ export const dateTime = (value: Date | string | null) => {
 };
 
 export const num = (value: number) => value.toLocaleString();
+
+export const ordinal = (n: number): string => {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
 
 /**
  * "1 finding" / "2 findings" — a count and the noun it counts, agreeing.

@@ -73,8 +73,16 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const versionFileUrlsForOwner = ownerOnlyFileUrls<
+  Awaited<ReturnType<typeof getModelVersionHandler>>
+>({
+  ownerId: ({ data }) => data.model.user.id,
+  strip: (data) => ({ ...data, files: withoutFileUrls(data.files) as typeof data.files }),
+});
 
 // Per-procedure because `modelId` does not mean the same thing in every input here. On `upsert` it
 // names the model the write LANDS on, and on the exploration-prompt inputs it restates the host's own
@@ -140,6 +148,7 @@ export const modelVersionRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionSchema)
+    .use(versionFileUrlsForOwner)
     .query(getModelVersionHandler),
   // Owner-only variant that reads from the primary DB. Used by the upload/edit
   // wizards and the files modal so a freshly-mutated file or linked-component

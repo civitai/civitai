@@ -7,7 +7,7 @@ import type {
   Flux2KleinCreateImageInput,
   Flux2KleinEditImageInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { Flux2KleinMode } from '~/shared/form-graph/generation/image/flux2-klein.graph';
 import { defineHandler } from '../handlers/handler-factory';

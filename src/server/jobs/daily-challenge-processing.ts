@@ -78,6 +78,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  DEFAULT_REVIEW_MODEL,
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
@@ -85,6 +86,7 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -945,7 +947,17 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
   )`;
 
-  // Get entries approved since last reviewed
+  // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
+  // sampling and per-user cap (both sized for free dailies) must not leave one unjudged.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  // Paid challenges skip the since-last-review window: the watermark advances even when an
+  // entry's review fails, so a single provider error would otherwise leave it unjudged for good.
+  const reviewedSince = judgeAllEntries
+    ? Prisma.empty
+    : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
+
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -959,17 +971,10 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
-    AND ci."reviewedAt" >= ${lastReviewedAt}
+    ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
   log('Recent entries:', recentEntries.length);
-
-  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
-  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
-  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
-  // the participant cap. Free challenges keep the sampled selection below.
-  const judgeAllEntries =
-    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
 
   let toReview: typeof recentEntries;
   if (judgeAllEntries) {
@@ -1040,19 +1045,29 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         return;
       }
 
-      const review = await generateReview({
-        theme: currentChallenge.theme,
-        themeElements,
-        resourceConcept,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: judgingConfig,
-        categories: userCategories?.map((c) => ({
-          key: c.key,
-          name: c.label,
-          criteria: c.criteria,
-        })),
-        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+      const review = await reviewWithShadow({
+        shadow: config.reviewShadow,
+        context: {
+          challengeId: currentChallenge.challengeId,
+          imageId: entry.imageId,
+          nsfwLevel: entry.nsfwLevel,
+        },
+        run: (model) =>
+          generateReview({
+            theme: currentChallenge.theme,
+            themeElements,
+            resourceConcept,
+            creator: entry.username,
+            imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+            config: judgingConfig,
+            categories: userCategories?.map((c) => ({
+              key: c.key,
+              name: c.label,
+              criteria: c.criteria,
+            })),
+            nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+            model,
+          }),
       });
       log('Review prepared', entry.imageId, review);
 
@@ -1088,6 +1103,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
       log('Comment sent', entry.imageId);
 
@@ -1098,6 +1114,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
+          eventPoints: false,
         });
         log('Reaction sent', entry.imageId);
       } catch (error) {
@@ -1127,7 +1144,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       }
     } catch (error) {
       const err = error as Error;
-      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      logToAxiom({
+        type: 'daily-challenge-review-error',
+        message: err.message,
+        model: DEFAULT_REVIEW_MODEL,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+      });
       log('Failed to review entry', entry.imageId, error);
     }
   });

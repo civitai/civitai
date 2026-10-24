@@ -981,6 +981,42 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
 }
 
 /**
+ * FORKABLE APPS rollout flag. Gates the fork surfaces a VIEWER reaches — the fork count and list
+ * on a parent's store page, the author's "Let others fork this app's source" setting, and (with
+ * `canAccessAppAssistant`) the Fork action. Fork ATTRIBUTION ("Forked from …") is provenance and
+ * is shown regardless of this flag.
+ *
+ * Mirrors `appBlocksFork` in `feature-flags.service.ts`, which is what carries it to the client.
+ */
+export const APP_BLOCKS_FORK_FLAG = 'app-blocks-fork';
+
+/**
+ * Whether the fork surfaces are on for `user`.
+ *
+ * 🔴 FAIL-CLOSED FOR EVERYONE, MODERATORS INCLUDED: there is deliberately no moderator floor. An
+ * absent flag and an unreachable Flipt both evaluate `false`, so the feature is inert until the
+ * flag is created (mods first, via its segment).
+ *
+ * 🔴 NO SUBJECT → `false`, ANSWERED HERE rather than by a no-user eval, which would return the
+ * flag's BASE value (see GLOBAL-EVAL SEMANTICS at the top of this file) — so a future base-`true`
+ * flip could not open it to anonymous callers by accident.
+ *
+ * The eval is wrapped so that even a throwing client reads as `false`; `isFlipt` already returns
+ * `false` on its own failure paths, so this only matters if that ever changes.
+ */
+export async function isAppBlocksForkEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_BLOCKS_FORK_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
  * storage — the FIRST surface that opens the per-app datastore to PUBLIC
  * cross-user writes (previously mod + app-dev-tester only). Mirrors
@@ -1060,8 +1096,33 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
 }
 
 /**
- * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
- * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
+ * Dedicated fail-closed flag for APP REACTIONS — `social:react:self` /
+ * `blocks.setReactionFromApp` / `blocks.getReactionsForApp` / `SET_ENTITY_REACTION`.
+ *
+ * Same posture as `app-blocks-post-creation`, and for the same reason: a reaction pays Buzz to
+ * the reactor and the content owner and moves public rankings, so it must not arm the day the
+ * runtime flag widens. It is also the per-capability kill switch named by the design
+ * (civitai-app-starters#669): flip it off and both procedures refuse at once, without touching
+ * any other block capability.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, which `blocks.setReactionFromApp`
+ * has already proven is the signed-in session user.
+ *
+ * 🔴 SHIPS OFF. The flag does not exist in Flipt when this merges; it is created separately, as
+ * base `enabled: false` with the `moderators` segment, like `app-blocks-post-creation`.
+ */
+export const APP_BLOCKS_APP_REACTIONS_FLAG = 'app-blocks-app-reactions';
+
+export async function isAppBlocksAppReactionsEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_APP_REACTIONS_FLAG, String(opts.user.id), buildFliptContext(opts.user));
+}
+
+/**
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
+ * training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
  * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
  * `blocks.consentTrainingQuote`).
@@ -1078,6 +1139,32 @@ export async function isAppBlocksTrainingKindEnabled(opts: {
 }): Promise<boolean> {
   const user = opts.user;
   return isFlipt(APP_BLOCKS_TRAINING_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated fail-closed flag for the CONFIRMED pass-through step — a `kind:'step'`
+ * `$type` job whose FIXED orchestrator price exceeds the token's per-call budget, run
+ * only once the viewer confirms that exact price in host chrome. Gates the estimate's
+ * grant (`stepQuote`), the host's `RUN_CONFIRMED_STEP` consent pair
+ * (`blocks.previewQuoteGrant` / `blocks.consentQuoteGrant` for an `sq_` quote) and the confirmed submit.
+ * With it off, the pass-through arm is exactly what it was: a job above the per-call
+ * budget is refused.
+ *
+ * Same posture as `app-blocks-training-kind`: independent of the runtime flag so a GA
+ * widening of `app-blocks-enabled` does not arm it on the same day; an ABSENT flag
+ * resolves `false` for everyone, moderators included. Evaluated with the TOKEN
+ * SUBJECT'S hydrated `SessionUser`, never `ctx.user`.
+ *
+ * 🔴 SHIPS OFF. Create it in Flipt as base `enabled: false` with the `moderators`
+ * segment first.
+ */
+export const APP_BLOCKS_CONFIRMED_STEP_FLAG = 'app-blocks-confirmed-step';
+
+export async function isAppBlocksConfirmedStepEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_CONFIRMED_STEP_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**

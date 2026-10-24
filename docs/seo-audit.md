@@ -153,7 +153,6 @@ descriptions, and canonicals are set (not inherited from defaults).
 - [ ] `/comics/browse` — [comics/browse.tsx](../src/pages/comics/browse.tsx)
 - [ ] `/challenges` — [challenges/index.tsx](../src/pages/challenges/index.tsx)
 - [ ] `/challenges/winners` — [challenges/winners.tsx](../src/pages/challenges/winners.tsx)
-- [ ] `/events` — [events/index.tsx](../src/pages/events/index.tsx)
 - [ ] `/tools` — [tools/index.tsx](../src/pages/tools/index.tsx)
 - [ ] `/builds` — [builds/index.tsx](../src/pages/builds/index.tsx)
 - [ ] `/search/models` — [search/models.tsx](../src/pages/search/models.tsx)

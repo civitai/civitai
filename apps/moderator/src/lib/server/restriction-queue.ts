@@ -4,67 +4,130 @@ import type { Actions } from '@sveltejs/kit';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { requiresGrant } from '$lib/server/access';
 import type { RestrictionType } from '$lib/restriction-types';
+import {
+  DEFAULT_RESTRICTION_FILTERS,
+  ORIGIN_FILTERS,
+  RESTRICTION_STATUSES,
+  resolveRestrictionFilters,
+} from '$lib/restriction-filters';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
+import { planRemixSources } from '$lib/restrictions/origin';
 import {
   getGenerationRestrictions,
+  getRemixSources,
+  SORT_ORDERS,
+  getRestrictionFacets,
   saveSuspiciousMatches,
+  type RemixSource,
   unwiredRulingReason,
   type RestrictionRow,
 } from '$lib/server/user-restriction.service';
 
-const PAGE_SIZE = 20;
+const TRIAGE_PAGE_SIZE = 50;
+
+type QueueConfig = {
+  types: readonly [RestrictionType, ...RestrictionType[]];
+  fallback: RestrictionType;
+};
 
 /**
- * The list read shared by every restriction queue. Defaults to Pending, as the main app's page did:
- * without it the queue opens with already-ruled rows interleaved at the top, and `advance()` has
- * nothing to advance past.
+ * The query both queue reads share. `.catch()` on every field sends a stale or hostile URL back to the
+ * default view instead of a 500.
  *
- * `type` has no "any" member, unlike `status`. Mixing two kinds of review into one list would put a
- * moderator one keystroke from ruling on a case with the wrong queue's assumptions in mind, and the
- * ruling copy differs per type — so each queue names the types it offers and `.catch()` sends an
- * unknown or absent value back to its default.
+ * A bare number in `q` is a user id, not a username: usernames are free text and an account named
+ * "12345" would otherwise be the only way to reach user 12345.
  */
-export async function restrictionQueueLoad(
-  url: URL,
-  queue: { types: readonly [RestrictionType, ...RestrictionType[]]; fallback: RestrictionType }
-) {
-  const querySchema = z.object({
+function parseQueueQuery<S extends z.ZodRawShape>(url: URL, queue: QueueConfig, extra: S) {
+  const base = z.object({
     type: z.enum(queue.types).catch(queue.fallback),
-    status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
+    status: z.enum(RESTRICTION_STATUSES).catch(DEFAULT_RESTRICTION_FILTERS.status),
     q: z.string().trim().max(100).catch(''),
     page: z.coerce.number().int().min(1).max(500).catch(1),
-    selected: z.coerce.number().int().positive().optional().catch(undefined),
   });
-  const { type, status, q, page, selected } = parseQuery(url, querySchema);
+  const parsed = parseQuery(url, base.extend(extra)) as z.output<typeof base> &
+    z.output<z.ZodObject<S>>;
+  const asId = Number(parsed.q);
+  const isUserId = parsed.q !== '' && Number.isInteger(asId) && asId > 0;
+  return {
+    ...parsed,
+    username: !isUserId && parsed.q ? parsed.q : undefined,
+    userId: isUserId ? asId : undefined,
+  };
+}
 
-  // A bare number is a user id, not a username: usernames are free text and an account named "12345"
-  // would otherwise be the only way to reach user 12345.
-  const asId = Number(q);
-  const isUserId = q !== '' && Number.isInteger(asId) && asId > 0;
+const selectedSchema = z.coerce.number().int().positive().optional().catch(undefined);
 
-  const { items, totalCount } = await getGenerationRestrictions({
-    page,
-    limit: PAGE_SIZE,
+/**
+ * The restriction queues' read: status (Pending by default), origin, sort, search and paging. The whole
+ * page ships at once: selection is client state, so the remix sources for every row have to be on it.
+ */
+export async function restrictionTriageLoad(url: URL, queue: QueueConfig) {
+  const { type, status, origin, sort, q, page, selected, username, userId } = parseQueueQuery(
+    url,
+    queue,
+    {
+      origin: z.enum(ORIGIN_FILTERS).optional().catch(undefined),
+      sort: z.enum(SORT_ORDERS).optional().catch(undefined),
+      selected: selectedSchema,
+    }
+  );
+  const query = {
     type,
     status: status === 'any' ? undefined : status,
-    username: !isUserId && q ? q : undefined,
-    userId: isUserId ? asId : undefined,
-  });
+    origin,
+    username,
+    userId,
+  };
 
-  const current: RestrictionRow | null = items.find((i) => i.id === selected) ?? null;
+  const [{ items, totalCount }, facets] = await Promise.all([
+    getGenerationRestrictions({ page, limit: TRIAGE_PAGE_SIZE, ...query, sort }),
+    // Counts are decoration: a failed count must not take the list down with it.
+    getRestrictionFacets(query).catch((err) => {
+      console.error('Restriction facet counts failed', err);
+      return undefined;
+    }),
+  ]);
+
+  // A deep link may name a restriction the filters or paging leave off this page; it opens regardless
+  // rather than the pane silently showing another row. Held to this page's own types, and to the type
+  // it is filtered to: a row of the other type would contradict the filter the moderator chose.
+  let pinned: RestrictionRow | null = null;
+  let selectedMissing: number | null = null;
+  if (selected && !items.some((i) => i.id === selected)) {
+    pinned = await restrictionById(selected, queue.types);
+    if (pinned && pinned.type !== type) pinned = null;
+    if (!pinned) selectedMissing = selected;
+  }
+
+  // A failed source lookup must not take the queue down, but it must not read as "no source" either.
+  const plan = planRemixSources(pinned ? [...items, pinned] : items);
+  let sources: Record<number, RemixSource> = {};
+  let sourcesFailed = false;
+  try {
+    sources = Object.fromEntries((await getRemixSources(plan.lookup)).map((s) => [s.id, s]));
+  } catch {
+    sourcesFailed = true;
+  }
 
   return {
     items,
-    current,
+    pinned,
+    selectedMissing,
+    sources,
+    sourcesFailed,
+    sourcesNotLoaded: plan.notLoaded,
+    facets,
     totalCount,
     page,
-    pageCount: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
+    hasMore: page * TRIAGE_PAGE_SIZE < totalCount,
+    offset: (page - 1) * TRIAGE_PAGE_SIZE,
     type,
-    status,
+    filters: resolveRestrictionFilters({ status, origin, sort }),
     q,
-    wide: true,
+    fullBleed: true,
+    headerInline: true,
   };
 }
 
@@ -103,7 +166,7 @@ async function restrictionById(
  *
  * This is a refusal rather than a hidden button because the check has to hold against a posted id, not
  * just against what the page chose to render. (The buttons are disabled as well — see
- * `RestrictionDetail.svelte`. That is an addition to this check, never a substitute for it.)
+ * `RestrictionDecisionForm.svelte`. That is an addition to this check, never a substitute for it.)
  *
  * 🔴 KEPT even though the refusal is now enforced by `resolveUserRestriction` itself — which is what
  * closes the surfaces this check could never reach: the retool User Lookup panel, the tRPC router and

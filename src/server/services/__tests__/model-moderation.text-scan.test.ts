@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as RouteModule from '~/server/services/text-scan/route';
@@ -66,7 +67,7 @@ describe('modelModerationAdapter — text scan', () => {
     expect(await modelModerationAdapter.submit({ entityId: 5, content: 'x' })).toBeUndefined();
     expect(submitTextModeration).not.toHaveBeenCalled();
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Model', entityId: 5 })
+      expect.objectContaining({ entityType: 'Model', entityId: 5, fromRetry: true })
     );
   });
 
@@ -83,7 +84,8 @@ describe('modelModerationAdapter — text scan', () => {
 });
 
 describe('submitModelTextModeration — routed', () => {
-  it('routes a non-moderator save', async () => {
+  it('routes a non-moderator save of a public model', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
     vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
     await submitModelTextModeration({ id: 7, name: 'LoRA', description: null });
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
@@ -91,14 +93,23 @@ describe('submitModelTextModeration — routed', () => {
     );
   });
 
+  it('never scans a model that is not public, in either pipeline', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+    await submitModelTextModeration({ id: 7, name: 'LoRA', description: null });
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+
   it('never scans a moderator save, in either pipeline', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
     await submitModelTextModeration({ id: 7, name: 'LoRA', description: null, isModerator: true });
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
   });
 
   it('swallows a routing failure so the save never fails', async () => {
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 7 });
     vi.mocked(submitTextModerationOrScan).mockRejectedValue(new Error('down'));
     await expect(submitModelTextModeration({ id: 7, name: 'LoRA' })).resolves.toBeUndefined();
+    expect(submitTextModerationOrScan).toHaveBeenCalled();
   });
 });
 

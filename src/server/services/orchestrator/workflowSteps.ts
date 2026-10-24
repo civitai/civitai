@@ -1,5 +1,8 @@
-import type { GetWorkflowStepData, Options } from '@civitai/client';
-import { getWorkflowStep as clientGetWorkflowStep, patchWorkflowStep } from '@civitai/client';
+import type { GetWorkflowStepData, Options } from '@civitai/orchestration-client';
+import {
+  getWorkflowStep as clientGetWorkflowStep,
+  patchWorkflowStep,
+} from '@civitai/orchestration-client';
 
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import type { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workflows.schema';

@@ -346,7 +346,7 @@
 │  ├─ <span class="pk">● civitai-clickhouse/</span>            <span class="cm"># src/ env · client</span>
 │  ├─ <span class="pk">● civitai-axiom/</span>                 <span class="cm"># src/ env · client</span>
 │  ├─ <span class="pk">● civitai-telemetry/</span>             <span class="cm"># src/ client · otel-helpers</span>
-│  └─ <span class="pk">● civitai-orchestrator/</span>          <span class="cm"># planned · @civitai/client wrapper (scanner/csam/training)</span>
+│  └─ <span class="pk">● civitai-orchestrator/</span>          <span class="cm"># planned · @civitai/orchestration-client wrapper (scanner/csam/training)</span>
 │
 ├─ <span class="pk">src/</span>                               <span class="cm"># main app</span>
 │  └─ server/
@@ -608,7 +608,7 @@ REDIS_SYS_URL=redis://…
           </tr>
           <tr>
             <td><code>@civitai/orchestrator</code><br><span class="pill plan">planned</span></td>
-            <td><code>createOrchestratorClient(token)</code> — 13-line wrapper over the <code>@civitai/client</code> SDK; needed by scanner / CSAM / training</td>
+            <td><code>createOrchestratorClient(token)</code> — 13-line wrapper over the <code>@civitai/orchestration-client</code> SDK; needed by scanner / CSAM / training</td>
             <td>— (token via env)</td>
             <td><code>ORCHESTRATOR_ENDPOINT</code>, <code>ORCHESTRATOR_ACCESS_TOKEN</code>, <code>ORCHESTRATOR_MODE</code></td>
           </tr>

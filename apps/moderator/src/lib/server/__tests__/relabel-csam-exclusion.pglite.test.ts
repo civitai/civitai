@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { servableImageKeys } from '../relabel.service';
@@ -21,7 +22,7 @@ let pg: PGlite;
 let db: Kysely<Record<string, never>>;
 
 beforeAll(async () => {
-  pg = await PGlite.create();
+  pg = await freshPglite();
   await pg.exec(TABLES);
   db = new Kysely({ dialect: pgliteDialect(pg) });
 }, 60_000);

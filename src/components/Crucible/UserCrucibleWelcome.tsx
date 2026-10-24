@@ -1,9 +1,9 @@
 import { Card, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
-import { useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { IconTrophy, IconCoin, IconMedal, IconChartBar, IconAward } from '@tabler/icons-react';
+import { IconTrophy, IconCoin, IconMedal, IconChartBar, IconThumbUp } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIntroDismissed } from '~/hooks/useIntroDismissed';
 import { numberWithCommas } from '~/utils/number-helpers';
 import type { RouterOutput } from '~/types/router';
 import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
@@ -17,26 +17,9 @@ export function UserCrucibleWelcome() {
     {},
     { enabled: !!currentUser }
   );
-  // Starts dismissed so the server render and returning visitors never flash the intro before
-  // localStorage is read.
-  const [introDismissed, setIntroDismissed] = useState(true);
+  const [introDismissed, dismissIntro] = useIntroDismissed(INTRO_DISMISSED_KEY);
 
-  useEffect(() => {
-    try {
-      setIntroDismissed(localStorage.getItem(INTRO_DISMISSED_KEY) === '1');
-    } catch {
-      setIntroDismissed(false);
-    }
-  }, []);
-
-  const dismissIntro = () => {
-    setIntroDismissed(true);
-    try {
-      localStorage.setItem(INTRO_DISMISSED_KEY, '1');
-    } catch {}
-  };
-
-  const isFirstTimer = !currentUser || (!isLoading && (stats?.totalCrucibles ?? 0) === 0);
+  const isFirstTimer = !currentUser || (!isLoading && (stats?.cruciblesEntered ?? 0) === 0);
   if (isFirstTimer && !introDismissed)
     return <CrucibleIntro canCreate={!!currentUser} onDismiss={dismissIntro} />;
   if (!currentUser) return null;
@@ -74,7 +57,7 @@ function UserCrucibleWelcomeContent({
           Welcome back, {username}!
         </Text>
         <Text size="sm" c="dimmed">
-          Here&apos;s how you&apos;re doing in your active crucibles
+          Your crucible record
         </Text>
       </Stack>
 
@@ -83,8 +66,8 @@ function UserCrucibleWelcomeContent({
         <StatCard
           icon={<IconTrophy size={24} />}
           iconColor="blue"
-          label="Total Crucibles"
-          value={stats?.totalCrucibles ?? 0}
+          label="Crucibles Entered"
+          value={stats?.cruciblesEntered ?? 0}
           isLoading={isLoading}
         />
         <StatCard
@@ -94,14 +77,21 @@ function UserCrucibleWelcomeContent({
           value={stats?.buzzWon ?? 0}
           isLoading={isLoading}
           formatValue={(v) => numberWithCommas(v ?? 0)}
+          hint={stats ? `${stats.cruciblesWon} of ${stats.cruciblesEnded} won` : undefined}
+          showEndedNote
         />
         <StatCard
           icon={<IconMedal size={24} />}
           iconColor="orange"
-          label="Best Placement"
-          value={stats?.bestPlacement}
+          label="Best Finish"
+          value={stats?.bestFinish?.position}
           isLoading={isLoading}
-          formatValue={(v) => (v !== null && v !== undefined ? `#${v}` : '-')}
+          formatValue={(v) =>
+            v !== null && v !== undefined && stats?.bestFinish
+              ? `#${v} of ${numberWithCommas(stats.bestFinish.fieldSize)}`
+              : '-'
+          }
+          showEndedNote
         />
         <StatCard
           icon={<IconChartBar size={24} />}
@@ -110,12 +100,13 @@ function UserCrucibleWelcomeContent({
           value={stats?.avgFinishTopPercent}
           isLoading={isLoading}
           formatValue={(v) => (v !== null && v !== undefined ? `Top ${v}%` : '-')}
+          showEndedNote
         />
         <StatCard
-          icon={<IconAward size={24} />}
+          icon={<IconThumbUp size={24} />}
           iconColor="yellow"
-          label="Prizes Won"
-          value={stats?.prizesWon ?? 0}
+          label="Votes Cast"
+          value={stats?.votesCast ?? 0}
           isLoading={isLoading}
           className="col-span-2 sm:col-span-1"
         />
@@ -134,6 +125,10 @@ type StatCardProps = {
   value: number | null | undefined;
   isLoading: boolean;
   formatValue?: (value: number | null | undefined) => string;
+  /** Small line under the value, e.g. a win rate. */
+  hint?: string;
+  /** Marks a card that only counts ended crucibles, so 0 reads as "nothing ended yet". */
+  showEndedNote?: boolean;
   className?: string;
 };
 
@@ -151,6 +146,8 @@ function StatCard({
   value,
   isLoading,
   formatValue,
+  hint,
+  showEndedNote,
   className,
 }: StatCardProps) {
   const displayValue = formatValue ? formatValue(value) : numberWithCommas(value ?? 0);
@@ -177,6 +174,20 @@ function StatCard({
           <Text fz="xl" fw={700} c="white" ta="center">
             {displayValue}
           </Text>
+        )}
+        {(hint || showEndedNote) && (
+          <Stack gap={0} align="center">
+            {hint && !isLoading && (
+              <Text size="xs" c="dimmed" ta="center">
+                {hint}
+              </Text>
+            )}
+            {showEndedNote && (
+              <Text size="xs" c="dimmed" ta="center" opacity={0.7}>
+                From ended crucibles
+              </Text>
+            )}
+          </Stack>
         )}
       </Stack>
     </Card>

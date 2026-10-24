@@ -12,7 +12,7 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
@@ -62,10 +62,6 @@ export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
-  // `true` narrows to Civitai-published articles. `false` is NOT the inverse — it is
-  // absent, the same as not filtering — so a stale `?isOfficial=false` in a url cannot
-  // silently hide every official article from a feed.
-  isOfficial: z.boolean().optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
   username: z.string().optional(),
@@ -104,11 +100,13 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
   publishedAt: z.date().nullish(),
+  // A date schedules a never-published draft to go live then; null cancels; omitted leaves it.
+  scheduledAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),

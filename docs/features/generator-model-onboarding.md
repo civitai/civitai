@@ -75,6 +75,7 @@ These steps are done by a human, after the deploy. The `generator-launch` skill 
 
 1. Publish, with the green **Publish** button in the version panel of `/models/<modelId>?modelVersionId=<versionId>`. On a Draft model this publishes the model and the version together; on a published model it publishes only the version.
 2. Remove the gate rule with `onboard.mjs gate remove`, or in the mod UI.
+3. For hosted weights, add a `GenerationBaseModel` row for each base model name (details below). Without it no community LoRA on that base model is generatable, however complete the form support: MOSS Image went live with none of its LoRAs covered. Then bust the version cache for the newly covered versions.
 
 Publish **before** removing the gate. While the rule is in place, the published version stays hidden from non-mods, because a `hidden` rule also blocks site-wide `canGenerate`. Removing the gate first would show everyone a Draft model they can't generate with.
 

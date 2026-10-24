@@ -124,6 +124,11 @@ duplication is not by design; it’s an unfinished migration.
 | **Comic** | Postgres `ComicProjectMetric` | **Postgres** `ComicProjectMetric` (reads via `ComicChapterRead`) |
 | **Image** | **ClickHouse** (feed) *and* `ImageMetric` (some paths) | ClickHouse |
 
+Exception: `collectedCount` on Model, Article and Post (and Collection `itemCount`) is a ClickHouse
+sum written back into the Postgres `*Metric` row by the metric jobs, fed by the `CollectionItem` CDC
+handler. A row counts only if `addedById` is set. Bookmarks were once written without it;
+`apps/event-engine/scripts/backfill-collection-item-adder.mjs` repairs the bookmark rows, one entity per run.
+
 Image is the one that reads tips from ClickHouse on the hot feed, and ClickHouse
 image tips also feed **search ranking** (`stats.tippedAmountCountAllTime:desc`)
 and **user scoring** — so it can’t be casually moved back to Postgres.

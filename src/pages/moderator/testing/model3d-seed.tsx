@@ -35,14 +35,7 @@ import { UploadType } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    if (!session || !session.user?.isModerator)
-      return { redirect: { destination: '/', permanent: false } };
-    return { props: {} };
-  },
-});
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 type ThreeDFormat = 'glb' | 'fbx' | 'obj' | 'stl';
 

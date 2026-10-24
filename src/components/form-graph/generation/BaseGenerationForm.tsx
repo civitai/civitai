@@ -6,6 +6,7 @@ import {
   useGenerationConfig,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
@@ -57,6 +58,7 @@ import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
+import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 
 /**
  * The BASE generation form: the entry component. Owns the store over the
@@ -118,6 +120,10 @@ export function BaseGenerationForm() {
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  useEffect(() => {
+    useActiveGenerationForm.setState({ store });
+    return () => useActiveGenerationForm.setState({ store: undefined });
+  }, [store]);
 
   return (
     <FormProvider store={store}>
@@ -127,6 +133,22 @@ export function BaseGenerationForm() {
       </WhatIfProvider>
     </FormProvider>
   );
+}
+
+/** A checkpoint's own turbo LoRA rides on its hydrated data, but the store holds a default checkpoint as a bare id, so the graph would never see it. */
+function useModelWriteBack(store: GenerationStore) {
+  const { getResourceData } = useResourceDataContext();
+  useEffect(() => {
+    function writeBack() {
+      const state = store.getSnapshot().state as Record<string, unknown>;
+      const model = state.model as PartialResourceValue | undefined;
+      if (!model?.id || !needsHydration(model)) return;
+      const data = getResourceData(model.id);
+      if (data) store.set({ model: asResourceValue(data) });
+    }
+    writeBack();
+    return store.subscribe(writeBack);
+  }, [store, getResourceData]);
 }
 
 /**
@@ -180,6 +202,7 @@ function useResourceHydrationSync(store: GenerationStore) {
 
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
   useResourceHydrationSync(store);
+  useModelWriteBack(store);
   useGenerationIngestion(store);
   useGenerationTour();
   const output = useOutputType(store);

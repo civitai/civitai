@@ -21,8 +21,8 @@ import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 /**
- * Creator Controls: USER-default metric privacy (level 1 of 3). Sets the baseline
- * hide flags for all of the creator's models. The flags only take effect while the
+ * Creator Controls: USER-default metric privacy, the primary control. Sets the baseline
+ * hide flags for all of the creator's models; a model or version can override it either way. The flags only take effect while the
  * user holds a valid Creator Program membership (enforced read-side); non/lapsed
  * members see an upsell and disabled toggles.
  *
@@ -62,21 +62,23 @@ export function CreatorControlsCard({
     {
       name: 'hideModelBuzz',
       label: 'Hide tipped / earned Buzz',
-      description: "Others won't see Buzz earned on your models.",
+      description:
+        "Others won't see Buzz earned on your models, unless a model or version overrides it.",
       checked: hideModelBuzz ?? false,
       onChange: (checked: boolean) => mutateSetting({ hideModelBuzz: checked }),
     },
     {
       name: 'hideModelDownloads',
       label: 'Hide download count',
-      description: "Others won't see your download counts.",
+      description: "Others won't see your download counts, unless a model or version overrides it.",
       checked: hideModelDownloads ?? false,
       onChange: (checked: boolean) => mutateSetting({ hideModelDownloads: checked }),
     },
     {
       name: 'hideModelGenerations',
       label: 'Hide generation count',
-      description: "Others won't see your generation counts.",
+      description:
+        "Others won't see your generation counts, unless a model or version overrides it.",
       checked: hideModelGenerations ?? false,
       onChange: (checked: boolean) => mutateSetting({ hideModelGenerations: checked }),
     },
@@ -124,6 +126,7 @@ export function CreatorControlsCard({
         <ShowcaseOptOutSetting flat />
         {flags.creatorControls && (
           <SettingsSection
+            id="metric-visibility"
             title={
               <Group gap={4} wrap="nowrap">
                 Metric visibility
@@ -135,7 +138,7 @@ export function CreatorControlsCard({
                 </InfoPopover>
               </Group>
             }
-            description="Creator Program members only. Reverts if your membership lapses."
+            description="The default for all your models. Creator Program members only; reverts if your membership lapses."
           >
             {!isActiveMember && <SettingRow block>{membershipUpsell}</SettingRow>}
             {metricSwitches.map((setting) => (

@@ -167,9 +167,72 @@ export function deriveUploadPartGeometry({
  * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
  * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
  * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
- * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free.
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free. Sized for stored originals; the
+ * generated-images estimate shares it as an upper bound.
  */
-export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = Math.round(1.4 * 1024 * 1024);
+export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
+
+/**
+ * Ceiling on source bytes one archive holds at once, from a reader's reservation until the
+ * archiver has written that entry. An object larger than the budget runs alone.
+ */
+export const MAX_ARCHIVE_SOURCE_BYTES = 256 * 1024 * 1024;
+
+export type ByteBudget = {
+  /** Resolves once `bytes` fit, with the function that gives them back (safe to call twice). */
+  reserve: (bytes: number) => Promise<() => void>;
+  /** Rejects every waiting and future reservation, so a failed archive parks no reader. */
+  abort: (reason: unknown) => void;
+  readonly reservedBytes: number;
+};
+
+/** A FIFO byte semaphore: a large reservation waits its turn rather than being overtaken. */
+export function createByteBudget(limitBytes = MAX_ARCHIVE_SOURCE_BYTES): ByteBudget {
+  let reserved = 0;
+  let aborted: Error | undefined;
+  const queue: Array<{ want: number; grant: () => void; fail: (e: Error) => void }> = [];
+
+  const fits = (want: number) => reserved + want <= limitBytes;
+  const drain = () => {
+    while (queue.length > 0 && fits(queue[0].want)) queue.shift()?.grant();
+  };
+
+  return {
+    get reservedBytes() {
+      return reserved;
+    },
+    async reserve(bytes) {
+      if (aborted) throw aborted;
+      // Clamped to the budget: an unknown-size or oversize object takes all of it, so it runs alone.
+      const want = Number.isFinite(bytes) ? Math.min(Math.max(0, bytes), limitBytes) : limitBytes;
+      // Counted at grant time, not on resume: `drain` grants several in one loop, and each must
+      // see the bytes the previous one took.
+      if (queue.length === 0 && fits(want)) reserved += want;
+      else
+        await new Promise<void>((resolve, fail) =>
+          queue.push({
+            want,
+            grant: () => {
+              reserved += want;
+              resolve();
+            },
+            fail,
+          })
+        );
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        reserved -= want;
+        drain();
+      };
+    },
+    abort(reason) {
+      aborted ??= reason instanceof Error ? reason : new Error(String(reason));
+      for (const waiter of queue.splice(0)) waiter.fail(aborted);
+    },
+  };
+}
 
 /**
  * Default ceiling on entries that have been handed to the archiver but not yet compressed and
@@ -177,13 +240,16 @@ export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = Math.round(1.4 * 1024 * 1024);
  * that converts "memory grows with the number of files" into "memory is constant".
  *
  * ⚠️ It is NOT the whole peak, and reading it as "8 image-sizes" understates the constant by
- * roughly 5×. At the CSAM call sites the appender runs behind a `p-limit(10)`, and each of
- * those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
+ * roughly 5×. At the CSAM generated-images call site the appender runs behind a `p-limit(10)`,
+ * and each of those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
  * parked inside `append()` waiting for a slot here. So the realistic peak is about
  * `8 + 3 × 10 = 38` image-sizes, not 8.
  *
  * That is the point regardless: 38 is a CONSTANT, set by the two concurrency caps. The defect
  * being fixed is that the peak previously scaled with how many images the account had.
+ *
+ * The images archive holds stored originals, so this count does not bound its bytes; it also
+ * reserves against `MAX_ARCHIVE_SOURCE_BYTES`.
  */
 export const MAX_PENDING_ARCHIVE_ENTRIES = 8;
 
@@ -221,8 +287,10 @@ export type BoundedArchive = {
   /**
    * Appends an entry, first waiting until the archiver has drained below the pending-entry
    * ceiling. Resolves once the entry has been accepted (not once it has been written).
+   * `onWritten` runs once the archiver has written the entry, or when the archive fails. Not
+   * called if append itself throws.
    */
-  append: (source: Buffer | Readable, data: EntryData) => Promise<void>;
+  append: (source: Buffer | Readable, data: EntryData, onWritten?: () => void) => Promise<void>;
   /** Finalizes the archive and waits for the output sink to flush and close. */
   finalize: () => Promise<void>;
   /** Entries appended but not yet processed. Exposed for tests and diagnostics. */
@@ -276,6 +344,8 @@ export function createBoundedArchive({
   let peak = 0;
   let failure: Error | undefined;
   const waiters: Array<() => void> = [];
+  // `archiver` processes entries one at a time in append order, so 'entry' events arrive FIFO.
+  const onWrittenQueue: Array<(() => void) | undefined> = [];
 
   // 🔴 The `while` is what makes the FAILURE path settle, and must not be narrowed to an `if`.
   // An earlier revision of this comment said the opposite — "that re-check is the actual guard",
@@ -312,11 +382,13 @@ export function createBoundedArchive({
 
   archive.on('entry', () => {
     if (pending > 0) pending--;
+    onWrittenQueue.shift()?.();
     releaseWaiters();
   });
 
   archive.on('error', (err: unknown) => {
     failure ??= err instanceof Error ? err : new Error(String(err));
+    for (const onWritten of onWrittenQueue.splice(0)) onWritten?.();
     releaseWaiters();
   });
 
@@ -327,7 +399,7 @@ export function createBoundedArchive({
     get peakPendingEntries() {
       return peak;
     },
-    async append(source, data) {
+    async append(source, data, onWritten) {
       if (failure) throw failure;
       while (pending >= maxPendingEntries) {
         await new Promise<void>((resolve) => waiters.push(resolve));
@@ -335,6 +407,7 @@ export function createBoundedArchive({
       }
       pending++;
       if (pending > peak) peak = pending;
+      onWrittenQueue.push(onWritten);
       archive.append(source, data);
     },
     async finalize() {

@@ -107,7 +107,10 @@ describe('voidUnscannedCrucibles', () => {
       entries: [],
     }));
     claim.mockResolvedValue({ count: 1 });
-    refundMultiAccountTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue({
+      refundedTransactions: [{ amount: 100 }],
+      totalRefunded: 1,
+    });
     createNotification.mockResolvedValue(undefined);
   });
 

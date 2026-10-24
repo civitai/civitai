@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -21,6 +21,7 @@ import {
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
+import { modelsRankingRules } from '~/server/search-index/ranking-rules';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
@@ -45,6 +46,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { hasCompleteSfwFace, hoistCoverImage } from '~/shared/utils/model-sfw-face';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -113,17 +115,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 
-  const rankingRules = [
-    'sort',
-    'attribute',
-    'metrics.thumbsUpCount:desc',
-    'words',
-    'proximity',
-    'exactness',
-  ];
-
-  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
-    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+  if (JSON.stringify(modelsRankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(modelsRankingRules);
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
@@ -484,6 +477,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
+        hasSfwFace: hasCompleteSfwFace(model),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: {
@@ -494,7 +488,10 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           allowNoCredit,
           allowCommercialUse,
           allowDerivatives,
-          allowDifferentLicense,
+          allowDifferentLicense: allowsDifferentLicenseOnMerges({
+            allowDerivatives,
+            allowDifferentLicense,
+          }),
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },
@@ -519,6 +516,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             ...x,
             // Keeps the column's name but holds readiness — the loaded-only filter reads this.
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
+            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
+            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
             pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
@@ -613,10 +612,19 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         coveredVersionIds.push(version.id);
       }
 
-      const modelImages = coveredVersionIds.flatMap((versionId) =>
-        images.filter(
-          (image) =>
-            image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+      // The .red cover ahead of the .com one: a .com viewer filters a mature .red cover out and
+      // lands on theirs, while a .red viewer keeps the creator's pick.
+      const modelImages = [model.sfwCoverImageId, model.coverImageId].reduce(
+        (list, coverId) =>
+          hoistCoverImage(
+            list,
+            list.find((image) => image.id === coverId)
+          ),
+        coveredVersionIds.flatMap((versionId) =>
+          images.filter(
+            (image) =>
+              image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+          )
         )
       );
 

@@ -5,11 +5,18 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
-import { failureSnapshot } from './failureSnapshot';
+import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
+  countGuestFrameEvent,
+  isDevTunnelGuestReload,
+  NO_GUEST_FRAME_EVENTS,
+} from './devTunnelGuestReload';
+import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
+import {
   blockInitFragmentEnabled,
+  blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
   type BlockHostSurface,
@@ -18,19 +25,21 @@ import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
+  capPickedResources,
   TOKEN_WAIT_TIMEOUT_MS,
   decideAutoRetry,
   advanceReviewConsentLatch,
   buildReviewConsentNotification,
-  grantedPageScopes,
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
   resolvePublishGenerationOutputsRequest,
+  resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   shouldEmitMidSessionLossBeacon,
@@ -52,21 +61,69 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
-import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
+import { handleEstimateBatch } from './estimateBatchGate';
 import {
   buildTrainingConsentCopy,
   resolveRunTrainingRequest,
+  resolveTrainingConsentThumbnails,
   trainingSubmitReplyFromError,
   trainingSubmitReplyFromResult,
   type TrainingQuotePreview,
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
+import {
+  buildConfirmedStepConsentCopy,
+  buildConfirmedStepDailyLimitCopy,
+  CONFIRMED_STEP_UNCONFIRMED_NOTICE,
+  confirmedStepReplyFromResult,
+  isDailyLimitRefusal,
+  resolveRunConfirmedStepRequest,
+  type ConfirmedStepQuotePreview,
+} from './runConfirmedStepGate';
+import {
+  ConfirmedStepConsentBody,
+  ConfirmedStepDailyLimitBody,
+  ConfirmedStepNoticeBody,
+} from './ConfirmedStepConsentBody';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import GuardedConfirmDialog from './GuardedConfirmDialog';
+import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import type { TrainingDataUpload } from './trainingDataUpload';
+import { trainingBlobKeyIdentity } from '~/server/schema/blocks/training-dataset.schema';
+import {
+  buildImagePickerReply,
+  resolveImagePickerRequest,
+  type BlockPickedImageInfo,
+} from './imagePickerLogic';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
+import { BlockImageBytesUploader } from './BlockImageBytesUploader';
 import type { BlockImageScanResult } from './blockImageScanLogic';
+import {
+  imageUploadResultFromScan,
+  processUploadBytes,
+  resolveImageUploadBytes,
+  UPLOAD_BYTES_INVALID_ERROR,
+  UPLOAD_BYTES_NO_TOKEN_ERROR,
+} from './imageUploadBytes';
+import {
+  MEDIA_UPLOAD_FAILED_ERROR,
+  MEDIA_UPLOAD_NO_TOKEN_ERROR,
+  processMediaUploadBytes,
+  resolveMediaUploadRequest,
+  type BlockMediaUploadInfo,
+} from './mediaUploadLogic';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -85,20 +142,25 @@ import {
   type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  processSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
+  type SaveBytesWindowEntry,
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -114,6 +176,10 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
+import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -147,26 +213,20 @@ const BlockGenerationSourceUploadModal = dynamic(
   { ssr: false }
 );
 
+const BlockTrainingDataUploadModal = dynamic(() => import('./BlockTrainingDataUploadModal'), {
+  ssr: false,
+});
+
+const BlockImagePickerModal = dynamic(() => import('./BlockImagePickerModal'), { ssr: false });
+
+const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), { ssr: false });
+
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
 // so a block can ask the host to start the civitai login flow when the user
 // clicks an action that needs auth/money. Login is now hub-driven (a popup to
 // auth.civitai.com) — see openLoginPopup; the old in-page LoginModal was removed
 // in the auth cutover.
-
-// Normalise a thrown storage error into a string the block can surface. Mirrors
-// IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
-// TRPCErrors with explicit code+message strings (UNAUTHORIZED, PAYLOAD_TOO_LARGE,
-// quota_exceeded, …); we forward the message and never throw upward, so the
-// block's host-mediated storage request rejects cleanly instead of hanging to
-// the SDK's 30s timeout.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -228,6 +288,10 @@ function storageErrorMessage(err: unknown): string {
  * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
  * windows instead of from a hard-coded literal in a comment. Importing them from
  * this file would drag the whole component graph into the `unit` project.
+ *
+ * `BLOCK_READY_TIMEOUT_MS` is the window for every surface EXCEPT the dev tunnel,
+ * which waits `DEV_TUNNEL_READY_TIMEOUT_MS` — the host reads the window for its
+ * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
@@ -323,10 +387,9 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
 // `forbidden` is the in-set code: review preview genuinely is a permission
 // context, and it is the closest member semantically.
 //
-// The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
-// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts;
-// the pinned @civitai/app-sdk dist does not export the wildcard union yet), so
-// tsc rejects any future edit that swaps in a non-member string.
+// The annotation is the GUARD — `WildcardPackErrorCode` is the SDK's
+// `BlockWildcardPackErrorCode` (aliased in wildcardPackParse.ts), so tsc rejects
+// any future edit that swaps in a non-member string.
 const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
 
 /**
@@ -353,8 +416,8 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  * population that sees two scrollbars, so the value is bounded on BOTH sides —
  * in `__tests__/pageRunScrollContract.test.ts` (the node `unit` suite, which
  * renders a real verdict on a push to `main`) and again in
- * `PageBlockHostScrollFit.browser.test.tsx` (the report-only browser tier, which
- * is why it is not the only one). NEITHER TIER BLOCKS A MERGE: `main` requires
+ * `PageBlockHostScrollFit.browser.test.tsx` (the browser tier, `Component tests`
+ * in CI). NEITHER TIER BLOCKS A MERGE: `main` requires
  * no status check at all in this repo, so both are signals a reviewer must read,
  * not doors that stay shut. The NUMBERS deliberately live in those tests, not here: a band
  * declared beside the value it bounds can be moved in the same edit. What lives
@@ -364,7 +427,8 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  *
  *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
  *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
- *                           − RewardsBonusBanner (~32 when active)
+ *                           − nav announcement slot (Buzz Bonus ~32 when active,
+ *                             plus 44 per event strip)
  *
  * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
  * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
@@ -631,6 +695,9 @@ export interface PageBlockHostProps {
    *  Trimmed from the wrapped `token.scopes` so the block's capability check is
    *  accurate, and used to surface a consent-needed terminal state. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /** #3/#6: true when the app's approved manifest declares scopes the viewer has
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
@@ -676,6 +743,13 @@ export interface PageBlockHostProps {
    *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
    *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
   onRetryToken?: () => void;
+  /**
+   * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
+   * live reload). The parent must fetch a freshly signed entry URL and REMOUNT this host
+   * with it — the same path as its manual Reload. Called at most once per mount; every
+   * other surface never calls it. See `isDevTunnelGuestReload` for the signal and why.
+   */
+  onGuestReloaded?: () => void;
   /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
@@ -726,7 +800,7 @@ export interface PageBlockHostProps {
    *     other functions, which is exactly the kind of distant coupling that
    *     produced the original defect. Encode the target route's predicate here.
    *
-   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * All three mounters (`/apps/run/[slug]`, `DevTunnelBlockHost` for the dev tunnel,
    * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
    * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
    * mounter cannot quietly omit it or downgrade it to one flag.
@@ -768,7 +842,7 @@ export interface PageBlockHostProps {
    * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
    * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
    * scrolling layout the actual space left to the page is
-   * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
+   * `100dvh − header − subNav − its mb-3 − nav announcement strips − AppFooter −
    * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
    * normal render. So the host is UNCONDITIONALLY taller than its scroll
    * viewport: the layout's `ScrollArea` grows a vertical scrollbar it can only
@@ -815,6 +889,7 @@ export function PageBlockHost({
   tokenKind,
   declaredScopes,
   missingScopes,
+  signedScopes,
   needsConsent,
   tokenError,
   tokenTerminal = false,
@@ -825,6 +900,7 @@ export function PageBlockHost({
   theme,
   onConsentGranted,
   onRetryToken,
+  onGuestReloaded,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -942,8 +1018,19 @@ export function PageBlockHost({
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
   // the authoritative scan gate, and on a verdict fires IMAGE_SCAN_RESOLVED then
   // removes itself. See the OPEN_IMAGE_UPLOAD handler + the render block.
+  // `replyOnScan` marks a `bytes` upload: its verdict is the IMAGE_UPLOAD_RESULT reply itself, not
+  // an IMAGE_SCAN_RESOLVED push after an early pending reply.
   const [imageScanPollers, setImageScanPollers] = useState<
-    Array<{ requestId: string; imageId: number }>
+    Array<{ requestId: string; imageId: number; replyOnScan?: boolean }>
+  >([]);
+  const [imageBytesUploads, setImageBytesUploads] = useState<
+    Array<{
+      requestId: string;
+      bytes: ArrayBuffer;
+      filename: string;
+      contentType: string;
+      blockToken: string;
+    }>
   >([]);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
@@ -1134,6 +1221,9 @@ export function PageBlockHost({
   // `canRemint` is whether a token re-mint is even wired: without it an auth
   // terminal can never be recovered, so we must not burn an attempt on it.
   const canRemint = onRetryToken != null;
+  // The surface's BLOCK_READY wait (window, timeout retry, timeout copy). The ONE
+  // surface check for it lives in `readyWaitPolicyFor`; only the dev tunnel differs.
+  const readyWait = readyWaitPolicyFor(surface);
   const autoRetry = useMemo(
     () =>
       decideAutoRetry({
@@ -1141,8 +1231,15 @@ export function PageBlockHost({
         attempts: autoRetryBudget.attempts,
         reminted: autoRetryBudget.reminted,
         canRemint,
+        autoRetryOnTimeout: readyWait.autoRetryOnTimeout,
       }),
-    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+    [
+      status,
+      autoRetryBudget.attempts,
+      autoRetryBudget.reminted,
+      canRemint,
+      readyWait.autoRetryOnTimeout,
+    ]
   );
   /** True once the host has stopped auto-recovering: this terminal state is final. */
   const autoRetrySettled = autoRetry.kind === 'none';
@@ -1232,12 +1329,15 @@ export function PageBlockHost({
   // fail-closed in [[...path]].tsx), so the event is dark behind the same flag as
   // the rest of App Blocks.
 
-  // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
-  // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
+  // #3/#6: the scopes the minted JWT ACTUALLY carries. See
+  // requestConsentGate.resolveAdvertisedScopes. Posting `[]` (the old hardcode)
   // lied to the block about its capabilities.
+  // A boolean, not `viewer`: the run page builds that object inline, so its
+  // identity changes every render and would re-subscribe handlers keyed on it.
+  const viewerSignedIn = viewer != null;
   const grantedScopes = useMemo<string[]>(
-    () => grantedPageScopes(declaredScopes, missingScopes),
-    [declaredScopes, missingScopes]
+    () => resolveAdvertisedScopes(declaredScopes, missingScopes, signedScopes),
+    [declaredScopes, missingScopes, signedScopes]
   );
 
   // Current sub-path under /apps/run/<slug>/<...path> (no leading slash). Read
@@ -1288,7 +1388,8 @@ export function PageBlockHost({
         // controller posts the freshest payload via the ref.
         raw: token ?? '',
         // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
-        // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
+        // consent-exempt storage scopes, plus any gated scope the viewer granted;
+        // never money). Posting `[]` lied to the block
         // about the capabilities it holds.
         scopes: grantedScopes,
         expiresAt: expiresAt ?? '',
@@ -1312,8 +1413,11 @@ export function PageBlockHost({
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
+      // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
+      ...blockInitStorageMode(surface),
     }),
     [
+      surface,
       appId,
       blockId,
       blockInstanceId,
@@ -1399,7 +1503,10 @@ export function PageBlockHost({
     if (controllerRef.current) return;
     const controller = new IframeInitController({
       sendInit: sendInitOnce,
-      readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+      // 10 s everywhere except the dev tunnel (30 s) — see `readyWaitPolicyFor`.
+      // The controller keeps re-posting BLOCK_INIT to the SAME frame for the
+      // whole window; nothing reloads the frame until it elapses.
+      readyTimeoutMs: readyWait.readyTimeoutMs,
       onReadyTimeout: () => {
         setStatus((current) => (current === 'loading' ? 'timeout' : current));
       },
@@ -1410,7 +1517,7 @@ export function PageBlockHost({
       controller.dispose();
       controllerRef.current = null;
     };
-  }, [token, status, sendInitOnce]);
+  }, [token, status, sendInitOnce, readyWait.readyTimeoutMs]);
 
   // #3/#6: the mint errored (no token will arrive). Surface an `error` state
   // immediately rather than waiting out the no_token timeout — a hard mint
@@ -1579,6 +1686,44 @@ export function PageBlockHost({
     return off;
   }, [token, expiresAt, tokenKind, grantedScopes, send, onMessage, reportNoToken]);
 
+  // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
+  // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
+  // only feeds it the frame's `load` events and BLOCK_HELLOs, counted since the frame was
+  // (re)mounted — a Retry re-keys the <iframe> via `reloadNonce`, which restarts both
+  // counts. It reports once per mount, so a burst of reloads is one request; a parent
+  // whose fresh mint fails unmounts this host into its own error state, so there is
+  // nothing here to loop. The callback is read through a ref so a parent's inline arrow
+  // cannot change these handlers' identity.
+  const guestFrameRef = useRef<GuestFrameCounts>(NO_GUEST_FRAME_EVENTS);
+  useEffect(() => {
+    // Only on a RE-key (the first mount starts at zero), after the new <iframe> commits —
+    // its document needs a network round trip before it can load or say hello.
+    if (reloadNonce === 0) return;
+    guestFrameRef.current = NO_GUEST_FRAME_EVENTS;
+  }, [reloadNonce]);
+  const guestReloadReportedRef = useRef(false);
+  const onGuestReloadedRef = useRef(onGuestReloaded);
+  onGuestReloadedRef.current = onGuestReloaded;
+  const noteGuestFrame = useCallback(
+    (event: GuestFrameEvent) => {
+      const guest = countGuestFrameEvent(guestFrameRef.current, event);
+      guestFrameRef.current = guest;
+      if (guestReloadReportedRef.current) return;
+      const reload = isDevTunnelGuestReload({
+        surface,
+        event,
+        loads: guest.loads,
+        hellos: guest.hellos,
+        status: statusRef.current,
+      });
+      if (!reload) return;
+      guestReloadReportedRef.current = true;
+      onGuestReloadedRef.current?.();
+    },
+    [surface]
+  );
+  const handleFrameLoad = useCallback(() => noteGuestFrame('load'), [noteGuestFrame]);
+
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
   // waiting out the current retry tick.
@@ -1614,9 +1759,10 @@ export function PageBlockHost({
       const marks = launchMarksRef.current;
       if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
+      noteGuestFrame('hello');
     });
     return off;
-  }, [onMessage]);
+  }, [onMessage, noteGuestFrame]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
@@ -1695,6 +1841,17 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage]);
+
+  useEffect(() => {
+    const record = createBlockEventRecorder({ appBlockId, blockInstanceId });
+    const off = onMessage<unknown>('TRACK_EVENT', (raw) => {
+      // A review mount's app id is a synthetic request id the ingest drops as an unknown app;
+      // this only saves the pointless request.
+      if (reviewMode) return;
+      record(raw);
+    });
+    return off;
+  }, [onMessage, reviewMode, appBlockId, blockInstanceId]);
 
   // App Blocks runtime observability — render-FAILURE beacon. The success beacon
   // fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here we fire
@@ -1878,7 +2035,11 @@ export function PageBlockHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // The dev-tunnel preview serves the document store locally, so there a
+        // refused `apps:storage` / `apps:storage:publish` is not shown to the
+        // viewer — decided by the gate from `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`.
+        surface
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
@@ -1912,10 +2073,20 @@ export function PageBlockHost({
       // refusal is the signal; the names are advisory. Delivered solely to the
       // frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      // The block always gets its answer above (an SDK predating local-preview
+      // grants waits on it); the viewer is prompted only when something other than
+      // a locally served document-store scope was refused.
+      if (!ungrantable.promptViewer) return;
       // Copy shared with IframeHost's twin of this path — see the constant for why
       // the wording is surface-neutral (the old "in this preview" clause was false
-      // on the live page too, and outright wrong on a model page).
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // on the live page too, and outright wrong on a model page). Signed out →
+      // offer sign-in instead — see `resolveUngrantableConsentPrompt`.
+      const prompt = resolveUngrantableConsentPrompt(gateStatus, viewerSignedIn);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` is deliberately ABSENT: the handler reads it through
@@ -1933,6 +2104,8 @@ export function PageBlockHost({
     onConsentGranted,
     reviewMode,
     reviewRunForReal,
+    viewerSignedIn,
+    surface,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected
@@ -2301,14 +2474,22 @@ export function PageBlockHost({
           return;
         }
         const requestId = raw.requestId;
+        const workflowId = raw.workflowId;
+        const { waitSeconds } = raw as { waitSeconds?: unknown };
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(typeof waitSeconds === 'number' && Number.isFinite(waitSeconds)
+              ? { waitSeconds }
+              : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
-          send('WORKFLOW_STATUS', { requestId, snapshot: failureSnapshot(err) });
+          send('WORKFLOW_STATUS', {
+            requestId,
+            snapshot: pollFailureSnapshot(err, workflowId),
+          });
         }
       }
     );
@@ -3333,7 +3514,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3392,7 +3573,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3424,7 +3605,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3459,7 +3640,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3497,7 +3678,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3593,7 +3774,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3605,10 +3786,28 @@ export function PageBlockHost({
   // synchronously in the message handler (single-threaded ⇒ check→increment before
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
+  // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
+  // they never await, so the in-flight count above would be released before the
+  // next message and bound nothing. Same ref-not-state reasoning.
+  const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
+  const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
+  // by requestId, so any reply to it would also settle — and misreport — the original request.
+  const uploadBytesInFlightRef = useRef<Set<string>>(new Set());
+  // The training images THIS host uploaded for this block, by key identity → url. A
+  // training quote naming any other key is never shown or confirmed (RUN_TRAINING).
+  const trainingUploadsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    trainingUploadsRef.current = new Map();
+  }, [blockInstanceId]);
+  // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
+  const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
-  // has no allow-downloads). TWO variants, each with its own security gate:
+  // has no allow-downloads). THREE variants, each with its own security gate:
   //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
   //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
   //            attacker origin (an opaque-origin block's url/data is untrusted).
@@ -3616,6 +3815,12 @@ export function PageBlockHost({
   //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
   //            a withheld/above-ceiling image (status !== 'visible', or omitted)
   //            can NEVER be saved.
+  //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
+  //            is classified from the content (processSaveBytes) and only
+  //            image/JSON/text can be saved, under the classified extension.
+  //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
@@ -3626,6 +3831,24 @@ export function PageBlockHost({
       const { requestId } = req;
       if (req.kind === 'invalid') {
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      if (req.kind === 'bytes') {
+        try {
+          // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
+          // record: a refused save is never decoded/parsed on this main thread, and an over-cap
+          // file is too-large rather than `busy` (processSaveBytes).
+          const { result, recent } = processSaveBytes(req, saveBytesWindowRef.current, Date.now());
+          saveBytesWindowRef.current = recent;
+          if (!result.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
         return;
       }
       // F2 concurrency cap (host-side backpressure): bound concurrent host-side
@@ -3689,9 +3912,11 @@ export function PageBlockHost({
   // spend-time page-LoRA gate already accepts, so the picker offers nothing
   // submit would refuse). The block asks the HOST to open its OWN native
   // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
-  // the iframe); the host posts back ONLY the single chosen resource. The
-  // untrusted iframe NEVER receives a list, the search API, or the catalog — it
-  // only ever learns about the one resource the user physically picked.
+  // the iframe); the host posts back ONLY what the viewer chose — one resource,
+  // or for a multi-select request (`multiple: { max }`, LoRA family only, see
+  // resolveResourcePickerMultiple) the up-to-`max` resources they staged. The
+  // untrusted iframe NEVER receives search results, the search API, or the
+  // catalog — it only ever learns about resources the user physically picked.
   //
   // This feeds the merged page-LoRA `additionalResources` plumbing: the block
   // puts a Checkpoint pick into body.modelVersionId and each LoRA pick into
@@ -3702,7 +3927,7 @@ export function PageBlockHost({
   //
   // The picker reuses the host's native ResourceSelectModal UNMODIFIED. The
   // block never sees the catalog or the search API — it only ever receives the
-  // ONE resource the user physically picked (host chrome can't be enumerated by
+  // resource(s) the user physically picked (host chrome can't be enumerated by
   // the iframe). The real authorization boundary is the SERVER gate
   // (assertViewerCanGeneratePageResources) at estimate/submit, NOT the picker UI.
   //  - `canGenerate: true` (UX floor) + the spend-time re-gate (authoritative).
@@ -3760,6 +3985,54 @@ export function PageBlockHost({
       // out of the picker here.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      // MULTI-SELECT (`multiple: { max }`, LoRA family only). Resolved off the
+      // same raw payload by its own pure function, so a request without the key
+      // falls straight through to the single-pick branch below, unchanged.
+      const multi = resolveResourcePickerMultiple(raw, resourceType);
+      if (multi.kind === 'refused') {
+        // Answer rather than drop: only an SDK that knows multi-select sends
+        // the key, and it throws on `error`. Never downgraded to a single pick.
+        send('RESOURCE_PICKER_RESULT', { requestId, error: multi.reason });
+        return;
+      }
+      if (multi.kind === 'multiple') {
+        // Same native modal, same options bag — only `limit` and
+        // `onSelectMultiple` are added, which switch on its existing batch UI.
+        // The iframe still only learns resources the viewer physically picked:
+        // the list is exactly what the viewer staged (in the order they staged
+        // it), each entry through the SAME safe projection a single pick uses.
+        // Dismissing answers an EMPTY list, so the block can tell "picked
+        // nothing" from a reply that never came.
+        let answeredList = false;
+        const replyWith = (picked: GenerationResource[]) => {
+          if (answeredList) return; // one reply per request
+          answeredList = true;
+          send('RESOURCE_PICKER_RESULT', {
+            requestId,
+            selectedResources: capPickedResources(picked, multi.max).map((resource) =>
+              projectSafeGenerationResource(resource)
+            ),
+          });
+        };
+        openResourceSelectModal({
+          title: multi.max === 1 ? 'Choose a resource' : `Choose up to ${multi.max} resources`,
+          options: {
+            canGenerate: true,
+            resources: [{ type: resourceType, baseModels }],
+          },
+          limit: multi.max,
+          // The modal keeps its one-click path while nothing is staged, and
+          // that path calls `onSelect` — still a list reply, of one.
+          onSelect: (resource) => replyWith([resource]),
+          onSelectMultiple: (resources) => replyWith(resources),
+          onClose: () => {
+            if (answeredList) return;
+            send('RESOURCE_PICKER_RESULT', { requestId, selectedResources: [] });
+          },
+        });
+        return;
+      }
 
       let answered = false;
       openResourceSelectModal({
@@ -3905,6 +4178,12 @@ export function PageBlockHost({
   //     url is an `orchestration…civitai.com` host that passes the img2img
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
+  //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //     Always BLOCKING: `asyncScan` is ignored, so the app never holds the id or a CDN url of
+  //     bytes the scan refused (the SDK already treats a blocking reply to an async request as
+  //     an immediately-scanned image).
+  //
   // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
   // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
   // the reply so concurrent uploads never cross. A successful upload posts the
@@ -3953,6 +4232,77 @@ export function PageBlockHost({
       // never came from a promise anybody is awaiting.)
       if (!req) return;
       const { requestId, purpose, asyncScan } = req;
+      // A requestId whose `bytes` upload is still in flight gets NO reply, whatever this
+      // payload is (invalid, no token, a picker request): the SDK settles by requestId, so
+      // any reply here would settle the ORIGINAL request with this one's result.
+      if (uploadBytesInFlightRef.current.has(requestId)) return;
+
+      const bytesReq = resolveImageUploadBytes(raw);
+      if (bytesReq.kind !== 'none') {
+        if (bytesReq.kind === 'invalid') {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_INVALID_ERROR });
+          return;
+        }
+        if (!token) {
+          reportNoToken('OPEN_IMAGE_UPLOAD');
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR });
+          return;
+        }
+        const { result, recent } = processUploadBytes(
+          bytesReq,
+          uploadBytesWindowRef.current,
+          Date.now()
+        );
+        uploadBytesWindowRef.current = recent;
+        if (!result.ok) {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: result.error });
+          return;
+        }
+        uploadBytesInFlightRef.current.add(requestId);
+        const blockToken = token;
+        setImageBytesUploads((prev) => [
+          ...prev,
+          {
+            requestId,
+            bytes: bytesReq.bytes,
+            filename: result.filename,
+            contentType: result.contentType,
+            blockToken,
+          },
+        ]);
+        return;
+      }
+
+      if (purpose === 'trainingData') {
+        let resolvedImages: TrainingDataUpload[] | null = null;
+        dialogStore.trigger({
+          id: `block-training-data-upload-${requestId}`,
+          component: BlockTrainingDataUploadModal,
+          props: {
+            onResolved: (images: TrainingDataUpload[]) => {
+              resolvedImages = images;
+              for (const image of images) {
+                trainingUploadsRef.current.set(trainingBlobKeyIdentity(image.air), image.url);
+              }
+            },
+          },
+          options: {
+            onClose: () => {
+              const images = resolvedImages as TrainingDataUpload[] | null;
+              send(
+                'IMAGE_UPLOAD_RESULT',
+                images
+                  ? {
+                      requestId,
+                      selected: { images: images.map(({ url, air }) => ({ url, air })) },
+                    }
+                  : { requestId }
+              );
+            },
+          },
+        });
+        return;
+      }
 
       // generationSource: UNSCANNED private img2img source (orchestrator scans
       // the OUTPUT). Reply carries the source shape { url, width, height }; the
@@ -4007,7 +4357,7 @@ export function PageBlockHost({
                 selected: { status: 'pending', imageId, url },
               });
               setImageScanPollers((prev) =>
-                prev.some((p) => p.requestId === requestId)
+                prev.some((p) => p.requestId === requestId && !p.replyOnScan)
                   ? prev
                   : [...prev, { requestId, imageId }]
               );
@@ -4052,7 +4402,133 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+
+  // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
+  // silent return strands the block until its picker timeout.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_IMAGE_PICKER', (raw) => {
+      const decision = resolveImagePickerRequest(raw);
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('IMAGE_PICKER_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const { request } = decision;
+
+      // The modal lists a private library under the real session, so unapproved review code and a
+      // pre-handshake block are answered as a dismissal instead of opening it.
+      if (reviewMode || readGateStatus() !== 'ready') {
+        send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, []));
+        return;
+      }
+
+      let picked: BlockPickedImageInfo[] = [];
+      dialogStore.trigger({
+        id: `block-image-picker-${request.requestId}`,
+        component: BlockImagePickerModal,
+        props: {
+          sources: request.sources,
+          max: request.max,
+          publicOnly: request.publicOnly,
+          onResolved: (result: BlockPickedImageInfo[]) => {
+            picked = result;
+          },
+        },
+        options: {
+          onClose: () => send('IMAGE_PICKER_RESULT', buildImagePickerReply(request, picked)),
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode]);
+
+  // OPEN_MEDIA_UPLOAD → MEDIA_UPLOAD_RESULT: an image, video or audio file uploaded as a PRIVATE
+  // generation input (a consumer blob), picked in host chrome or supplied as `bytes`. Review mode
+  // and a pre-handshake block get the cancelled `{ requestId }`: the upload would run under the
+  // viewer's real session.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_MEDIA_UPLOAD', (raw) => {
+      const decision = resolveMediaUploadRequest(raw);
+      if (decision.kind === 'drop') return;
+      // An id whose `bytes` upload is still running gets no reply: it would settle that upload.
+      const requestId = decision.kind === 'ok' ? decision.request.requestId : decision.requestId;
+      if (mediaUploadInFlightRef.current.has(requestId)) return;
+      if (reviewMode || readGateStatus() !== 'ready') {
+        send('MEDIA_UPLOAD_RESULT', { requestId });
+        return;
+      }
+      if (decision.kind === 'refuse') {
+        send('MEDIA_UPLOAD_RESULT', { requestId, error: decision.error });
+        return;
+      }
+      const { kind, bytes, mimeType } = decision.request;
+
+      if (bytes) {
+        // A block cannot upload unasked into the account of a viewer it holds no token for.
+        if (!token) {
+          reportNoToken('OPEN_MEDIA_UPLOAD');
+          send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_NO_TOKEN_ERROR });
+          return;
+        }
+        const { result, recent } = processMediaUploadBytes(
+          { kind, bytes, mimeType },
+          mediaUploadWindowRef.current,
+          Date.now()
+        );
+        mediaUploadWindowRef.current = recent;
+        if (!result.ok) {
+          send('MEDIA_UPLOAD_RESULT', { requestId, error: result.error });
+          return;
+        }
+        mediaUploadInFlightRef.current.add(requestId);
+        const contentType = result.contentType;
+        // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
+        void (async () => {
+          try {
+            const run = await import('./mediaUploadRun');
+            try {
+              const blob = new Blob([bytes], { type: contentType });
+              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              send(
+                'MEDIA_UPLOAD_RESULT',
+                selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
+              );
+            } catch (err) {
+              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+            }
+          } catch {
+            send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
+          } finally {
+            mediaUploadInFlightRef.current.delete(requestId);
+          }
+        })();
+        return;
+      }
+
+      let uploaded: BlockMediaUploadInfo | null = null;
+      dialogStore.trigger({
+        id: `block-media-upload-${requestId}`,
+        component: BlockMediaUploadModal,
+        props: {
+          kind,
+          onResolved: (result: BlockMediaUploadInfo) => {
+            uploaded = result;
+          },
+        },
+        options: {
+          onClose: () =>
+            send(
+              'MEDIA_UPLOAD_RESULT',
+              uploaded ? { requestId, selected: uploaded } : { requestId }
+            ),
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
@@ -4330,6 +4806,120 @@ export function PageBlockHost({
     unfollowCollectionMutation,
   ]);
 
+  // ── SET_ENTITY_REACTION → ENTITY_REACTION_RESULT ───────────────────────────
+  // ── GET_ENTITY_REACTIONS → ENTITY_REACTIONS_RESULT ─────────────────────────
+  //
+  // A block sets, or reads, the viewer's reaction on an image it was served. The decision layer
+  // is SHARED with IframeHost (`reactionGate.ts`), which carries the rationale; this host
+  // contributes its `viewer` prop, its `reviewMode` and the token's granted scopes.
+  //
+  // 🔴 NO CONFIRM DIALOG, ON PURPOSE. A per-tap confirm would make reactions unusable; the
+  // consent is the consent-gated `social:react:self` grant, refused here as `needs-consent`
+  // while missing and refused again by the server if this check ever regressed.
+  //
+  // REQUEST-style ⇒ every path with a usable `requestId` replies exactly once
+  // (`createReactionReplyLatch`) with a `result` or a closed-set `error`; one without is dropped,
+  // there is nothing to reply to. `trpcUtils.client` rather than a `useMutation` so no
+  // render-time hook is added to a component that tests mock by hand.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewMode,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewMode,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewMode,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewMode,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
   // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
   //
   // A block asks the host to publish a REAL Post on the viewer's profile from the
@@ -4511,6 +5101,11 @@ export function PageBlockHost({
           settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
           return;
         }
+        const thumbnails = resolveTrainingConsentThumbnails(preview, trainingUploadsRef.current);
+        if (thumbnails === null) {
+          settlement.reply({ error: 'training data not uploaded here' });
+          return;
+        }
         const copy = buildTrainingConsentCopy({ appName, preview });
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
@@ -4524,10 +5119,18 @@ export function PageBlockHost({
         dialogStore.trigger({
           // Per-request id — a deduped dialog would be a request that never replies.
           id: `block-run-training-${requestId}`,
-          component: ConfirmDialog,
+          // A confirm that spends Buzz: disabled briefly after it appears.
+          component: GuardedConfirmDialog,
           props: {
             title: copy.title,
-            message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
+            message: (
+              <TrainingConsentBody
+                copy={copy}
+                preview={preview}
+                thumbnails={thumbnails}
+                onBuyBuzz={openBuyBuzz}
+              />
+            ),
             labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
             confirmProps: { color: 'blue' },
             size: 'lg',
@@ -4577,25 +5180,209 @@ export function PageBlockHost({
     reportNoToken,
   ]);
 
-  // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
-  // Step 1 of the training flow: the host calls `blocks.prepareTrainingDataset`
-  // with the page's block token, which the block's own origin cannot reach. No
-  // dialog — nothing is charged. Decision + reply live in `prepareTrainingDatasetGate.ts`.
+  // ── RUN_CONFIRMED_STEP → CONFIRMED_STEP_RESULT ────────────────────────────
+  // One pass-through step whose FIXED price exceeds the app's per-call budget: preview
+  // the stored quote, refuse with an explanation if it would exceed the viewer's own
+  // daily limit, else confirm in host chrome, record consent (session-only), then
+  // submit — see `runConfirmedStepGate.ts`. The same shape, settlement and transport
+  // rules as RUN_TRAINING above.
   useEffect(() => {
-    const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
-      void handlePrepareTrainingDataset({
+    const showDailyLimitRefusal = (
+      requestId: string,
+      total: number,
+      dailyLimit: ConfirmedStepQuotePreview['dailyLimit']
+    ) => {
+      const copy = buildConfirmedStepDailyLimitCopy({ appName, total, dailyLimit });
+      dialogStore.trigger({
+        id: `block-confirmed-step-limit-${requestId}`,
+        component: AlertDialog,
+        props: {
+          type: 'info',
+          title: copy.title,
+          size: 'md',
+          children: ({ handleClose }: { handleClose: () => void }) => (
+            <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
+          ),
+        },
+      });
+    };
+    const showUnconfirmedNotice = (requestId: string) => {
+      dialogStore.trigger({
+        id: `block-confirmed-step-unconfirmed-${requestId}`,
+        component: AlertDialog,
+        props: {
+          type: 'info',
+          title: CONFIRMED_STEP_UNCONFIRMED_NOTICE.title,
+          size: 'md',
+          children: ({ handleClose }: { handleClose: () => void }) => (
+            <ConfirmedStepNoticeBody
+              text={CONFIRMED_STEP_UNCONFIRMED_NOTICE.body}
+              onClose={handleClose}
+            />
+          ),
+        },
+      });
+    };
+    const off = onMessage<unknown>('RUN_CONFIRMED_STEP', (raw) => {
+      const gate = resolveRunConfirmedStepRequest({
         raw,
         ready: readGateStatus() === 'ready',
         signedIn: viewer != null,
         reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('CONFIRMED_STEP_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, quoteId, body } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('CONFIRMED_STEP_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('RUN_CONFIRMED_STEP');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        let preview: ConfirmedStepQuotePreview;
+        try {
+          preview = (await trpcUtils.client.blocks.previewQuoteGrant.mutate({
+            // The KIND is stated, never inferred: this dialog confirms step quotes only.
+            kind: 'step',
+            blockToken: token,
+            quoteId,
+          })) as ConfirmedStepQuotePreview;
+        } catch (err) {
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        // The viewer's own limit binds and the confirm cannot override it: explain,
+        // point at where to raise it, and refuse — no confirm is offered.
+        if (preview.exceedsDailyLimit) {
+          settlement.reply({ error: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE });
+          showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+          return;
+        }
+        const copy = buildConfirmedStepConsentCopy({ appName, preview });
+        const openBuyBuzz =
+          preview.shortfall != null && preview.shortfall > 0
+            ? () =>
+                dialogStore.trigger<BuyBuzzModalProps>({
+                  id: `block-confirmed-step-buy-buzz-${requestId}`,
+                  component: BuyBuzzModal,
+                  props: { minBuzzAmount: preview.shortfall ?? undefined },
+                })
+            : undefined;
+        dialogStore.trigger({
+          // Per-request id — a deduped dialog would be a request that never replies.
+          id: `block-run-confirmed-step-${requestId}`,
+          // A confirm that spends Buzz: disabled briefly after it appears.
+          component: GuardedConfirmDialog,
+          props: {
+            title: copy.title,
+            message: (
+              <ConfirmedStepConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />
+            ),
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not be
+              // able to claim `declined` for a job that is being submitted.
+              settlement.markConsented();
+              try {
+                await trpcUtils.client.blocks.consentQuoteGrant.mutate({
+                  kind: 'step',
+                  blockToken: token,
+                  quoteId,
+                });
+                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+                try {
+                  result = await submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                } catch (err) {
+                  // Never resent: the quote is spent once.
+                  const failed = trainingSubmitReplyFromError(err);
+                  settlement.reply(failed);
+                  if ('error' in failed && failed.error === 'submission-unconfirmed') {
+                    showUnconfirmedNotice(requestId);
+                  }
+                  return;
+                }
+                const reply = confirmedStepReplyFromResult(result);
+                settlement.reply(reply);
+                // The outcome is unknown and a retry would be a new, separately charged
+                // job: say so in host chrome, not only to the block.
+                if ('error' in reply && reply.error === 'submission-unconfirmed') {
+                  showUnconfirmedNotice(requestId);
+                }
+                // The day's spend moved between preview and submit: tell the viewer
+                // the same thing the preview would have.
+                if (isDailyLimitRefusal(result.snapshot)) {
+                  showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+                }
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    submitWorkflowMutation,
+    reportNoToken,
+  ]);
+
+  // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
+  // A bundle may still send this: answer at once rather than hang. Training images
+  // arrive via OPEN_IMAGE_UPLOAD { purpose: 'trainingData' }.
+  useEffect(() => {
+    const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
+      const requestId = (raw as { requestId?: unknown } | null | undefined)?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      send('TRAINING_DATASET_RESULT', { requestId, error: 'removed' });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // ── ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT ────────────────────────
+  // The batch twin of ESTIMATE_WORKFLOW, for an app that prices one generation
+  // per grid cell: a list of bodies in, one snapshot per body plus a run total
+  // out. Estimate only — nothing is submitted, and each cell is still submitted
+  // through SUBMIT_WORKFLOW. Decision + reply live in `estimateBatchGate.ts`,
+  // shared with the model-slot host.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: reviewNack ? REVIEW_NACK_MESSAGE : null,
         token,
-        prepare: (input) => trpcUtils.client.blocks.prepareTrainingDataset.mutate(input),
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
         send,
-        onNoToken: () => reportNoToken('PREPARE_TRAINING_DATASET'),
+        onNoToken: (requestId) => {
+          nack('ESTIMATE_WORKFLOW_BATCH', requestId);
+        },
       });
     });
     return off;
-  }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
+  }, [onMessage, send, token, reviewNack, trpcUtils, nack]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from
@@ -4839,6 +5626,7 @@ export function PageBlockHost({
         // hang the store popover on.
         slug={slug}
         slotId={PAGE_SLOT_ID}
+        hostSurface={surface}
         canOpenPage={canOpenPage}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
@@ -4901,11 +5689,40 @@ export function PageBlockHost({
           resolves the pending upload. */}
       {imageScanPollers.map((p) => (
         <BlockImageScanPoller
-          key={p.requestId}
+          key={`${p.replyOnScan ? 'bytes' : 'picked'}:${p.requestId}`}
           imageId={p.imageId}
           onResult={(result: BlockImageScanResult) => {
-            send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
-            setImageScanPollers((prev) => prev.filter((x) => x.requestId !== p.requestId));
+            if (p.replyOnScan) {
+              uploadBytesInFlightRef.current.delete(p.requestId);
+              send('IMAGE_UPLOAD_RESULT', imageUploadResultFromScan(p.requestId, result));
+            } else {
+              send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
+            }
+            // The variant too, not just the id: a picked and a bytes upload may share a requestId.
+            setImageScanPollers((prev) =>
+              prev.filter((x) => !(x.requestId === p.requestId && x.replyOnScan === p.replyOnScan))
+            );
+          }}
+        />
+      ))}
+      {imageBytesUploads.map((u) => (
+        <BlockImageBytesUploader
+          key={u.requestId}
+          bytes={u.bytes}
+          filename={u.filename}
+          contentType={u.contentType}
+          blockToken={u.blockToken}
+          onPersisted={(imageId) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            setImageScanPollers((prev) => [
+              ...prev,
+              { requestId: u.requestId, imageId, replyOnScan: true },
+            ]);
+          }}
+          onError={(error) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            uploadBytesInFlightRef.current.delete(u.requestId);
+            send('IMAGE_UPLOAD_RESULT', { requestId: u.requestId, error });
           }}
         />
       ))}
@@ -5044,6 +5861,7 @@ export function PageBlockHost({
               key={reloadNonce}
               ref={iframeRef}
               src={renderedIframeSrc}
+              onLoad={handleFrameLoad}
               sandbox={effectiveSandbox}
               referrerPolicy="no-referrer"
               // Sanitize the publisher-controlled appName for the iframe title too
@@ -5284,6 +6102,7 @@ export function PageBlockHost({
               // Automatic recovery has settled (exhausted, or never applicable):
               // the button is now the only path forward, so make it unmissable.
               prominentRetry={autoRetrySettled}
+              timeoutCopy={readyWait.timeoutCopy}
             />
           </Box>
         ) : null}

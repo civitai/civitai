@@ -3,9 +3,9 @@ import { openLoginHere } from '~/components/Login/requireLogin';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSession } from '~/providers/SessionProvider';
 
-/** Opens sign-in for an upload, returning to the current page, under the generator's login reason. */
+/** Opens sign-in for an upload, returning to the current page, under the upload's own login reason. */
 export function openSignInToUpload() {
-  openLoginHere('image-gen');
+  openLoginHere('image-upload');
 }
 
 /**

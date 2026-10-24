@@ -49,12 +49,18 @@ const fetchImageResources = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   getUserBuzzAccount,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -95,6 +101,17 @@ const validCreateInput = {
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   duration: 24,
 };
+
+const REFUNDED = { refundedTransactions: [{ amount: 50 }], totalRefunded: 1 };
+
+/** One leg per prefix, already refunded: a 409 then reads as settled. */
+function legsAlreadyRefunded() {
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 50 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
+}
 
 describe('crucibleImageSchema', () => {
   it('accepts a Cloudflare id whose variant nibble is not RFC-4122 conformant', () => {
@@ -1152,7 +1169,8 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
     getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
     createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
-    refundMultiAccountTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+    legsAlreadyRefunded();
   });
 
   const lockedCheck = () => {
@@ -1386,10 +1404,83 @@ describe('submitEntry — free entries', () => {
       where: { crucibleId: 1, userId: 42 },
     });
   });
+
+  // Entries whose image is gone (deleted or withdrawn), counted per the where clause.
+  const withGoneEntries = ({ all, live }: { all: number; live: number }) =>
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { imageId?: unknown };
+    }) => ('imageId' in args.where ? live : all)) as never);
+
+  it('reopens the slot of an entry whose image is gone, and charges the entry made in it', async () => {
+    withGoneEntries({ all: 3, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('still charges a re-entry when the gone entry was the free one', async () => {
+    withGoneEntries({ all: 1, live: 0 });
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('accepts while live entries are under the limit, however many entries were made', async () => {
+    withGoneEntries({ all: 5, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses once the live entries reach the limit', async () => {
+    withGoneEntries({ all: 4, live: 3 });
+
+    await expect(submit()).rejects.toThrow(/maximum of 3 entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count entries whose image is gone toward the crucible's total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      entryLimit: 3,
+      freeEntriesPerUser: 1,
+      maxTotalEntries: 10,
+      _count: { entries: 10 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 9)) as never);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
+      where: { crucibleId: 1, imageId: { not: null } },
+    });
+  });
+
+  it("refuses once the crucible's live entries reach its total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryLimit: 3,
+      maxTotalEntries: 10,
+      _count: { entries: 12 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 10)) as never);
+
+    await expect(submit()).rejects.toThrow(/reached its maximum number of entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('createCrucibleEntryPost', () => {
-  const create = (viewer: { isGreen?: boolean; blockedByUserIds?: number[] } = {}) =>
+  const create = (viewer: { isGreen?: boolean; blockedCreatorIds?: number[] } = {}) =>
     createCrucibleEntryPost({ crucibleId: 1, userId: 42, ...viewer });
   const arena = (overrides: Record<string, unknown> = {}) => ({
     name: 'Open Arena',
@@ -1449,7 +1540,7 @@ describe('createCrucibleEntryPost', () => {
   it.each([
     ['still under review', { ingestion: 'Pending' }, {}],
     ['accepting mature entries, on the green site', { nsfwLevel: 1 | 4 }, { isGreen: true }],
-    ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
+    ['whose creator blocked the caller', {}, { blockedCreatorIds: [99] }],
   ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
 

@@ -51,9 +51,6 @@ const SKELETON_TILES = 12;
 /** The single page of the community catalog this panel holds client-side. */
 const COMMUNITY_PAGE_SIZE = 100;
 
-const matches = (query: string, ...fields: (string | null | undefined)[]) =>
-  !query || fields.some((field) => field?.toLowerCase().includes(query));
-
 type Tile = {
   shopItemId: number;
   cosmeticId: number;
@@ -115,7 +112,6 @@ export function StickerShopPanel({
   });
 
   const isLoading = loadingOfficial || loadingCommunity;
-  const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
     // Official first, then community, each most-sold first. Not interleaved: the
@@ -125,29 +121,26 @@ export function StickerShopPanel({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,
       listedAtOf: (entry) => entry.createdAt,
-      // `getShop` already filtered the types server-side; this is the owned rule.
-      filters: { modifier: 'notOwned' },
+      // `getShop` already filtered the types server-side; this is the owned rule
+      // and the search. Only this half is searched here: the community half got
+      // back what the server matched.
+      filters: { modifier: 'notOwned', search },
       sort: CosmeticShopSort.MostPopular,
       ownedCosmeticIds,
       wishlistedIds: new Set<number>(),
-    })
-      // Only this half is filtered here. The community half asked the server for
-      // the search and got back what matched — re-testing those titles locally
-      // would drop the ones that matched on the cosmetic's own name.
-      .filter(({ shopItem }) => matches(query, shopItem.title, shopItem.cosmetic?.name))
-      .map(({ shopItem }) => ({
-        shopItemId: shopItem.id,
-        cosmeticId: shopItem.cosmeticId,
-        title: shopItem.title,
-        unitAmount: shopItem.unitAmount,
-        cosmeticData: shopItem.cosmetic?.data,
-        cosmeticFlags: shopItem.cosmetic?.flags,
-        meta: shopItem.meta,
-        creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
-        creator: shopItem.cosmetic?.creator ?? null,
-        description: shopItem.description,
-        viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
-      }));
+    }).map(({ shopItem }) => ({
+      shopItemId: shopItem.id,
+      cosmeticId: shopItem.cosmeticId,
+      title: shopItem.title,
+      unitAmount: shopItem.unitAmount,
+      cosmeticData: shopItem.cosmetic?.data,
+      cosmeticFlags: shopItem.cosmetic?.flags,
+      meta: shopItem.meta,
+      creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
+      creator: shopItem.cosmetic?.creator ?? null,
+      description: shopItem.description,
+      viaShopUserId: CIVITAI_SHOP_ATTRIBUTION,
+    }));
 
     const community = communityItems.map((item) => ({
       shopItemId: item.id,
@@ -193,7 +186,7 @@ export function StickerShopPanel({
       });
       return acc;
     }, []);
-  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query, imageNsfwLevel]);
+  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, search, imageNsfwLevel]);
 
   return (
     <div className="mb-2 w-full overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">

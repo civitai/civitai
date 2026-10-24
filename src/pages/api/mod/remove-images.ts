@@ -7,6 +7,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { ViolationType } from '~/server/common/enums';
+import { heldRemovalSummary, holdRemovals } from '~/server/services/image-removal-hold.service';
 
 const schema = z.object({
   imageIds: z.array(z.number()).optional(),
@@ -15,6 +16,8 @@ const schema = z.object({
   reason: z.string().optional(),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().trim().min(1).optional(),
+  /** The moderator holds `image.removal.confirm`; asserted by the trusted caller, like `moderatorId`. */
+  canConfirmReRemoval: z.boolean().optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
@@ -24,10 +27,32 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
 
   try {
-    const { imageIds, userId, reason, moderatorId, violationType, violationDetails } = parsed.data;
+    const {
+      imageIds,
+      userId,
+      reason,
+      moderatorId,
+      violationType,
+      violationDetails,
+      canConfirmReRemoval,
+    } = parsed.data;
+
+    // A removal of chosen images is held; an account-wide removal (`userId`) is not.
+    let ids = imageIds;
+    let held: ReturnType<typeof heldRemovalSummary> = [];
+    if (imageIds?.length && !canConfirmReRemoval) {
+      const hold = await holdRemovals(
+        imageIds.map((imageId) => ({ imageId, violationType, violationDetails })),
+        moderatorId ?? 0,
+        'api.removeImages'
+      );
+      ids = hold.proceed;
+      held = heldRemovalSummary(hold.held);
+      if (!ids.length) return res.status(200).json({ images: 0, held });
+    }
 
     const tracker = new Tracker(req, res);
-    const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
+    const images = await handleBlockImages({ ids, userId, moderatorId });
     await Limiter({ batchSize: 10000 }).process(images, async (images) => {
       await tracker.images(
         images.map((image) => ({
@@ -44,7 +69,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         }))
       );
     });
-    res.status(200).json({ images: images.length });
+    res.status(200).json({ images: images.length, held });
   } catch (e) {
     const err = e as Error;
     logToAxiom({

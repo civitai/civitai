@@ -7,7 +7,7 @@ import type {
   Flux1KontextMaxImageGenInput,
   Flux1KontextProImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   fluxKontextModeOf,

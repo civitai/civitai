@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { IconCheck, IconRefresh, IconUpload, IconX } from '@tabler/icons-react';
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -119,12 +119,17 @@ export function GenerateImageModal({
         setSelectedIdx(0);
         setIsGenerating(false);
         activeWorkflowId.current = null;
-      } else if (result.status === 'failed') {
+      } else if (result.status === 'failed' || result.status === 'siteRestricted') {
         setIsGenerating(false);
         activeWorkflowId.current = null;
         showErrorNotification({
           title: 'Generation failed',
-          error: new Error('The image generator returned an error. Please try again.'),
+          error: new Error(
+            ('errorMessage' in result && result.errorMessage) ||
+              (result.status === 'siteRestricted'
+                ? 'This image was rated mature and is not available on this site.'
+                : 'The image generator returned an error. Please try again.')
+          ),
         });
       }
       // If still processing, the next interval tick (or signal) will retry.

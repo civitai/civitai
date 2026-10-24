@@ -150,10 +150,11 @@ prisma_check() { # <dir> <flake-prisma-version> <flake-engine-commit>
     --flake-prisma-version "$2" --flake-engine-commit "$3"
 }
 
-# The values the flake currently supplies. Kept as literals rather than read
+# The values the flake should supply (REAL_NODE is the .nvmrc pin, which the
+# locked nixpkgs can lag; see flake.nix). Kept as literals rather than read
 # back out of flake.nix on purpose: a test that derives its expectation from the
 # thing under test cannot fail.
-REAL_NODE=24.19.0
+REAL_NODE=24.22.1
 REAL_PNPM=10.34.5
 REAL_PRISMA=6.13.0
 REAL_COMMIT=361e86d0ea4987e9f53a565309b3eed797a6bcbd

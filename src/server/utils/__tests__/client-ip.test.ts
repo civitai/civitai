@@ -11,7 +11,7 @@ import requestIp from 'request-ip';
  * dependency, this file stops collecting and that is the signal.
  */
 
-import { resolveClientIp } from '../client-ip';
+import { getEdgeAttestedClientIp, getTrustedClientIp, resolveClientIp } from '../client-ip';
 
 const SOCKET_PEER = '10.42.0.9';
 
@@ -238,5 +238,39 @@ describe('resolveClientIp', () => {
         expect(requestIp.getClientIp(reqWith({ 'cf-connecting-ip': 'fe80::1' }))).toBe('fe80::1');
       });
     });
+  });
+});
+
+describe('getEdgeAttestedClientIp', () => {
+  const peer = { remoteAddress: '10.20.30.40' };
+
+  it('returns the edge-stamped address, normalised, when the edge request id accompanies it', () => {
+    expect(
+      getEdgeAttestedClientIp({
+        headers: { 'cf-ray': 'abc123', 'cf-connecting-ip': '::ffff:203.0.113.7' },
+        socket: peer,
+      })
+    ).toBe('203.0.113.7');
+  });
+
+  it.each([
+    ['no edge request id', { 'cf-connecting-ip': '203.0.113.7' }],
+    ['a blank edge request id', { 'cf-ray': '  ', 'cf-connecting-ip': '203.0.113.7' }],
+    ['an edge request id but no address', { 'cf-ray': 'abc123' }],
+    ['an address that is not one', { 'cf-ray': 'abc123', 'cf-connecting-ip': 'not-an-ip' }],
+    ['no headers at all', {}],
+  ])('returns null for %s, and never the transport peer', (_label, headers) => {
+    expect(getEdgeAttestedClientIp({ headers, socket: peer })).toBeNull();
+    // The wider resolver is unchanged: it still falls back to the peer in each of these.
+    expect(getTrustedClientIp({ headers, socket: peer })).toBe('10.20.30.40');
+  });
+
+  it('agrees with getTrustedClientIp whenever it answers', () => {
+    const req = {
+      headers: { 'cf-ray': 'abc123', 'cf-connecting-ip': '2001:DB8::1' },
+      socket: peer,
+    };
+    expect(getEdgeAttestedClientIp(req)).toBe('2001:db8::1');
+    expect(getTrustedClientIp(req)).toBe('2001:db8::1');
   });
 });

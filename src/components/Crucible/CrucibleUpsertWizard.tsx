@@ -1242,6 +1242,7 @@ export function CrucibleUpsertWizard(props: Props) {
         : null,
     _count: { entries: crucible?._count.entries ?? 0 },
     paidEntryCount: crucible?.paidEntryCount ?? 0,
+    entrantCount: crucible?.entrantCount ?? 0,
   };
 
   const submitLabel = crucible ? 'Save Changes' : 'Create Crucible';

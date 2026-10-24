@@ -1,4 +1,4 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
@@ -75,6 +75,17 @@ function logCredentialAttribution(
     /* see above: a logging fault must not surface as a failed moderation call */
   }
 }
+
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
+export const init: ServerInit = async () => {
+  try {
+    const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
+    await releaseLeasesAtBoot();
+  } catch (error) {
+    void logAxiomError(error, { event: 'text-scan test run lease release failed' });
+  }
+};
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);

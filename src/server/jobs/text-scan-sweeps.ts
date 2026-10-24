@@ -1,7 +1,7 @@
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { isTextScanEnabled } from '~/server/services/text-scan/mode';
+import { getTextScanCsamMode, isTextScanEnabled } from '~/server/services/text-scan/mode';
 import { scamEligibleAuthors } from '~/server/services/text-scan/profiles/scam-text';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
@@ -171,6 +171,7 @@ const chatWindowKey = (message: ChatRow) =>
     : null;
 
 export function sweepChatWindows(now = new Date(), options: SweepOptions = {}) {
+  let review: Promise<boolean> | undefined;
   return sweep<ChatRow>({
     job: 'text-scan-chat-windows',
     cursorKey: TEXT_SCAN_CHAT_CURSOR_KEY,
@@ -202,9 +203,13 @@ export function sweepChatWindows(now = new Date(), options: SweepOptions = {}) {
         const newestId = Math.max(windows.get(key)?.newestId ?? 0, message.id);
         windows.set(key, { senderId: message.userId, newestId });
       }
-      const eligible = await scamEligibleAuthors([...windows.values()].map((w) => w.senderId));
+      review ??= getTextScanCsamMode().then((mode) => mode === 'review');
+      // In csam review every sender is scanned; the profile narrows older accounts to csam only.
+      const eligible = (await review)
+        ? null
+        : await scamEligibleAuthors([...windows.values()].map((w) => w.senderId));
       const ids = [...windows.values()]
-        .filter((w) => eligible.has(w.senderId))
+        .filter((w) => !eligible || eligible.has(w.senderId))
         .map((w) => w.newestId);
       return { scanned: ids.length, submitted: await scanAll('ChatMessage', ids) };
     },

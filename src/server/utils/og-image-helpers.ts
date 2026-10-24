@@ -103,6 +103,13 @@ export async function fetchImageAsDataUri(
     if (arrayBuffer.byteLength > maxBytes) return null;
 
     const contentType = res.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+    // satori cannot decode WebP, and an optimized edge variant is the only resized one that keeps
+    // transparency (a plain resize comes back as JPEG), so a WebP is re-encoded as PNG here.
+    if (contentType === 'image/webp') {
+      const { default: sharp } = await import('sharp');
+      const png = await sharp(Buffer.from(arrayBuffer)).png().toBuffer();
+      return `data:image/png;base64,${png.toString('base64')}`;
+    }
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     return `data:${contentType};base64,${base64}`;
   } catch {

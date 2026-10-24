@@ -51,6 +51,12 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   return { mockRead, mockWrite, ids: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_test_${++ids.n}`,
@@ -75,7 +81,9 @@ const baseInput: SubmitExternalListingInput = {
   contentRating: 'g',
 };
 
-function ownedClient(overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}) {
+function ownedClient(
+  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
 
@@ -110,7 +118,10 @@ describe('submitExternalListing', () => {
     expect(res.listingId).toMatch(/^apl_test_/);
     expect(res.publishRequestId).toMatch(/^alpr_test_/);
 
-    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(listingData).toMatchObject({
       kind: 'offsite',
       status: 'draft',
@@ -125,8 +136,10 @@ describe('submitExternalListing', () => {
       userId: CALLER,
     });
 
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as Record<string, unknown>;
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(reqData).toMatchObject({
       kind: 'offsite',
       status: 'pending',
@@ -142,25 +155,30 @@ describe('submitExternalListing', () => {
     // caller OTHER owns the client → allowed; rows carry OTHER.
     await submitExternalListing({ input: baseInput, userId: OTHER });
     const listingData = mockWrite.appListing.create.mock.calls[0][0].data as { userId: number };
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as { submittedByUserId: number };
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as {
+      submittedByUserId: number;
+    };
     expect(listingData.userId).toBe(OTHER);
     expect(reqData.submittedByUserId).toBe(OTHER);
   });
 
   it('ownership failure: a client owned by someone else → FORBIDDEN, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'FORBIDDEN',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('client not found → NOT_FOUND, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(null);
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'NOT_FOUND',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -182,7 +200,25 @@ describe('submitExternalListing', () => {
       input: { ...baseInput, requestedScopes: TokenScope.MediaWrite, scopeJustifications: {} },
       userId: CALLER,
     });
-    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(listingData.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('never snapshots a client_credentials-only bit into the disclosed connect scopes', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(
+      ownedClient({ allowedScopes: CEILING | TokenScope.AppStoreCatalogWrite })
+    );
+    await submitExternalListing({
+      input: { ...baseInput, scopeJustifications: {} },
+      userId: CALLER,
+    });
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(listingData.connectRequestedScopes).toBe(CEILING);
   });
 
@@ -199,7 +235,10 @@ describe('submitExternalListing', () => {
   });
 
   it.each([
-    ['unknown-scope key', { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { NotAScope: 'x' } }],
+    [
+      'unknown-scope key',
+      { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { NotAScope: 'x' } },
+    ],
     [
       'value > max length',
       {
@@ -237,18 +276,22 @@ describe('submitExternalListing', () => {
 
   it('slug already taken → friendly BAD_REQUEST, no tx', async () => {
     mockRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('already taken'),
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('already taken'),
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('per-user pending cap → TOO_MANY_REQUESTS, no tx', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(10);
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'TOO_MANY_REQUESTS',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 });
@@ -339,7 +382,27 @@ describe('updateListing (connect scope edit re-validation)', () => {
       listingId: 'apl_live',
       userId: CALLER,
       // A bogus form mask is supplied; the service must ignore it and snapshot CEILING.
-      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: {
+        requestedScopes: TokenScope.ModelsRead,
+        scopeJustifications: { ModelsRead: 'reason' },
+      },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('never re-snapshots a client_credentials-only bit on a scope edit', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue({
+      ...approvedConnectListing,
+      status: 'pending',
+    });
+    mockRead.oauthClient.findUnique.mockResolvedValue(
+      ownedClient({ allowedScopes: CEILING | TokenScope.AppStoreCatalogWrite })
+    );
+    await updateListing({
+      listingId: 'apl_live',
+      userId: CALLER,
+      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(CEILING);
@@ -413,9 +476,10 @@ describe('loadConnectClientForListing (moderator ownership relaxation)', () => {
   });
 
   it('mod + App-Block client → still BAD_REQUEST (exclusion holds for mods, no DB lookup)', async () => {
-    await expect(
-      loadConnectClientForListing('appblk-abc123', CALLER, true)
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('App Block') });
+    await expect(loadConnectClientForListing('appblk-abc123', CALLER, true)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('App Block'),
+    });
     expect(mockRead.oauthClient.findUnique).not.toHaveBeenCalled();
   });
 

@@ -57,6 +57,8 @@ import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
+import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
+import { CrucibleEventTagsPanel } from '~/components/Crucible/CrucibleEventTagsPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import {
@@ -229,13 +231,28 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
 
+  const withdrawEntryMutation = trpc.crucible.withdrawEntry.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        title: 'Entry removed',
+        message: 'Your entry slot is open again.',
+      });
+      queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) });
+    },
+  });
+
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
 
   const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
-  const entryCount = crucible._count?.entries ?? 0;
+  // What the grid lists, not the raw row count: entries hidden from this viewer are not claimed.
+  const entryCount = entriesData?.pages[0]?.visibleCount ?? crucible._count?.entries ?? 0;
   const { paidEntryCount } = crucible;
   const entryFeePool = crucible.entryFee * paidEntryCount;
   const totalPrizePool = getCrucibleTotalPrizePool({
@@ -254,6 +271,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
+  const podiumEntries = entriesData?.pages[0]?.podium ?? [];
+  // A winner the page can't show (image deleted, hidden, outside the viewer's level) still holds
+  // their prize place on the leaderboard.
+  const leaderboardEntries = [
+    ...loadedEntries.filter(hasScore),
+    ...podiumEntries.filter(({ id }) => !loadedEntries.some((entry) => entry.id === id)),
+  ];
   const userEntries = crucible.viewerEntries;
 
   const openEntry = async ({ imageId }: { imageId: number }, gridOrder: number[]) => {
@@ -289,7 +313,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     entryLimit: maxUserEntries,
   });
   const nextEntryFree = isFreeCrucibleEntry({
-    entriesSoFar: userEntryCount,
+    entriesSoFar: crucible.viewerEntriesSoFar,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
   });
 
@@ -320,6 +344,28 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
+    });
+  };
+
+  const handleWithdrawEntry = (entry: CrucibleEntryData) => {
+    openConfirmModal({
+      title: 'Remove your entry',
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            Remove this entry from the crucible? It leaves judging and its slot opens up again.
+          </Text>
+          <Text size="sm" fw={600}>
+            {crucible.entryFee > 0
+              ? `There are no refunds, and entering again in this slot costs the full ${crucible.entryFee.toLocaleString()} Buzz fee.`
+              : "This can't be undone."}
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { cancel: 'Keep it', confirm: 'Remove entry' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => withdrawEntryMutation.mutate({ entryId: entry.id }),
     });
   };
 
@@ -374,6 +420,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         {/* Hero Section */}
         <CrucibleHeader
           className="-mt-3"
+          entryCount={entryCount}
           crucible={{
             id: crucible.id,
             name: crucible.name,
@@ -391,6 +438,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             heroImage: crucible.heroImage,
             _count: crucible._count,
             paidEntryCount,
+            entrantCount: crucible.entrantCount,
           }}
         />
 
@@ -400,7 +448,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
         {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
-            entries={entriesData?.pages[0]?.podium ?? []}
+            entries={podiumEntries}
             prizeWinners={crucible.prizeWinners}
             buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
@@ -429,6 +477,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   />
                 ))}
 
+              {/* Discussion sits before the entries feed, as on the challenge page */}
+              <div className="mb-8">
+                <CrucibleDiscussion crucibleId={crucible.id} userId={crucible.user.id} />
+              </div>
+
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid
                 entries={loadedEntries.map(toGridEntry)}
@@ -440,6 +493,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 onEntryClick={openEntry}
                 status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
+                onWithdrawEntry={isOpen ? handleWithdrawEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 completed={crucible.status === CrucibleStatus.Completed}
@@ -569,7 +623,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               {/* Prize Pool & Standings */}
               {rankingsVisible ? (
                 <CrucibleLeaderboard
-                  entries={loadedEntries.filter(hasScore)}
+                  entries={leaderboardEntries}
                   totalCount={entryCount}
                   prizeWinners={crucible.prizeWinners}
                   hasMore={!!hasMoreEntries}
@@ -640,6 +694,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 ]}
               />
 
+              {isModerator && <CrucibleEventTagsPanel crucibleId={crucible.id} />}
+
               {(canEdit || canCancel) && (
                 <Paper className="rounded-lg p-6" bg="dark.6">
                   <Title
@@ -708,6 +764,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
   currentEntryCount: crucible.viewerEntryCount,
+  entriesSoFar: crucible.viewerEntriesSoFar,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,

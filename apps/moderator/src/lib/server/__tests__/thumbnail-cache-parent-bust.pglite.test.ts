@@ -1,6 +1,10 @@
-import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { REDIS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -10,12 +14,20 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * that entry is ever stored under.
  */
 
-const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
+const { dbHandle, del, sysSet, syncSearchIndexBulk } = vi.hoisted(() => ({
+  sysSet: vi.fn(async (_key: string, _value: string, _opts?: unknown) => undefined),
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
 }));
 
+vi.mock('../removal-hold', () => ({
+  // No approved appeals here; the hold itself is covered by image-removal-confirmation.pglite.test.ts.
+  holdRemovals: vi.fn(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  })),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -28,7 +40,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../redis', () => ({
   getRedis: () => ({ del }),
-  getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
+  getSysRedis: () => ({ packed: { set: sysSet } }),
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects: vi.fn(async () => undefined),
@@ -51,6 +63,7 @@ const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
 const { deleteImagesByIds } = await import('../image-deletion');
+const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -72,6 +85,7 @@ CREATE TABLE "Image" (
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,
@@ -100,7 +114,7 @@ let db: PGlite;
 beforeEach(async () => {
   del.mockClear();
   syncSearchIndexBulk.mockClear();
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "metadata", "nsfwLevel") VALUES
@@ -205,5 +219,68 @@ describe('moderator writes that change a custom thumbnail', () => {
 
     expect(bustedKeys()).toEqual(expect.arrayContaining([key(VIDEO_ID), key(OTHER_VIDEO_ID)]));
     expect(reindexed().sort()).toEqual([VIDEO_ID, OTHER_VIDEO_ID]);
+  });
+});
+
+// A held owner's image is kept by the hold's delete trigger (the real migration, installed here),
+// blocked and taken out of its post: that post's gallery caches are as stale as for a delete.
+describe('deleteImagesByIds on an image a hold marker keeps', () => {
+  const HOLD_MIGRATION = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
+    ),
+    'utf-8'
+  );
+  const OWNER = 42;
+  const POST = 900;
+
+  beforeEach(async () => {
+    vi.mocked(bustPostGalleryCaches).mockClear();
+    sysSet.mockClear();
+    await db.exec(`
+      CREATE TABLE "Post" (
+        "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT, "detail" TEXT,
+        "createdAt" TIMESTAMP(3), "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER,
+        "collectionId" INTEGER, "metadata" JSONB
+      );
+      CREATE TABLE "CsamReport" (
+        "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3),
+        "details" JSONB NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
+      CREATE FUNCTION update_post_nsfw_levels(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+    `);
+    await db.exec(HOLD_MIGRATION);
+    await db.exec(`
+      INSERT INTO "EvidenceHold" ("userId", "role", "reason") VALUES (${OWNER}, 'manual', 'review');
+      UPDATE "Image" SET "userId" = ${OWNER}, "postId" = ${POST} WHERE "id" = ${PLAIN_IMAGE_ID};
+    `);
+  });
+
+  it('busts the post the image was taken out of, and the image leaves search', async () => {
+    await deleteImagesByIds([PLAIN_IMAGE_ID]);
+
+    const row = await db.query(
+      `SELECT "postId", "ingestion" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`
+    );
+    expect(row.rows).toEqual([{ postId: null, ingestion: 'Blocked' }]);
+    expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
+    // The existence cache is what takes a blocked image off the site; meta and metadata go with it.
+    expect(sysSet.mock.calls.map(([k, v]) => [k, v])).toContainEqual([
+      `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${PLAIN_IMAGE_ID}`,
+      'false',
+    ]);
+    expect(bustedKeys()).toEqual(
+      expect.arrayContaining([
+        `${REDIS_KEYS.CACHES.IMAGE_META}:${PLAIN_IMAGE_ID}`,
+        `${REDIS_KEYS.CACHES.IMAGE_METADATA}:${PLAIN_IMAGE_ID}`,
+      ])
+    );
+    expect(
+      syncSearchIndexBulk.mock.calls
+        .filter(([batch]) => batch.action === 'delete')
+        .flatMap(([batch]) => batch.entityIds)
+    ).toEqual([PLAIN_IMAGE_ID]);
   });
 });

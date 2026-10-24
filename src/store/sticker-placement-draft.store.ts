@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { mintPurchaseKey } from '~/utils/purchase-key';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -261,19 +262,6 @@ const nextDraftId = () =>
     ? crypto.randomUUID()
     : `draft-${++draftSequence}`;
 
-/**
- * A purchase's idempotency key, which the server refuses a repeat of.
- *
- * Feature-detected for the same reason the draft ids are: `crypto.randomUUID` is
- * undefined outside a secure context, and throwing here would take down the buy
- * button on any http origin that is not localhost.
- */
-let purchaseKeySequence = 0;
-const nextPurchaseKey = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
-
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
@@ -415,7 +403,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
     const existing = get().packKeys[cosmeticId];
     if (existing) return existing;
 
-    const key = nextPurchaseKey();
+    const key = mintPurchaseKey();
     set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
     return key;
   },

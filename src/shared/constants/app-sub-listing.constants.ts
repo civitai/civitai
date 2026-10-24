@@ -20,6 +20,12 @@ import {
 export const APP_SUB_LISTING_STATUSES = ['pending', 'approved', 'hidden', 'withdrawn'] as const;
 export type AppSubListingStatus = (typeof APP_SUB_LISTING_STATUSES)[number];
 
+/** In the store or waiting for review: the statuses a withdraw moves to `withdrawn`. */
+export const APP_SUB_LISTING_ACTIVE_STATUSES = ['pending', 'approved'] as const;
+export function isActiveSubListingStatus(status: string): boolean {
+  return (APP_SUB_LISTING_ACTIVE_STATUSES as readonly string[]).includes(status);
+}
+
 /** Same five values, same order, as the listing rating ladder (ascending maturity). */
 export const APP_SUB_LISTING_CONTENT_RATINGS = OFFSITE_CONTENT_RATING_LADDER;
 export type AppSubListingContentRating = OffsiteRatingValue;
@@ -98,6 +104,49 @@ export function subListingRunHref(parentSlug: string, subPath: string, subListin
   return `/apps/run/${encodeURIComponent(parentSlug)}/${path}?sl=${encodeURIComponent(
     subListingId
   )}`;
+}
+
+/** A catalog item's id on its off-site platform; it is both the item key and the `{id}`. */
+export const APP_SUB_LISTING_EXTERNAL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function isValidSubListingExternalId(value: string): boolean {
+  return APP_SUB_LISTING_EXTERNAL_ID_RE.test(value);
+}
+
+export const APP_SUB_LISTING_LINK_TEMPLATE_MAX = 300;
+export const APP_SUB_LISTING_LINK_TEMPLATE_PLACEHOLDER = '{id}';
+/** An https origin followed by a path; the DB CHECK uses the same pattern (a test pins them). */
+export const APP_SUB_LISTING_LINK_TEMPLATE_PREFIX_RE = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?\//;
+
+/** The DB CHECK on `app_sub_listing_parents.link_template`: https, bounded, exactly one `{id}`. */
+export function isValidSubListingLinkTemplate(value: string): boolean {
+  return (
+    APP_SUB_LISTING_LINK_TEMPLATE_PREFIX_RE.test(value) &&
+    value.length <= APP_SUB_LISTING_LINK_TEMPLATE_MAX &&
+    value.split(APP_SUB_LISTING_LINK_TEMPLATE_PLACEHOLDER).length === 2
+  );
+}
+
+/**
+ * The link an off-site parent's card opens: its template with `{id}` filled in. Null unless the
+ * result is https on the template's own origin, so an id can never move the link elsewhere.
+ */
+export function subListingExternalHref(
+  template: string | null | undefined,
+  externalId: string
+): string | null {
+  if (!template || !isValidSubListingLinkTemplate(template)) return null;
+  const href = template.replace(
+    APP_SUB_LISTING_LINK_TEMPLATE_PLACEHOLDER,
+    encodeURIComponent(externalId)
+  );
+  try {
+    const origin = new URL(template.replace(APP_SUB_LISTING_LINK_TEMPLATE_PLACEHOLDER, '')).origin;
+    const url = new URL(href);
+    return url.protocol === 'https:' && url.origin === origin ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 export function isSubListingCard(item: StoreGridItem): item is SubListingCard {

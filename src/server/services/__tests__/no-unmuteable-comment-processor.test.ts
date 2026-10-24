@@ -78,7 +78,7 @@ describe('comment notifications — per-thread mute', () => {
   // exemption list is pinned as well as documented.
   it('exempts exactly one processor, on purpose', () => {
     expect([...MUTE_EXEMPT]).toEqual(['new-mention']);
-    expect(filteredTypes).toHaveLength(13);
+    expect(filteredTypes).toHaveLength(15);
   });
 
   it('finds the family on the real objects', () => {

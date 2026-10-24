@@ -5,10 +5,13 @@ import {
   blockTrainingDatasetItemsSchema,
   blockWorkflowBodySchema,
 } from '../workflow.schema';
+import { findForeignTrainingBlobKeys, trainingBlobKeyFromAir } from '../training-dataset.schema';
 
 /**
  * The `kind:'training'` wire body. `.strict()` with NO `maxBuzz` and no timeout
- * knob: the price is the server's stored quote, never an app-supplied number.
+ * knob: the price is the server's stored quote, never an app-supplied number. Its
+ * dataset is the Training Studio's `{ air, caption }` items, each `air` reduced to
+ * the bare consumer-blob key.
  */
 
 const PARAMS = {
@@ -30,9 +33,14 @@ const PARAMS = {
   keepTokens: 0,
 };
 
+const BLOB_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/E8S6FBPH50ENNVF2PD5.jpeg';
+
 const BODY = {
   kind: 'training',
-  datasetId: `tds_${'a'.repeat(32)}`,
+  items: [
+    { air: `${BLOB_URL}?sig=abc`, caption: 'a' },
+    { air: 'CXJQSCS1TYZR1PX45C7QBVB8E0.jpeg', caption: 'b' },
+  ],
   engine: 'ai-toolkit',
   model: 'sdxl',
   params: PARAMS,
@@ -46,6 +54,13 @@ describe('blockTrainingBodySchema', () => {
     expect(parsed.kind).toBe('training');
   });
 
+  it('reduces every item to its bare blob key — the url form and the key form alike', () => {
+    expect(blockTrainingBodySchema.parse(BODY).items).toEqual([
+      { air: 'E8S6FBPH50ENNVF2PD5.jpeg', caption: 'a' },
+      { air: 'CXJQSCS1TYZR1PX45C7QBVB8E0.jpeg', caption: 'b' },
+    ]);
+  });
+
   it('accepts a submit body naming a quote', () => {
     expect(
       blockTrainingBodySchema.safeParse({ ...BODY, quoteId: `tq_${'b'.repeat(32)}` }).success
@@ -56,13 +71,15 @@ describe('blockTrainingBodySchema', () => {
     ['a maxBuzz knob', { maxBuzz: 100 }],
     ['a timeout knob', { timeout: '01:00:00' }],
     ['an image count', { imageCount: 3 }],
+    ['a dataset handle', { datasetId: `tds_${'a'.repeat(32)}` }],
     ['inline training data', { trainingData: { type: 'blobs', items: [] } }],
   ])('rejects %s (strict)', (_l, extra) => {
     expect(blockWorkflowBodySchema.safeParse({ ...BODY, ...extra }).success).toBe(false);
   });
 
   it.each([
-    ['a malformed datasetId', { datasetId: 'tds_x' }],
+    ['no items', { items: [] }],
+    ['51 items', { items: Array.from({ length: 51 }, (_, i) => ({ air: `K${i}`, caption: '' })) }],
     ['a malformed quoteId', { quoteId: 'tq_../x' }],
     ['another engine', { engine: 'kohya' }],
     ['an over-long trigger word', { triggerWord: 'x'.repeat(65) }],
@@ -78,10 +95,11 @@ describe('blockTrainingBodySchema', () => {
     expect(blockWorkflowBodySchema.safeParse({ ...BODY, ...over }).success).toBe(false);
   });
 
-  it('accepts exactly the sample-prompt maximum (boundary control)', () => {
+  it('accepts exactly the item and sample-prompt maxima (boundary controls)', () => {
     expect(
       blockTrainingBodySchema.safeParse({
         ...BODY,
+        items: Array.from({ length: 50 }, (_, i) => ({ air: `K${i}`, caption: '' })),
         samplePrompts: Array(BLOCK_TRAINING_SAMPLE_PROMPTS_MAX).fill('p'),
       }).success
     ).toBe(true);
@@ -108,16 +126,49 @@ describe('blockTrainingBodySchema', () => {
 });
 
 describe('blockTrainingDatasetItemsSchema', () => {
-  it('accepts image ids with captions and rejects anything else on an item', () => {
-    expect(blockTrainingDatasetItemsSchema.safeParse([{ imageId: 1, caption: 'a' }]).success).toBe(
-      true
-    );
-    expect(
-      blockTrainingDatasetItemsSchema.safeParse([{ imageId: 1, caption: 'a', url: 'x' }]).success
-    ).toBe(false);
-    expect(blockTrainingDatasetItemsSchema.safeParse([]).success).toBe(false);
-    expect(
-      blockTrainingDatasetItemsSchema.safeParse([{ imageId: 1, caption: 'x'.repeat(1001) }]).success
-    ).toBe(false);
+  const items = (...airs: string[]) => airs.map((air) => ({ air, caption: '' }));
+  const parses = (value: unknown) => blockTrainingDatasetItemsSchema.safeParse(value).success;
+
+  it.each([
+    ['a url on another host', 'https://example.com/v2/consumer/blobs/K1.jpeg'],
+    ['a plain-http blob url', 'http://orchestration.civitai.com/v2/consumer/blobs/K1.jpeg'],
+    ['a civitai url outside the blob path', 'https://image.civitai.com/K1.jpeg'],
+    ['a blob url with a deeper path', `${BLOB_URL}/x`],
+    ['a key with a path separator', 'a/b'],
+    ['an orchestrator AIR', 'urn:air:sdxl:lora:orchestrator:blob@K1'],
+    ['an empty air', ''],
+  ])('refuses %s', (_l, air) => {
+    expect(parses(items(air))).toBe(false);
+  });
+
+  it('refuses one blob named twice, however it is spelled or cased', () => {
+    expect(parses(items('E8S6FBPH50ENNVF2PD5.jpeg', `${BLOB_URL}?sig=1`))).toBe(false);
+    expect(parses(items('k1.jpeg', 'K1.JPEG'))).toBe(false);
+    expect(parses(items('K1.jpeg', 'K2.jpeg'))).toBe(true);
+  });
+
+  it('caps a caption at the orchestrator’s 8,192 characters, and refuses another key', () => {
+    expect(parses([{ air: 'K1', caption: 'x'.repeat(8192) }])).toBe(true);
+    expect(parses([{ air: 'K1', caption: 'x'.repeat(8193) }])).toBe(false);
+    expect(parses([{ air: 'K1', caption: '', imageId: 1 }])).toBe(false);
+  });
+});
+
+describe('trainingBlobKeyFromAir / findForeignTrainingBlobKeys', () => {
+  it('reads the key out of the upload url, dropping the query', () => {
+    expect(trainingBlobKeyFromAir(`${BLOB_URL}?sig=abc&exp=1`)).toBe('E8S6FBPH50ENNVF2PD5.jpeg');
+    expect(trainingBlobKeyFromAir('K1')).toBe('K1');
+    expect(trainingBlobKeyFromAir('https://evil.example/v2/consumer/blobs/K1')).toBeNull();
+  });
+
+  it('reports the quoted keys an uploader did not upload, case-insensitively', () => {
+    expect(findForeignTrainingBlobKeys(['K1.jpeg', 'K2.jpeg'], ['k1.JPEG', 'k2.jpeg'])).toEqual([]);
+    expect(findForeignTrainingBlobKeys(['K1.jpeg', 'K2.jpeg'], ['K1.jpeg'])).toEqual(['K2.jpeg']);
+    expect(findForeignTrainingBlobKeys(['K1.jpeg'], [])).toEqual(['K1.jpeg']);
+  });
+
+  it('never reads a malformed key list as "nothing foreign"', () => {
+    expect(findForeignTrainingBlobKeys(undefined, ['K1'])).not.toEqual([]);
+    expect(findForeignTrainingBlobKeys([7], ['7'])).toEqual(['7']);
   });
 });

@@ -9,6 +9,7 @@ import type { VaultItemFilesSchema } from '~/server/schema/vault.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
@@ -46,9 +47,7 @@ export default AuthedEndpoint(
     // traffic to every download route at once rather than one abuser. See
     // `parseIpBlocklist`.
     const ip = getTrustedClientIp(req);
-    const ipBlacklist = parseIpBlocklist(
-      (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
-    );
+    const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
     if (ip && ipBlacklist.includes(ip)) return onError(403, 'Forbidden');
 
     if (!user) {

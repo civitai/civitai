@@ -16,6 +16,7 @@ import {
 import { Fragment, useState } from 'react';
 import Link from 'next/link';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
 import {
   ReasonGatedField,
   ReasonGatedSubmitButton,
@@ -86,7 +87,27 @@ export function subListingEditDiff(live: Content, pending: Content) {
 /** Delivery width for the 96px queue thumbnail: the first edge-ladder rung at or above 2x. */
 const QUEUE_IMAGE_WIDTH = 320;
 
-function FieldValue({ field, value }: { field: keyof Content; value: unknown }) {
+/**
+ * The image a content version shows, as the click-to-reveal reads it, or null when it has none.
+ * The live and the proposed versions carry their own image and their own level.
+ */
+function reviewImage(content: Content | null | undefined) {
+  if (content?.imageId == null || content.imageNsfwLevel == null) return null;
+  return { imageId: content.imageId, nsfwLevel: content.imageNsfwLevel };
+}
+
+function FieldValue({
+  field,
+  value,
+  content,
+  testId,
+}: {
+  field: keyof Content;
+  value: unknown;
+  /** The version `value` was read from — for an image, whose level decides the reveal. */
+  content: Content | null | undefined;
+  testId?: string;
+}) {
   if (value == null || value === '')
     return (
       <Text size="sm" c="dimmed">
@@ -95,15 +116,20 @@ function FieldValue({ field, value }: { field: keyof Content; value: unknown }) 
     );
   if (field === 'imageUrl') {
     // `imageUrl` is the stored image KEY, not a URL: resolve it through the edge.
+    // On civitai.com an image rated above PG-13 is held behind the click-to-reveal; the
+    // thumbnail is too small for the overlay and the queue has no larger view, so the reveal
+    // is the compact show / hide control in its corner (`toggle`).
     return (
-      <Image
-        src={getEdgeUrl(String(value), { width: QUEUE_IMAGE_WIDTH })}
-        alt=""
-        w={96}
-        h={54}
-        fit="cover"
-        radius="sm"
-      />
+      <ReviewMediaReveal image={reviewImage(content)} explain={false} toggle testId={testId}>
+        <Image
+          src={getEdgeUrl(String(value), { width: QUEUE_IMAGE_WIDTH })}
+          alt=""
+          w={96}
+          h={54}
+          fit="cover"
+          radius="sm"
+        />
+      </ReviewMediaReveal>
     );
   }
   return <Text size="sm">{String(value)}</Text>;
@@ -120,10 +146,29 @@ function RowContent({ row }: { row: QueueRow }) {
           </Text>
         )}
         <Text size="xs" c="dimmed">
-          /{row.live.subPath}
+          {row.externalHref ? (
+            <Anchor
+              href={row.externalHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="xs"
+              data-testid="sub-listing-external-link"
+            >
+              {row.externalHref}
+            </Anchor>
+          ) : (
+            `/${row.live.subPath}`
+          )}
           {row.live.contentRating ? ` · ${row.live.contentRating}` : ''}
         </Text>
-        {row.live.imageUrl && <FieldValue field="imageUrl" value={row.live.imageUrl} />}
+        {row.live.imageUrl && (
+          <FieldValue
+            field="imageUrl"
+            value={row.live.imageUrl}
+            content={row.live}
+            testId={`sub-listing-image-reveal-${row.id}`}
+          />
+        )}
       </Stack>
     );
   }
@@ -148,10 +193,20 @@ function RowContent({ row }: { row: QueueRow }) {
               {d.label}
             </Text>
             <div data-testid={`sub-listing-diff-${d.key}`}>
-              <FieldValue field={d.key} value={d.before} />
+              <FieldValue
+                field={d.key}
+                value={d.before}
+                content={row.live}
+                testId={`sub-listing-image-reveal-${row.id}-live`}
+              />
             </div>
             <div data-testid={`sub-listing-diff-${d.key}-proposed`}>
-              <FieldValue field={d.key} value={d.after} />
+              <FieldValue
+                field={d.key}
+                value={d.after}
+                content={row.pending}
+                testId={`sub-listing-image-reveal-${row.id}-proposed`}
+              />
             </div>
           </Fragment>
         ))}

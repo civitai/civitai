@@ -34,3 +34,42 @@ export function isAppealableImage(image: {
 export function isAppealableModel3D(model: { status: Model3DStatus }) {
   return model.status === Model3DStatus.Unpublished || model.status === Model3DStatus.Deleted;
 }
+
+/**
+ * Only a title-scan takedown is appealable: a moderator's is not a scan error, and while one holds
+ * a grant would lift only the scan's, leaving the storyline down.
+ */
+export function getStorylineAppealRefusal(storyline: {
+  tosViolationByScan: boolean;
+  tosViolationByModerator: boolean;
+}) {
+  if (storyline.tosViolationByModerator)
+    return 'A moderator took this storyline down, so it cannot be appealed here';
+  if (!storyline.tosViolationByScan) return 'This storyline was not taken down by its title scan';
+  return null;
+}
+
+/**
+ * Recorded on an appeal approved because a moderator lifted the title-scan takedown directly, so
+ * the audit trail and overturn counts can tell it from an appeal that was reviewed.
+ */
+export const DIRECT_LIFT_APPEAL_REASON = 'lifted-by-moderator';
+export const DIRECT_LIFT_APPEAL_NOTE =
+  'Approved by a moderator lifting the title-scan takedown directly, not an appeal review.';
+/** The same, for a takedown a clean rescan of the title lifted. */
+export const RESCAN_LIFT_APPEAL_REASON = 'lifted-by-rescan';
+export const RESCAN_LIFT_APPEAL_NOTE =
+  'Approved because a clean rescan of the title lifted the takedown, not an appeal review.';
+
+// apps/moderator also sends closed-owner-deleted and reviewed-*; it mirrors these strings.
+export type OrphanedAppealOutcome =
+  | 'under-review'
+  | 'closed-owner-deleted'
+  | 'closed-unreviewed'
+  | 'reviewed-approved'
+  | 'reviewed-rejected';
+
+export const OrphanedAppealReason = {
+  DeletedByOwner: 'deleted-by-owner',
+  RemovedBeforeReview: 'removed-before-review',
+} as const;

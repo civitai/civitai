@@ -47,7 +47,8 @@ const gate = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // reset, not clear: a once-value a test queued but never consumed would leak into the next test.
+  vi.resetAllMocks();
   mockGetPaidAccess.mockResolvedValue({});
   mockHasEntityAccess.mockResolvedValue([]);
   mockGetViewerMonetization.mockImplementation(
@@ -156,10 +157,11 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
     expect(r.canGenerate).toBe(false);
   });
 
-  it('purchase lookup is scoped to covered && non-owner && non-free gated ids only', async () => {
-    const bundledCovered = resource({ id: 1 });
+  it('purchase lookup is scoped to non-owner && non-free gated ids only', async () => {
+    const bundled = resource({ id: 1 });
     const freeNonOwner = resource({ id: 2 });
     const ownedBundled = resource({ id: 3 });
+    // The raw live-rule column, which an expansion-covered version reads false.
     const notCovered = resource({ id: 4, covered: false });
     mockGetPaidAccess.mockResolvedValueOnce({
       1: gate({ entityId: 1, terms: BUNDLED }),
@@ -168,13 +170,80 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
       4: gate({ entityId: 4, terms: BUNDLED }),
     });
 
-    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], {
+    await applyPaidAccessGating([bundled, freeNonOwner, ownedBundled, notCovered], {
       id: 1,
     });
 
-    // Only id 1 qualifies for the purchase check.
     expect(mockHasEntityAccess).toHaveBeenCalledTimes(1);
+    expect(mockHasEntityAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ entityIds: [1, 4] })
+    );
+  });
+
+  it('lets a BUYER through on a version the live coverage column reads false', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    mockHasEntityAccess.mockResolvedValueOnce([{ entityId: 1, hasAccess: true }]);
+    const r = resource({ covered: false });
+
+    await applyPaidAccessGating([r], { id: 1 });
+
+    expect(r.hasAccess).toBe(true);
+  });
+});
+
+describe('applyPaidAccessGating — every copy of a version is gated', () => {
+  // Two objects can share an id: a version substituting for itself, or two epochs of one version.
+  const pair = () => [resource(), resource()];
+
+  it('BLOCKS a non-buyer on every copy of a must-buy version', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => [r.hasAccess, r.canGenerate])).toEqual([
+      [false, false],
+      [false, false],
+    ]);
+  });
+
+  it('lets a buyer through on every copy, with one purchase lookup for the id', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    mockHasEntityAccess.mockResolvedValueOnce([{ entityId: 1, hasAccess: true }]);
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => r.hasAccess)).toEqual([true, true]);
     expect(mockHasEntityAccess).toHaveBeenCalledWith(expect.objectContaining({ entityIds: [1] }));
+  });
+
+  it.each([
+    ['FREE', FREE],
+    ['TRIAL', TRIAL],
+  ])('keeps %s generation open to a non-buyer on every copy', async (_name, terms) => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => [r.hasAccess, r.canGenerate])).toEqual([
+      [true, true],
+      [true, true],
+    ]);
+  });
+
+  it.each([
+    ['owner', { id: OWNER }],
+    ['moderator', { id: 1, isModerator: true }],
+  ])('lets the %s through on every copy', async (_name, viewer) => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, viewer);
+
+    expect(copies.map((r) => r.hasAccess)).toEqual([true, true]);
+    expect(mockHasEntityAccess).not.toHaveBeenCalled();
   });
 });
 

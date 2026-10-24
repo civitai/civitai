@@ -14,8 +14,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  *   - *"'Reviews' are not clickable."*
  *
  * 🔴 READ BEFORE TREATING ANY RESULT HERE AS A GATE: IT IS NOT ONE. This file is in
- * the Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — report-only and non-blocking. The GATING
+ * the Vitest browser-mode `component` project, which CI runs as `Component tests`;
+ * no check in this repo blocks a merge. The GATING
  * claims for this change live in the node project:
  * `__tests__/appListingReviewsAnchor.test.ts` (the link/target seam, which fails
  * SILENTLY in production and so is the one that matters) and
@@ -103,6 +103,9 @@ function base(over: Partial<ListingDetail> = {}): ListingDetail {
     contentRating: null,
     isBeta: false,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     iconUrl: null,
     coverUrl: null,
     creator: null,

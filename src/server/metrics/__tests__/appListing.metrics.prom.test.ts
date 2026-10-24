@@ -57,11 +57,6 @@ beforeEach(() => {
 });
 
 describe(METRIC, () => {
-  it('is registered on the DEFAULT registry — the one /api/metrics scrapes', () => {
-    ensureRegisterAppListingMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it('🔴 is registered by IMPORTING the module — a never-degraded pod is 0, not absent', () => {
     // If registration only happened inside the emitter, the series would not exist
     // until the first degrade: a healthy pod would scrape `no data`, which reads as

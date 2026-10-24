@@ -5,20 +5,17 @@ import { logToAxiom } from '~/server/logging/client';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
-import {
-  loadTextScanTextHash,
-  queueTextScanRescan,
-} from '~/server/services/text-scan/actions/appeal-text-hash';
+import { loadGrantTextHash } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
   buildTextScanFlagEntry,
   hasOpenTextScanFlag,
-  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
 } from '~/server/services/text-scan/flag-snapshot';
 import type { PoiMinorResult } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
   return SearchIndexUpdate.queueUpdate({
@@ -50,7 +47,7 @@ export async function applyBountyPoi({
         "lockedProperties" = ARRAY(
           SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['poi']::text[])
         ),
-        meta = COALESCE(b.meta, '{}'::jsonb) || jsonb_build_object(
+        meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
           ${TEXT_SCAN_FLAGS_KEY}, COALESCE(b.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || jsonb_build_object(
             'poi', ${entry}::jsonb || jsonb_build_object(
               'at', now(),
@@ -100,16 +97,19 @@ export async function resolveBountyPoiAppeal({
   bountyId,
   uphold,
   userId,
+  resolvedReason,
+  internalNotes,
 }: {
   bountyId: number;
   uphold: boolean;
   userId: number;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
   const bounty = await dbWrite.bounty.findUnique({
     where: { id: bountyId },
     select: { poi: true, meta: true },
   });
-  let rescanQueued = false;
 
   if (uphold) {
     if (!bounty?.poi || !hasOpenTextScanFlag(bounty.meta, 'poi'))
@@ -124,13 +124,11 @@ export async function resolveBountyPoiAppeal({
       WHERE b.id = ${bountyId} AND b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
     `;
   } else {
-    const currentHash = await loadTextScanTextHash('Bounty', bountyId);
-    if (!currentHash)
+    const grantHash = await loadGrantTextHash('Bounty', bountyId, 'poi');
+    if (!grantHash)
       throw throwBadRequestError(
         "Could not read this bounty's text, so the grant cannot record what it covers. The appeal is still open."
       );
-    const flaggedHash = readTextScanFlags(bounty?.meta)?.poi?.textHash;
-    rescanQueued = !!flaggedHash && flaggedHash !== currentHash;
     const restored = await dbWrite.$executeRaw`
       UPDATE "Bounty" b
       SET poi = FALSE,
@@ -144,7 +142,7 @@ export async function resolveBountyPoiAppeal({
             jsonb_build_object(
               'at', now(),
               'by', ${userId}::int,
-              'textHash', COALESCE(b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+              'textHash', ${grantHash}::text,
               'via', 'appeal'
             )
           )
@@ -157,9 +155,11 @@ export async function resolveBountyPoiAppeal({
     ids: [bountyId],
     entityType: EntityType.Bounty,
     status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    resolvedReason,
+    internalNotes,
     userId,
   });
 
-  if (rescanQueued) await queueTextScanRescan('Bounty', bountyId);
-  return { rescanQueued };
+  // The grant covers the scanned text, so nothing is rescanned. Consumers still read the field.
+  return { rescanQueued: false };
 }

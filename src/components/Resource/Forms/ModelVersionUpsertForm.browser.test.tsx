@@ -11,6 +11,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
  */
 
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ModelVersionTerms } from '@civitai/buzz';
 
 const mutateAsync = vi.hoisted(() =>
@@ -195,7 +196,10 @@ const flags = vi.hoisted(() => ({
   current: { licensingFee: true, earlyAccessModel: false } as Record<string, boolean>,
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// Spread the real module: the form's import graph also reaches `useOptionalFeatureFlags` (via the
+// impression hook), and a hand-listed mock that omits it fails the file at import, collecting 0 tests.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => flags.current,
 }));
 const currentUser = vi.hoisted(() => ({

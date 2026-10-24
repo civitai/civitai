@@ -18,6 +18,7 @@ import type {
 } from '~/shared/constants/buzz.constants';
 import type {
   ClaimWatchedAdRewardInput,
+  CompensationSource,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   CreateMultiAccountBuzzTransactionInput,
@@ -77,6 +78,7 @@ import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
+import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
@@ -311,12 +313,14 @@ export async function getUserBuzzTransactions({
 
   return {
     cursor,
-    transactions: transactions.map((t) => ({
-      ...t,
-      // Assign each user to their corresponding transaction
-      toUser: toUsers.find((u) => u.id === t.toAccountId),
-      fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
-    })),
+    transactions: transactions.map((t) =>
+      redactTransactionCounterparty({
+        ...t,
+        // Assign each user to their corresponding transaction
+        toUser: toUsers.find((u) => u.id === t.toAccountId),
+        fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
+      })
+    ),
   };
 }
 
@@ -585,7 +589,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
     const details = parseDetails(row.details);
     const type = fromClickhouseTransactionType(row.type);
 
-    return {
+    return redactTransactionCounterparty({
       date: new Date(`${row.date.replace(' ', 'T')}Z`),
       type,
       // ClickHouse stores every amount as a positive magnitude; the direction
@@ -600,7 +604,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
       externalTransactionId: row.externalTransactionId || null,
       fromUser: usersById.get(row.fromAccountId),
       toUser: usersById.get(row.toAccountId),
-    };
+    });
   });
 }
 
@@ -780,7 +784,8 @@ async function formatExportBatch(
         counterpartyName(row.toAccountId, usernames.get(row.toAccountId)),
         row.description,
         entityUrl,
-        row.externalTransactionId,
+        redactTransactionCounterparty({ type, externalTransactionId: row.externalTransactionId })
+          .externalTransactionId ?? '',
       ];
     })
   );
@@ -1612,6 +1617,14 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
+// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
+// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
+  compensation: "NOT IN ('licenseFee', 'tip')",
+  licenseFee: "= 'licenseFee'",
+  tip: "= 'tip'",
+};
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -1653,7 +1666,7 @@ export const getDailyCompensationRewardByUser = async ({
       WHERE date BETWEEN ${minDate} AND ${maxDate}
         AND modelVersionId IN (${versionIds})
         AND amount > 0
-        AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
+        AND source ${COMPENSATION_SOURCE_SQL[source]}
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
         -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
         -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under
@@ -2079,8 +2092,11 @@ export const grantBuzzPurchase = async ({
   return transactionId;
 };
 
-export async function getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix: string) {
-  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix });
+export async function getMultiAccountTransactionsByPrefix(
+  externalTransactionIdPrefix: string,
+  opts?: BuzzReadOptions
+) {
+  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix }, opts);
 
   return data.map((item) => ({
     ...item,

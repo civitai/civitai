@@ -439,22 +439,35 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
     expect(result.items[0].playCount).toBe(0);
   });
 
-  it('🔴 ONE listing query per page, not one per row, and only for the rows RETURNED', async () => {
-    // The `limit + 1` probe row must not be joined — and the join must never become an
-    // N+1 on a 50-row mod queue.
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      queueRow({ id: 'r1', slug: 'app-1' }),
-      queueRow({ id: 'r2', slug: 'app-2' }),
-      queueRow({ id: 'r3', slug: 'app-3' }), // the probe row at limit=2
-    ]);
-    const result = await listPendingRequests({ limit: 2 });
-    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
-    expect(mockDbRead.appListing.findMany.mock.calls[0][0].where.slug.in).toEqual([
-      'app-1',
-      'app-2',
-    ]);
-    expect(result.items).toHaveLength(2);
-    expect(result.nextCursor).toBe('r2');
+  it('🔴 a FIXED number of listing queries per page, not one per row, and only for the rows RETURNED', async () => {
+    // The `limit + 1` probe row must not be joined — and the reads must never become an
+    // N+1 on a 50-row mod queue. Three per page: the slug join, plus the two re-rate
+    // lookups (draft transition, reset restore) the approve warning needs.
+    const page = (n: number) =>
+      Array.from({ length: n + 1 }, (_, i) =>
+        queueRow({ id: `r${i + 1}`, slug: `app-${i + 1}`, appBlockId: `blk-${i + 1}` })
+      );
+    const queriesFor = async (n: number) => {
+      mockDbRead.appListing.findMany.mockClear();
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(page(n));
+      const result = await listPendingRequests({ limit: n });
+      expect(result.items).toHaveLength(n);
+      return mockDbRead.appListing.findMany.mock.calls.map(
+        (c) => c[0].where as { slug?: { in: string[] }; OR?: unknown[] }
+      );
+    };
+
+    const one = await queriesFor(1);
+    const five = await queriesFor(5);
+    expect(one).toHaveLength(3);
+    expect(five).toHaveLength(3);
+
+    const join = five.find((w) => w.slug);
+    expect(join?.slug?.in).toEqual(['app-1', 'app-2', 'app-3', 'app-4', 'app-5']);
+    // Each re-rate lookup carries one clause per RETURNED row; the probe row is not in it.
+    const lookups = five.filter((w) => w.OR);
+    expect(lookups).toHaveLength(2);
+    for (const w of lookups) expect(w.OR).toHaveLength(5);
   });
 
   it('no listing query at all when the page is empty', async () => {

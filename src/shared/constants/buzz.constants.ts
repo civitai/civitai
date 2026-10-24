@@ -1,4 +1,4 @@
-import { BuzzClientAccount } from '@civitai/client';
+import { BuzzClientAccount } from '@civitai/orchestration-client';
 import {
   buzzApiAccountTypes,
   clientToApiAccountType,
@@ -78,10 +78,25 @@ export enum TransactionType {
    * query that sums this type alone overstates net by every reversal.
    */
   AppAuthorFee = 28,
+  /**
+   * Creator Services escrow, every leg: buyer → account 0 on hold, account 0 → seller on
+   * release, account 0 → buyer on refund.
+   *
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS `'unknown_29'`, as `AppAuthorFee` does. Use
+   * `clickhouseTransactionTypePredicate`, never a hand-written `type = …`.
+   */
+  ServiceEscrow = 29,
 }
 
 /** Ledger queries prefix-match stored rows on this, so changing it orphans every existing author-fee row. */
 export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
+
+/**
+ * Generation tips are paid as `Compensation`; this externalTransactionId prefix is the only thing that
+ * tells them apart from generation compensation. Creator Studio's earnings read matches it literally,
+ * and the bankable predicate counts tips by it, so renaming it makes tips already paid unbankable.
+ */
+export const GENERATION_TIP_TRANSACTION_PREFIX = 'generation-tip-';
 
 type BuzzTypeConfig =
   | {

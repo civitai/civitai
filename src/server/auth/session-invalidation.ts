@@ -1,6 +1,7 @@
 import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { hSetMultiWithTTL } from '~/server/redis/atomic';
+import { logToAxiom } from '~/server/logging/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
@@ -98,7 +99,13 @@ async function updateSessionState(
   // `clearSessionCache` asks the hub to drop it, so the next read re-produces from the DB. It runs on
   // BOTH the 'refresh' and 'invalid' paths, and unconditionally (not gated on the token scan above), so
   // every per-user caller of refreshSession/invalidateSession gets a fresh shape on the next read.
-  await clearSessionCache(userId);
+  try {
+    await clearSessionCache(userId);
+  } catch (err) {
+    // A revoke must still reach the token state and the signal below, which are what end the sessions.
+    if (type !== 'invalid') throw err;
+    logSignOutStepFailure('clear-session-cache', userId, err);
+  }
   if (userTokens.length > 0) {
     // Atomic multi-field set+TTL — single EVAL replaces the sequential
     // hSet (multi-field) + hExpire (multi-field). The previous pair could
@@ -152,7 +159,19 @@ async function sendSessionSignal(userId: number, type: 'refresh' | 'invalid') {
   } catch (error) {
     // Don't let signal failures break session invalidation
     log(`Failed to send session ${type} signal to user ${userId}: ${error}`);
+    if (type === 'invalid') logSignOutStepFailure('session-signal', userId, error);
   }
+}
+
+/** A sign-out step that failed while the others ran, named so it can be re-run for this user. */
+function logSignOutStepFailure(step: string, userId: number, err: unknown) {
+  logToAxiom({
+    type: 'error',
+    name: 'session-invalidation-step-failed',
+    step,
+    userId,
+    message: (err as Error)?.message,
+  }).catch(() => undefined);
 }
 
 /**

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DecisionResolutionTables } from '../decision-resolution-tables';
 import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.harness';
@@ -22,7 +23,7 @@ export async function applyDecisionsSchema(db: PGlite): Promise<void> {
 }
 
 export async function freshDecisionsDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await applyDecisionsSchema(db);
   return db;
 }
@@ -41,7 +42,7 @@ export async function applyDecisionsSchemaV1(db: PGlite): Promise<void> {
 }
 
 export async function v1DecisionsDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await applyDecisionsSchemaV1(db);
   return db;
 }

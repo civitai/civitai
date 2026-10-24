@@ -5,12 +5,10 @@ import { AGENT_BUILD_PROMPT, AGENT_ONBOARDING_URL } from '~/components/Apps/cliC
  * 🔴 THE PROMPT'S BYTES, IN THE TIER A HUMAN ACTUALLY READS.
  *
  * These two assertions need no DOM, and they were originally written in
- * `AgentOnboardingCard.browser.test.tsx` — the `component` project, which
- * `.github/workflows/lint.yml` does not run at all ("🔴 GEOMETRY ONLY; `component` IS STILL
- * UNGATED … its only CI home is the preview pipeline's report-only
- * `preview / component-tests`"). So the single strongest claim in the whole change — that we
- * have not quietly altered the instruction we hand people's coding agents — was reported
- * nowhere. Moved here, beside `appsBuildState.test.ts`, which the `unit` project picks up.
+ * `AgentOnboardingCard.browser.test.tsx`, in the `component` project, which CI did not
+ * run at the time, so the single strongest claim in the whole change — that we have not
+ * quietly altered the instruction we hand people's coding agents — was reported nowhere.
+ * Moved here, beside `appsBuildState.test.ts`, which the `unit` project picks up.
  *
  * The browser suite keeps the assertion that genuinely needs a DOM: that these bytes are what
  * reaches the clipboard. This file is about the constant; that one is about the affordance.

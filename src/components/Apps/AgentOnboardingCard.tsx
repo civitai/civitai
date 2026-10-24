@@ -44,9 +44,9 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
 /**
  * "Let your agent build it" — the copyable onboarding prompt for `/apps/build`.
  *
- * Mounted in all THREE of `AppsBuildBody`'s states: the public pitch (inside
- * {@link GetStartedBody}), the first-app quickstart (beside the three CLI commands), and the
- * workbench's collapsed "Developer resources" strip.
+ * Mounted in all THREE of `AppsBuildBody`'s states: it leads the public pitch (inside
+ * {@link GetStartedBody}) and the first-app state, and sits first inside the workbench's
+ * collapsed "Developer resources" strip.
  *
  * Pure presentational — props-only, no tRPC, no tracker import; the funnel event arrives as
  * `onCopy` from `AppsBuildBody`, the one call site with a tracker, which is what keeps
@@ -111,9 +111,11 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * ⚠️ TWO ACCEPTED COSTS OF THE TWO-TREE STRUCTURE. (a) The element type changes at the root and
  * at each row, so React remounts the card's ~40 nodes one commit after hydration —
  * sub-millisecond, one tick. (b) The caret is inline content in the animated tree only, so it
- * can push the prompt's last word onto a new line: ~0.009 CLS, an order of magnitude under the
- * 0.1 threshold. Reserving its box was declined — `animation-name` is time-invariant and a
- * blink's opacity is not, so it would buy the box at the cost of the caret's only crisp guard.
+ * can push the prompt's last word onto a new line, moving everything below the card by one
+ * line (~21px): at most roughly 0.03 CLS on a 667px-tall viewport, under the 0.1 threshold,
+ * and not measured. Reserving its box was declined — `animation-name` is time-invariant and
+ * a blink's opacity is not, so it would buy the box at the cost of the caret's only crisp
+ * guard.
  */
 export function AgentOnboardingCard({
   onCopy,
@@ -136,7 +138,7 @@ export function AgentOnboardingCard({
    * stays cheap. This is the same code path reduced motion takes, not a second one.
    */
   animated?: boolean;
-  /** Density. `prominent` leads the public pitch; `inline` sits beside other content. */
+  /** Density. `prominent` leads the pitch and first-app states; `inline` is the workbench strip. */
   tone?: 'prominent' | 'inline';
 }) {
   const reduceMotion = useReducedMotion(true);
@@ -155,20 +157,19 @@ export function AgentOnboardingCard({
       {tone === 'prominent' ? (
         <Title order={3}>Let your agent build it</Title>
       ) : (
-        <Text fw={600}>Or let your agent do it</Text>
+        <Text fw={600}>Let your agent do it</Text>
       )}
     </Group>,
     <Text size="sm" c="dimmed" key="subtitle">
       {/*
-        🔴 BOTH VARIANTS DISCLOSE THE SAME SIDE EFFECTS, AND THE SHORTER ONE IS NOT THE
-        MINOR CASE. `inline` is what BOTH signed-in placements render, so it is the variant
-        most readers actually see, and "it runs the setup" — the wording this replaced — named
-        none of what the prompt makes an agent do on their machine. Both copies hand the agent
-        byte-identical instructions, so both have to describe them.
+        🔴 BOTH VARIANTS DISCLOSE THE SAME SIDE EFFECTS. "It runs the setup", the wording the
+        shorter one replaced, named none of what the prompt makes an agent do on their
+        machine. Both copies hand the agent byte-identical instructions, so both have to
+        describe them.
       */}
       {tone === 'prominent'
         ? 'Paste this into Claude Code, Cursor, Codex or any coding agent. It installs the Civitai CLI, registers the Civitai MCP servers, tells you whether you still need to log in, then interviews you about your idea and builds it.'
-        : 'Paste this into your coding agent instead — it installs the Civitai CLI, registers the MCP servers, tells you whether you still need to log in, then builds from your idea.'}
+        : 'Paste this into your coding agent. It installs the Civitai CLI, registers the MCP servers, tells you whether you still need to log in, then builds from your idea.'}
     </Text>,
     <PromptPanel motionOn={motionOn} onCopy={onCopy} key="prompt" />,
   ];

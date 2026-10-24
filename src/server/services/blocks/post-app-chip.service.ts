@@ -4,8 +4,7 @@
  * Deliberately THIN and deliberately SEPARATE from `post-app-chip.logic.ts`,
  * which holds the whole decision and is pure + I/O-injected. Keeping the two
  * apart is what lets the decision be tested in the node `unit` project without
- * pulling in `dbRead` or the Flipt client — the same split
- * `app-listing-icon.service.ts` uses against `listing-media-url.ts`.
+ * pulling in `dbRead` or the Flipt client.
  *
  * 🔴 THIN IS NOT UNTESTED, AND THIS FILE IS WHERE THE DISCLOSURE GATE ACTUALLY
  * LIVES. Every interesting property of the decision is pinned in the logic
@@ -43,7 +42,7 @@ import type { SessionUser } from '~/types/session';
 /**
  * `logToAxiom` returns a promise that can reject, so the `.catch` is required —
  * an unhandled rejection from a fail-open path would defeat the point of failing
- * open. Mirrors `noteDegradedIconRead` in `app-listing-icon.service.ts`.
+ * open.
  */
 function noteDegradedChipRead(err: unknown): void {
   logToAxiom({
@@ -73,6 +72,7 @@ export async function readPostAppChip({
   postId,
   user,
   host,
+  viewerBrowsingLevel,
 }: {
   postId: number;
   user?: SessionUser;
@@ -82,6 +82,11 @@ export async function readPostAppChip({
    * missing host under-links rather than over-links.
    */
   host: string;
+  /**
+   * The viewer's browsing level. On a red-capable host it lifts the chip icon's media ceiling
+   * exactly as it lifts the store card's (`listingMediaCeiling`); absent ⇒ the non-red view.
+   */
+  viewerBrowsingLevel?: number | null;
 }): Promise<PostAppChip | null> {
   try {
     // SERVER-resolved, never re-derived from the client `features` object — see
@@ -115,6 +120,7 @@ export async function readPostAppChip({
       postId,
       storeScope,
       host,
+      viewerBrowsingLevel,
       readPostMetadata: async (id) => {
         // 🔴 `getDbWithoutLag`, not a bare `dbRead` — the SAME routing
         // `getPostDetail` uses for this post. The chip's own write happens inside

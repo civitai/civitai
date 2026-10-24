@@ -1,5 +1,8 @@
 import { includesMinor, includesPoi } from '~/utils/metadata/audit';
-import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { BlocklistType } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
+import { escalateToServerFault } from '~/server/logging/server-fault-override';
+import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 /**
@@ -30,8 +33,12 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
  *   - C3 (illegal content): `includesMinor` / `includesPoi` are a HARD legal fail
  *     (minor/POI/CSAM signals) — reject + the caller files a Report. Then
  *     `auditPromptServer` runs the full platform audit (regex + external
- *     moderation) and routes repeat abuse into the EXISTING auto-mute machinery,
- *     closing the loop with the trust gate.
+ *     moderation) and REJECTS on a block. It does NOT feed auto-mute from here:
+ *     with `isGreen: true` a hard block takes the green redirect branch, which
+ *     records nothing (no blocked-prompt counter, no prohibited-request report),
+ *     and a soft block reports with `count: 0` and no `track`, which writes nothing
+ *     and can never cross the mute threshold. Repeat abuse on this path is
+ *     therefore rejected, not accumulated.
  *   - M1 (link abuse): `throwOnBlockedUserContent` rejects blocked link domains and the
  *     blocked-pattern list; no server-side unfurl is ever performed.
  *   - M3 (size): tight caps (title ≤ 200 chars, body ≤ a few KB) — enforced by the
@@ -54,22 +61,33 @@ export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' 
  * `category` so the caller can decide whether to file a Report (minor/poi/audit)
  * before converting to a user-facing TRPCError. NEVER leak the raw matched word to
  * the client beyond the audit machinery's own message.
+ *
+ * `unchecked` means a check could not run, not that one found something. Only metrics read it
+ * (`moderation_unavailable` vs `moderation_blocked`); it must not change the refusal.
  */
 export class SharedContentBlockedError extends Error {
   readonly category: SharedBlockedCategory;
-  constructor(category: SharedBlockedCategory, message: string) {
+  readonly unchecked: boolean;
+  constructor(category: SharedBlockedCategory, message: string, options?: { unchecked?: boolean }) {
     super(message);
     this.name = 'SharedContentBlockedError';
     this.category = category;
+    this.unchecked = options?.unchecked ?? false;
   }
 }
 
 export interface SharedTextSafetyInput {
   title: string;
   body?: string;
-  /** Token subject — the abuse principal for auto-mute accounting. */
+  /**
+   * Token subject. Passed to the audit as the abuse principal, though no block on this path is
+   * counted toward auto-mute today (see the C3 note above).
+   */
   userId: number;
-  /** From the hydrated subject; moderators skip the auto-mute side effect. */
+  /**
+   * From the hydrated subject. Exempts moderators from the blocked-PATTERN list only (never the
+   * link list); the audit's moderator auto-mute skip is moot here since nothing is counted.
+   */
   isModerator?: boolean;
 }
 
@@ -110,15 +128,46 @@ export async function assertSharedTextSafe(
   // a Report; neither of these two does today, but they are kept distinct so that stays the
   // router's decision rather than being flattened here.
   //
-  // The outer catch is still load-bearing: the guard reaches redis and Flipt, and an
-  // infrastructure throw from either must not escape as a raw 500 on user input.
+  // Two catches, split by whether caller input can reach the throw. Escalating a failure to a
+  // server fault makes the shared write budget refund it instead of charging a rejection, so the
+  // escalation is an allow-list: only a throw that caller text cannot induce may earn it.
+  //
+  // First, the two lists the guard reads (link domains + message patterns), read here BEFORE the
+  // guard with no caller input involved. A throw here is our outage: the text was never checked,
+  // so it is refused, but escalated with a retry message. Category 'link' because it files no
+  // Report and no alert; the retry message reaches shared-storage callers only (sub-listing
+  // callers substitute their own refusal). These run even when the guard would skip its own
+  // reads (both fields empty) — that costs the two list reads and keeps the escalation
+  // unconditional.
+  const retryMessage = 'Content could not be reviewed right now. Please try again.';
+  try {
+    await Promise.all([
+      getBlocklistData(BlocklistType.LinkDomain),
+      getBlocklistData(BlocklistType.MessagePattern),
+    ]);
+  } catch {
+    throw escalateToServerFault(
+      new SharedContentBlockedError('link', retryMessage, { unchecked: true })
+    );
+  }
+
+  // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
+  // throw is still refused with the retry message rather than escaping as a raw 500, but it is
+  // NOT escalated, so it is charged. The lists were just proven readable (the guard's Flipt read
+  // swallows its own failures), so three causes remain: a later list read racing an outage (rare,
+  // and bounded by the rejection bucket); list CONTENTS the scan cannot process (a malformed entry
+  // written into the shared cache key, which several apps populate); or a scan bug that a crafted
+  // input could trigger — and that last one must never become a free refund. All three are ours
+  // to see, and a charged BAD_REQUEST is classified as a client fault and never logged on its own,
+  // so the swallowed error is logged here at error severity. Its name and message only: never the
+  // title/body, which is user content.
   try {
     // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
     // across the seam between two independent fields. Handing it the joined string reintroduces
     // exactly the false positive that separation exists to prevent.
     await throwOnBlockedUserContent([title, body], {
       isModerator,
-      surface: 'appListing',
+      surface: 'appSharedStorage',
       onBlocked: (kind) => {
         throw kind === 'link'
           ? new SharedContentBlockedError('link', 'Content contains a blocked link')
@@ -127,13 +176,28 @@ export async function assertSharedTextSafe(
     });
   } catch (error) {
     if (error instanceof SharedContentBlockedError) throw error;
-    throw new SharedContentBlockedError('link', 'Content contains a blocked link');
+    logToAxiom({
+      name: 'app-shared-content-scan-failed',
+      type: 'error',
+      message: 'Shared-text blocklist scan threw; write refused and charged',
+      details: {
+        surface: 'appSharedStorage',
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    }).catch(() => undefined);
+    throw new SharedContentBlockedError('link', retryMessage, { unchecked: true });
   }
 
-  // C3 — full platform audit (regex + external moderation) + the EXISTING
-  // auto-mute machinery (repeat blocked-prompt accounting → mute). isGreen:true
-  // forces the SFW + profanity ceiling for community text. `track` omitted (the
+  // C3 — full platform audit (regex + external moderation). isGreen:true forces
+  // the SFW + profanity ceiling for community text. `track` omitted (the
   // block-token path has no request Tracker); auditPromptServer guards on it.
+  //
+  // 🔴 This call REJECTS; it does not count. With isGreen:true a hard block takes
+  // auditPromptServer's green branch, which skips addBlockedPrompt and
+  // reportProhibitedRequest entirely; a soft block calls reportProhibitedRequest
+  // with count 0 and no `track`, so nothing is written and the mute threshold is
+  // never reached. No block on this path contributes to auto-mute today.
   try {
     await auditPromptServer({
       prompt: combined,
@@ -142,6 +206,7 @@ export async function assertSharedTextSafe(
       isModerator,
     });
   } catch (e) {
+    // Any throw is an `audit` block, a failed read inside the audit included, so never `unchecked`.
     const message = e instanceof Error ? e.message : 'Content was flagged';
     throw new SharedContentBlockedError('audit', message);
   }

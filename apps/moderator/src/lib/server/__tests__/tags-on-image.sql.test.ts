@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   sql: [] as string[],
   params: [] as unknown[][],
   invalidatedAfter: [] as number[],
+  bustedPictures: [] as { imageIds: number[]; after: number }[],
 }));
 
 vi.mock('../db', async () => {
@@ -14,13 +15,21 @@ vi.mock('../db', async () => {
 vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
 vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn() }));
+vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
 vi.mock('../thumbnail-cache', () => ({
   invalidateThumbnails: vi.fn(async () => {
     h.invalidatedAfter.push(h.sql.length);
   }),
 }));
+vi.mock('../profile-picture-cache', () => ({
+  bustProfilePictures: vi.fn(async (target: { imageIds: number[] }) => {
+    h.bustedPictures.push({ imageIds: target.imageIds, after: h.sql.length });
+  }),
+}));
 
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
+const { bustImageTagCaches } = await import('../cache');
+const { logAxiomError } = await import('../axiom');
 
 const flat = (i: number) => h.sql[i].replace(/\s+/g, ' ').trim();
 
@@ -28,6 +37,7 @@ beforeEach(() => {
   h.sql.length = 0;
   h.params.length = 0;
   h.invalidatedAfter.length = 0;
+  h.bustedPictures.length = 0;
 });
 
 describe('upsertTagsOnImageNew', () => {
@@ -55,5 +65,29 @@ describe('upsertTagsOnImageNew', () => {
 
     // Two statements in: the upsert and update_nsfw_levels_new.
     expect(h.invalidatedAfter).toEqual([2]);
+  });
+
+  // The main app serves avatars from a day-long profile-picture cache and gates them on its rating, so
+  // a tag that re-rates someone's avatar has to evict that entry too.
+  it('evicts the cached profile pictures of the re-rated images after the recompute', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 31, tagId: 2 },
+      { imageId: 32, tagId: 2 },
+    ]);
+
+    expect(h.bustedPictures).toEqual([{ imageIds: [31, 32], after: 2 }]);
+  });
+
+  // The tag rows and the level are committed by then: a Redis failure on the tag caches must neither
+  // fail the write nor skip the thumbnail and avatar refreshes after it.
+  it('completes, and still refreshes thumbnails and avatars, when the tag-cache bust fails', async () => {
+    vi.mocked(logAxiomError).mockClear();
+    vi.mocked(bustImageTagCaches).mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(upsertTagsOnImageNew([{ imageId: 31, tagId: 2 }])).resolves.toBeUndefined();
+
+    expect(h.invalidatedAfter).toEqual([2]);
+    expect(h.bustedPictures).toEqual([{ imageIds: [31], after: 2 }]);
+    expect(logAxiomError).toHaveBeenCalledTimes(1);
   });
 });

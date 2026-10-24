@@ -22,6 +22,9 @@ export const ReportEntity = {
   Announcement: 'announcement',
   Crucible: 'crucible',
   Challenge: 'challenge',
+  GameFrameGame: 'gameFrameGame',
+  Storyline: 'storyline',
+  ServiceOffering: 'serviceOffering',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -53,6 +56,13 @@ export const DEFAULT_REPORT_STATUSES: ReportStatus[] = [
   ReportStatus.Pending,
   ReportStatus.Processing,
 ];
+
+/** The statuses a moderator can set from a report queue: the outcome, and nothing in between. Pending
+ *  and Processing are states a report arrives in or was left in, not decisions — claiming was removed,
+ *  and the queues still FILTER on them because older reports carry them. */
+export const REPORT_RULINGS = [ReportStatus.Actioned, ReportStatus.Unactioned] as const;
+export const isReportRuling = (v: string): v is (typeof REPORT_RULINGS)[number] =>
+  (REPORT_RULINGS as readonly string[]).includes(v);
 
 /** What a queue badge counts: reports nobody has picked up. `Processing` is deliberately excluded —
  *  a moderator sets it while investigating an ownership claim, which can run for weeks, so counting it
@@ -95,6 +105,9 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   announcement: 'Announcement',
   crucible: 'Crucible',
   challenge: 'Challenge',
+  gameFrameGame: 'Game',
+  storyline: 'Storyline',
+  serviceOffering: 'Service',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -118,6 +131,9 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   announcement: 'announcement',
   crucible: 'crucible',
   challenge: 'challenge',
+  gameFrameGame: 'game',
+  storyline: 'storyline',
+  serviceOffering: 'service',
 };
 
 const entityBySlug = new Map(
@@ -158,6 +174,23 @@ export const reportedPlacementId = (details: unknown, reason: string): number | 
   const raw = (details as Record<string, unknown>).placementId;
   const id = typeof raw === 'string' ? Number(raw) : raw;
   return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+};
+
+/**
+ * The player picture a Civitai Games report is about, or null when it is about the game itself.
+ * Https only: the URL comes from the report's details and ends up in an `<img src>` and a link.
+ */
+export const gameFrameReportImage = (details: unknown): string | null => {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const image = (details as Record<string, unknown>).image;
+  if (!image || typeof image !== 'object' || Array.isArray(image)) return null;
+  const url = (image as Record<string, unknown>).url;
+  if (typeof url !== 'string') return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
 };
 
 /** The label Retool showed for a report: the violation, else the stated reason, else the enum. */
@@ -201,14 +234,19 @@ export const getReportItemUrl = (
       ? chatAuditChatUrl(entityId)
       : null
     : // Same reasoning as chat, and the same reason it read as broken: a report against an ACCOUNT
-      // carries a userId, profiles are addressed by username, so `entityUrl` can derive nothing and
-      // the row fell through to dead grey text — reported as "reportedUser renders greyed out". The
-      // destination exists, it just lives in this app: User Lookup takes an id.
-      type === 'reportedUser'
-      ? entityId
-        ? userLookupUrl(entityId)
-        : null
-      : contextUrl
+    // carries a userId, profiles are addressed by username, so `entityUrl` can derive nothing and
+    // the row fell through to dead grey text — reported as "reportedUser renders greyed out". The
+    // destination exists, it just lives in this app: User Lookup takes an id.
+    type === 'reportedUser'
+    ? entityId
+      ? userLookupUrl(entityId)
+      : null
+    : // A Civitai Games game lives on another origin; its mirror row stores the absolute URL.
+    type === 'gameFrameGame'
+    ? contextUrl?.startsWith('https://')
+      ? contextUrl
+      : null
+    : contextUrl
     ? `${base}${contextUrl}`
     : entityUrl(base, type, entityId);
 

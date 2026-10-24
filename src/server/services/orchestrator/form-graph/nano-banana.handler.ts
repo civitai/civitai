@@ -7,7 +7,7 @@ import type {
   NanoBanana2ImageGenInput,
   NanoBanana2LiteImageGenInput,
   NanoBananaProImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { NanoBanana21ImageGenInput } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
@@ -59,7 +59,7 @@ export const createNanoBananaInput = defineHandler<
           aspectRatio: data.aspectRatio?.value,
           resolution: data.resolution,
           images: data.images?.map((x) => x.url),
-          numImages: quantity,
+          quantity,
           seed: data.seed,
           enableWebSearch: data.enableWebSearch,
         }) as NanoBanana2ImageGenInput,
@@ -78,7 +78,7 @@ export const createNanoBananaInput = defineHandler<
           aspectRatio: data.aspectRatio?.value,
           resolution: data.resolution,
           images: data.images?.map((x) => x.url),
-          numImages: quantity,
+          quantity,
         }) as NanoBanana21ImageGenInput,
       },
     ];
@@ -94,7 +94,7 @@ export const createNanoBananaInput = defineHandler<
           prompt: data.prompt,
           aspectRatio: data.aspectRatio?.value,
           images: data.images?.map((x) => x.url),
-          numImages: quantity,
+          quantity,
           seed: data.seed,
         }) as NanoBanana2LiteImageGenInput,
       },
@@ -115,7 +115,7 @@ export const createNanoBananaInput = defineHandler<
         resolution: data.resolution,
         outputFormat: data.outputFormat,
         images: data.images?.map((x) => x.url),
-        numImages: quantity,
+        quantity,
         seed: data.seed,
       }) as NanoBananaProImageGenInput,
     },

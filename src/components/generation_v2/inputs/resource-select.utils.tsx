@@ -6,7 +6,7 @@
  */
 
 import { Group, Skeleton } from '@mantine/core';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 // =============================================================================
@@ -20,7 +20,7 @@ export type ResourceData = GenerationResource & { air: string };
  * Value type for resource select inputs - stores the full GenerationResource.
  * Input schema accepts just an id (number) and the component hydrates to full resource.
  */
-export type ResourceSelectValue = GenerationResource;
+export type ResourceSelectValue = GenerationResourceValue;
 
 /**
  * Partial resource value that can be passed to the input.
@@ -32,8 +32,11 @@ export type ResourceSelectValue = GenerationResource;
  * is a plain string on the wire. The picker hydrates by id when fields are
  * missing, so the prop type reflects that.
  */
-export type PartialResourceValue = Partial<Omit<GenerationResource, 'model' | 'epochDetails'>> & {
+export type PartialResourceValue = Partial<
+  Omit<GenerationResourceValue, 'model' | 'epochDetails' | 'settings'>
+> & {
   id: number;
+  settings?: Partial<GenerationResource['settings']>;
   model?: { type?: string } & Partial<Omit<GenerationResource['model'], 'type'>>;
   epochDetails?: Partial<NonNullable<GenerationResource['epochDetails']>>;
 };

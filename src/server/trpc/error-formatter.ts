@@ -1,5 +1,6 @@
 import type { TRPCDefaultErrorShape, TRPCError } from '@trpc/server';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 export function errorFormatter({
   shape,
@@ -8,6 +9,13 @@ export function errorFormatter({
   shape: TRPCDefaultErrorShape;
   error: TRPCError;
 }) {
+  const formatted = formatShape(shape, error);
+  const rateLimit = rateLimitMetaOf(error);
+  if (!rateLimit) return formatted;
+  return { ...formatted, data: { ...formatted.data, rateLimit } };
+}
+
+function formatShape(shape: TRPCDefaultErrorShape, error: TRPCError) {
   // `cause.softBlock` is set only by the generation gate (auditPromptServer)
   // and read only by the generator form. Keep it off the message: consumers
   // match that with `startsWith`.

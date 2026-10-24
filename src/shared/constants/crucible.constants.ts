@@ -92,6 +92,14 @@ export const CRUCIBLE_MAX_ALLOWED_RESOURCES = 10;
 
 export const CRUCIBLE_MAX_ALLOWED_BASE_MODELS = 10;
 
+/** Moderator-set labels a homepage Feed block selects crucibles by. Shared with shop items. */
+export {
+  MAX_EVENT_TAGS as CRUCIBLE_MAX_EVENT_TAGS,
+  EVENT_TAG_MAX_LENGTH as CRUCIBLE_EVENT_TAG_MAX_LENGTH,
+  EVENT_TAG_PATTERN as CRUCIBLE_EVENT_TAG_PATTERN,
+  normalizeEventTag as normalizeCrucibleEventTag,
+} from '~/shared/constants/event-tag.constants';
+
 /** How far ahead a crucible's start may be scheduled. */
 export const CRUCIBLE_MAX_START_LEAD_DAYS = 30;
 
@@ -191,3 +199,6 @@ export const playsToEnd = (durationSeconds: number | null, capSeconds: number) =
 
 /** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
+
+// Candidate pool for getJudgingSuggestions; the caught-up filter runs after the SQL LIMIT, so keep it above the open-crucible count.
+export const CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES = 50;

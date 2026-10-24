@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
+import type { EventPointsConfig } from '~/server/events/points/types';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import {
   redis,
@@ -12,11 +13,13 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { placeListedJoiner } from '~/server/events/team-balance';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import type { EventPromoIcon } from '~/shared/constants/nav-banner.constants';
 
-// Disable pod memory keeping for now... We might not need it.
-// const manualAssignments: Record<string, Record<string, string>> = {};
-async function getManualAssignments(event: string) {
-  // if (manualAssignments[event]) return manualAssignments[event];
+// One user's field, not the whole hash: a balanced event places up to its list size (5,000 for
+// birthday2026) in it, and this runs on every cosmetic resolution during the event.
+async function getManualAssignment(event: string, userId: number, { strict = false } = {}) {
   // Fail open: called via getUserTeam → getUserCosmeticId on every
   // user-cosmetic resolution during active events. A sysRedis outage
   // shouldn't 500 every cosmetic lookup — degrade to "no manual
@@ -25,16 +28,18 @@ async function getManualAssignments(event: string) {
     // Wall-clock deadline: this read is on the per-request cosmetic-resolution
     // path during active events; the try/catch only covers a fast DOWN, so a
     // silent half-open would park it ~11min.
-    const assignments = await withSysReadDeadline(
-      sysRedis.hGetAll(
-        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+    return await withSysReadDeadline(
+      sysRedis.hGet(
+        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`,
+        userId.toString()
       )
     );
-    // manualAssignments[event] = assignments;
-    return assignments;
   } catch (err) {
-    logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
-    return {} as Record<string, string>;
+    // Strict callers decide something that must not use a guessed team (selling
+    // a team-coloured item), so they get the failure instead of the fallback.
+    if (strict) throw err;
+    logSysRedisFailOpen('read-degraded', 'getManualAssignment', err, { event });
+    return undefined;
   }
 }
 export async function addManualAssignments(event: string, team: string, users: string[]) {
@@ -76,17 +81,51 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     await redis.del(name);
     await redis.del(`${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`);
   }
-  async function getUserTeam(userId: number) {
-    const manualAssignment = await getManualAssignments(name);
-    if (manualAssignment[userId.toString()]) return manualAssignment[userId.toString()];
+  async function getUserTeam(userId: number, opts?: { strict?: boolean }) {
+    const manualAssignment = await getManualAssignment(name, userId, opts);
+    if (manualAssignment) return manualAssignment;
     const random = new Rand(name + userId.toString(), PRNG.sfc32);
     const number = random.next();
     const index = Math.floor(number * definition.teams.length);
     return definition.teams[index];
   }
-  function getTeamCosmetic(team: string) {
-    const name = `${definition.cosmeticName} - ${team}`;
-    return getCosmetic(name);
+  // For an event with `join.balance`: places a listed user on a team now, unless they already hold one
+  // of the event's team cosmetics (joined or bought), whose team they keep. Every team-committing
+  // action calls it before reading the team, so a purchase and a join racing settle the same team.
+  // Returns the team placed on (or already assigned by hand), else undefined.
+  async function settleBalancedTeam(userId: number) {
+    if (!definition.join?.balance) return undefined;
+    const [held] = await dbWrite.$queryRaw<{ held: number }[]>`
+      SELECT 1 AS held FROM "UserCosmetic" uc
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      WHERE uc."userId" = ${userId}
+        AND c.data->>'event' = ${name}
+        AND c.data->>'team' IS NOT NULL
+      LIMIT 1
+    `;
+    if (held) return undefined;
+    return placeListedJoiner(name, userId, definition.teams);
+  }
+  // A join event finds its team cosmetic by data (event, team, design), so cosmetic names stay
+  // display-only. Older events find it by the name "<cosmeticName> - <team>".
+  async function getTeamCosmetic(team: string) {
+    if (!definition.join) return getCosmetic(`${definition.cosmeticName} - ${team}`);
+
+    const field = `${name}:${definition.join.design}:${team}`;
+    const cached = await redis.hGet(REDIS_KEYS.COSMETICS.IDS, field);
+    if (cached) return Number(cached);
+    const [cosmetic] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Cosmetic"
+      WHERE type = 'ContentDecoration'
+        AND data->>'event' = ${name}
+        AND data->>'team' = ${team}
+        AND data->>'design' = ${definition.join.design}
+      ORDER BY id
+      LIMIT 1
+    `;
+    if (!cosmetic) return;
+    await redis.hSet(REDIS_KEYS.COSMETICS.IDS, field, cosmetic.id.toString());
+    return cosmetic.id;
   }
   async function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(await getUserTeam(userId));
@@ -158,6 +197,7 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     clearUserCosmeticCache,
     getTeamCosmetic,
     getUserTeam,
+    settleBalancedTeam,
     getUserCosmeticId,
     getRewards,
     getDiscordRoles,
@@ -205,12 +245,99 @@ export type BuzzEventContext = {
   db: PrismaClient;
 };
 
+// Scores a team by the points its event cosmetics earn: every qualifying action on content wearing
+// one is recorded in a ledger and settled hourly. See src/server/events/points/.
+export type EventScoring = EventPointsConfig & {
+  // Accounts registered less than this many days before the event starts earn nobody points.
+  newAccountDays: number;
+  // Scoring keeps running this long past endDate for late data; the winner is decided after it.
+  finalizeAfterMs: number;
+};
+
+// The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
+// wear a decoration) are read from `scoring` and the event's decoration definition, never restated
+// here, so the page cannot drift from the rules the scoring job applies.
+export type EventPageCopy = {
+  headline: string;
+  // A second headline line, drawn in the team-colour gradient.
+  headlineAccent?: string;
+  // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
+  heroImage?: string;
+  // CDN image id for the home block's art, composed for its short, nearly square slot; the block
+  // falls back to the hero. The left side fades into the block and carries the play button.
+  homeImage?: string;
+  // A short film about the event, as a CDN video id. The hero puts a play button on its art that
+  // opens it; `title` names it in the button's label and the player's heading. `duration` is the
+  // file's length in seconds, as its own header states it; the button shows it, or just "Watch".
+  heroVideo?: { id: string; title: string; duration?: number };
+  // Shown verbatim on the hero's date badge, e.g. "Nov 11 to Nov 25"; without it the badge formats
+  // startDate and endDate in the viewer's timezone.
+  dates?: string;
+  summary: string;
+  steps: { title: string; body: string }[];
+  prize: { title: string; body: string; imageUrl?: string };
+  // The prize badge's art per team, as CDN image ids: `animated` for viewers who autoplay, `static`
+  // (a still frame) for those who turned autoplay off.
+  prizeBadge?: Record<string, { animated: string; static: string }>;
+  faq?: { question: string; answer: string }[];
+};
+
+// The strip this event shows in the nav announcement slot while the viewer can play it (see
+// nav-banner.service.ts). Title and image default to the page's headline and hero.
+export type EventBannerCopy = {
+  title?: string;
+  accent?: string;
+  text?: string;
+  cta?: string;
+  image?: string;
+  background?: string;
+  dismissible?: boolean;
+  priority?: number;
+};
+
+type EditorCardCopy = {
+  title?: string;
+  body: string;
+  // Shown while the content is unpublished.
+  draftNote?: string;
+  image?: string;
+};
+
+// Copy for the event's other entry points, served beside its banner (see nav-banner.service.ts).
+// Links, visibility and the hat button are derived from the rest of the definition, never set here.
+export type EventPromoCopy = {
+  // The user-menu entry. Defaults to the event title.
+  menuLabel?: string;
+  menuIcon?: EventPromoIcon;
+  // The card under Publish in the post editor. Omit it and the editor shows no card.
+  postEditor?: EditorCardCopy;
+  // The same card in the article editor, for an event whose decoration can sit on an article.
+  articleEditor?: EditorCardCopy;
+  // The post editor's card for a post that belongs to a model: it hats the model.
+  modelEditor?: EditorCardCopy;
+  homeBlock?: { eyebrow?: string; title?: string; body?: string; cta?: string };
+};
+
 type HolidayEventDefinition = {
   title: string;
+  page?: EventPageCopy;
+  banner?: EventBannerCopy;
+  // Needs `banner`: the promo rides on the banner's entry.
+  promo?: EventPromoCopy;
   startDate: Date;
   endDate: Date;
-  teams: string[];
-  bankIndex: number;
+  teams: readonly string[];
+  // Gates the event behind this flag, with an early window for flagged users. See event-access.ts.
+  featureFlag?: FeatureFlagKey;
+  previewFrom?: Date;
+  // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
+  bankIndex?: number;
+  scoring?: EventScoring;
+  // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
+  // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
+  // behaviour. `balance` places users on the event's team-balance list by predicted points instead of
+  // the hash; see team-balance.ts.
+  join?: { claimKey: string; design: string; balance?: boolean };
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;

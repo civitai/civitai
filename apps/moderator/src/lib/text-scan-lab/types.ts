@@ -16,7 +16,7 @@ export const LAB_ENTITY_TYPES = [
 ] as const;
 export type LabEntityType = (typeof LAB_ENTITY_TYPES)[number];
 
-export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam';
+export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam';
 
 // Mirrors each main-app profile's `labels` (src/server/services/text-scan/profiles/*.profile.ts).
 export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
@@ -70,6 +70,7 @@ export type LabScanResult =
       parseError?: string;
       rawContent?: string;
       elapsedMs: number;
+      segments?: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
 
@@ -79,8 +80,21 @@ export const PROMPT_KEYS = [
   'label:poi',
   'label:minor',
   'label:scam',
+  'label:csam',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 /** A moderator's unpublished changes: the prompt keys they edited and their text. */
 export type PromptChanges = Partial<Record<PromptKey, string>>;
+
+export const isPromptKey = (key: string): key is PromptKey =>
+  (PROMPT_KEYS as readonly string[]).includes(key);
+
+/** A moderator's unsaved rule edit for a try: a negative id is a rule not saved yet. */
+export type LabRuleOverride = {
+  id: number;
+  subject: string;
+  description: string;
+  aliases: string[];
+  enabled: boolean;
+};

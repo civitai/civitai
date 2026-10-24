@@ -22,4 +22,41 @@ describe('notifyAppealResolved', () => {
       expect.objectContaining({ userId: 1, key: 'entity-appeal-resolved:Image:128489949:555' })
     );
   });
+
+  it('keeps an image appeal’s details as they were', async () => {
+    createNotification.mockClear();
+    await notifyAppealResolved({ appeal: { id: 3, userId: 8 }, entityId: 40, status: 'Approved' });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: { entityType: 'Image', entityId: 40, status: 'Approved', resolvedMessage: '' },
+      })
+    );
+  });
+
+  // The main app's `entity-appeal-resolved` copy reads a site appeal's `category` and `restored`.
+  it('names a site appeal by its own entity and carries its category', async () => {
+    createNotification.mockClear();
+    await notifyAppealResolved({
+      appeal: { id: 4, userId: 8 },
+      entityType: 'User',
+      entityId: 8,
+      status: 'Rejected',
+      resolvedMessage: 'No.',
+      details: { category: 'Account', restored: false },
+    });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 8,
+        key: 'entity-appeal-resolved:User:8:4',
+        details: {
+          category: 'Account',
+          restored: false,
+          entityType: 'User',
+          entityId: 8,
+          status: 'Rejected',
+          resolvedMessage: 'No.',
+        },
+      })
+    );
+  });
 });

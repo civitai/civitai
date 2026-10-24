@@ -1,5 +1,5 @@
 import { Badge, Skeleton, Text, Tooltip } from '@mantine/core';
-import { IconCheck, IconGavel, IconHourglass, IconUsers } from '@tabler/icons-react';
+import { IconCheck, IconGavel, IconHourglass, IconSwords, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -7,6 +7,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -49,6 +50,7 @@ type CrucibleCardData = {
     entries: number;
   };
   paidEntryCount: number;
+  entrantCount: number;
   judging?: CrucibleJudgingStatus;
 };
 
@@ -65,6 +67,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
     image,
     _count,
     paidEntryCount,
+    entrantCount,
     judging,
   } = data;
   const entryCount = _count.entries ?? 0;
@@ -165,10 +168,28 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 <DaysFromNow date={endAt} withoutSuffix /> left
               </Text>
             )}
-            <Text component="span" size="xs" fw={600} className="flex items-center gap-1">
-              <IconUsers size={14} />
-              {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
-            </Text>
+            <IconBadge
+              icon={<IconSwords size={14} />}
+              color="gray.0"
+              p={0}
+              size="lg"
+              variant="transparent"
+            >
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+              </Text>
+            </IconBadge>
+            <IconBadge
+              icon={<IconUsers size={14} />}
+              color="gray.0"
+              p={0}
+              size="lg"
+              variant="transparent"
+            >
+              <Text fw="bold" size="xs">
+                {abbreviateNumber(entrantCount)} {entrantCount === 1 ? 'entrant' : 'entrants'}
+              </Text>
+            </IconBadge>
           </div>
         </div>
       }

@@ -1,6 +1,7 @@
 import {
   cancelCrucibleHandler,
   removeCrucibleEntryHandler,
+  withdrawCrucibleEntryHandler,
   updateCrucibleHandler,
   checkEntryEligibilityHandler,
   getCreateEligibilityHandler,
@@ -23,6 +24,7 @@ import {
   getUserCrucibleStatsHandler,
   submitEntryHandler,
   submitVoteHandler,
+  toggleCrucibleFollowHandler,
 } from '~/server/controllers/crucible.controller';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -31,6 +33,7 @@ import {
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
   removeCrucibleEntrySchema,
+  withdrawCrucibleEntrySchema,
   updateCrucibleSchema,
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
@@ -45,14 +48,13 @@ import {
   getJudgingSuggestionsSchema,
   getUserActiveCruciblesSchema,
   getUserCrucibleStatsSchema,
+  setCrucibleEventTagsSchema,
   submitEntrySchema,
   submitVoteSchema,
   toggleCrucibleFollowSchema,
 } from '~/server/schema/crucible.schema';
-import {
-  getFollowedCrucibleIds,
-  toggleCrucibleFollow,
-} from '~/server/services/crucible-engagement.service';
+import { getFollowedCrucibleIds } from '~/server/services/crucible-engagement.service';
+import { getCrucibleEventTags, setCrucibleEventTags } from '~/server/services/crucible.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -151,6 +153,11 @@ export const crucibleRouter = router({
     .input(removeCrucibleEntrySchema)
     .mutation(removeCrucibleEntryHandler),
 
+  withdrawEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(withdrawCrucibleEntrySchema)
+    .mutation(withdrawCrucibleEntryHandler),
+
   update: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(updateCrucibleSchema)
@@ -189,9 +196,18 @@ export const crucibleRouter = router({
   toggleFollow: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(toggleCrucibleFollowSchema)
-    .mutation(({ input, ctx }) =>
-      toggleCrucibleFollow({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(toggleCrucibleFollowHandler),
+
+  // Event tags are moderator data: no row sent to a non-moderator may carry them.
+  getEventTags: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCrucibleByIdSchema)
+    .query(({ input }) => getCrucibleEventTags(input.id)),
+
+  setEventTags: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(setCrucibleEventTagsSchema)
+    .mutation(({ input }) => setCrucibleEventTags(input)),
 
   getFollowedIds: protectedProcedure
     .use(isFlagProtected('crucible'))

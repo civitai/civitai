@@ -33,14 +33,6 @@ export function fullyPassed(testModule) {
 
 const log = (msg) => console.error(msg);
 
-const relOrNull = (id, root) => {
-  try {
-    return core.toRel(id, root);
-  } catch {
-    return null;
-  }
-};
-
 export default class TestCacheReporter {
   onInit(vitest) {
     this.vitest = vitest;
@@ -77,7 +69,7 @@ export default class TestCacheReporter {
         // Never throws, so the tripwire below really is first: `toRel` can raise on a malformed
         // id, and a throw here would abort `record()` before a false skip could be reported. A
         // null file is refused by recordOne anyway ("test file outside the repo").
-        file: relOrNull(m.moduleId, root),
+        file: core.relOrNull(m.moduleId, root),
         project: m.project.name,
         ms:
           (d.prepareDuration ?? 0) +
@@ -218,7 +210,15 @@ export default class TestCacheReporter {
       .find((g) => g?.getModuleById(m.moduleId));
     if (!graph) return void (row.why = 'test file not in module graph');
 
-    const ids = new Set(core.closureOf(graph, m.moduleId));
+    // Memoised across files: each lists ~1000 ids, mostly the same ones, and converting them afresh
+    // per file benchmarked at ~4.5ms a file, ~11s of a full run's end.
+    this.relMemo ??= new Map();
+    const relOf = (id) => {
+      if (!this.relMemo.has(id)) this.relMemo.set(id, core.relOrNull(id, root));
+      return this.relMemo.get(id);
+    };
+    const expand = core.expandOnlyLoaded(m.meta()?.testCacheLoaded, testRel, relOf);
+    const ids = new Set(core.closureOf(graph, m.moduleId, expand));
     for (const setup of m.project.config.setupFiles ?? []) {
       // The fs tracker is instrumentation, not an input: its closure (this cache's own code, which
       // imports child_process) is covered by the salt. Walking it marked EVERY test as reaching a
@@ -226,10 +226,14 @@ export default class TestCacheReporter {
       // Exactly the tracker, not its directory: the end-to-end fixture's own setup file lives under
       // scripts/test-cache/ too, and a directory-wide exclusion silently skipped scanning it.
       if (core.toRel(setup, root) === 'scripts/test-cache/fs-tracker.mjs') continue;
-      const s = core.closureOf(graph, setup);
+      // Narrowed like the test file, and stricter: a module this file never loaded is dropped, not
+      // kept as a leaf. setup.ts's `vi.mock` factories `await import` the redis and db packages, and
+      // once any file runs one, the shared graph hangs them under setup.ts for every file. Measured:
+      // a component test importing neither was keyed on both.
+      const s = core.closureOf(graph, setup, expand);
       if (s === null) return void (row.why = 'setup file not in module graph');
       ids.add(setup);
-      for (const id of s) ids.add(id);
+      for (const id of s) if (expand(id)) ids.add(id);
     }
     const entries = new Set([testRel]);
     for (const id of ids) entries.add(core.toRel(id, root));

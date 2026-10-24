@@ -84,15 +84,23 @@ export type UserStats = {
 };
 
 export type ProfileMedia = {
+  /** The Image row, where the caller needs to tell two profile images apart. */
+  id?: number;
   /** Cloudflare key (Image.url), not the numeric id — what EdgeMedia takes as `src`. */
   url: string;
   type: string | null;
   nsfwLevel: number | null;
+  /** The image scan's minor tags, for a moderator checking an avatar or cover. */
+  minor?: boolean;
+  acceptableMinor?: boolean;
 };
 
 export type UserProfileText = {
   bio: string | null;
   message: string | null;
+  /** The variants shown on the SFW site; null where the account set none. */
+  sfwBio: string | null;
+  sfwMessage: string | null;
   location: string | null;
   /** Retool's "Look at Cover Image". Both are kept: an account can pass on the SFW one and fail on
    *  the real one, and a moderator asked about a cover has to see the one that was reported. */
@@ -111,6 +119,7 @@ export type UserScores = {
   articles: number | null;
   reportsAgainst: number | null;
   reportsActioned: number | null;
+  staffAwarded: number | null;
 };
 
 export type UserLookupResult = {
@@ -180,7 +189,7 @@ export async function resolveUsername(userId: number): Promise<{ username: strin
  * Retool-era `UserStrikes`. Nothing writes both, so counting only the legacy one showed 0 for every
  * strike the live system has issued — on a header chip that exists to say how much rope is left.
  */
-async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
+export async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
   const row = await dbRead
     .selectFrom('UserStrike')
     .select((eb) => [
@@ -324,6 +333,29 @@ export async function getUserLookup(userId: number): Promise<UserLookupResult | 
   return card
     ? { ...card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks }
     : null;
+}
+
+export type ReportedAccountDetails = {
+  card: UserCard;
+  profile: UserProfileText | null;
+  counts: UserCounts;
+};
+
+/**
+ * Who a reported account IS, for the report queues — the slice of `getUserLookup` a report is judged
+ * on. Most user reports are Spam, and spam lives in the profile text and in what the account posts,
+ * not in its images; a queue that showed only the image grid hid the evidence for the commonest case.
+ * Not the whole lookup: scores, stats and leaderboard ranks answer nothing about a report.
+ */
+export async function getReportedAccountDetails(
+  userId: number
+): Promise<ReportedAccountDetails | null> {
+  const [card, profile, counts] = await Promise.all([
+    getUserCard(userId),
+    getProfile(userId),
+    getCounts(userId),
+  ]);
+  return card ? { card, profile, counts } : null;
 }
 
 // CURATOR STATUS (Retool's CuratorStatus / CuratorStatus2). Curators hold elevated permissions on the
@@ -499,35 +531,93 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
 // in-tool action there; linking out to the profile instead means the moderator has to load the very
 // page they may be about to act on, in a normal browsing session.
 async function getProfile(userId: number): Promise<UserProfileText | null> {
-  const row = await dbRead
+  return (await getProfiles([userId])).get(userId) ?? null;
+}
+
+/** `getProfile` for many accounts in one read (the CSAM holds queue shows a page of them). */
+export async function getProfiles(userIds: number[]): Promise<Map<number, UserProfileText>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
     .selectFrom('UserProfile as up')
     .leftJoin('Image as ci', 'ci.id', 'up.coverImageId')
     .leftJoin('Image as si', 'si.id', 'up.sfwCoverImageId')
     .select([
+      'up.userId',
       'up.bio',
       'up.message',
+      'up.sfwBio',
+      'up.sfwMessage',
       'up.location',
+      'ci.id as coverId',
       'ci.url as coverUrl',
       sql<string | null>`ci.type::text`.as('coverType'),
       'ci.nsfwLevel as coverNsfwLevel',
+      'ci.minor as coverMinor',
+      'ci.acceptableMinor as coverAcceptableMinor',
+      'si.id as sfwCoverId',
       'si.url as sfwCoverUrl',
       sql<string | null>`si.type::text`.as('sfwCoverType'),
       'si.nsfwLevel as sfwCoverNsfwLevel',
+      'si.minor as sfwCoverMinor',
+      'si.acceptableMinor as sfwCoverAcceptableMinor',
     ])
-    .where('up.userId', '=', userId)
-    .executeTakeFirst();
-  if (!row) return null;
-  return {
-    bio: row.bio,
-    message: row.message,
-    location: row.location,
-    coverImage: row.coverUrl
-      ? { url: row.coverUrl, type: row.coverType, nsfwLevel: row.coverNsfwLevel }
-      : null,
-    sfwCoverImage: row.sfwCoverUrl
-      ? { url: row.sfwCoverUrl, type: row.sfwCoverType, nsfwLevel: row.sfwCoverNsfwLevel }
-      : null,
-  };
+    .where('up.userId', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map((row) => [
+      row.userId,
+      {
+        bio: row.bio,
+        message: row.message,
+        sfwBio: row.sfwBio,
+        sfwMessage: row.sfwMessage,
+        location: row.location,
+        coverImage: row.coverUrl
+          ? {
+              id: row.coverId ?? undefined,
+              url: row.coverUrl,
+              type: row.coverType,
+              nsfwLevel: row.coverNsfwLevel,
+              minor: row.coverMinor ?? false,
+              acceptableMinor: row.coverAcceptableMinor ?? false,
+            }
+          : null,
+        sfwCoverImage: row.sfwCoverUrl
+          ? {
+              id: row.sfwCoverId ?? undefined,
+              url: row.sfwCoverUrl,
+              type: row.sfwCoverType,
+              nsfwLevel: row.sfwCoverNsfwLevel,
+              minor: row.sfwCoverMinor ?? false,
+              acceptableMinor: row.sfwCoverAcceptableMinor ?? false,
+            }
+          : null,
+      },
+    ])
+  );
+}
+
+/** The avatars of many accounts in one read. `User.image` is the legacy URL; the modern avatar is the
+ *  Image row behind `profilePictureId` (see `getIdentity`). */
+export async function getProfilePictures(userIds: number[]): Promise<Map<number, ProfileMedia>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
+    .selectFrom('User as u')
+    .innerJoin('Image as i', 'i.id', 'u.profilePictureId')
+    .select([
+      'u.id as userId',
+      'i.id',
+      'i.url',
+      sql<string>`i.type::text`.as('type'),
+      'i.nsfwLevel',
+      'i.minor',
+      'i.acceptableMinor',
+    ])
+    .where('u.id', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map(({ userId, ...media }) => [userId, media] satisfies [number, ProfileMedia])
+  );
 }
 
 async function getScores(userId: number): Promise<UserScores | null> {
@@ -548,6 +638,7 @@ async function getScores(userId: number): Promise<UserScores | null> {
     articles: at('articles'),
     reportsAgainst: at('reportsAgainst'),
     reportsActioned: at('reportsActioned'),
+    staffAwarded: at('staffAwarded'),
   };
 }
 
@@ -615,7 +706,7 @@ async function getCommentFlags(userId: number) {
   ].filter((f) => f.count > 0);
 }
 
-async function getCounts(userId: number): Promise<UserCounts> {
+export async function getCounts(userId: number): Promise<UserCounts> {
   const [counts, modelFlags, commentFlags] = await Promise.all([
     Promise.all(
       COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {

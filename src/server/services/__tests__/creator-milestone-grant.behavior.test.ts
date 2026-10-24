@@ -1,14 +1,31 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ createNotification: vi.fn(async () => undefined) }));
+const mocks = vi.hoisted(() => ({
+  createNotification: vi.fn(async () => undefined),
+  refreshCosmetics: vi.fn<(ids: number[]) => Promise<void>>(async () => undefined),
+  purgeCache: vi.fn<(input: { tags?: string[] }) => Promise<void>>(async () => undefined),
+}));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: mocks.createNotification,
 }));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const original = await importOriginal<typeof Caches>();
+  return {
+    ...original,
+    userCosmeticCache: { ...original.userCosmeticCache, refresh: mocks.refreshCosmetics },
+  };
+});
+vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Cloudflare>()),
+  purgeCache: mocks.purgeCache,
+}));
 
+import type * as Cloudflare from '~/server/cloudflare/client';
+import type * as Caches from '~/server/redis/caches';
 import type * as NotificationService from '~/server/services/notification.service';
 import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
@@ -32,12 +49,14 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * excluding property, so an exclusion that matched everyone would fail on the twin.
  */
 
+const migrationPath = (name: string) =>
+  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql');
 const MIGRATIONS = [
   '20261005120000_creator_milestone',
   '20261007120000_creator_milestone_cosmetic',
-].map((name) =>
-  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
-);
+].map(migrationPath);
+const CARD_DECORATION_MIGRATION = migrationPath('20261027140000_cosmetic_type_card_decoration');
+const MYTHIC_MIGRATION = migrationPath('20261027150000_creator_milestone_mythic');
 
 const holder = { db: null as unknown as PGlite };
 const pg = {
@@ -98,12 +117,19 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
+    -- The enum as prod has it before the CardDecoration migration: every grant must still parse.
+    CREATE TYPE "CosmeticType" AS ENUM ('Badge', 'NamePlate', 'ContentDecoration',
+      'ProfileDecoration', 'ProfileBackground', 'Sticker', 'ChatTheme');
+    CREATE TABLE "Cosmetic" (
+      id serial PRIMARY KEY, name text, description text,
+      type "CosmeticType" NOT NULL DEFAULT 'Badge', source text, "permanentUnlock" boolean, data jsonb
+    );
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL REFERENCES "User"(id),
       "cosmeticId" int NOT NULL REFERENCES "Cosmetic"(id),
       "obtainedAt" timestamp(3) NOT NULL DEFAULT now(),
       "claimKey" text NOT NULL DEFAULT 'claimed',
+      "equippedAt" timestamp(3),
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
   `);
@@ -208,6 +234,20 @@ describe('nightly grant', () => {
     expect(await held(AT_EDGE)).toEqual([
       { milestoneKey: 'score:spark', seen: announced.length === 0 },
     ]);
+  });
+
+  // A model a moderator takes down stops counting, so a total can fall below a tier already held.
+  it('revokes and announces nothing when a total falls below tiers already held', async () => {
+    const cosmeticId = await attachCosmetic('score:spark');
+    await runNight();
+    const before = await held(ELIGIBLE);
+    expect(before).toHaveLength(2);
+
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 0 }]]);
+    expect(transitions).toEqual([{ userId: ELIGIBLE, oldTotal: 1200, newTotal: 0 }]);
+    expect(await grantScoreTierMilestones(pg, transitions)).toEqual([]);
+    expect(await held(ELIGIBLE)).toEqual(before);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId, claimKey: 'score:spark' }]);
   });
 
   it('grants nothing twice', async () => {
@@ -548,14 +588,14 @@ describe('nightly grant before a definition launches', () => {
     await q(`UPDATE "User" SET "isModerator" = true WHERE id = $1`, [ELIGIBLE]);
   });
 
-  async function runBatch(now: Date) {
+  async function runBatch(now: Date, models = 600) {
     const ctx = {
       pg,
       jobContext: { on: vi.fn(), checkIfCanceled: vi.fn() } as never,
       tierUnlocks: [],
       tierGrantErrors: [] as unknown[],
     };
-    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models: 600 }]], { now });
+    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models }]], { now });
     expect(ctx.tierGrantErrors).toEqual([]);
   }
 
@@ -579,5 +619,189 @@ describe('nightly grant before a definition launches', () => {
     await runBatch(AFTER_LAUNCH);
     expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
     expect(notifiedKeys()).toEqual([`creator-score-tier-reached:${ELIGIBLE}:score:spark`]);
+  });
+
+  it('keeps a held tier and announces nothing when the total falls below it', async () => {
+    await runBatch(AFTER_LAUNCH);
+    const before = await held(ELIGIBLE);
+    expect(before).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
+    mocks.createNotification.mockClear();
+
+    await runBatch(AFTER_LAUNCH, 0);
+    expect(await held(ELIGIBLE)).toEqual(before);
+    expect(notifiedKeys()).toEqual([]);
+  });
+});
+
+describe('Mythic', () => {
+  const MYTHIC = 'score:mythic';
+  const WEARER = 30;
+
+  const mythicCosmetics = () =>
+    q<{ id: number; type: string }>(
+      `SELECT c.id, c.type::text AS type FROM "Cosmetic" c
+       WHERE c.id IN (
+         SELECT "cosmeticId" FROM "CreatorMilestone" WHERE key = $1
+         UNION SELECT "cosmeticId" FROM "CreatorMilestoneCosmetic" WHERE "milestoneKey" = $1
+       ) ORDER BY c.type::text`,
+      [MYTHIC]
+    );
+  const worn = (userId: number) =>
+    q<{ cosmeticId: number; type: string }>(
+      `SELECT uc."cosmeticId", c.type::text AS type FROM "UserCosmetic" uc
+       JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+       WHERE uc."userId" = $1 AND uc."equippedAt" IS NOT NULL ORDER BY 1`,
+      [userId]
+    );
+  const cross = async (userId: number, from: number, to: number) => {
+    await addUser(userId, from);
+    const transitions = await applyUserScoreUpdates(pg, [[String(userId), { models: to }]]);
+    return grantScoreTierMilestones(pg, transitions);
+  };
+
+  beforeAll(async () => {
+    // Twice, as it may be applied by hand more than once; the rows that use the value come after.
+    for (const migration of [CARD_DECORATION_MIGRATION, CARD_DECORATION_MIGRATION])
+      await holder.db.exec(readFileSync(migration, 'utf8'));
+  });
+
+  beforeEach(async () => {
+    // The file-wide reset unlinks every milestone cosmetic; the migration is idempotent and relinks.
+    for (const migration of [MYTHIC_MIGRATION, MYTHIC_MIGRATION])
+      await holder.db.exec(readFileSync(migration, 'utf8'));
+    mocks.refreshCosmetics.mockClear();
+    mocks.purgeCache.mockClear();
+  });
+
+  it('seeds one Mythic row above Legend, with one badge and one card glow', async () => {
+    expect(
+      await q(
+        `SELECT key, threshold, "sortOrder" FROM "CreatorMilestone"
+         WHERE key IN ('score:legend', $1) ORDER BY "sortOrder"`,
+        [MYTHIC]
+      )
+    ).toEqual([
+      { key: 'score:legend', threshold: 10_000_000, sortOrder: 9 },
+      { key: MYTHIC, threshold: 100_000_000, sortOrder: 10 },
+    ]);
+    expect((await mythicCosmetics()).map((c) => c.type)).toEqual(['Badge', 'CardDecoration']);
+    // Applied twice per test, so a second insert would show here.
+    expect(await q(`SELECT count(*)::int AS n FROM "Cosmetic" WHERE name LIKE 'Mythic %'`)).toEqual(
+      [{ n: 2 }]
+    );
+  });
+
+  it.each([
+    [99_999_999, []],
+    [100_000_000, [MYTHIC]],
+  ])('at a new total of %i, crosses %j', async (total, crossed) => {
+    const crossings = await cross(ELIGIBLE, 50_000_000, total);
+    expect(crossings.map((c) => c.milestoneKey).filter((key) => key === MYTHIC)).toEqual(crossed);
+  });
+
+  it('grants a crossing the badge and the glow, wearing the glow and not the badge', async () => {
+    await cross(ELIGIBLE, 50_000_000, 100_000_000);
+    const cosmetics = await mythicCosmetics();
+    const glow = cosmetics.find((c) => c.type === 'CardDecoration');
+    expect(
+      (await cosmeticsOf(ELIGIBLE)).filter((c) => c.claimKey === MYTHIC).map((c) => c.cosmeticId)
+    ).toEqual(cosmetics.map((c) => c.id).sort((a, b) => a - b));
+    expect(await worn(ELIGIBLE)).toEqual([{ cosmeticId: glow?.id, type: 'CardDecoration' }]);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledWith([ELIGIBLE]);
+    expect(mocks.purgeCache).toHaveBeenCalledTimes(1);
+    expect(mocks.purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${ELIGIBLE}`] });
+  });
+
+  const mythicGlowOf = async (userId: number) => {
+    const glow = (await mythicCosmetics()).find((c) => c.type === 'CardDecoration');
+    return q<{ worn: boolean }>(
+      `SELECT "equippedAt" IS NOT NULL AS worn FROM "UserCosmetic"
+       WHERE "userId" = $1 AND "cosmeticId" = $2`,
+      [userId, glow?.id]
+    );
+  };
+  /** A glow from elsewhere (the shop, later) that `userId` owns, worn or not. */
+  const giveShopGlow = async (userId: number, wearing: boolean) => {
+    const [{ id }] = await q<{ id: number }>(
+      `INSERT INTO "Cosmetic" (name, type) VALUES ('Shop glow', 'CardDecoration') RETURNING id`
+    );
+    await q(
+      `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt")
+       VALUES ($1, $2, CASE WHEN $3::boolean THEN now() END)`,
+      [userId, id, wearing]
+    );
+    return id;
+  };
+
+  afterEach(async () => {
+    await q(`DELETE FROM "UserCosmetic" WHERE "cosmeticId" IN (
+      SELECT id FROM "Cosmetic" WHERE name = 'Shop glow')`);
+    await q(`DELETE FROM "Cosmetic" WHERE name = 'Shop glow'`);
+  });
+
+  it('leaves a glow the creator already wears on, and grants the Mythic one unworn', async () => {
+    await addUser(WEARER, 50_000_000);
+    const own = await giveShopGlow(WEARER, true);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(WEARER), { models: 100_000_000 }],
+    ]);
+    const crossings = await grantScoreTierMilestones(pg, transitions);
+    expect(crossings.map((c) => c.milestoneKey)).toContain(MYTHIC);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: false }]);
+    expect(await worn(WEARER)).toEqual([{ cosmeticId: own, type: 'CardDecoration' }]);
+    expect(mocks.refreshCosmetics).not.toHaveBeenCalled();
+  });
+
+  it('wears the Mythic glow for a creator who owns another glow but is not wearing it', async () => {
+    await addUser(WEARER, 50_000_000);
+    await giveShopGlow(WEARER, false);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(WEARER), { models: 100_000_000 }],
+    ]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: true }]);
+  });
+
+  it('decides per creator: one wearing a glow does not stop another being equipped', async () => {
+    await addUser(WEARER, 50_000_000);
+    await addUser(ELIGIBLE, 50_000_000);
+    await giveShopGlow(WEARER, true);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(WEARER), { models: 100_000_000 }],
+      [String(ELIGIBLE), { models: 100_000_000 }],
+    ]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await mythicGlowOf(WEARER)).toEqual([{ worn: false }]);
+    expect(await mythicGlowOf(ELIGIBLE)).toEqual([{ worn: true }]);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledWith([ELIGIBLE]);
+  });
+
+  it('keeps the committed grant when refreshing the caches fails', async () => {
+    mocks.refreshCosmetics.mockRejectedValueOnce(new Error('redis down'));
+    const crossings = await cross(ELIGIBLE, 50_000_000, 100_000_000);
+    expect(crossings.map((c) => c.milestoneKey)).toContain(MYTHIC);
+    expect(await mythicGlowOf(ELIGIBLE)).toEqual([{ worn: true }]);
+  });
+
+  it('wears the glow for a creator the backfill grants silently, and refreshes their card', async () => {
+    await addUser(ELIGIBLE, 150_000_000);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(await held(ELIGIBLE)).toContainEqual({ milestoneKey: MYTHIC, seen: true });
+    expect((await worn(ELIGIBLE)).map((c) => c.type)).toEqual(['CardDecoration']);
+    expect(mocks.refreshCosmetics).toHaveBeenCalledWith([ELIGIBLE]);
+  });
+
+  it('wears a glow attached to an existing holder by the cosmetics batch', async () => {
+    await addUser(ELIGIBLE, 150_000_000);
+    await q(`DELETE FROM "CreatorMilestoneCosmetic" WHERE "milestoneKey" = $1`, [MYTHIC]);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(await worn(ELIGIBLE)).toEqual([]);
+
+    await holder.db.exec(readFileSync(MYTHIC_MIGRATION, 'utf8'));
+    await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10, milestoneKey: MYTHIC });
+    expect((await worn(ELIGIBLE)).map((c) => c.type)).toEqual(['CardDecoration']);
+    expect(mocks.refreshCosmetics).toHaveBeenLastCalledWith([ELIGIBLE]);
   });
 });

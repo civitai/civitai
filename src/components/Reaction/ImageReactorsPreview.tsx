@@ -90,7 +90,7 @@ export function ImageReactorsList({ imageId }: { imageId: number }) {
         </Text>
       ) : !data?.length ? (
         <Text size="sm" c="dimmed">
-          No reactions yet.
+          No one to show.
         </Text>
       ) : (
         <Stack gap={6}>

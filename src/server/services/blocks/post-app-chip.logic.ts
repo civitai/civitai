@@ -100,9 +100,17 @@
  *
  * `OauthClient.logoUrl` is dead weight — NULL for every `appblk-%` client
  * measured. The real app icon is `app_listings.icon_id → Image.url`, projected
- * through the shared `listingIconUrl` so the chip's icon is byte-identical to
- * the one the store renders for the same app. A live app has no icon at all, so
- * `iconUrl: null` is an ordinary case the UI must render gracefully.
+ * through the shared listing-media gate (`listing-media-audience`) so the chip's
+ * icon is the one the store card renders for the same app, to the same viewer, on
+ * the same host. A live app has no icon at all, so `iconUrl: null` is an ordinary
+ * case the UI must render gracefully.
+ *
+ * 🔴 THE CHIP FOLLOWS THE STORE'S LISTING-MEDIA RULE, HOST AND VIEWER INCLUDED.
+ * Off a red host the icon shows only within SFW ∩ the listing's rating; on a red
+ * host it shows within that same ceiling UNION the viewer's opted-in levels
+ * (`listingMediaCeiling`). An icon that is still scanning or flagged renders as
+ * no icon on every host. A caller that passes no viewer level gets the non-red
+ * view on a red host too, which is the fail-closed direction.
  *
  * ## ⚠ THE WORDING TRAP, recorded because it already shipped once
  *
@@ -124,8 +132,14 @@
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
-import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
-import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import {
+  gatedListingIconUrl,
+  isModerationFlagSet,
+  listingMediaCeiling,
+  listingMediaImageSelect,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
+import { isRedCapableHost, ratingAllowedOnHost } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 
@@ -275,7 +289,7 @@ export function postAppChipQuery(appId: string) {
               kind: true,
               contentRating: true,
               revisionOfId: true,
-              icon: { select: { url: true } },
+              icon: { select: listingMediaImageSelect },
             },
           },
         },
@@ -326,6 +340,8 @@ type ListingCandidate = {
 function readListingCandidate(
   block: unknown,
   host: string,
+  /** The viewer's browsing level, for the icon's red-host media ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel: number | null | undefined,
   /**
    * Listing ids the per-listing VISIBILITY LEVEL hides from a general viewer.
    *
@@ -387,18 +403,38 @@ function readListingCandidate(
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
     name: typeof l.name === 'string' ? sanitizeAppChromeName(l.name) ?? '' : '',
-    iconUrl: listingIconUrl(
-      typeof icon === 'object' && icon !== null
-        ? {
-            url:
-              typeof (icon as { url?: unknown }).url === 'string'
-                ? (icon as { url: string }).url
-                : null,
-          }
-        : null
+    iconUrl: gatedListingIconUrl(
+      readChipIcon(icon),
+      listingMediaCeiling(
+        { redCapable: isRedCapableHost(host), viewerBrowsingLevel },
+        typeof l.contentRating === 'string' ? l.contentRating : null
+      )
     ),
     viewable: lifecycleOk && maturityOk,
     maturityRefused: !maturityOk,
+  };
+}
+
+/**
+ * The joined icon row → the shape the listing-media gate reads, or null. Defensive like the rest
+ * of this reader (the row is typed `unknown`): any missing or mistyped field fails CLOSED — an
+ * absent `ingestion` makes no image at all, an absent level reads as unrated (which the gate
+ * refuses), and a moderation flag counts as SET unless it is literally `false` or absent.
+ */
+function readChipIcon(icon: unknown): ListingMediaImage | null {
+  if (typeof icon !== 'object' || icon === null) return null;
+  const i = icon as Record<string, unknown>;
+  if (typeof i.url !== 'string' || typeof i.ingestion !== 'string') return null;
+  return {
+    url: i.url,
+    ingestion: i.ingestion,
+    nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
+    needsReview: i.needsReview == null ? null : String(i.needsReview),
+    poi: isModerationFlagSet(i.poi),
+    minor: isModerationFlagSet(i.minor),
+    tosViolation: isModerationFlagSet(i.tosViolation),
+    acceptableMinor: isModerationFlagSet(i.acceptableMinor),
+    blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }
 
@@ -503,13 +539,18 @@ export function projectPostAppChip(
     host: string;
     /** See {@link readListingCandidate}. Required so the level term cannot be forgotten. */
     hiddenListingIds: ReadonlySet<string>;
+    /**
+     * The viewer's browsing level, for the icon's media ceiling on a red-capable host (the
+     * store's rule, `listingMediaCeiling`). Absent ⇒ the non-red view on every host.
+     */
+    viewerBrowsingLevel?: number | null;
   }
 ): PostAppChip | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
   const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
   const candidates = blocks
-    .map((b) => readListingCandidate(b, opts.host, opts.hiddenListingIds))
+    .map((b) => readListingCandidate(b, opts.host, opts.viewerBrowsingLevel, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
@@ -622,6 +663,8 @@ export async function resolvePostAppChip(args: {
   storeScope: StoreVisibilityScope;
   /** The request's host, for the maturity term. See {@link projectPostAppChip}. */
   host: string;
+  /** The viewer's browsing level, for the icon's red-host ceiling. See {@link projectPostAppChip}. */
+  viewerBrowsingLevel?: number | null;
   /** Narrow marker read. Build its args with {@link postAppMarkerQuery}. */
   readPostMetadata: (postId: number) => Promise<unknown>;
   /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
@@ -653,6 +696,10 @@ export async function resolvePostAppChip(args: {
   const hiddenListingIds = listingIds.length
     ? await args.readHiddenListingIds(listingIds)
     : EMPTY_HIDDEN;
-  const chip = projectPostAppChip(row ?? null, { host: args.host, hiddenListingIds });
+  const chip = projectPostAppChip(row ?? null, {
+    host: args.host,
+    hiddenListingIds,
+    viewerBrowsingLevel: args.viewerBrowsingLevel,
+  });
   return { chip, outcome: chip ? 'chip' : 'unresolved' };
 }

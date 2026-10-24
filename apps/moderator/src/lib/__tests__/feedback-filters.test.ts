@@ -164,7 +164,8 @@ describe('formatFeedbackFilterValue', () => {
    *
    * What the list does cover, and why each part is in it:
    *   - `area` ∈ `FEEDBACK_AREAS` — `bitdex-image-feed`, `apps-marketplace`, `site-bug-report` —
-   *     plus an unknown slug, since the column is free text.
+   *     plus an unknown slug, since the column is free text. `app-block` is not a row: it has no
+   *     producer yet, and its planned context (`{ surface, modelId? }`) has no `filters`.
    *   - the keys live producers write: `kind`, `category`, `sort`, `query`
    *     (`src/components/Apps/appsStoreFeedbackContext.ts`). `FeedbackDrawer.tsx` writes `path`
    *     only, which is not a `filters` entry at all.

@@ -56,44 +56,86 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model-version.service.ts',
     'export const upsertModelVersion',
-    "scanEntityInBackground({ entityType: 'Model', entityId: version.modelId })",
+    'scanModelAndRules(version.modelId)',
     2,
   ],
   [
     'src/server/services/model-version.service.ts',
     'export async function applyModelVersionContentChange',
-    "if (!context) scanEntityInBackground({ entityType: 'Model', entityId: modelId })",
+    'if (!context) scanModelAndRules(modelId)',
     1,
   ],
   [
     'src/server/services/model-version.service.ts',
     'export const mergeVersions',
-    "scanEntityInBackground({ entityType: 'Model', entityId: modelId })",
-    1,
-  ],
-  [
-    'src/server/services/model.service.ts',
-    'export const privateModelFromTraining',
-    "scanEntityInBackground({ entityType: 'Model', entityId: result.id })",
+    'scanModelAndRules(modelId)',
     1,
   ],
   [
     'src/server/services/model.service.ts',
     'export async function migrateResourceToCollection',
-    "scanEntityInBackground({ entityType: 'Model', entityId })",
+    'modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }))',
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const createPost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/services/model-moderation.adapter.ts',
+    'export async function submitModelTextModeration(',
+    'if (model.isModerator) return;\n\n  if (model.rules !== false) checkModelRulesInBackground(model.id)',
     1,
   ],
   [
-    'src/server/services/post.service.ts',
-    'export const updatePost',
-    "scanEntityInBackground({ entityType: 'Post', entityId: post.id })",
+    'src/server/controllers/model.controller.ts',
+    'export const publishModelHandler',
+    'meta: withModelRulesClearance(meta, modelMeta, isModerator)',
     1,
+  ],
+  [
+    'src/server/controllers/model.controller.ts',
+    'export const publishModelHandler',
+    'enforceModelRules: !isModerator',
+    1,
+  ],
+  [
+    'src/server/controllers/model.controller.ts',
+    'export const publishPrivateModelHandler',
+    'enforceModelRules: !ctx.user.isModerator',
+    1,
+  ],
+  [
+    'src/server/routers/model.router.ts',
+    'migrateToCollection:',
+    'migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })',
+    1,
+  ],
+  [
+    'src/server/controllers/model-version.controller.ts',
+    'export const publishModelVersionHandler',
+    'await unpublishLiveModelForLiteralRules({',
+    1,
+  ],
+  [
+    'src/server/services/text-scan/submit.ts',
+    'export function scanModelAndRules(',
+    'if (rules) checkModelRulesInBackground(modelId)',
+    1,
+  ],
+  [
+    'src/server/services/text-scan/submit.ts',
+    'export function checkModelRulesInBackground(',
+    '.then(({ checkModelRulesOnEdit }) => checkModelRulesOnEdit(modelId))',
+    1,
+  ],
+  [
+    'src/server/services/model-version.service.ts',
+    'export const publishModelVersionById',
+    'scanEntitiesInBackground(',
+    1,
+  ],
+  [
+    'src/server/jobs/process-scheduled-publishing.ts',
+    'export const processScheduledPublishing',
+    'scanEntitiesInBackground(',
+    2,
   ],
   [
     'src/server/services/blocks/block-post.service.ts',
@@ -142,6 +184,6 @@ const cases: [file: string, start: string, call: string, times: number][] = [
 describe('text-scan write-path wiring', () => {
   it.each(cases)('%s → %s', (file, start, call, times) => {
     const body = functionBody(file, start);
-    expect(body.split(call).length - 1, `${call} in ${start}`).toBeGreaterThanOrEqual(times);
+    expect(body.split(call).length - 1, `${call} in ${start}`).toBe(times);
   });
 });

@@ -21,6 +21,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { mockRead, mockWrite } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (args: { data: unknown }) => args.data),

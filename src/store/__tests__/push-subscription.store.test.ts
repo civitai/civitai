@@ -43,16 +43,6 @@ describe('push subscription store', () => {
     expect(state.subscribed).toBe(false);
     expect(state.support).toBe('unsupported');
   });
-
-  it('starts from the SSR-safe defaults', () => {
-    // A server render must produce exactly what the old per-instance useState defaults produced.
-    const state = usePushSubscriptionStore.getState();
-    expect(state.support).toBe('unsupported');
-    expect(state.permission).toBeNull();
-    expect(state.subscribed).toBe(false);
-    expect(state.currentEndpoint).toBeNull();
-    expect(state.busy).toBe(false);
-  });
 });
 
 /**

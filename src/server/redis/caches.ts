@@ -32,7 +32,11 @@ import {
 } from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+} from '~/server/selectors/cosmetic.selector';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import {
   type ImageTagComposite,
@@ -41,8 +45,10 @@ import {
   modelTagCompositeSelect,
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
@@ -98,14 +104,7 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
-    const imageTags = await db.tagsOnImageDetails.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: {
-        imageId: true,
-        source: true,
-        tagId: true,
-      },
-    });
+    const imageTags = await getImageTagRows(db, imageIds);
 
     const tagIds = imageTags.map((t) => t.tagId);
     const tags = await tagCache.fetch(tagIds);
@@ -152,7 +151,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
-    const userCosmeticsRaw = await db.userCosmetic.findMany({
+    const equipped = await db.userCosmetic.findMany({
       where: { userId: { in: goodIds }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
@@ -160,6 +159,12 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
         data: true,
       },
     });
+    // Unequip-on-withhold doesn't reach rows worn before it shipped, so filter on read too.
+    const withheld = await getWithheldCosmeticIds(
+      equipped.map((x) => x.cosmeticId),
+      db
+    );
+    const userCosmeticsRaw = equipped.filter((x) => !withheld.has(x.cosmeticId));
     const results = userCosmeticsRaw.reduce((acc, { userId, cosmeticId, data }) => {
       acc[userId] ??= { userId, cosmetics: [] };
       acc[userId].cosmetics.push({ cosmeticId, data });
@@ -169,6 +174,32 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+/**
+ * For a bulk `UserCosmetic` write that changed what users wear: re-reads their entries so reads served
+ * from this cache drop or show the change now rather than at the TTL. Batched, and never throws — the
+ * write it follows has committed.
+ */
+export async function refreshUserCosmeticCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  for (let i = 0; i < ids.length; i += 500)
+    await userCosmeticCache.refresh(ids.slice(i, i + 500)).catch(() => undefined);
+}
+
+export type RemovedUserCosmetic = {
+  userId: number;
+  equippedAt: Date | null;
+  equippedToId: number | null;
+};
+
+/** Owners of the removed rows that were worn by the user themselves, not placed on content. */
+export const wornUserIds = (rows: RemovedUserCosmetic[]) =>
+  rows.filter((x) => x.equippedAt && x.equippedToId === null).map((x) => x.userId);
+
+/** `refreshUserCosmeticCache` for rows a bulk write deleted: only users who were wearing one. */
+export async function refreshUserCosmeticCacheForRemoved(rows: RemovedUserCosmetic[]) {
+  await refreshUserCosmeticCache(wornUserIds(rows));
+}
 
 type UserOwnedStickerLookup = {
   userId: number;
@@ -277,30 +308,42 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
 type EntityCosmeticLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
-  claimKey: string;
   userData: Prisma.JsonValue;
+  createdById: number | null;
 };
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
-    createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
+    createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
+          SELECT uc."cosmeticId", uc."equippedToId", uc."data" as "userData", c."createdById"
           FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';
         `;
+        // Unequip-on-withhold doesn't reach content decorated before it shipped, so filter on read too.
+        // Only creator cosmetics can be withheld, so a batch of shop frames costs no extra query.
+        const withheld = await getWithheldCosmeticIds(
+          entityCosmetics.filter((x) => x.createdById != null).map((x) => x.cosmeticId),
+          dbWrite
+        );
         return Object.fromEntries(
-          entityCosmetics.map((x) => [
-            x.equippedToId,
-            // Hack here so we can fix it in the appendFn
-            x as any as WithClaimKey<ContentDecorationCosmetic>,
-          ])
+          entityCosmetics
+            .filter((x) => !withheld.has(x.cosmeticId))
+            .map(({ createdById: _, ...x }) => [
+              x.equippedToId,
+              // Hack here so we can fix it in the appendFn
+              x as any as ContentDecorationCosmetic,
+            ])
         );
       },
       appendFn: async (records) => {
@@ -329,7 +372,104 @@ export const cosmeticEntityCaches = Object.fromEntries(
       ttl: CacheTTL.day,
     }),
   ])
-) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
+) as Record<CosmeticEntity, CachedObject<ContentDecorationCosmetic>>;
+
+type EntityEventDecorationLookupRaw = {
+  equippedToId: number;
+  cosmeticId: number;
+  userId: number;
+};
+// userId is the wearer's, for the hat popover; getEventDecorationsForEntity leaves it out of what
+// it sends.
+type WornEventDecoration = EventDecorationCosmetic & { userId: number };
+/** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
+export const eventDecorationEntityCaches = Object.fromEntries(
+  Object.values(CosmeticEntity).map((entity) => [
+    entity as CosmeticEntity,
+    createCachedObject<WornEventDecoration>({
+      // v2: entries carry userId.
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:event:v2:${entity}`,
+      idKey: 'equippedToId',
+      // Read on every image feed page while an event runs, and almost no entity wears one, so
+      // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
+      notFoundTtl: CacheTTL.hour,
+      staleWhileRevalidate: false,
+      // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
+      debounceTime: 1,
+      lookupFn: async (ids) => {
+        const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
+          SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+          WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND jsonb_typeof(c.data->'event') = 'string';
+        `;
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        const result: Record<number, WornEventDecoration> = {};
+        for (const row of rows) {
+          const cosmetic = cosmetics[row.cosmeticId];
+          if (!cosmetic || !isEventDecorationData(cosmetic.data)) continue;
+          result[row.equippedToId] = {
+            id: cosmetic.id,
+            name: cosmetic.name,
+            type: cosmetic.type,
+            source: cosmetic.source,
+            data: cosmetic.data,
+            equippedToId: row.equippedToId,
+            equippedToType: entity as CosmeticEntity,
+            userId: row.userId,
+          };
+        }
+        return result;
+      },
+      ttl: CacheTTL.day,
+    }),
+  ])
+) as Record<CosmeticEntity, CachedObject<WornEventDecoration>>;
+
+// Content anyone may see, for the hat popover, which is the same for every viewer: only public ids
+// are returned, so a miss reads as not public. No stale serving, so a take-down shows within the TTL.
+// The same rules as reviewedImageWhere and the published-model checks elsewhere; change them together.
+const publicContentCache = (
+  entity: 'Image' | 'Model' | 'Article',
+  lookup: (ids: number[]) => Promise<{ id: number }[]>
+) =>
+  createCachedObject<{ id: number }>({
+    key: `${REDIS_KEYS.CACHES.COSMETICS}:event-public:${entity}`,
+    idKey: 'id',
+    ttl: 5 * 60,
+    notFoundTtl: 5 * 60,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => Object.fromEntries((await lookup(ids)).map((row) => [row.id, row])),
+  });
+export const publicContentCaches: Partial<Record<CosmeticEntity, CachedObject<{ id: number }>>> = {
+  Image: publicContentCache(
+    'Image',
+    (ids) => dbRead.$queryRaw`
+      SELECT i.id FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id IN (${Prisma.join(ids)}) AND p."publishedAt" <= now()
+        AND p.availability <> 'Private' AND NOT p."tosViolation"
+        AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
+    `
+  ),
+  Model: publicContentCache(
+    'Model',
+    (ids) => dbRead.$queryRaw`
+      SELECT m.id FROM "Model" m
+      WHERE m.id IN (${Prisma.join(ids)}) AND m.status = 'Published'
+        AND m.availability <> 'Private' AND NOT m."tosViolation"
+    `
+  ),
+  Article: publicContentCache(
+    'Article',
+    (ids) => dbRead.$queryRaw`
+      SELECT a.id FROM "Article" a
+      WHERE a.id IN (${Prisma.join(ids)}) AND a.status = 'Published'
+        AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation"
+    `
+  ),
+};
 
 type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
@@ -1752,10 +1892,14 @@ export type {
  * `modelVersionDonationGoal`), so a draft-inclusive payload can never leak into the shared
  * key and a cached public payload can never be served to a privileged viewer.
  *
- * Correctness rides on explicit busts, not TTL expiry — every writer (goal create in
- * `ensureDonationGoal`, donation + goal-completion in `checkDonationGoalComplete`) busts the key
- * eagerly, so the TTL (CacheTTL.hour, matching `PaidAccess`) is just a backstop. `staleWhileRevalidate:
- * false` so a bust truly clears the entry rather than serving one more stale read.
+ * Correctness rides on explicit writes, not TTL expiry, so the TTL (CacheTTL.hour, matching
+ * `PaidAccess`) is a backstop. Goal creation (`ensureDonationGoal`) and every donation, including the
+ * one that completes the goal (`checkDonationGoalComplete`), REFRESH the entry: one primary lookup
+ * written straight to the cache. The bulk path in `model.service.ts` BUSTS it.
+ * `staleWhileRevalidate: false` so a bust truly clears the entry rather than serving one more stale
+ * read. Known gap: refresh writes unconditionally, so a refresh whose lookup ran before a concurrent
+ * goal completion can land last and cache the goal as still open until the TTL. donateToGoal
+ * re-checks `active` on the primary, so that only affects what is displayed.
  *
  * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
  * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).

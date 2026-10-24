@@ -1,6 +1,10 @@
 /** Vidu handler for the form-graph lane — Q1 (`vidu`), Q3 (`vidu-q3`) and Q4 (`vidu-q4`) engines. */
 
-import type { ViduVideoGenInput, ViduQ3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
+import type {
+  ViduVideoGenInput,
+  ViduQ3VideoGenInput,
+  VideoGenStepTemplate,
+} from '@civitai/orchestration-client';
 import type {
   ViduQ4ImageToVideoInput,
   ViduQ4ReferenceToVideoInput,
@@ -50,7 +54,7 @@ function createQ1Input(data: ViduData): ViduVideoGenInput {
     images: refImages,
     quantity: data.quantity ?? 1,
     seed: data.seed,
-    enablePromptEnhancer: data.enablePromptEnhancer,
+    enhancePrompt: data.enablePromptEnhancer,
   }) as ViduVideoGenInput;
 }
 
@@ -65,7 +69,7 @@ function createQ3Input(data: ViduData): ViduQ3VideoGenInput {
     resolution: data.resolution as ViduQ3VideoGenInput['resolution'],
     duration: data.duration,
     turbo: data.draft,
-    enableAudio: data.enableAudio,
+    generateAudio: data.enableAudio,
     images: images?.length ? images.map((x) => x.url) : undefined,
     quantity: data.quantity ?? 1,
     seed: data.seed,
@@ -95,7 +99,7 @@ function createQ4Input(data: ViduData): ViduQ4ImageToVideoInput | ViduQ4Referenc
       prompt,
       referenceImages: images,
       aspectRatio: data.aspectRatio?.value as ViduQ4ReferenceToVideoInput['aspectRatio'],
-      enableAudio: data.enableAudio,
+      generateAudio: data.enableAudio,
     }) as ViduQ4ReferenceToVideoInput;
   }
 

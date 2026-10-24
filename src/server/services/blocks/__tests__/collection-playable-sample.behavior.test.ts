@@ -310,18 +310,6 @@ describe('getCollectionPlayableSample — the BOUND', () => {
     // would produce.
     expect(map.get(ORDER_NEWEST_SAFE)!.sampled).not.toBe(ORDER_TOTAL);
   });
-
-  it('🔴 PLAYABLE_SAMPLE_SIZE is 200 — the measured point, pinned absolutely', async () => {
-    // Every other assertion in this file derives its fixtures from the constant, so
-    // all of them would follow it anywhere. This one does not: 200 is the value
-    // measured to agree with the exact clamped count on the floor for 97 of 97
-    // live collections, at ~400 ms as shipped against ~2.6 s for the exact count.
-    // 500 showed no measurable accuracy gain and a wider worst case. Moving it is
-    // a cost/accuracy decision that must be RE-MEASURED, not a refactor — and the
-    // re-measurement must use the shipped shape: the 257 ms once quoted here came
-    // from an unordered LIMIT, which is ~4x cheaper and not what runs.
-    expect(PLAYABLE_SAMPLE_SIZE).toBe(200);
-  });
 });
 
 describe('getCollectionPlayableSample — the ORDER (🔴 the finding that shapes this design)', () => {

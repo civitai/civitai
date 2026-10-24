@@ -9,7 +9,7 @@ import {
  * The owner-facing COPY and OPTION-ENABLEMENT for the per-listing visibility level.
  *
  * 🔴 WHY THIS IS A PURE MODULE AND NOT TERNARIES IN THE PANEL. The browser-mode component
- * suites are REPORT-ONLY in CI (`preview / component-tests`), and on this workstation they
+ * suites run in CI as `Component tests`, but on this workstation they
  * cannot run at all — `browserType.launch` fails because the nix
  * `playwright-browsers` derivation's layout does not match the revision the npm package
  * expects, and CLAUDE.md is explicit that bumping that pin is not self-contained. So any
@@ -168,4 +168,40 @@ export function visibilityPostApprovalPrompt(
   return `This app is approved, but its visibility is still set to ${visibilityLevelLabel(
     visibility
   )} — so most people cannot find it in the store. Set it to Everyone when you are ready.`;
+}
+
+/** The store badge for a restricted listing: a short label plus the tooltip explaining it. */
+export type VisibilityBadge = { label: string; tooltip: string };
+
+/**
+ * The badge a store card or detail page shows for a listing's RESTRICTED audience, or
+ * `null` to show nothing.
+ *
+ * Takes the viewer-scoped `restrictedAudience` from the DTO, never the raw level: the server
+ * has already decided whether this viewer may know it (`restrictedAudienceForViewer`), so a
+ * `null` here covers unset, `public`, and "this viewer is not told".
+ *
+ * 🔴 `private` IS LABELLED "Unlisted", NOT {@link visibilityLevelLabel}'s "Private". The
+ * owner's selector names the setting; this badge describes the listing to someone looking
+ * at it, and "Private" would claim an access control the system does not enforce — anyone
+ * with the URL can still open it. See {@link visibilityLevelDescription}, which is reused
+ * as the tooltip so the copy is spelled once.
+ */
+export function visibilityBadgeFor(
+  restrictedAudience: AppListingVisibility | null
+): VisibilityBadge | null {
+  // Typed as the FULL level set, not just the restricted subset, so `public` is handled by
+  // an explicit branch rather than by falling out of a switch with no case — a `public`
+  // that reached here at runtime must render nothing, never `undefined`.
+  if (restrictedAudience === null || restrictedAudience === 'public') return null;
+  // No `default`: the switch is exhaustive over the remaining levels, so a new restricted
+  // level is a compile error here rather than a silently missing badge.
+  switch (restrictedAudience) {
+    case 'testers':
+      return { label: 'Testers only', tooltip: visibilityLevelDescription('testers') };
+    case 'moderators':
+      return { label: 'Moderators only', tooltip: visibilityLevelDescription('moderators') };
+    case 'private':
+      return { label: 'Unlisted', tooltip: visibilityLevelDescription('private') };
+  }
 }

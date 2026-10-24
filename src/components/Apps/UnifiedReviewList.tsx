@@ -22,10 +22,12 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
 import {
   compactRelativeTime,
   REVIEW_RELATIVE_TICK_MS,
@@ -33,6 +35,7 @@ import {
 } from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
+  failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
@@ -288,7 +291,15 @@ export function UnifiedReviewList({
  * `null` case: an approval whose build never started looked, until now, exactly
  * like a healthy one in the mod queue.
  */
-function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: string }) {
+function DeployStateChip({
+  state,
+  rowKey,
+  buildSignals,
+}: {
+  state: string | null;
+  rowKey: string;
+  buildSignals?: BuildAttemptSignals | null;
+}) {
   const testId = `apps-unified-review-deploy-${rowKey}`;
   if (state === null || state === undefined) {
     return (
@@ -312,9 +323,11 @@ function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: stri
       : state.startsWith('preview-')
       ? 'grape'
       : 'blue';
+  // A failed build names its step and class: structured fields, never the excerpt.
+  const summary = state === 'failed' ? failedBuildSummary(buildSignals) : null;
   return (
     <Badge size="sm" color={color} variant="light" data-testid={testId}>
-      {state}
+      {summary ? `${state} · ${summary}` : state}
     </Badge>
   );
 }
@@ -493,12 +506,20 @@ function UnifiedReviewRowView({
             interactive child in a whole-row-clickable cell, i.e. a second thing one click
             could do. */}
         <Group gap="sm" wrap="nowrap">
-          <ListingIconThumb
-            url={row.iconUrl}
-            name={row.title}
-            imgTestId={`apps-unified-review-icon-${row.key}`}
-            placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
-          />
+          {/* Blurred, without the overlay, when it is above SFW on civitai.com: 40px cannot
+              carry the reveal button, and the row opens the review, which reveals it. */}
+          <ReviewMediaReveal
+            image={row.reviewMedia?.icon}
+            explain={false}
+            testId={`apps-unified-review-icon-reveal-${row.key}`}
+          >
+            <ListingIconThumb
+              url={row.iconUrl}
+              name={row.title}
+              imgTestId={`apps-unified-review-icon-${row.key}`}
+              placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
+            />
+          </ReviewMediaReveal>
           <Stack gap={0} style={{ minWidth: 0 }}>
             {row.slug && <Code>{row.slug}</Code>}
             {row.title && row.title !== row.slug && (
@@ -577,7 +598,11 @@ function UnifiedReviewRowView({
         <Table.Td>
           {deploy ? (
             <Stack gap={4} align="flex-start">
-              <DeployStateChip state={deploy.state} rowKey={row.key} />
+              <DeployStateChip
+                state={deploy.state}
+                rowKey={row.key}
+                buildSignals={deploy.buildSignals}
+              />
               {onRetriggerBuild && (
                 <RetriggerBuildButton
                   publishRequestId={deploy.publishRequestId}

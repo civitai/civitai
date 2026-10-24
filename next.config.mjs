@@ -11,6 +11,26 @@ const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
 
+/**
+ * Opt-OUT of `next build`'s own TypeScript pass. OFF unless the environment sets EXACTLY `'1'`:
+ * unset, empty, `'0'`, `'true'` or a typo all leave full checking on, so a build that does not
+ * know about this variable is a checked build. The Dockerfile forwards it as a build-arg that
+ * defaults empty.
+ *
+ * Only the PR-preview image build sets it. That pipeline already runs the full `tsc` in its own
+ * typecheck task, and PR CI runs it again, so the build's pass was a third serial copy of the same
+ * check on the critical path to a usable preview. Release and production builds never set it.
+ *
+ * `ignoreBuildErrors` SKIPS the pass entirely rather than running it and discarding errors (read
+ * from `startTypeChecking` in `next/dist/build/type-check.js`). That includes the type-check of the
+ * generated `.next/types/validator.ts`, which rejects a module under `src/pages` with no default
+ * export. That class is still caught before merge: `scripts/typecheck.mjs` runs `next typegen`
+ * before `tsc`, so the CI typecheck reads the same validator.
+ *
+ * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
+ */
+const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
+
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
 });
@@ -130,6 +150,7 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    typescript: { ignoreBuildErrors: skipBuildTypecheck },
     // Source maps for prod CPU-profile de-minification.
     //
     // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
@@ -189,10 +210,14 @@ export default defineNextConfig(
       // won't resolve the out-of-root symlink without transpiling it
       'form-graph',
       'superjson',
+      // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
+      // left external; bundling it lets Turbopack resolve the directory.
+      '@civitai/orchestration-client',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
@@ -203,6 +228,7 @@ export default defineNextConfig(
       '@civitai/notifications',
       '@civitai/moderation',
       '@civitai/mod-utils',
+      '@civitai/app-assistant',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
@@ -314,6 +340,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
+      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
+      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
       //
@@ -325,7 +354,7 @@ export default defineNextConfig(
       // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
       // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
-        '@civitai/client',
+        '@civitai/orchestration-client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',
@@ -440,6 +469,13 @@ export default defineNextConfig(
         {
           source: '/apps/installed',
           destination: '/apps/activity',
+          statusCode: 301,
+        },
+        // `/events` page removed; the sitemap and external links still point at it. Official
+        // articles are now the Civitai Official chip on `/articles`.
+        {
+          source: '/events',
+          destination: '/articles',
           statusCode: 301,
         },
         {

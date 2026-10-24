@@ -1,6 +1,6 @@
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import type { XGuardLabelOverride } from '~/server/services/orchestrator/orchestrator.service';
-import type { Priority } from '@civitai/client';
+import type { Priority } from '@civitai/orchestration-client';
 
 // EntityModeration upsert is owned by `createXGuardModerationRequest` —
 // it persists a Pending row on success and a Failed row on submit failure
@@ -16,6 +16,7 @@ export async function submitTextModeration({
   wait,
   recordForReview = false,
   forceRescan = false,
+  rearmRetries = false,
 }: {
   entityType: string;
   entityId: number;
@@ -36,6 +37,8 @@ export async function submitTextModeration({
    * previous verdict shouldn't be reused.
    */
   forceRescan?: boolean;
+  /** A fresh submit, not a retry: reset the row's retry budget. */
+  rearmRetries?: boolean;
 }) {
   return createXGuardModerationRequest({
     mode: 'text',
@@ -48,5 +51,6 @@ export async function submitTextModeration({
     wait,
     recordForReview,
     forceRescan,
+    rearmRetries,
   });
 }

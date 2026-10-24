@@ -1,8 +1,26 @@
 import { ColorSchemeScript, mantineHtmlProps } from '@mantine/core';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
+import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
+import { sampleImageRender } from '~/server/logging/image-render-sample';
+import { recordPageRender } from '~/server/prom/route-traffic.metrics';
+import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 
 export default class _Document extends Document {
+  // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
+  // `/404` and a thrown error as `/_error`, while redirects and `/_next/data` requests for a
+  // getServerSideProps page never do. A `/_next/data` request for any other page renders here.
+  static async getInitialProps(ctx: DocumentContext) {
+    if (!ctx.req) return Document.getInitialProps(ctx);
+    const initialProps = await measureRenderCpu(ctx.pathname, ssrRequestKind(ctx.req), () =>
+      Document.getInitialProps(ctx)
+    );
+    recordPageRender(ctx.pathname, ctx.req as never);
+    // Not awaited: a flag evaluation or log write must never delay the response.
+    void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);
+    return initialProps;
+  }
+
   render() {
     const pageProps = this.props?.__NEXT_DATA__?.props?.pageProps;
     return (
@@ -15,11 +33,15 @@ export default class _Document extends Document {
             and Next 16 / Turbopack injects each CSS Module's `@layer modules`
             block at runtime — potentially before globals.css parses. Declaring
             the order here (the first node in <head>) makes it deterministic:
-            preflight < theme < mantine < modules < unlayered Tailwind utils.
+            preflight < theme < mantine < civitai.components < modules < unlayered
+            Tailwind utils. `civitai.components` is `@civitai/components`' sheet (the
+            `shellDesignSystemMarkup` shell): above preflight and `theme`, whose resets
+            would otherwise strip its borders and backgrounds, and below CSS modules, so
+            `ShellDs.module.css` can map civitai's exact Mantine values onto it.
           */}
           <style
             dangerouslySetInnerHTML={{
-              __html: '@layer tailwind-preflight, theme, mantine, modules;',
+              __html: '@layer tailwind-preflight, theme, mantine, civitai.components, modules;',
             }}
           />
           <ColorSchemeScript />

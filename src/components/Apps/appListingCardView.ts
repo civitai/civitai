@@ -3,8 +3,7 @@
  *
  * The kind-aware badge / CTA / recommend-label logic for `AppListingCard`,
  * extracted into pure functions so the correctness gate lives in the node `unit`
- * project (the civitai browser-mode component suites are REPORT-ONLY / non-
- * blocking — so the real, blocking test coverage for this behaviour is here).
+ * project, which needs no browser.
  *
  * LIVE (P2d cut over): this view-model now backs the DEFAULT `/apps` store grid
  * (`AppListingsMarketplaceBody` → `AppListingCard`), reading the unified
@@ -133,13 +132,11 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  *
  * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
  * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
- * only covered by the browser `component` project, which is REPORT-ONLY; the node
- * `unit` project is the one that reddens a `main` push. A rule expressed as JSX
- * (`card.openCount ? … : null`) would be invisible to the only tier that ever goes
- * red on its own. Expressed as this function's return type it is pinned in
- * `__tests__/appListingCardView.test.ts` — with `null`, `0` and `>0` as three
- * separately-named cases — and the component is left with a branch that has nothing
- * to get wrong.
+ * only covered by the browser `component` project. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the node `unit` tier. Expressed as this
+ * function's return type it is pinned in `__tests__/appListingCardView.test.ts` — with `null`, `0`
+ * and `>0` as three separately-named cases — and the component is left with a branch that has
+ * nothing to get wrong.
  *
  * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
  * `getRecommendLabel` above rather than an inconsistency. A review count is an
@@ -237,7 +234,7 @@ export function getListingCta(
 // ---------------------------------------------------------------------------
 // Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
 // store card + detail. Mirrors the my-submissions edit gating
-// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// (`OffsiteSubmissionsList` `canEdit`): the
 // owner can edit an app that is still editable (NOT mod-removed / rejected).
 // ---------------------------------------------------------------------------
 

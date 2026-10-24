@@ -1,4 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -588,6 +599,14 @@ describe('republishOwnListing — composition with the gates that were already t
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res.status).toBe('pending');
     expect(flipData()).toEqual({ status: 'pending', contentRating: 'x' });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: APP_ID,
+      slug: SLUG,
+      before: 'g',
+      after: 'x',
+      actorUserId: OWNER,
+    });
   });
 
   it('the floor is RAISE-ONLY on the review arm as well (tame media never lowers `x`)', async () => {
@@ -622,13 +641,16 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
       before: {
         status: 'approved',
         assets: {
-          v: 1,
+          v: 2,
           iconId: ICON_ID,
           coverId: COVER_ID,
           screenshots: [
             { imageId: SHOT_ID, caption: 'a demo' },
             { imageId: 44, caption: null },
           ],
+          // No civitai.red overrides table on this mock: recorded as none.
+          redIconId: null,
+          redCoverId: null,
         },
       },
     });
@@ -642,10 +664,12 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
     await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
 
     expect(eventData().before.assets).toEqual({
-      v: 1,
+      v: 2,
       iconId: null,
       coverId: null,
       screenshots: [],
+      redIconId: null,
+      redCoverId: null,
     });
   });
 

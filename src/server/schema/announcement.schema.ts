@@ -1,7 +1,8 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { isHttpUrl } from '~/utils/url-helpers';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -132,18 +133,9 @@ export const creatorAnnouncementActionSchema = z.object({
   link: z
     .string()
     .trim()
-    .refine(
-      (value) =>
-        /^\/(?!\/)/.test(value) ||
-        (() => {
-          try {
-            return ['http:', 'https:'].includes(new URL(value).protocol);
-          } catch {
-            return false;
-          }
-        })(),
-      { message: 'Enter a full https:// link or a path beginning with /' }
-    ),
+    .refine((value) => /^\/(?!\/)/.test(value) || isHttpUrl(value), {
+      message: 'Enter a full https:// link or a path beginning with /',
+    }),
   linkText: z.string().trim().min(1).max(40),
 });
 
@@ -176,7 +168,7 @@ export const upsertCreatorAnnouncementSchema = z.object({
   // announcement by deleting it or by setting an endsAt.
   /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
   profileOnly: z.boolean().default(false),
-  coverImage: imageSchema.optional(),
+  coverImage: imageReferenceInputSchema.optional(),
   /** The pre-multi-button shape, still accepted from older clients. Ignored when `actions` is sent. */
   action: creatorAnnouncementActionSchema.optional(),
   actions: z

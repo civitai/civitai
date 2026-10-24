@@ -65,7 +65,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -227,6 +227,7 @@ const versionRow = {
 
 type Body = {
   air: string;
+  defaultFileId: number | null;
   size: number;
   fileType: string;
   fileName: string;
@@ -599,6 +600,13 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
     expect(lastAirArgs()?.modelFileId).toBe(String(GGUF.id));
     expect(urlFileId(supplied.body)).toBe(String(GGUF.id));
   });
+
+  it('names the default file whichever file was pinned, so consumers can recognise a pin to it', async () => {
+    const pinnedDefault = await run([SAFETENSOR, GGUF], { modelFileId: String(SAFETENSOR.id) });
+    expect(pinnedDefault.body.defaultFileId).toBe(SAFETENSOR.id);
+    const pinnedOther = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
+    expect(pinnedOther.body.defaultFileId).toBe(SAFETENSOR.id);
+  });
 });
 
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
@@ -811,6 +819,15 @@ describe('evictable', () => {
     expect(byFileId.body.fileName).toBe(GGUF.name);
     expect(byDefault.body.evictable).toBe(false);
     expect(byFileId.body.evictable).toBe(false);
+  });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
   });
 });
 

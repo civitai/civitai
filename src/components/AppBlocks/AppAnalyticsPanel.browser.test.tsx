@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -12,18 +13,44 @@ import type * as TrpcModule from '~/utils/trpc';
  * former shape for the latter fabricates a clean zero dashboard.
  */
 
-const mocks = vi.hoisted(() => ({ analytics: { current: undefined as unknown } }));
+const mocks = vi.hoisted(() => ({
+  analytics: { current: undefined as unknown },
+  apps: { current: [] as unknown[] },
+  queryInputs: [] as unknown[],
+  cardInputs: [] as unknown[],
+  cardOptions: [] as unknown[],
+  cardError: { current: null as unknown },
+  isPlaceholderData: { current: false },
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    blocks: {
-      getMyApps: { useQuery: () => ({ data: [], isLoading: false }) },
-      getMyAppAnalytics: {
-        useQuery: () => ({ data: mocks.analytics.current, isLoading: false, error: null }),
+  trpc: makeTrpcProxy({
+    'blocks.getMyApps': { useQuery: () => ({ data: mocks.apps.current, isLoading: false }) },
+    'blocks.getMyAppAnalytics': {
+      useQuery: (input: unknown) => {
+        mocks.queryInputs.push(input);
+        return { data: mocks.analytics.current, isLoading: false, error: null };
       },
     },
-  },
+    // The card's own read. Fixtures carry its section under `customEvents` beside the panel
+    // payload, so one fixture object drives both reads.
+    'blocks.getMyAppCustomEvents': {
+      useQuery: (input: unknown, options: unknown) => {
+        mocks.cardInputs.push(input);
+        mocks.cardOptions.push(options);
+        const section = (mocks.analytics.current as { customEvents?: unknown } | undefined)
+          ?.customEvents;
+        return {
+          // A refetch that errors keeps the previous data, so the error must win over it.
+          data: section,
+          isLoading: false,
+          isPlaceholderData: mocks.isPlaceholderData.current,
+          error: mocks.cardError.current,
+        };
+      },
+    },
+  }),
 }));
 
 // Chart.js needs a real canvas + sizing; the series rendering isn't under test.
@@ -604,5 +631,468 @@ describe('AppAnalyticsPanel — metric-card labels stay unambiguous', () => {
     // Positive control: a guard that iterates an empty list passes vacuously
     // and would report green while checking nothing.
     expect(CARD_LABELS.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+/**
+ * The Custom events card reads ClickHouse like App loads, so it has the same fabricated-zero
+ * hazard: an unavailable or absent section must never render a count. Its four states, the
+ * drop banner and the two inputs (owner toggle, event selection) are pinned here.
+ */
+describe('AppAnalyticsPanel — custom events', () => {
+  const DECLARED = [
+    {
+      name: 'generate_clicked',
+      description: 'User pressed Generate',
+      properties: [
+        { name: 'mode', type: 'enum', values: ['txt2img', 'img2img', 'inpaint'] },
+        { name: 'batch', type: 'number' },
+        { name: 'advanced', type: 'boolean' },
+      ],
+    },
+    { name: 'share_clicked', properties: [] },
+  ];
+  const RANGE = { from: new Date(0), to: new Date(0), granularity: 'day' as const };
+  const MEASURED = {
+    range: RANGE,
+    declared: DECLARED,
+    includeOwner: false,
+    topEvents: [
+      { eventName: 'generate_clicked', count: 57, signedInViewers: 13, anonymousEvents: 21 },
+      { eventName: 'share_clicked', count: 8, signedInViewers: 5, anonymousEvents: 2 },
+    ],
+    undeclaredDrops: 0,
+  };
+  const SELECTED = {
+    eventName: 'generate_clicked',
+    series: [
+      { bucket: '2026-07-06T00:00:00.000Z', value: 9 },
+      { bucket: '2026-07-13T00:00:00.000Z', value: 4 },
+    ],
+    properties: [
+      {
+        name: 'mode',
+        type: 'enum',
+        values: [
+          { value: 'txt2img', count: 12 },
+          { value: 'img2img', count: 7 },
+          { value: 'inpaint', count: 0 },
+        ],
+      },
+      { name: 'batch', type: 'number', count: 3, sum: 16, avg: 5.25, p50: 4, p95: 10 },
+      { name: 'advanced', type: 'boolean', trueCount: 6, falseCount: 1 },
+    ],
+  };
+
+  function card(): HTMLElement {
+    const heading = page.getByText('Custom events', { exact: true }).element();
+    const root = heading.closest('.mantine-Card-root');
+    if (!(root instanceof HTMLElement)) throw new Error('Custom events card not found');
+    return root;
+  }
+  const lastInput = () => mocks.cardInputs[mocks.cardInputs.length - 1];
+
+  test('requests the section for the scoped app, owner rows excluded by default', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
+    expect(lastInput()).toEqual({
+      appBlockId: 'apb_1',
+      includeOwner: false,
+    });
+  });
+
+  test('measured: one row per declared event with events, signed-in viewers and signed-out events', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(page.getByRole('row', { name: 'generate_clicked 57 13 21' }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole('row', { name: 'share_clicked 8 5 2' }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('Signed-in viewers', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('Signed-out events', { exact: true })).toBeInTheDocument();
+    expect(page.getByText(/were sent with names/).elements()).toHaveLength(0);
+  });
+
+  test('(a) nothing declared: points at the manifest docs', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: { ...MEASURED, declared: [], topEvents: [] },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText(/doesn't declare any custom events/)).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('link', { name: 'Declare events in your manifest' }))
+      .toHaveAttribute('href', 'https://developer.civitai.com/apps/reference/manifest');
+    expect(page.getByRole('table').elements()).toHaveLength(0);
+  });
+
+  test('(b) declared but nothing recorded: a labelled, measured zero', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        topEvents: MEASURED.topEvents.map((e) => ({
+          ...e,
+          count: 0,
+          signedInViewers: 0,
+          anonymousEvents: 0,
+        })),
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(page.getByText('No declared events were recorded in this range.', { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole('row', { name: 'generate_clicked 0 0 0' }))
+      .toBeInTheDocument();
+    expect(page.getByText(/Couldn't load custom events/).elements()).toHaveLength(0);
+  });
+
+  test('(c) unavailable: says so and renders no count at all', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        range: RANGE,
+        declared: DECLARED,
+        includeOwner: false,
+        topEvents: [],
+        undeclaredDrops: 0,
+        unavailable: true,
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(page.getByText(/Couldn't load custom events right now/))
+      .toBeInTheDocument();
+    expect(page.getByText(/No declared events were recorded/).elements()).toHaveLength(0);
+    expect(page.getByRole('table').elements()).toHaveLength(0);
+    expect(card().textContent).not.toMatch(/\d/);
+  });
+
+  test('(d) no section returned: renders like unavailable, never as zero', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(page.getByText(/Couldn't load custom events right now/))
+      .toBeInTheDocument();
+    expect(page.getByText(/No declared events were recorded/).elements()).toHaveLength(0);
+    expect(card().textContent).not.toMatch(/\d/);
+    await expect.element(page.getByText('Active installs', { exact: true })).toBeInTheDocument();
+  });
+
+  test('drops banner: counts events sent under undeclared names', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, undeclaredDrops: 5 } };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(
+        page.getByText(
+          "5 events were sent in this range with names your approved manifest doesn't declare, so they were not recorded by name. Declare an event in your manifest and resubmit to see it here.",
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+  });
+
+  test('drops banner: singular copy for one event', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, undeclaredDrops: 1 } };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect
+      .element(page.getByText(/^1 event was sent in this range with a name your approved manifest/))
+      .toBeInTheDocument();
+  });
+
+  test('the team toggle refetches with includeOwner: true', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const toggle = page.getByRole('switch', { name: 'Include team activity' });
+    await expect.element(toggle).not.toBeChecked();
+    await expect
+      .element(
+        page.getByText(
+          'Events sent while the app owner or an accepted collaborator was signed in.',
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    expect(page.getByText(/always counted/).elements()).toHaveLength(0);
+    await toggle.click();
+    await expect.element(toggle).toBeChecked();
+    expect(lastInput()).toEqual({
+      appBlockId: 'apb_1',
+      includeOwner: true,
+    });
+  });
+
+  test('selecting an event requests it and renders its series and property breakdown', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+
+    await expect
+      .element(page.getByText('Select an event to see it over time and its property breakdown.'))
+      .toBeInTheDocument();
+    expect(page.getByText('generate_clicked over time').elements()).toHaveLength(0);
+
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+
+    expect(lastInput()).toEqual({
+      appBlockId: 'apb_1',
+      includeOwner: false,
+      event: 'generate_clicked',
+    });
+    await expect
+      .element(page.getByText('generate_clicked over time', { exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('row', { name: 'txt2img 12' })).toBeInTheDocument();
+    await expect.element(page.getByRole('row', { name: 'inpaint 0' })).toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText('Set on 3 events · sum 16 · avg 5.25 · median 4 · p95 10', { exact: true })
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText('true 6 · false 1', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Showing generate_clicked', { exact: true }))
+      .toHaveAttribute('aria-live', 'polite');
+    expect(card().querySelectorAll('[data-testid="chart"]')).toHaveLength(1);
+  });
+
+  test('a stale selection from the previous payload never renders under the newly clicked event', async () => {
+    // The payload still carries generate_clicked's detail (what a kept placeholder holds).
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const share = page.getByRole('button', { name: 'share_clicked' });
+    await share.click();
+    await expect.element(share).toHaveAttribute('aria-pressed', 'true');
+    await expect
+      .element(page.getByText("Couldn't load the details for share_clicked.", { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Details unavailable for share_clicked', { exact: true }))
+      .toHaveAttribute('aria-live', 'polite');
+    expect(page.getByText('generate_clicked over time').elements()).toHaveLength(0);
+  });
+
+  test('clicking the selected event again deselects it', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
+    expect(lastInput()).toEqual({
+      appBlockId: 'apb_1',
+      includeOwner: false,
+    });
+  });
+
+  test('empty breakdowns say so for every property type, and a no-property event says so', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          eventName: 'generate_clicked',
+          series: [],
+          properties: [
+            {
+              name: 'mode',
+              type: 'enum',
+              values: [
+                { value: 'txt2img', count: 0 },
+                { value: 'img2img', count: 0 },
+              ],
+            },
+            { name: 'batch', type: 'number', count: 0, sum: 0, avg: null, p50: null, p95: null },
+            { name: 'advanced', type: 'boolean', trueCount: 0, falseCount: 0 },
+          ],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect.element(page.getByText('generate_clicked over time')).toBeInTheDocument();
+    expect(
+      page.getByText('Not set on any event in this range.', { exact: true }).elements()
+    ).toHaveLength(3);
+    expect(page.getByText(/^true 0/).elements()).toHaveLength(0);
+  });
+
+  test('a number property set on one event uses the singular and an em dash for a missing stat', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          ...SELECTED,
+          properties: [
+            { name: 'batch', type: 'number', count: 1, sum: 7, avg: 7, p50: null, p95: 7 },
+          ],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect
+      .element(page.getByText('Set on 1 event · sum 7 · avg 7 · median — · p95 7', { exact: true }))
+      .toBeInTheDocument();
+  });
+
+  test("the card's query keeps previous data while it refetches, and waits for an app", async () => {
+    mocks.analytics.current = { ...ZEROED };
+    mocks.cardOptions.length = 0;
+    renderWithProviders(<AppAnalyticsPanel />);
+    await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
+    const options = mocks.cardOptions[mocks.cardOptions.length - 1] as {
+      enabled: boolean;
+      placeholderData: (previous: unknown) => unknown;
+    };
+    expect(options.enabled).toBe(false);
+    const previous = { marker: 'previous payload' };
+    expect(options.placeholderData(previous)).toBe(previous);
+  });
+
+  test('the panel payload is requested exactly as before: no custom-events input', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.queryInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('switch', { name: 'Include team activity' }).click();
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect
+      .element(page.getByRole('button', { name: 'generate_clicked' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    expect(new Set(mocks.queryInputs.map((i) => JSON.stringify(i)))).toEqual(
+      new Set([JSON.stringify({ appBlockId: 'apb_1' })])
+    );
+  });
+
+  test('a failed card request (an old pod without the procedure) shows "couldn\'t load", not the panel error', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardError.current = {
+      message: 'No "query"-procedure on path "blocks.getMyAppCustomEvents"',
+    };
+    try {
+      renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+      await expect
+        .element(page.getByText(/Couldn't load custom events right now/))
+        .toBeInTheDocument();
+      expect(card().textContent).not.toMatch(/\d/);
+      expect(page.getByText(/Failed to load analytics/).elements()).toHaveLength(0);
+      await expect.element(page.getByText('Active installs', { exact: true })).toBeInTheDocument();
+    } finally {
+      mocks.cardError.current = null;
+    }
+  });
+
+  test('when the section is unavailable with an event selected, the selection can be cleared', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+    mocks.cardError.current = { message: 'timeout' };
+    try {
+      await page.getByRole('switch', { name: 'Include team activity' }).click();
+      const clear = page.getByRole('button', { name: 'Clear the selected event' });
+      await clear.click();
+      await expect.element(clear).not.toBeInTheDocument();
+      expect(lastInput()).toEqual({ appBlockId: 'apb_1', includeOwner: true });
+    } finally {
+      mocks.cardError.current = null;
+    }
+  });
+
+  test('while a selection refetches: a loader in the detail pane, the stale table marked busy', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.isPlaceholderData.current = true;
+    try {
+      renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+      const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+      await eventButton.click();
+      await expect
+        .element(page.getByRole('status', { name: 'Loading generate_clicked' }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole('status', { name: 'Refreshing custom events' }))
+        .toBeInTheDocument();
+      expect(card().querySelector('[aria-busy="true"]')).not.toBeNull();
+      expect(page.getByText(/Couldn't load the details/).elements()).toHaveLength(0);
+    } finally {
+      mocks.isPlaceholderData.current = false;
+    }
+  });
+
+  test('a boolean set only to false still shows its split, not "Not set"', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          ...SELECTED,
+          properties: [{ name: 'advanced', type: 'boolean', trueCount: 0, falseCount: 5 }],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect.element(page.getByText('true 0 · false 5', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Not set on any event in this range.').elements()).toHaveLength(0);
+  });
+
+  test('picking another app starts the card fresh: no selection, owner toggle off', async () => {
+    mocks.apps.current = [
+      { id: 'apb_1', appName: 'First app', blockId: 'b1' },
+      { id: 'apb_2', appName: 'Second app', blockId: 'b2' },
+    ];
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.cardInputs.length = 0;
+    try {
+      renderWithProviders(<AppAnalyticsPanel />);
+      await page.getByRole('textbox', { name: 'App' }).click();
+      await page.getByRole('option', { name: 'First app' }).click();
+      const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+      await eventButton.click();
+      await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+      await page.getByRole('switch', { name: 'Include team activity' }).click();
+      expect(lastInput()).toEqual({
+        appBlockId: 'apb_1',
+        includeOwner: true,
+        event: 'generate_clicked',
+      });
+
+      await page.getByRole('textbox', { name: 'App' }).click();
+      await page.getByRole('option', { name: 'Second app' }).click();
+      await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
+      expect(lastInput()).toEqual({
+        appBlockId: 'apb_2',
+        includeOwner: false,
+      });
+    } finally {
+      mocks.apps.current = [];
+    }
+  });
+
+  test('"All my apps" asks for no custom events and says to pick an app', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    mocks.cardOptions.length = 0;
+    renderWithProviders(<AppAnalyticsPanel />);
+    await expect
+      .element(page.getByText('Choose an app to see its custom events.', { exact: true }))
+      .toBeInTheDocument();
+    expect((mocks.cardOptions[mocks.cardOptions.length - 1] as { enabled: boolean }).enabled).toBe(
+      false
+    );
+    expect(page.getByText(/Couldn't load custom events/).elements()).toHaveLength(0);
   });
 });

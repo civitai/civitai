@@ -9,6 +9,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { trpc } from '~/utils/trpc';
 import {
+  canAccessAppAssistant,
   canAccessAppsBuild,
   hasAppsStoreAccess,
   isAppDeveloper,
@@ -153,6 +154,7 @@ export function useAppsNavSections(): AppsSection[] {
       : NO_APPS_NAV_CAPABILITIES.isAuthor,
     canBuild: canAccessAppsBuild(currentUser, features),
     canSeeStore: hasAppsStoreAccess(features),
+    canUseAssistant: !!currentUser && canAccessAppAssistant(features),
   };
 
   return visibleAppsSections(summary, context);

@@ -1,5 +1,5 @@
-import { Group, Tabs } from '@mantine/core';
-import { IconClockHour9, IconGridDots } from '@tabler/icons-react';
+import { Button, Center, Group, Stack, Tabs, Text } from '@mantine/core';
+import { IconClockHour9, IconGridDots, IconInbox } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import type { ReactElement } from 'react';
@@ -19,6 +19,7 @@ import {
   SelectionProvider,
   generatedImageSelectStore,
 } from '~/components/ImageGeneration/utils/generationImage.select';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceResidency';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -27,7 +28,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import type { GenerationResultsView } from '~/store/generation-panel.store';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { getLoginLink } from '~/utils/login-helpers';
 
 const GenerationPanel = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 const GenerationFormPane = dynamic(() =>
@@ -47,15 +47,7 @@ function useLeaveGenerate({ closeGenerator }: { closeGenerator: boolean }) {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, features, ctx }) => {
-    if (!session)
-      return {
-        redirect: {
-          destination: getLoginLink({ returnUrl: ctx.req.url }),
-          permanent: false,
-        },
-      };
-
+  resolver: async ({ features }) => {
     if (!features?.imageGeneration) return { notFound: true };
   },
 });
@@ -107,6 +99,7 @@ function FullScreenGenerator() {
 }
 
 function GenerateResults() {
+  const currentUser = useCurrentUser();
   const view = useGenerationPanelStore((state) => state.view);
 
   // 'generate' has no tab here (the form is beside the results); fall back to the last results
@@ -118,6 +111,22 @@ function GenerateResults() {
   useEffect(() => {
     if (view === 'generate') generationGraphPanel.setView(tabView);
   }, [view, tabView]);
+
+  if (!currentUser)
+    return (
+      <>
+        <Meta title="Generate" deIndex />
+        <Center h="100%" p="md">
+          <Stack gap="xs" align="center">
+            <IconInbox size={64} stroke={1} />
+            <Text align="center">Sign in to see your generations</Text>
+            <LoginRedirect reason="image-gen">
+              <Button>Sign in</Button>
+            </LoginRedirect>
+          </Stack>
+        </Center>
+      </>
+    );
 
   return (
     <SelectionProvider store={generatedImageSelectStore}>

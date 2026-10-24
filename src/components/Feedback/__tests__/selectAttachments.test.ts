@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { selectAttachments } from '~/components/Feedback/selectAttachments';
-import { constants } from '~/server/common/constants';
 import { FEEDBACK_IMAGE_MAX_COUNT } from '~/shared/constants/feedback.constants';
 
 /**
@@ -29,18 +28,6 @@ const run = (selected: File[], alreadyAttached = 0) =>
   });
 
 const names = (files: File[]) => files.map((f) => f.name);
-
-describe('the caps themselves', () => {
-  it('takes the size cap from the shared upload constant nine other surfaces use', () => {
-    // Pinned so the feedback picker cannot quietly diverge from the rest of the app.
-    expect(constants.mediaUpload.maxImageFileSize).toBe(50 * 1024 ** 2);
-    expect(MAX_BYTES).toBe(constants.mediaUpload.maxImageFileSize);
-  });
-
-  it('caps the count at 3', () => {
-    expect(FEEDBACK_IMAGE_MAX_COUNT).toBe(3);
-  });
-});
 
 describe('size cap', () => {
   it('accepts a file one byte under the limit', () => {

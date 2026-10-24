@@ -45,3 +45,27 @@ describe('rated-entity text-scan adapters', () => {
     expect(applyCollectionTextScan).toHaveBeenCalledWith(args);
   });
 });
+
+describe('retired model-rules text-scan adapter', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s rows are neither retried nor acted on',
+    async (entityType) => {
+      const adapter = getModerationAdapter(entityType)!;
+      await expect(adapter.isEnabled!({ entityId: 1 })).resolves.toBe(false);
+      expect(adapter.applyTextScan).toBeUndefined();
+    }
+  );
+});
+
+describe('leftover ModelRules rows', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s is registered but never enabled, so the retry cron skips it',
+    async (type) => {
+      const adapter = getModerationAdapter(type);
+      expect(adapter).toBeDefined();
+      expect(await adapter!.isEnabled!({ entityId: 1 })).toBe(false);
+      expect(adapter!.applyTextScan).toBeUndefined();
+      expect(adapter!.applyFailure).toBeUndefined();
+    }
+  );
+});

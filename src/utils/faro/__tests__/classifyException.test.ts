@@ -1395,15 +1395,15 @@ describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-mo
     expect(r.category).toBe('bizlogic');
   });
 
-  // The `green`/SFW-model rewrite of `Prompt requires mature content but workflow does not allow
-  // it` — same user state, different sentence. The tail is left unmatched so a reworded tail
-  // cannot silently make the pattern inert.
+  // The green-site / private-resource rewrite of `Prompt requires mature content but workflow does
+  // not allow it` — same user state, different sentence. The tail is left unmatched so a reworded
+  // tail cannot silently make the pattern inert.
   it.each([
+    ['The prompt has been blocked due to mature content, which is not allowed on this site'],
     [
-      'The prompt has been blocked due to mature content which is not supported by the current model',
+      'The prompt has been blocked due to mature content, which private and in-training resources cannot generate',
     ],
-    ['The prompt has been blocked due to mature content which this model cannot produce'],
-  ])('tags the SFW-model block %j as bizlogic', (value) => {
+  ])('tags the mature-content block %j as bizlogic', (value) => {
     const r = classifyException(exc('TRPCClientError', value));
     expect(r.drop).toBe(false);
     expect(r.category).toBe('bizlogic');
@@ -1421,16 +1421,6 @@ describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-mo
     const r = classifyException(exc(type, value, APP_FRAME));
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
-  });
-
-  // A bizlogic tag must never become a drop.
-  it('keeps every new bizlogic phrasing (tag-only, no drop)', () => {
-    for (const value of [
-      'Your prompt was flagged: breasts',
-      'The prompt has been blocked due to mature content which is not supported by the current model',
-    ]) {
-      expect(classifyException(exc('TRPCClientError', value)).drop).toBe(false);
-    }
   });
 });
 

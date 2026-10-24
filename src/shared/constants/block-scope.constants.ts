@@ -25,6 +25,9 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// Client-safe and import-free apart from the equally import-free `manifest-bounded-parse`,
+// so this adds no server or third-party edge to the client graph.
+import { APP_STORAGE_BASE_SCOPE } from './block-storage.constants';
 // 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
 // module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
 // so a VALUE import would pull a server path into a module this file's own header keeps
@@ -92,6 +95,32 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // apps that declare it, never to a pre-approval dev-tunnel/dev-token session.
   'apps:storage:shared:read': SKIP_OAUTH_CHECK,
   'apps:storage:shared:write': SKIP_OAUTH_CHECK,
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE that replaces the four scopes
+  // above (which stay live, unchanged, until every app has migrated off the old routes).
+  // What an app may store is declared per collection in the manifest's `storage` block
+  // (`block-storage.constants.ts`), so two scopes suffice where four restated the
+  // declaration and could disagree with it:
+  //
+  //   - `apps:storage` — reads, the viewer's private collections, marks and counters.
+  //     CONSENT-EXEMPT (scope-grant.service.ts): it reaches only this app's own store.
+  //     A manifest that declares any collection must request it.
+  //   - `apps:storage:publish` — create or edit documents in SHARED collections under
+  //     the viewer's identity, i.e. content other viewers read. SENSITIVE (needs a
+  //     justification) and CONSENT-GATED: deliberately absent from CONSENT_EXEMPT_SCOPES,
+  //     so a token carries it only after the viewer granted it for this app. Required by
+  //     a shared collection whose `write` lets viewers author documents
+  //     (`collectionNeedsPublishScope`, `block-storage.constants.ts`).
+  //
+  // SKIP_OAUTH_CHECK for the same reason as the rest of the storage family. Both are in the
+  // BEARER dev-token allowlist (`DEV_TOKEN_SCOPE_ALLOWLIST`), whose tokens the storage routes
+  // confine to the developer's own `dev:<uid>` namespace; neither is in the tunnel, review
+  // or private-run allowlists.
+  //
+  // 🔴 `apps:storage` (no trailing colon) does NOT start with APP_STORAGE_SCOPE_PREFIX,
+  // which is why APP_STORAGE_SCOPES below matches the family by `isAppStorageScope`
+  // rather than by the prefix alone.
+  'apps:storage': SKIP_OAUTH_CHECK,
+  'apps:storage:publish': SKIP_OAUTH_CHECK,
   // collections:read:self / collections:write:self — the App Blocks Collections
   // surface (discover + read public collections and the viewer's OWN collections;
   // follow/bookmark a collection on the viewer's behalf). Same no-OAuth-bit
@@ -190,6 +219,24 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   //   - A non-anon subject is required (enforced in `enforceContextBinding`).
   //   - Minted by NO dev or review allowlist, so it only reaches an approved app's token.
   'apps:store:items:write': SKIP_OAUTH_CHECK,
+  // social:react:self — set the VIEWER'S reaction on an image a block endpoint served this app
+  // (`blocks.setReactionFromApp` → `SET_ENTITY_REACTION`). A reaction pays the reactor and the
+  // content owner Buzz, moves "Most Reactions" rankings and is publicly attributed, exactly as a
+  // click on the site is — the wrapper calls the same handler.
+  //
+  //   - SENSITIVE ⇒ the manifest must justify it: it writes something other users see, under
+  //     the viewer's name.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES, so a token carries it only
+  //     after the viewer granted it. There is no per-tap confirm; the grant is the consent.
+  //   - :self ⇒ a non-anon subject is required in `enforceContextBinding`.
+  //   - SKIP_OAUTH_CHECK, for the same reason as `goods:purchase:self`: the natural bit,
+  //     `TokenScope.SocialWrite`, also gates chat, comments and answers, so deriving it onto an
+  //     app's OAuth client at approve would light up those unrelated procedures for the app.
+  //   - PAGE-SAFE by bounding, like tipping: the site's own per-user reaction quota (shared,
+  //     not added to), a provenance ticket per entity and a fail-closed kill switch.
+  //   - In both DEV allowlists (self-bound to the author's own account) and in neither review
+  //     allowlist (a moderator must not react under their own name for an unapproved app).
+  'social:react:self': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -200,34 +247,44 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * as a block JWS:
  *
  *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
- *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *     (`server/services/apps/app-storage.service.ts`), through `resolveBlockToken`
+ *     (`server/services/blocks/block-bridge-auth.service.ts`), which calls `verifyBlockToken`.
  *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
- *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     (`server/routers/apps-shared.router.ts`), through the same `resolveBlockToken`, reached
  *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
  *     back down after the middleware already verified it.
  *
  * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
  * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
  * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
- * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination
  * for exactly this reason — see `oauthAppStorageConflictError`.
  *
- * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
- * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
+ * DERIVED from the scope vocabulary above by family, never re-typed, so a new
+ * `apps:storage:*` scope is covered the day it is added rather than silently exempt. The
+ * family is the bare `apps:storage` plus everything under the `apps:storage:` prefix: the
+ * document-store scopes (`apps:storage`, `apps:storage:publish`) are served by storage
+ * routes that are not written yet, and until those routes are shown to accept an OAuth
+ * bearer the conservative answer is to refuse `auth: "oauth"` alongside them too.
  * The derived membership is pinned (on growth AND shrink) by the
  * `APP_STORAGE_SCOPES (the auth:"oauth" conflict set)` suite in
  * `src/shared/constants/__tests__/block-scope.constants.test.ts` — if that ledger fails
  * because a new storage scope DOES read middleware-resolved claims, update the ledger and
  * this docblock in the same commit.
  *
- * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
- * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
- * first of those empties out, this family stops needing the manifest refusal at all.
+ * The eleven routes and the two `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`; the callers of
+ * `resolveBlockToken` are ledgered in
+ * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`. When the first of
+ * those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
-export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
-  (scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX)
-);
+/** Is `scope` in the app-storage family: `apps:storage` itself or anything under `apps:storage:`? */
+export function isAppStorageScope(scope: string): boolean {
+  return scope === APP_STORAGE_BASE_SCOPE || scope.startsWith(APP_STORAGE_SCOPE_PREFIX);
+}
+export const APP_STORAGE_SCOPES: readonly string[] =
+  Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(isAppStorageScope);
 
 /**
  * The app-storage scopes present in a manifest's declared `scopes`, in the order the
@@ -449,6 +506,73 @@ export const PRIVATE_RUN_BUZZ_CAP = 2500;
 export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
 
 /**
+ * The most a block token's per-call `buzzBudget` claim may be, for an install token
+ * and a pre-approval (dev / private-run / review) token alike. It bounds one
+ * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
+ * budget times its step count, and at `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` whatever the
+ * budget; no single step is held to the budget. Total spend is bounded by
+ * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
+ * the dev-tunnel session cap and the per-app caps.
+ *
+ * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
+ * a `kind:'training'` run and a confirmed pass-through step. Those are charged against
+ * that confirmed quote, under their own per-job ceilings, not against this claim
+ * (`blockTrainingRunCeiling` / `blockConfirmedStepCeiling` in block-scope.middleware).
+ *
+ * It is NOT bounded by the aggregate caps: it is above `PRIVATE_RUN_BUZZ_CAP`, so one
+ * call inside this budget can still be refused by the aggregate it reserves against.
+ * It equals the confirmed-step per-job ceiling, so a token at this cap is never offered
+ * a confirmed step — every price a confirm could cover already fits the budget.
+ */
+export const BUZZ_BUDGET_CAP = 5000;
+
+/**
+ * The most ONE multi-step (`kind: 'workflow'`) call may be quoted or reserved at in
+ * total, author fee included, whatever the token's budget and step count. Without it
+ * that call's ceiling is the budget times its step count, so it would rise with
+ * `BUZZ_BUDGET_CAP`. A chained workflow can still bill above its quote; the settle
+ * then corrects the cap counters up.
+ */
+export const BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL = 8000;
+
+/**
+ * The per-call budget a token gets when nothing declares one (manifest
+ * `page.buzzBudgetPerGen` for a page, `buzz_budget_per_gen` for a model slot), on
+ * every mint path. A viewer is never asked to confirm it, and raising it reaches every
+ * approved app that declares no budget at its next mint, with no re-review.
+ */
+export const BUZZ_BUDGET_DEFAULT = 1000;
+
+/**
+ * The per-call budget for a declared value — an install's `buzz_budget_per_gen` or a
+ * manifest's `page.buzzBudgetPerGen`. Anything but an integer takes the default; a
+ * non-positive integer is 0, which the mint refuses and every spend gate fails closed on.
+ * Shared by the page/install mint and the hub token.
+ */
+export function resolvePerCallBuzzBudget(declared: unknown): number {
+  const candidate =
+    typeof declared === 'number' && Number.isInteger(declared) ? declared : BUZZ_BUDGET_DEFAULT;
+  return candidate <= 0 ? 0 : Math.min(candidate, BUZZ_BUDGET_CAP);
+}
+
+/**
+ * The machine-readable code a viewer-confirmed job (a confirmed pass-through step or a
+ * training run) is refused with when it would exceed what remains of the viewer's own
+ * opted-in daily Buzz limit for the app (`app_user_scope_grants.buzz_budget_per_day`).
+ * The confirm can never override that limit where it is checked; the viewer raises it on
+ * the app activity page (`/apps/activity`). Where it is checked: the submit, on an
+ * ordinary page token; the step host's preview, on any token (the only check on a
+ * private run); a training private run is not checked against it at all.
+ *
+ * Shared because three places must agree on the string: the server's failed-snapshot
+ * `errorCode`, the host's `CONFIRMED_STEP_RESULT` error, and the SDK that branches on it.
+ */
+export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
+
+/** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
+export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
+
+/**
  * Bounds for a user-set per-app consent budget
  * (`app_user_scope_grants.buzz_budget_per_day`). MIN is 1 rather than 0: a
  * budget of zero would be a way to consent to `ai:write:budgeted` and
@@ -591,18 +715,17 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  *     `LOW === min(...)` holds for any number of ties);
  *   · the INLINE customComfy arm reserves an app-declared ceiling up to
  *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
- *   · `textToImage` reserves its live whatIf quote, which can be far LOWER (the
- *     platform's own default per-generation budget is 10);
+ *   · `textToImage` reserves its live whatIf quote, which can be far LOWER;
  *   · a STEP reserves `max(declaredBuzz, quotedBuzz)`, and `chat-completion`'s
  *     declared 1 is documented in `blocks.router.ts` as "that floor, not a
  *     price" — measured several times the constant, rising with `maxTokens`.
  *
  * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
  * this docblock asserted: every path gates the reservation against the token's
- * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
- * It is simply not renderable — it is per-app, ~4× the largest reservation any
- * path can actually take (INLINE_MAX_BUZZ = 250; 180 for recipes), and alarming
- * rather than informative. Do not "correct" the copy by naming it.
+ * per-call budget, which every mint clamps at `BUZZ_BUDGET_CAP`.
+ * It is simply not renderable — it is per-app, far above what most paths reserve
+ * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
+ * and alarming rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:
  * the reservation is taken up front, before the run, and the request is refused
@@ -654,8 +777,10 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - read the viewer's Buzz balance   (`buzz:read:self`)
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`,
+ *                                       `apps:storage:publish`,
  *                                       `posts:write:self`,
- *                                       `apps:store:items:write`)
+ *                                       `apps:store:items:write`,
+ *                                       `social:react:self`)
  *
  * This set does two things. (1) PRESENTATION — it drives the distinct,
  * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
@@ -678,6 +803,9 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'buzz:read:self',
   'collections:read:private',
   'apps:storage:shared:write',
+  // The document store's successor to `apps:storage:shared:write`: documents in a shared
+  // collection, authored under the viewer's identity, read by every viewer of the app.
+  'apps:storage:publish',
   // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
   // The most consequential entry in this set: `apps:storage:shared:write` is
   // visible to other viewers OF THAT APP, this one is visible to the whole site
@@ -689,6 +817,8 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'goods:purchase:self',
   // Writes store cards every visitor sees, under the viewer's name.
   'apps:store:items:write',
+  // Sets a public, reward-paying reaction under the viewer's name.
+  'social:react:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

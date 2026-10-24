@@ -1,7 +1,8 @@
 import { sql } from '@civitai/db/kysely';
+import { BOX_OPENING_REWARD_STATUS, MOD_GRANT_SOURCE_PREFIX } from '@civitai/shared/mystery-box';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { clickhouseDate } from './clickhouse-date';
+import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
@@ -19,6 +20,7 @@ import { escapeLike } from './like';
 import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
+import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -52,29 +54,18 @@ export type UserReview = {
    *  deciding without reading it. */
   details: string | null;
   modelCreator: string | null;
-  imageCount: number;
 };
 
-export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
-  // Retool's SubmittedReviewImageCount. This is the body of the `ResourceReviewHelper` VIEW, inlined and
-  // correlated to the row — NEVER join the view itself. It groups over all 71M reviews, and the qual does
-  // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
-  // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
-  // per returned row: 0.9s.
+const REVIEWS_LIMIT = 100;
+
+export async function getReviews(
+  userId: number,
+  limit = REVIEWS_LIMIT
+): Promise<Capped<UserReview>> {
   return dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
-    .select((eb) =>
-      eb
-        .selectFrom('ImageResourceNew as ir')
-        .innerJoin('Image as i', (join) =>
-          join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
-        )
-        .select((agg) => agg.fn.count('i.id').distinct().as('count'))
-        .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
-        .as('imageCount')
-    )
     .select([
       'rr.id',
       'rr.createdAt',
@@ -90,12 +81,46 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
     .orderBy('rr.createdAt', 'desc')
     .limit(limit + 1)
     .execute()
-    .then((rows) =>
-      capped(
-        rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
-        limit
-      )
-    );
+    .then((rows) => capped(rows, limit));
+}
+
+/**
+ * Review id → how many of the reviewer's own images use the reviewed version, for the same reviews
+ * `getReviews` lists. Retool's SubmittedReviewImageCount.
+ *
+ * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
+ * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
+ * instead is slower for prolific reviewers, so neither shape wins.
+ *
+ * The body of the `ResourceReviewHelper` VIEW, inlined and correlated to the row — NEVER join the view
+ * itself. It groups over every review and the qual does not push through, so both a join and a keyed
+ * `IN (…)` lookup time out. (The main app hit the same wall: resourceReview.service.ts.)
+ */
+export async function getReviewImageCounts(
+  userId: number,
+  limit = REVIEWS_LIMIT
+): Promise<Record<number, number>> {
+  // The same joins as `getReviews`, so the limit lands on the same rows.
+  const rows = await dbRead
+    .selectFrom('ResourceReview as rr')
+    .innerJoin('Model as m', 'm.id', 'rr.modelId')
+    .innerJoin('User as u', 'u.id', 'm.userId')
+    .select((eb) => [
+      'rr.id',
+      eb
+        .selectFrom('ImageResourceNew as ir')
+        .innerJoin('Image as i', (join) =>
+          join.onRef('i.id', '=', 'ir.imageId').onRef('i.userId', '=', 'rr.userId')
+        )
+        .select((agg) => agg.fn.count('i.id').distinct().as('count'))
+        .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
+        .as('imageCount'),
+    ])
+    .where('rr.userId', '=', userId)
+    .orderBy('rr.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+  return Object.fromEntries(rows.map((row) => [row.id, Number(row.imageCount ?? 0)]));
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -256,7 +281,7 @@ export type UserCommentV2 = {
 //
 // (Its name promises a link filter that its SQL does not contain — the filtering was done in the
 // browser. What the query is actually for is this resolution, so that is what is ported.)
-const THREAD_TARGETS = [
+export const THREAD_TARGETS = [
   'imageId',
   'modelId',
   'postId',
@@ -268,12 +293,12 @@ const THREAD_TARGETS = [
   'answerId',
 ] as const;
 
-const threadEntityId = sql<number | null>`coalesce(${sql.join(
+export const threadEntityId = sql<number | null>`coalesce(${sql.join(
   THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
   sql`, `
 )})`;
 
-const threadEntityType = sql<string | null>`case ${sql.join(
+export const threadEntityType = sql<string | null>`case ${sql.join(
   THREAD_TARGETS.map(
     (c) =>
       sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
@@ -282,6 +307,22 @@ const threadEntityType = sql<string | null>`case ${sql.join(
   ),
   sql` `
 )} end`;
+
+/** What each `CommentV2` hangs off, through its thread and, for a reply, the root thread. A comment whose thread points at nothing has no entry. */
+export async function commentV2ThreadParents(
+  commentIds: number[]
+): Promise<Map<number, { type: string; id: number }>> {
+  if (!commentIds.length) return new Map();
+  const { rows } = await sql<{ id: number; type: string | null; targetId: number | null }>`
+    select c.id, ${threadEntityType} as type, ${threadEntityId} as "targetId"
+    from "CommentV2" c
+    left join "Thread" t on t.id = c."threadId"
+    left join "Thread" root on root.id = t."rootThreadId"
+    where c.id in (${sql.join(commentIds)})`.execute(dbRead);
+  return new Map(
+    rows.flatMap((r) => (r.type && r.targetId ? [[r.id, { type: r.type, id: r.targetId }]] : []))
+  );
+}
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
@@ -617,6 +658,61 @@ export async function getShopPurchases(userId: number, limit = 50): Promise<Capp
     .then((rows) => capped(rows, limit));
 }
 
+// MYSTERY BOXES a moderator granted this user. A grant has no purchase row, so they are found by
+// sourceKey prefix.
+export type GrantedBox = {
+  sourceKey: string;
+  boxName: string;
+  /** When it was granted, or, once opened, when it was opened. */
+  at: Date;
+  state: 'held' | 'opened' | 'takenBack';
+  /** What it gave, once opened. */
+  reward: string | null;
+};
+
+export async function getGrantedBoxes(userId: number, limit = 50): Promise<Capped<GrantedBox>> {
+  const prefix = `${escapeLike(MOD_GRANT_SOURCE_PREFIX)}%`;
+  const [held, opened] = await Promise.all([
+    dbRead
+      .selectFrom('Item as i')
+      .innerJoin('ItemDefinition as box', 'box.id', 'i.itemDefinitionId')
+      .select(['i.sourceKey', 'box.name as boxName', 'i.createdAt as at'])
+      .where('i.holderType', '=', 'user')
+      .where('i.holderId', '=', userId)
+      .where('i.sourceKey', 'like', prefix)
+      .orderBy('i.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('BoxOpening as o')
+      .innerJoin('ItemDefinition as box', 'box.id', 'o.boxDefinitionId')
+      .leftJoin('ItemDefinition as reward', 'reward.id', 'o.rewardDefinitionId')
+      .select([
+        'o.boxSourceKey as sourceKey',
+        'box.name as boxName',
+        'o.createdAt as at',
+        'o.rewardStatus',
+        'reward.name as reward',
+      ])
+      .where('o.userId', '=', userId)
+      .where('o.boxSourceKey', 'like', prefix)
+      .orderBy('o.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+  ]);
+  const rows: GrantedBox[] = [
+    ...held.map((row) => ({ ...row, state: 'held' as const, reward: null })),
+    ...opened.map(({ rewardStatus, ...row }) => ({
+      ...row,
+      state:
+        rewardStatus === BOX_OPENING_REWARD_STATUS.granted
+          ? ('opened' as const)
+          : ('takenBack' as const),
+    })),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
+  return capped(rows, limit);
+}
+
 // Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
 export type AvailableCosmetic = { id: number; name: string };
 
@@ -724,6 +820,10 @@ export async function getResourceGenerations(
     SELECT modelVersionId, sum(count) AS count
     FROM daily_resource_generation_counts
     WHERE createdDate >= subtractDays(toStartOfDay(now()), ${days})
+      -- Upper bound because a legacy import left rows dated 2079 and 2120 holding a
+      -- version's whole all-time total; they satisfy any open-ended window and would
+      -- make a farming check read a lifetime count as this week's.
+      AND createdDate <= today()
       AND modelVersionId IN (${ids})
     GROUP BY modelVersionId
     ORDER BY count DESC
@@ -965,6 +1065,121 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .limit(limit)
     .execute();
   return rows as RetoolActivityRow[];
+}
+
+// IMAGE REMOVALS, from ClickHouse `default.images`. ModActivity finds image actions through the account's
+// current Image rows, and a blocked image is hard-deleted from Postgres after 7 days, so its removal
+// drops off that list. This log is keyed by owner and survives the delete.
+//
+// Owner is recorded from 2024 on; 2023 rows carry ownerId 0 and cannot be attributed. `ownerId` is not
+// in the sort key (time, imageId, userId), but the table is small enough that the scan measured
+// 164–237ms on the two largest accounts (~39k and ~33k removals).
+//
+// A non-owner `Delete` is not always a moderator: several frequent actors are not moderators today
+// (former moderators, or collaborators), so the actor's current role is returned for the UI to show.
+export type ImageRemovalRow = {
+  key: string;
+  type: 'DeleteTOS' | 'Delete' | 'Restore';
+  at: string;
+  imageId: number;
+  actorId: number;
+  actorUsername: string | null;
+  actorIsModerator: boolean;
+  tosReason: string | null;
+  violationType: string | null;
+};
+
+export type ImageRemovalCounts = { tos: number; deletedByOthers: number; restored: number };
+
+export type ImageRemovalCursor = { at: string; imageId: number };
+
+const REMOVALS_SCOPE = (userId: number) => `ownerId = ${userId}
+  AND (type IN ('DeleteTOS', 'Restore') OR (type = 'Delete' AND userId != ownerId))`;
+
+/**
+ * Ends every page on a whole (time, imageId) group. No column is unique per row — one image can be
+ * removed and restored in the same second, and a DeleteTOS can repeat — so a plain keyset cursor drops
+ * whichever row of a tie falls past the page edge. A page runs over `pageSize` by at most the size
+ * of its last group. Not a whole second: a bulk removal logs hundreds of rows in one second.
+ */
+export async function getImageRemovals(
+  userId: number,
+  before?: ImageRemovalCursor,
+  pageSize = 50
+): Promise<{
+  rows: ImageRemovalRow[];
+  next: ImageRemovalCursor | null;
+  counts: ImageRemovalCounts;
+}> {
+  // The ClickHouse helper interpolates with NO escaping.
+  if (before && !(isClickhouseDateTime(before.at) && Number.isInteger(before.imageId)))
+    throw new Error('[image-removals] malformed cursor');
+  const scope = REMOVALS_SCOPE(userId);
+  const olderThan = before
+    ? `AND (time, imageId) < (toDateTime('${before.at}'), ${before.imageId})`
+    : '';
+  const ch = getClickhouse();
+
+  const [keys, countRows] = await Promise.all([
+    ch.$query<{ time: string; imageId: string }>(`
+      SELECT time, imageId FROM default.images WHERE ${scope} ${olderThan}
+      ORDER BY time DESC, imageId DESC LIMIT ${pageSize + 1}
+    `),
+    ch.$query<{ tos: string; deletedByOthers: string; restored: string }>(`
+      SELECT countIf(type = 'DeleteTOS') AS tos, countIf(type = 'Delete') AS deletedByOthers,
+             countIf(type = 'Restore') AS restored
+      FROM default.images WHERE ${scope}
+    `),
+  ]);
+  const counts = {
+    tos: Number(countRows[0]?.tos ?? 0),
+    deletedByOthers: Number(countRows[0]?.deletedByOthers ?? 0),
+    restored: Number(countRows[0]?.restored ?? 0),
+  };
+  if (!keys.length) return { rows: [], next: null, counts };
+
+  const edge = keys[Math.min(pageSize, keys.length) - 1];
+  const boundary = { at: edge.time, imageId: Number(edge.imageId) };
+  // Enum order puts Restore after the removals, so DESC lists a same-second restore above its removal.
+  const rows = await ch.$query<{
+    type: ImageRemovalRow['type'];
+    time: string;
+    imageId: string;
+    userId: string;
+    tosReason: string | null;
+    violationType: string | null;
+  }>(`
+    SELECT type, time, imageId, userId, tosReason, violationType
+    FROM default.images
+    WHERE ${scope} ${olderThan}
+      AND (time, imageId) >= (toDateTime('${boundary.at}'), ${boundary.imageId})
+    ORDER BY time DESC, imageId DESC, type DESC
+  `);
+
+  const actors = await usersByIds(rows.map((r) => Number(r.userId)));
+  return {
+    rows: rows.map((r, i) => {
+      const actorId = Number(r.userId);
+      const actor = actors.get(actorId);
+      return {
+        // The table has no row id and a (time, imageId, type) triple can repeat; the page is replaced
+        // whole on every move, so a positional suffix is stable enough.
+        key: `${r.time}:${r.imageId}:${r.type}:${i}`,
+        type: r.type,
+        at: clickhouseDate(r.time),
+        imageId: Number(r.imageId),
+        actorId,
+        actorUsername: actor?.username ?? null,
+        actorIsModerator: !!actor?.isModerator,
+        tosReason: r.tosReason,
+        violationType: r.violationType,
+      };
+    }),
+    // A page that filled up may have older rows; when the extra row shared the boundary group it is
+    // already on this page, and the next fetch simply comes back empty.
+    next: keys.length > pageSize ? boundary : null,
+    counts,
+  };
 }
 
 // TRAINING RUNS (Retool's NewSubmittedTrainsBrett). The summary line is what a moderator acts on: what
@@ -1232,9 +1447,8 @@ const BUZZ_COLORS: Record<string, string> = {
   green: 'Green',
 };
 
-/** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzLedgerSide`. */
-const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
+/** See `USER_ACCOUNT_TYPES` in `buzz-accounts.ts`. */
+const USER_ACCOUNT_TYPES = new Set<string>(USER_ACCOUNT_TYPE_LIST);
 
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;
