@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { ServerDomains } from '~/shared/constants/domain.constants';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as NextRouterModule from 'next/router';
 
 /**
  * A static shell page is rendered once for every viewer, so its server HTML carries no cookie,
@@ -18,6 +19,16 @@ import type * as TrpcMod from '~/utils/trpc';
  * the same tree hydrates over it. The page data never arrives here (`window.__civShell` stays
  * pending), so what is measured is the hydration render alone.
  */
+
+// `_app` always has a router; this is the shell page's once its route query is restored.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  useRouter: () => ({
+    pathname: '/images/[imageId]',
+    asPath: '/images/101',
+    query: { imageId: '101' },
+  }),
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');

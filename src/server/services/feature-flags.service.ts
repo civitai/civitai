@@ -141,6 +141,11 @@ const featureFlags = createFeatureFlags({
   // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
   // moderator cohort is a Flipt rollout, never this static list.
   shellImages: { availability: [], fliptKey: 'shell-images' },
+  // Kill switch for every static shell render (`~/server/shell/shell-mode`): while off, no request
+  // gets a shell whatever its cookie says. Read with no user (entity `anonymous`), so it is one
+  // switch for everyone, never a per-user rollout. `[]`: dark, and fails CLOSED when the key is
+  // absent or Flipt is down — a shell is an optimisation, so losing it costs only CPU.
+  shellMaster: { availability: [], fliptKey: 'shell-master' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
