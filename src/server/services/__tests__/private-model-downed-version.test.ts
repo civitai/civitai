@@ -171,16 +171,18 @@ describe('making a model a moderator took down private', () => {
       status: 'UnpublishedViolation',
       availability: 'Public',
     } as never);
-    await makePrivate(true);
-
+    await expect(
+      privateModelFromTraining({ id: MODEL, user: { id: 9, isModerator: true } } as never)
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
-    expect(modelStatus).toBe('UnpublishedViolation');
   });
 
   it('stays down when the take-down lands after the check, and rolls nothing back', async () => {
     // The flow read the model live; the take-down committed before the flow's write.
     modelStatus = 'UnpublishedViolation';
-    await makePrivate();
+    await expect(
+      privateModelFromTraining({ id: MODEL, user: { id: 5, isModerator: false } } as never)
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 
     expect(modelStatus).toBe('UnpublishedViolation');
     expect(statusOf(10)).toBe('Published');

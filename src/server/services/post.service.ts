@@ -1077,7 +1077,7 @@ export const updatePost = async ({
             FROM "Post" p
             JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
             JOIN "Model" m ON m.id = mv."modelId"
-            WHERE p.id = ${id}
+            WHERE p.id = ${id} AND p."userId" = ${user.id}
           `
         : [];
     // Only the owner's posts come down with a take-down, so only their publish can race one and takes
