@@ -20,6 +20,7 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
 import type * as AuthSessionModule from '~/server/auth/get-server-auth-session';
 import type * as SearchApiKeyModule from '~/components/Search/search-api-key';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as ImageDetailPageModule from '~/components/Image/Detail/ImageDetailPage';
 
 const SEEDS = vi.hoisted(() => ({
   tosMeta: { hash: 'tos-hash', baseline: 'tos-baseline', fieldKeys: { blue: 'tosBlue' } },
@@ -30,6 +31,8 @@ const SEEDS = vi.hoisted(() => ({
 const h = vi.hoisted(() => ({
   bootstrap: vi.fn(),
   authSession: vi.fn(),
+  /** Makes the shell's page body throw during render. */
+  throwInShell: false,
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -84,9 +87,21 @@ vi.mock('~/components/Search/search-api-key', async (importOriginal) => ({
   createInstantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
 }));
 
+vi.mock('~/components/Image/Detail/ImageDetailPage', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageDetailPageModule>();
+  return {
+    ...actual,
+    ImageDetailPage: () => {
+      if (h.throwInShell) throw new Error('shell render failed');
+      return actual.ImageDetailPage();
+    },
+  };
+});
+
 import AppWithTRPC from '~/pages/_app';
 import AppDocument from '~/pages/_document';
 import * as ImagePage from '~/pages/images/[imageId]';
+import ErrorPage from '~/pages/_error';
 import { PAGE_RENDER_METRIC } from '~/server/prom/route-traffic.metrics';
 import { SSR_CPU_METRIC } from '~/server/prom/ssr-cpu.metrics';
 
@@ -148,19 +163,30 @@ function routeQuery(url: string) {
 async function render(variant: Variant) {
   const req = makeReq(variant);
   const res = makeRes();
-  const { params, query } = routeQuery(variant.url);
+  const html = await renderPage(req, res, variant.url);
+  return { html, headers: res.getHeaders(), nextData: nextDataOf(html) };
+}
+
+type Req = ReturnType<typeof makeReq>;
+type Res = ReturnType<typeof makeRes>;
+
+/** One `renderToHTML` of `/images/[imageId]`, or of `/_error` with `err` as Next renders it. */
+async function renderPage(req: Req, res: Res, url: string, err?: Error) {
+  const { params, query } = routeQuery(url);
+  const page = err ? '/_error' : ROUTE;
   const result = await renderToHTML(
     req as never,
     res as never,
-    ROUTE,
-    query,
+    page,
+    err ? {} : query,
     {
-      Component: ImagePage.default,
+      Component: err ? ErrorPage : ImagePage.default,
       App: AppWithTRPC,
       Document: AppDocument,
-      getServerSideProps: ImagePage.getServerSideProps,
+      getServerSideProps: err ? undefined : ImagePage.getServerSideProps,
+      err,
       buildManifest: {
-        pages: { '/_app': [], [ROUTE]: [] },
+        pages: { '/_app': [], [ROUTE]: [], '/_error': [] },
         devFiles: [],
         ampDevFiles: [],
         polyfillFiles: [],
@@ -171,17 +197,16 @@ async function render(variant: Variant) {
       reactLoadableManifest: {},
       dynamicCssManifest: [],
       pageConfig: {},
-      params,
-      resolvedUrl: variant.url,
-      page: ROUTE,
+      params: err ? undefined : params,
+      resolvedUrl: url,
+      page,
       experimental: {},
       isNextDataRequest: false,
     } as never,
     { buildId: BUILD_ID } as never,
     { isFallback: false } as never
   );
-  const html = result.toUnchunkedString();
-  return { html, headers: res.getHeaders(), nextData: nextDataOf(html) };
+  return result.toUnchunkedString();
 }
 
 function nextDataOf(html: string) {
@@ -263,6 +288,11 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
 
   it('renders the shell: skeleton, generic noindex head, page-data prefetch, edge headers', () => {
     expect(base.headers['x-civ-render']).toBe('shell');
+    expect(base.headers['cloudflare-cdn-cache-control']).toBe(
+      'public, max-age=60, stale-while-revalidate=30'
+    );
+    expect(base.headers['cache-tag']).toMatch(/^shell,shell-images,build-[\w-]+$/);
+    expect(base.headers['cache-control']).toBe('private, no-store');
     expect(base.html).toContain('data-testid="image-detail-shell-skeleton"');
     expect(base.html).toContain('<meta name="robots" content="noindex,nofollow"');
     expect(base.html).toContain('window.__civShell=p');
@@ -350,5 +380,35 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
       tosMeta: SEEDS.tosMeta,
       flags: { shellMaster: true, shellImages: true },
     });
+  });
+});
+
+describe('a shell render that throws', () => {
+  const EDGE_HEADERS = ['cloudflare-cdn-cache-control', 'cache-tag', 'x-civ-render'];
+
+  it('leaves the error page with none of the edge-cache headers', async () => {
+    const req = makeReq(BASE);
+    const res = makeRes();
+    h.throwInShell = true;
+    let thrown: unknown;
+    try {
+      await renderPage(req, res, BASE.url);
+    } catch (e) {
+      thrown = e;
+    } finally {
+      h.throwInShell = false;
+    }
+    expect(String(thrown)).toContain('shell render failed');
+    // What Next's base server does next with the same request and response
+    // (`renderErrorImpl`, `next/dist/server/base-server.js` 16.3.1): reset Cache-Control only, then
+    // render `/_error` — a full render, for the viewer.
+    res.statusCode = 500;
+    res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
+    await renderPage(req, res, BASE.url, thrown as Error);
+    const headers = res.getHeaders();
+    for (const name of EDGE_HEADERS) expect(headers, name).not.toHaveProperty(name);
+    expect(headers['cache-control']).toBe(
+      'private, no-cache, no-store, max-age=0, must-revalidate'
+    );
   });
 });

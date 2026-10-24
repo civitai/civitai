@@ -1,9 +1,9 @@
 /**
- * The response headers of `/images/[imageId]`, through the two hooks Next runs for a page request
- * in this order (`next/dist/server/render.js`, 16.3.1: `_app.getInitialProps`, then the page's
- * `getServerSideProps`, on the same request): the real `_app` and the real `createServerSideProps`
- * with the page's `shell` option. Only a shell render may carry the edge-cache header, and it may
- * carry no cookie.
+ * The response headers of `/images/[imageId]`, through the hooks Next runs for a page request in
+ * this order (`next/dist/server/render.js`, 16.3.1: `_app.getInitialProps`, the page's
+ * `getServerSideProps`, then `_document.getInitialProps` once the page rendered, on one request):
+ * the real `_app`, `createServerSideProps` with the page's `shell` option, and `_document`. Only a
+ * shell render may carry the edge-cache header, and it may carry no cookie.
  *
  * Lives outside `src/pages`: Next treats every file there as a route.
  */
@@ -37,6 +37,7 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 }));
 
 import AppWithTRPC from '~/pages/_app';
+import AppDocument from '~/pages/_document';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const appGetInitialProps = (
@@ -101,6 +102,15 @@ async function request({
     params: { imageId: '123' },
     resolvedUrl: url,
   } as unknown as GetServerSidePropsContext);
+  // Then the document, which Next renders only once the page rendered (its `renderPage` is stubbed).
+  await AppDocument.getInitialProps({
+    req,
+    res,
+    pathname: ROUTE,
+    query,
+    asPath: url,
+    defaultGetInitialProps: async () => ({ html: '', head: [], styles: [] }),
+  } as unknown as Parameters<typeof AppDocument.getInitialProps>[0]);
   return { headers: res.getHeaders(), result };
 }
 

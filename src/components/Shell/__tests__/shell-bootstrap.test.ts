@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as DeviceHelpersModule from '~/utils/device-helpers';
 import type * as PrivacyUiModule from '~/components/Consent/privacy-ui';
+import type * as CookiesHelpersModule from '~/utils/cookies-helpers';
 
 /**
  * The shell boot (`useShellBootstrap` + the providers' shell paths), driven through the real
@@ -23,11 +24,25 @@ import type * as PrivacyUiModule from '~/components/Consent/privacy-ui';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The page's route query as the router holds it once restored (a shell render's own is empty; see
+// `shell-route-query.ts`). Reset before each test.
 const router = {
   asPath: '/images/101',
-  query: {} as Record<string, string>,
+  query: { imageId: '101' } as Record<string, string>,
   pathname: '/images/[imageId]',
 };
+/** Every cookie the referral provider writes, in order. */
+const { cookieWrites } = vi.hoisted(() => ({ cookieWrites: [] as [string, unknown][] }));
+vi.mock('~/utils/cookies-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof CookiesHelpersModule>();
+  return {
+    ...actual,
+    setCookie: (key: string, data: unknown, expires?: Date) => {
+      cookieWrites.push([key, data]);
+      return actual.setCookie(key, data, expires);
+    },
+  };
+});
 vi.mock('next/router', async (importOriginal) => ({
   ...(await importOriginal<typeof NextRouterModule>()),
   useRouter: () => router,
@@ -427,6 +442,14 @@ async function settle() {
   }
 }
 
+/** The same tree again with new props, as Next re-renders `_app` when the router changes. */
+async function rerender(pageProps: PageProps) {
+  await act(async () => {
+    root?.render(h(Wrapped, { pageProps }));
+  });
+  await settle();
+}
+
 async function render(pageProps: PageProps, { withAds = false, strict = false } = {}) {
   const tree: ReactNode = h(Wrapped, { pageProps, withAds });
   root = createRoot(document.createElement('div'));
@@ -470,6 +493,9 @@ function parseCookiesRaw() {
 let navigate: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  router.asPath = '/images/101';
+  router.query = { imageId: '101' };
+  cookieWrites.length = 0;
   queryClient.clear();
   commits.length = 0;
   adsEnabledCommits.length = 0;
@@ -666,6 +692,24 @@ describe('cookie-derived values on a shell boot', () => {
     await render(shellPageProps());
     expect(last().shellReady).toBe(true);
     expect(parseCookiesRaw().ref_landing_page).toBe('/landing');
+  });
+
+  it('a referral in the URL is recorded once, even when the page data lands before the route query is restored', async () => {
+    // The shell's own (empty) route query; the inline script's page data is already in.
+    router.query = {};
+    router.asPath = '/images/101?ref_code=abc';
+    window.history.replaceState(null, '', '/images/101?ref_code=abc');
+    window.__civShell = Promise.resolve(json(payload()));
+    await render(shellPageProps());
+    expect(last().shellReady).toBe(true);
+    // What the router holds once `syncShellRouteQuery` lands.
+    router.query = { imageId: '101', ref_code: 'abc' };
+    await rerender(shellPageProps());
+    await rerender(shellPageProps());
+    expect(cookieWrites.filter(([key]) => key === 'ref_code')).toEqual([['ref_code', 'abc']]);
+    expect(cookieWrites.filter(([key]) => key === 'ref_landing_page')).toEqual([
+      ['ref_landing_page', '/images/101?ref_code=abc'],
+    ]);
   });
 
   it('control: with no landing page cookie the provider does record one', async () => {
