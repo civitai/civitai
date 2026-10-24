@@ -26,7 +26,7 @@ import {
 
 // Default model for the daily-challenge pipeline. Routed through OpenRouter.
 //
-// One model drives every stage, chosen against the two failure modes this pipeline actually has:
+// MiMo was chosen for every stage against the two failure modes this pipeline actually has:
 //
 //   - REVIEW must handle NSFW entries without bailing. GPT-5 Nano silently returned "No content
 //     in response" on 1-4 of 24 explicit entries per run (R, X and XXX alike), which surfaces as
@@ -40,10 +40,12 @@ import {
 // MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
 // on an article), which is irrelevant for the once-per-challenge content stages.
 //
-// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator), pass its URN or
-// `civitai/*` alias as `input.model` from the call site or the Playground.
+// REVIEW moved to Qwen 3.8 on the orchestrator after OpenRouter rejected every MiMo review from
+// 2026-10-23; MiMo stays as its fallback. The orchestrator rejects some images outright ("Input
+// image may violate our terms and services"), which the fallback covers.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
+export const DEFAULT_REVIEW_MODEL: AIModel = 'civitai/qwen3.8';
+export const REVIEW_FALLBACK_MODEL: AIModel = AI_MODELS.MIMO;
 
 function isCivitaiHostedModel(model: string) {
   return model.startsWith('urn:air:') || model.startsWith('civitai/');
