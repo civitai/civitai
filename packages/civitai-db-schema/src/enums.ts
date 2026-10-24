@@ -541,6 +541,7 @@ export const ApiKeyType = {
   User: 'User',
   Access: 'Access',
   Refresh: 'Refresh',
+  Worker: 'Worker',
 } as const;
 
 export type ApiKeyType = (typeof ApiKeyType)[keyof typeof ApiKeyType];

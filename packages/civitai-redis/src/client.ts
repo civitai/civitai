@@ -2636,8 +2636,8 @@ export const REDIS_SYS_KEYS = {
     // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
     BANKABLE_SPENT: 'creator-program:bankable-spent',
     // String, Buzz. The smallest two-way amount between a creator and one user that the
-    // counterparty review files. Ops-owned and deliberately without a default in code: the review
-    // skips, and logs that it skipped, until it is set.
+    // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
+    // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
     // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
