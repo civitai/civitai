@@ -100,8 +100,8 @@ describe('doc-store: a connection the pool cannot hand out is a retryable servic
     ['too many connections', pgError('53300', 'sorry, too many clients already')],
     ['the server starting up', pgError('57P03', 'the database system is starting up')],
     [
-      'an arbitrary connect rejection',
-      new Error('Cannot use a pool after calling end on the pool'),
+      'a PgBouncer that cannot reach the server',
+      pgError('08P01', 'pgbouncer cannot connect to server'),
     ],
   ])('%s', async (_name, fault) => {
     const { db, sent } = scriptedDb({ connect: fault });
@@ -124,6 +124,40 @@ describe('doc-store: a connection the pool cannot hand out is a retryable servic
   });
 });
 
+describe('doc-store: a connect() rejection that is misconfiguration, not an outage, stays a 500', () => {
+  // Retrying these never helps: a 503 "temporarily unavailable" would be an endless retry loop
+  // that hides a broken deploy.
+  it.each([
+    ['a wrong password (28P01)', pgError('28P01', 'password authentication failed for user "x"')],
+    ['an auth rule refusing the role (28000)', pgError('28000', 'no pg_hba.conf entry for host')],
+    ['a missing database (3D000)', pgError('3D000', 'database "nope" does not exist')],
+    ['a host name that does not resolve (ENOTFOUND)', errnoError('ENOTFOUND')],
+    ['a host name DNS cannot answer for (EAI_AGAIN)', errnoError('EAI_AGAIN')],
+    [
+      'a pooler refusing a startup parameter (08P01)',
+      pgError('08P01', 'unsupported startup parameter: statement_timeout'),
+    ],
+    ['a pool already ended', new Error('Cannot use a pool after calling end on the pool')],
+  ])('%s', async (_name, fault) => {
+    const { db, sent } = scriptedDb({ connect: fault });
+    const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
+    expect(err).toBe(fault);
+    expect(sent).toEqual([]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-doc-store-config-fault',
+        type: 'error',
+        message: fault.message,
+      }),
+      'app-blocks'
+    );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-blocks-doc-store-connection-fault' }),
+      expect.anything()
+    );
+  });
+});
+
 describe('doc-store: a connection-class failure inside the transaction is a retryable service_unavailable', () => {
   it.each([
     ['53300 too_many_connections', pgError('53300')],
@@ -136,7 +170,16 @@ describe('doc-store: a connection-class failure inside the transaction is a retr
     ['08000 connection_exception', pgError('08000')],
     ['08003 connection_does_not_exist', pgError('08003')],
     ['08006 connection_failure', pgError('08006')],
-    ['08P01 protocol_violation', pgError('08P01')],
+    ["08P01 from PgBouncer: 'server conn crashed?'", pgError('08P01', 'server conn crashed?')],
+    [
+      "08P01 from PgBouncer: 'no more connections allowed'",
+      pgError('08P01', 'no more connections allowed (max_client_conn)'),
+    ],
+    [
+      "08P01 from PgBouncer: 'pgbouncer cannot connect to server'",
+      pgError('08P01', 'pgbouncer cannot connect to server'),
+    ],
+    ["08P01 from PgBouncer: 'query_wait_timeout'", pgError('08P01', 'query_wait_timeout')],
     ['ECONNRESET', errnoError('ECONNRESET')],
     ['ECONNREFUSED', errnoError('ECONNREFUSED')],
     ['EPIPE', errnoError('EPIPE')],
@@ -198,6 +241,11 @@ describe('doc-store: what stays as it was', () => {
     ['a TypeError', new TypeError("Cannot read properties of undefined (reading 'rows')")],
     // A 5-character SQLSTATE that merely CONTAINS 08 is not class 08.
     ['SQLSTATE 22008 (datetime overflow)', pgError('22008')],
+    // 08P01 is also what Postgres raises for a malformed message from US — a bug, not an outage.
+    [
+      '08P01 protocol_violation from a parameter-count bug',
+      pgError('08P01', 'bind message supplies 1 parameters, but prepared statement "" requires 2'),
+    ],
   ])('%s inside the transaction is rethrown untouched (the route sends 500)', async (_n, fault) => {
     const { db } = scriptedDb({ failOn: (sql) => (isInTx(sql) ? fault : undefined) });
     const err = await rejection(createDocStore({ db }).get(CTX, PREFS, 'k'));
