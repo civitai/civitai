@@ -25,7 +25,7 @@ import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { shellRouteByName } from '~/server/shell/shell-mode';
-import { applyShellResponseHeaders, syncShellRouteCookie } from '~/server/shell/shell-response';
+import { applyShellPrivateHeaders, syncShellRouteCookie } from '~/server/shell/shell-response';
 import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const getServerProxySSGHelpers = async (
@@ -119,7 +119,7 @@ export function createServerSideProps<P>({
     // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
     // or returned — no session, no flags, no prefetch. Ads stay gated until the page data's verdict.
     if (shell && (context.req as { [SHELL_REQ_KEY]?: string })[SHELL_REQ_KEY] === shell) {
-      applyShellResponseHeaders(context.res, shell);
+      applyShellPrivateHeaders(context.res);
       return { props: { adsGated: true } as unknown as NonNullable<P> };
     }
 

@@ -125,6 +125,10 @@ function seedShellCaches(queryClient: QueryClient, data: ShellPageData) {
  */
 export function useShellBootstrap(active: boolean, page: ShellPageInputs): ShellAppProps {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  // The same signal `useShellPagePending` waits on: until it clears, `router.query` is the shell's
+  // empty one, and the referral provider would record from it once and never again.
+  const queryPending = active && page.onShellPage && routeQueryPending(router);
   const [cookies, setCookies] = useState<ParsedCookies | null>(null);
   const [data, setData] = useState<ShellPageData | null>(null);
   const [failed, setFailed] = useState(false);
@@ -189,7 +193,7 @@ export function useShellBootstrap(active: boolean, page: ShellPageInputs): Shell
     sessionSeed,
     flagsSeed,
     appShell,
-    referralsPending: !ready,
+    referralsPending: !ready || queryPending,
     status: ready ? 'ready' : failed ? 'failed' : 'pending',
   };
 }

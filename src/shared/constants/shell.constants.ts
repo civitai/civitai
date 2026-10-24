@@ -18,6 +18,13 @@ export const SHELL_REQ_KEY = 'civShellRoute';
 /** Response header naming how a page was rendered; only a shell render sets it. */
 export const SHELL_RENDER_HEADER = 'X-Civ-Render';
 
+/** The headers only a successfully rendered shell may carry: the edge cache's, and the label. */
+export const SHELL_EDGE_HEADERS = [
+  'Cloudflare-CDN-Cache-Control',
+  'Cache-Tag',
+  SHELL_RENDER_HEADER,
+] as const;
+
 /** The page-data URL for a page URL: same path and query, under `/api/page-data`. */
 export function shellPageDataUrl(pathname: string, search: string) {
   return `${SHELL_PAGE_DATA_PREFIX}${pathname}${search}`;

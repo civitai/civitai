@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { getCookies } from 'cookies-next';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { shellRouteByName } from '~/server/shell/shell-mode';
-import { SHELL_RENDER_HEADER } from '~/shared/constants/shell.constants';
+import { SHELL_EDGE_HEADERS, SHELL_RENDER_HEADER } from '~/shared/constants/shell.constants';
 
 /**
  * What a static shell response carries, and the route cookie that opts a viewer into it.
@@ -17,7 +17,7 @@ import { SHELL_RENDER_HEADER } from '~/shared/constants/shell.constants';
 
 export const SHELL_CACHE_CONTROL = 'private, no-store';
 export const SHELL_CDN_CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=30';
-export const SHELL_CDN_CACHE_CONTROL_HEADER = 'Cloudflare-CDN-Cache-Control';
+export const SHELL_CDN_CACHE_CONTROL_HEADER = SHELL_EDGE_HEADERS[0];
 
 let buildId: string | undefined;
 
@@ -40,12 +40,23 @@ export function shellCacheTag(route: ShellRouteName) {
   return `shell,shell-${route},build-${shellBuildId()}`;
 }
 
-export function applyShellResponseHeaders(res: ServerResponse, route: ShellRouteName) {
+/** Before the shell renders (`getServerSideProps`): private to browsers, no cookie. */
+export function applyShellPrivateHeaders(res: ServerResponse) {
   res.setHeader('Cache-Control', SHELL_CACHE_CONTROL);
+  res.removeHeader('Set-Cookie');
+}
+
+/**
+ * Only once the shell HAS rendered (`_document.getInitialProps`, which Next reaches after the page
+ * rendered). Set earlier, they would survive a render that throws: Next renders `/_error` on the
+ * same response and resets only Cache-Control (`renderErrorImpl` in `base-server.js`, 16.3.1), so a
+ * per-viewer error page would go out edge-cacheable. `_app` also strips them on every non-shell run.
+ */
+export function applyShellEdgeHeaders(res: ServerResponse, route: ShellRouteName) {
+  applyShellPrivateHeaders(res);
   res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, SHELL_CDN_CACHE_CONTROL);
   res.setHeader('Cache-Tag', shellCacheTag(route));
   res.setHeader(SHELL_RENDER_HEADER, 'shell');
-  res.removeHeader('Set-Cookie');
 }
 
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
