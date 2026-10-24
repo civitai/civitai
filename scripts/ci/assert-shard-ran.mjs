@@ -95,18 +95,21 @@ const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
  * it separates that from a legitimate shard for every N >= 2.
  *
  * 🔴 COUNTED IN FILES, NOT TESTS. vitest shards by file count, so file shares are exact
- * (515/514/514/514), while test shares are not: one parametrised table,
+ * (927/926/926/926), while test shares are not: one parametrised table,
  * `image-parity.test.ts` at 8,620 cases (~19% of the suite), lands wholly on one shard and
  * grows with every generator model. A test-count ceiling tripped on that file alone
  * (shard 3 at 17,079 vs 17,036, 2026-09-25) with sharding working correctly, three weeks
  * after BASE_TESTS was last re-pinned for the same reason. Do not move this back to tests.
  *
- * BASE_FILES is the whole unit suite's file count: 515 + 514 + 514 + 514 = 2,057, the four
- * shards' "across N files" figures on `main`, 2026-09-25 (run 36084791308). A stale-low
- * figure trips the ceiling only once the suite grows 80% past it.
+ * BASE_FILES is the whole unit suite's file count: 927 + 926 + 926 + 926 = 3,705, the four
+ * shards' "across N files" figures on `main`, 2026-10-24 (2c5643eb4a; shards 1 and 3 again on
+ * 24ee0e73a8, run 40113886304). A stale-low figure trips the ceiling only once the suite grows
+ * 80% past it: the previous 2,057 (2026-09-25) did exactly that, shard 1 at 927 files against a
+ * ceiling of 926 with every test green. The four shares were still even quarters, which rules
+ * out cause (1) below.
  */
-const BASE_FILES = 2057;
-const BASE_FILES_MEASURED = '2026-09-25';
+const BASE_FILES = 3705;
+const BASE_FILES_MEASURED = '2026-10-24';
 const MAX_FILES = Math.round((BASE_FILES / total) * 1.8);
 
 if (!existsSync(reportPath)) {
