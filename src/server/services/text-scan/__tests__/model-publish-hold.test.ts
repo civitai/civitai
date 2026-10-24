@@ -10,6 +10,7 @@ const { mockTx, checkModelRulesLiteralHold, holdModelForLiteralRules } = vi.hois
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -90,6 +91,7 @@ vi.mock('~/server/services/text-scan/model-rules-hold', () => ({ checkModelRules
 vi.mock('~/server/services/text-scan/actions/model-rules', () => ({ holdModelForLiteralRules }));
 
 const logToAxiom = loggingMock.logToAxiom;
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { publishModelById, publishPrivateModel } from '~/server/services/model.service';
 
 const MODEL_ID = 42;
@@ -110,6 +112,8 @@ beforeEach(() => {
     status: 'Published',
   });
   mockTx.$executeRaw.mockResolvedValue(0);
+  // None of the listed versions is taken down.
+  mockTx.$queryRaw.mockResolvedValue([]);
   // The requested versions are this model's own.
   dbMock.dbWrite.modelVersion.findMany.mockImplementation((async ({
     where,
@@ -283,5 +287,37 @@ describe('publishPrivateModel — Model rules literal hold', () => {
     checkModelRulesLiteralHold.mockResolvedValue(HOLD);
     await publishPrivateModel({ ...input, publishVersions: false }, { enforceModelRules: true });
     expect(checkModelRulesLiteralHold).not.toHaveBeenCalled();
+  });
+});
+
+describe('publishModelById with a taken-down version in the list', () => {
+  const publish = (enforceModelRules: boolean) =>
+    publishModelById({ id: MODEL_ID, versionIds: [100, 101], enforceModelRules });
+
+  beforeEach(() => {
+    mockTx.$queryRaw.mockResolvedValue([
+      { status: 'Published' },
+      { status: 'UnpublishedViolation' },
+    ]);
+  });
+
+  it('refuses the owner and publishes no version', async () => {
+    await expect(publish(true)).rejects.toThrow(/not authorized/);
+    expect(publishModelVersionsWithEarlyAccess).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator republish it', async () => {
+    await publish(false);
+    expect(publishModelVersionsWithEarlyAccess).toHaveBeenCalledTimes(1);
+  });
+
+  // Keep the status out of the WHERE: a locking read filtered on it skips, without waiting, a row
+  // whose committed status still reads live while a take-down is changing it, and the race reopens.
+  it('locks every listed version, not only the taken-down ones', async () => {
+    await publish(true).catch(() => undefined);
+
+    const sql = (mockTx.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toMatch(/FOR SHARE/);
+    expect(sql).not.toMatch(/status\s+(NOT\s+)?IN/i);
   });
 });

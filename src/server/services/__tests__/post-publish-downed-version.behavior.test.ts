@@ -86,6 +86,14 @@ beforeEach(async () => {
     const { rows } = await pg.query(`SELECT * FROM "Post" WHERE id = $1`, [where.id]);
     return rows[0];
   }) as never);
+  dbMock.dbWrite.post.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => {
+    const { rows } = await pg.query(`SELECT * FROM "Post" WHERE id = $1`, [where.id]);
+    return rows[0] ?? null;
+  }) as never);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
 });
 

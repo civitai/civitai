@@ -14,7 +14,8 @@ vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
 }));
 // Stands in for the real post path: publishing onto a taken-down version is refused there, except for
 // a moderator.
-const { postedTo } = vi.hoisted(() => ({ postedTo: [] as number[] }));
+// FAILS is a version whose post fails, which sends the flow down its rollback.
+const { postedTo, FAILS } = vi.hoisted(() => ({ postedTo: [] as number[], FAILS: 99 }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
   createModelVersionPostFromTraining: async ({
@@ -25,6 +26,7 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
     user: { isModerator: boolean };
   }) => {
     postedTo.push(modelVersionId);
+    if (modelVersionId === FAILS) throw new Error('post failed');
     if (modelVersionId !== 10 && !user.isModerator) throw new Error('refused: taken down');
   },
   bustMvCache: async () => undefined,
@@ -97,26 +99,32 @@ describe('making a model with a taken-down version private', () => {
     expect(versions.map((v) => v.availability)).toEqual(['Private', 'Private', 'Private']);
   });
 
-  it('does not reset them to Draft when the flow fails', async () => {
+  it.each([
+    ['an owner', false],
+    ['a moderator', true],
+  ])('does not reset them to Draft when %s run fails', async (_label, asModerator) => {
     dbMock.dbWrite.model.update.mockResolvedValueOnce({
       id: MODEL,
       modelVersions: [
         { id: 10, status: 'Published' },
-        { id: 99, status: 'Published' },
+        { id: FAILS, status: 'Published' },
       ],
     } as never);
-    await makePrivate();
+    await makePrivate(asModerator);
 
     expect(statusOf(10)).toBe('Draft');
     expect(statusOf(11)).toBe('UnpublishedViolation');
     expect(statusOf(12)).toBe('Deleted');
   });
 
-  it('lets a moderator publish them', async () => {
+  // Ruled by the Moderation Lead (hq:ky1cf68gw8ec): a moderator's run keeps them down too.
+  // Restoring a taken-down version is its own explicit moderator action, not a side effect of this one.
+  it('keeps them down when a moderator runs it', async () => {
     await makePrivate(true);
 
-    expect(postedTo).toEqual([10, 11, 12]);
-    expect(statusOf(11)).toBe('Published');
-    expect(statusOf(12)).toBe('Published');
+    expect(postedTo).toEqual([10]);
+    expect(statusOf(10)).toBe('Published');
+    expect(statusOf(11)).toBe('UnpublishedViolation');
+    expect(statusOf(12)).toBe('Deleted');
   });
 });

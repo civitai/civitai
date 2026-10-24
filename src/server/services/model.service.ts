@@ -4071,6 +4071,19 @@ export const publishModelById = async ({
           throw error;
         });
 
+      // A version a moderator took down must not come back because its id was in this list. Every
+      // listed row is read under a share lock, so a take-down racing this publish is either seen or
+      // waits for it; a status filter in the WHERE would skip, unlocked, a row it is changing.
+      if (enforceModelRules && includeVersions) {
+        const listed = await tx.$queryRaw<{ status: ModelStatus }[]>`
+          SELECT status FROM "ModelVersion"
+          WHERE id IN (${Prisma.join(versionIds)}) AND "modelId" = ${id}
+          FOR SHARE
+        `;
+        if (listed.some((v) => constants.modPublishOnlyStatuses.includes(v.status)))
+          throw throwAuthorizationError('You are not authorized to publish this model version');
+      }
+
       // Anti-bump guard: publishedAt is immutable once a model has gone
       // public. Allowed transitions: NULL (Draft) -> set, or future
       // (Scheduled) -> reschedule. Republish of an already-public model is a
@@ -6009,13 +6022,12 @@ export const privateModelFromTraining = async ({
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
-  // A version a moderator took down stays down: this flow neither republishes it, posts to it, nor
-  // resets it to a Draft its owner could publish when the flow fails.
-  const keepDowned = user.isModerator
-    ? {}
-    : { status: { notIn: constants.modPublishOnlyStatuses } };
+  // A version a moderator took down stays down, whoever runs this flow: it neither republishes it,
+  // posts to it, nor resets it to a Draft its owner could publish when the flow fails. Restoring one
+  // is its own moderator action.
+  const keepDowned = { status: { notIn: constants.modPublishOnlyStatuses } };
   const isPublishable = (v: { status: ModelStatus }) =>
-    user.isModerator || !constants.modPublishOnlyStatuses.includes(v.status);
+    !constants.modPublishOnlyStatuses.includes(v.status);
 
   try {
     const result = await dbWrite.model.update({

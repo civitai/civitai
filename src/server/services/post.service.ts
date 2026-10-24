@@ -867,8 +867,6 @@ export const createPost = async ({
     });
     if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
       throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
-    // After the visibility check, so a version the caller cannot see stays not-found.
-    if (data.publishedAt && !isModerator) await assertPublishableVersion(data.modelVersionId);
 
     availability = modelVersion.model.availability;
   }
@@ -922,13 +920,25 @@ export const createPost = async ({
   const { linkPendingChapter } = linksStoryline
     ? await import('~/server/services/storyline.service')
     : { linkPendingChapter: undefined };
-  const post = linkPendingChapter
-    ? await dbWrite.$transaction(async (tx) => {
-        const created = await insertPost(tx);
-        await linkPendingChapter(tx, { postId: created.id, userId, storylineId, parentChapterId });
-        return created;
-      })
-    : await insertPost(dbWrite);
+  // Checked after the visibility check above, so a version the caller cannot see stays not-found.
+  const guardedVersionId =
+    data.modelVersionId && data.publishedAt && !isModerator ? data.modelVersionId : undefined;
+  const post =
+    linkPendingChapter || guardedVersionId
+      ? await dbWrite.$transaction(async (tx) => {
+          if (guardedVersionId && (await lockDownedVersion(tx, guardedVersionId)))
+            throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+          const created = await insertPost(tx);
+          if (linkPendingChapter)
+            await linkPendingChapter(tx, {
+              postId: created.id,
+              userId,
+              storylineId,
+              parentChapterId,
+            });
+          return created;
+        })
+      : await insertPost(dbWrite);
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
@@ -983,12 +993,20 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
-/** Refuses a non-moderator publishing straight onto a taken-down version. */
-async function assertPublishableVersion(modelVersionId: number) {
-  const [check] = await dbWrite.$queryRaw<{ downed: boolean }[]>`
-    SELECT ${onDownedVersionSql(Prisma.sql`${modelVersionId}::int`)} AS downed
+/**
+ * Whether this version or its model is taken down, read under a share lock on both rows, so call it
+ * in the publish's transaction. A take-down already in flight is waited for and seen; one that starts
+ * later waits for the publish to commit, and its own cascade then unpublishes the post.
+ */
+async function lockDownedVersion(tx: Prisma.TransactionClient, modelVersionId: number) {
+  const [row] = await tx.$queryRaw<{ downed: boolean }[]>`
+    SELECT (mv.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+      OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)})) AS downed
+    FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId}
+    FOR SHARE OF mv, m
   `;
-  if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+  return !!row?.downed;
 }
 
 export const updatePost = async ({
@@ -1041,6 +1059,16 @@ export const updatePost = async ({
 
   let publishedAtWritten = false;
   const post = await dbWrite.$transaction(async (tx) => {
+    // Locked before the post row: a take-down locks the version and then its posts, so taking them
+    // in the other order could deadlock with it.
+    const guardedVersionId =
+      publishedAt !== undefined && !user.isModerator
+        ? restData.modelVersionId !== undefined
+          ? restData.modelVersionId
+          : (await tx.post.findUnique({ where: { id }, select: { modelVersionId: true } }))
+              ?.modelVersionId
+        : undefined;
+    const downed = guardedVersionId ? await lockDownedVersion(tx, guardedVersionId) : false;
     const updated = await tx.post.update({
       where: { id, userId: !user.isModerator ? user.id : undefined },
       data: {
@@ -1082,15 +1110,11 @@ export const updatePost = async ({
         RETURNING "publishedAt"
       `;
       // A moderator's take-down unpublishes the version's posts; an owner publishing one afterwards
-      // would put it back up. Checked in the same statement as the write, so it cannot race the take-down.
-      // A post already public writes nothing either, and stays the no-op it always was.
+      // would put it back up. A post already public writes nothing either, and stays the no-op it
+      // always was.
       const alreadyPublic = !!updated.publishedAt && updated.publishedAt <= new Date();
-      if (!writtenRows.length && !user.isModerator && !alreadyPublic) {
-        const [check] = await tx.$queryRaw<{ downed: boolean }[]>`
-          SELECT ${onDownedVersionSql(Prisma.sql`${updated.modelVersionId}::int`)} AS downed
-        `;
-        if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
-      }
+      if (!writtenRows.length && downed && !alreadyPublic)
+        throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
       // Reflect the actually-written timestamp (may be the stashed
       // prevPublishedAt rather than the submitted value). The controller's
       // wasPublished check (post.controller.ts: `!post?.publishedAt &&
