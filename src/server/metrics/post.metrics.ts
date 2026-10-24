@@ -4,10 +4,10 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import {
   executeRefresh,
   getAffected,
-  getEntityMetricTasks,
   reactionCountKeys,
   snippets,
 } from '~/server/metrics/metric-helpers';
+import { getCollectionItemCountTasks } from '~/server/metrics/collection-item-counts';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -208,7 +208,7 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 async function getCollectionTasks(ctx: MetricContext) {
-  return getEntityMetricTasks(ctx)('Post', 'collectedCount');
+  return getCollectionItemCountTasks(ctx)('Post');
 }
 
 type MetricKey = keyof PostMetric;

@@ -124,12 +124,13 @@ duplication is not by design; it’s an unfinished migration.
 | **Comic** | Postgres `ComicProjectMetric` | **Postgres** `ComicProjectMetric` (reads via `ComicChapterRead`) |
 | **Image** | **ClickHouse** (feed) *and* `ImageMetric` (some paths) | ClickHouse |
 
-Exception: `collectedCount` on Model, Article and Post (and Collection `itemCount`) is a ClickHouse
-sum written back into the Postgres `*Metric` row by the metric jobs, fed by the `CollectionItem` CDC
-handler. A row counts only if `addedById` is set. Bookmarks were once written without it, but rows
-older than the November 2025 seed of the events table are counted anyway, by the seed's bulk events.
-`apps/event-engine/scripts/backfill-collection-item-adder.mjs` sets the missing adders and then
-reconciles each touched entity to its row count, one entity per run; a +1 per row would double count.
+Exception: `collectedCount` on Model, Article and Post, and Collection `itemCount`, are counted from
+`CollectionItem` in Postgres by the metric jobs (`src/server/metrics/collection-item-counts.ts`), not
+summed from ClickHouse. `collectedCount` is distinct collectors, so one account holding an item in
+many collections counts once; both count ACCEPTED rows only. The `CollectionItem` CDC events, and a
+0 on a status change, only mark which entities to recount. Image's `Collection` is still the
+ClickHouse sum. `apps/event-engine/scripts/backfill-collection-item-adder.mjs` gives old bookmark
+rows their missing adder and marks every affected entity for a recount.
 
 Image is the one that reads tips from ClickHouse on the hot feed, and ClickHouse
 image tips also feed **search ranking** (`stats.tippedAmountCountAllTime:desc`)

@@ -11,26 +11,11 @@ import {
 // Helpers for backfill-collection-item-adder.mjs, split out so they can be tested without a
 // database. See that script's header for why each rule exists.
 
-// The metrics collectionItemHandler (src/handlers/collection-items.ts) emits for a non-image row.
-const ENTITY_METRICS = [
-  ['collectionId', 'Collection', 'itemCount'],
-  ['modelId', 'Model', 'collectedCount'],
-  ['postId', 'Post', 'collectedCount'],
-  ['articleId', 'Article', 'collectedCount'],
-];
-
 // One entity per run, so each can be scoped and sized on its own; a bookmark row carries one of these.
 const ENTITY_COLUMNS = { Article: 'articleId', Model: 'modelId', Post: 'postId' };
 
 // Only Bookmark collections: their owner is the only one who adds to them, so the owner is the
 // adder. In any other collection the owner may not be. $1 and $2 are the id range.
-//
-// `counted` is what the metric aggregates will count from now on: a row with an adder, or one this
-// run is about to give one, unless that user is in metricExcludedUsers ($2 of the truth queries),
-// whose events the aggregates filter out. It is the same before and after the UPDATE, so the dry
-// run (read-only replica) and the real run reconcile to the same truth. Anything else in a touched
-// entity or collection, such as a null-adder image row, is reconciled out of the total: it is what
-// the handler will count from here on, so leaving it in would drift as soon as one is deleted.
 export function backfillSql(entity) {
   const column = ENTITY_COLUMNS[entity];
   if (!column)
@@ -44,146 +29,39 @@ export function backfillSql(entity) {
     AND ci."imageId" IS NULL
     AND ci."${column}" IS NOT NULL
     AND c."userId" > 0`;
-  const counted = `(ci."addedById" IS NOT NULL OR (c.mode = 'Bookmark' AND c."userId" > 0
-    AND ci."imageId" IS NULL AND ci."${column}" IS NOT NULL))
-    AND COALESCE(ci."addedById", c."userId") <> ALL($2::int[])`;
   return {
-    candidates: `SELECT c.mode::text AS mode, ci."${column}" AS "entityId", ci."collectionId", count(*)::int AS n
-      FROM "CollectionItem" ci, "Collection" c WHERE ${candidates} GROUP BY 1, 2, 3`,
+    candidates: `SELECT c.mode::text AS mode, count(*)::int AS n
+      FROM "CollectionItem" ci, "Collection" c WHERE ${candidates} GROUP BY 1`,
     update: `UPDATE "CollectionItem" ci SET "addedById" = c."userId"
       FROM "Collection" c
       WHERE ${candidates} AND c.mode = 'Bookmark'
-      RETURNING ci.id, ci."collectionId", ci."${column}" AS "entityId"`,
-    // No index leads with the entity column, so every call is a full scan: call it once, with
-    // every id, never per batch or per chunk.
-    entityTruth: `SELECT ci."${column}" AS id, count(*)::int AS n
-      FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
-      WHERE ci."${column}" = ANY($1::int[]) AND ${counted} GROUP BY 1`,
-    collectionTruth: `SELECT ci."collectionId" AS id, count(*)::int AS n
-      FROM "CollectionItem" ci JOIN "Collection" c ON c.id = ci."collectionId"
-      WHERE ci."collectionId" = ANY($1::int[]) AND ${counted} GROUP BY 1`,
+      RETURNING ci.id`,
+    // Everything whose count the new rules can change: every entity and collection with a row of
+    // this kind, and every entity still showing a count with no rows left to back it.
+    touchEntities: `SELECT DISTINCT "${column}" AS id FROM "CollectionItem" WHERE "${column}" IS NOT NULL
+      UNION
+      SELECT "${column}" FROM "${entity}Metric" WHERE "collectedCount" <> 0`,
+    touchCollections: `SELECT DISTINCT "collectionId" AS id FROM "CollectionItem"
+      WHERE "${column}" IS NOT NULL`,
   };
 }
 
-// The total the metric job will read once the daily views catch up is history + recent:
-//   history: entityMetricDailyAgg_history_v2 (written by entityMetricDailySeal_v2_mv), the latest
-//     sealed value per day, for days before yesterday. Read from the table, as
-//     sql/entity-metric-current-totals.sql does, not through the view: a `day` filter on the view
-//     returned nothing for history.
-//   recent: the raw events since yesterday, deduped and filtered exactly as
-//     entityMetricDaily_today_v2_mv does, so events the view has not refreshed in yet, including
-//     this run's own, are counted.
-export const HISTORY_TOTALS_SQL = `SELECT entityId, sum(t) AS total FROM (
-    SELECT entityId, day, argMax(total, sealedAt) AS t FROM default.entityMetricDailyAgg_history_v2
-    WHERE entityType = {entityType:String} AND metricType = {metricType:String}
-      AND entityId IN {ids:Array(Int64)} AND day < today() - 1
-    GROUP BY entityId, day
-  ) GROUP BY entityId`;
+// The metric jobs recount, from Postgres, every entity with an event in this table since their
+// last run (src/server/metrics/collection-item-counts.ts reads it by name).
+export const EVENTS_TABLE = 'entityMetricEvents_month';
 
-export function recentTotalsSql(eventsTable) {
-  return `SELECT entityId, sum(latestValue) AS total FROM (
-      SELECT entityId, argMax(metricValue, version) AS latestValue FROM default.${eventsTable}
-      WHERE entityType = {entityType:String} AND metricType = {metricType:String}
-        AND entityId IN {ids:Array(Int64)} AND createdAt >= today() - 1
-        AND userId NOT IN (SELECT userId FROM default.metricExcludedUsers FINAL WHERE active = 1)
-      GROUP BY entityId, userId, createdAt
-    ) GROUP BY entityId`;
-}
+// A 0 marks an entity for that recount and moves no sum, so writing one twice is harmless.
+export const TOUCH_USER_ID = -1;
 
-// What the metric job reads right now (entityMetricDailyAgg_v2).
-export const VIEW_TOTALS_SQL = `SELECT entityId, sum(total) AS total FROM default.entityMetricDailyAgg_v2
-  WHERE entityType = {entityType:String} AND metricType = {metricType:String}
-    AND entityId IN {ids:Array(Int64)}
-  GROUP BY entityId`;
-
-export function addTotals(history, recent) {
-  const out = new Map(history);
-  for (const [id, n] of recent) out.set(id, (out.get(id) ?? 0) + n);
-  return out;
-}
-
-// `have` may run ahead of the view only by events it has not refreshed in yet: a handful per
-// entity, and a sliver of the whole. Anything more means `have` is not reading what the view
-// reads, and a delta written from it would land on top of the real total. A false alarm only
-// stops the run.
-export const VIEW_DRIFT_LIMIT = { perEntity: 20, share: 0.001, floor: 200 };
-
-export function viewDrift(ids, have, view) {
-  let total = 0;
-  let viewSum = 0;
-  let worst = { entityId: null, have: 0, view: 0, drift: 0 };
-  for (const entityId of ids) {
-    const h = have.get(entityId) ?? 0;
-    const v = view.get(entityId) ?? 0;
-    const drift = Math.abs(h - v);
-    total += drift;
-    viewSum += Math.abs(v);
-    if (drift > worst.drift) worst = { entityId, have: h, view: v, drift };
-  }
-  const limit = Math.max(VIEW_DRIFT_LIMIT.floor, viewSum * VIEW_DRIFT_LIMIT.share);
-  const ok = worst.drift <= VIEW_DRIFT_LIMIT.perEntity && total <= limit;
-  return { ok, total, limit, worst };
-}
-
-// The reconcile events carry no user: they correct a total, not anyone's action. -1 is what the
-// November 2025 seed used, so the views are known to count it.
-export const RECONCILE_USER_ID = -1;
-
-// The materialized views behind entityMetricDailyAgg_v2: sealed days and today.
-export const DAILY_VIEWS = ['entityMetricDaily_today_v2_mv', 'entityMetricDailySeal_v2_mv'];
-
-// A table name as a whole identifier anywhere in a query, so that `FROM (SELECT ... FROM t)` and
-// `default.t` match and `t_v2` does not. RE2, for ClickHouse's match().
-export function tableNamePattern(table) {
-  return `(^|[^A-Za-z0-9_])${table}([^A-Za-z0-9_]|$)`;
-}
-
-// One event per entity whose ClickHouse total is off from what it should count, valued at the
-// difference, so the total lands on the truth whatever put it where it is. An entity missing from
-// either side counts 0 there.
-export function reconcile({ entityType, metricType, ids, truth, ch, createdAt }) {
-  const rows = ids.map((entityId) => {
-    const want = truth.get(entityId) ?? 0;
-    const have = ch.get(entityId) ?? 0;
-    return { entityType, entityId, want, have, delta: want - have };
-  });
-  const events = rows
-    .filter((r) => r.delta !== 0)
-    .map((r) => ({
-      entityType,
-      entityId: r.entityId,
-      metricType,
-      userId: RECONCILE_USER_ID,
-      metricValue: r.delta,
-      createdAt,
-    }));
-  return { rows, events };
-}
-
-const BUCKETS = [
-  ['< -100', (d) => d < -100],
-  ['-100..-11', (d) => d >= -100 && d <= -11],
-  ['-10..-1', (d) => d >= -10 && d <= -1],
-  ['0', (d) => d === 0],
-  ['1..10', (d) => d >= 1 && d <= 10],
-  ['11..100', (d) => d >= 11 && d <= 100],
-  ['101..1000', (d) => d >= 101 && d <= 1000],
-  ['> 1000', (d) => d > 1000],
-];
-
-export function deltaSummary(rows) {
-  const histogram = Object.fromEntries(
-    BUCKETS.map(([label, test]) => [label, rows.filter((r) => test(r.delta)).length])
-  );
-  const sum = (f) => rows.filter(f).reduce((acc, r) => acc + r.delta, 0);
-  return {
-    entities: rows.length,
-    events: rows.filter((r) => r.delta !== 0).length,
-    added: sum((r) => r.delta > 0),
-    removed: sum((r) => r.delta < 0),
-    net: sum(() => true),
-    histogram,
-  };
+export function touchEvents(entityType, metricType, ids, createdAt) {
+  return ids.map((entityId) => ({
+    entityType,
+    entityId,
+    metricType,
+    userId: TOUCH_USER_ID,
+    metricValue: 0,
+    createdAt,
+  }));
 }
 
 // From the environment only: a missing credential stops the run rather than falling back.
@@ -200,35 +78,19 @@ export function clickhouseConfig(env) {
   return { url: env.CLICKHOUSE_HOST, username, password: env.CLICKHOUSE_PASSWORD };
 }
 
-export const METRIC_PAIRS = ENTITY_METRICS.map(([, entityType, metricType]) => [
-  entityType,
-  metricType,
-]);
-
-// Each batch gets its own second, so a key that recurs in a later batch is a distinct row rather
-// than a replacement of the earlier one. Never in the past: the metric jobs find affected entities
-// by `createdAt >= lastUpdate`, and the daily views ignore anything older than yesterday.
-export function nextStampMs(prevStampMs, nowMs) {
-  const now = Math.floor(nowMs / 1000) * 1000;
-  return prevStampMs == null ? now : Math.max(now, prevStampMs + 1000);
-}
-
-// The ledger is JSONL, in two parts.
-//   Phase 1, per id range: `pending` (Postgres txid, the row ids given an adder, and the entity and
-//   collection ids they touch), then `committed`, or `abandoned` if its transaction rolled back.
-//   Phase 2, once: `reconcile` (stamp and events), optionally `restamped`, then `reconciled`.
-// Returns the phase-1 batch left unfinished, if any; where phase 1 resumes; every id touched by
-// committed batches; and the reconcile, if one was planned.
+// The ledger is JSONL. Per id range: `pending` (the Postgres txid and the row ids given an adder),
+// then `committed`, or `abandoned` if its transaction rolled back. Once every range is done:
+// `touched`. Returns the batch left unfinished, if any, where the run resumes, and whether the
+// touch has run.
 //
 // A torn final line is dropped: every line is written before the step it records, so losing the
-// last one only loses a claim the resume check re-derives from Postgres and ClickHouse.
+// last one only loses a claim the resume check re-derives from Postgres.
 //
 // A ledger belongs to one entity: resuming it under another would skip that entity's rows in every
 // range the first run finished.
 export function readLedger(lines, entity) {
   const batches = new Map();
-  let reconcile = null;
-  let lastStampMs = null;
+  let touched = false;
   const entries = lines.filter((line) => line.trim());
   entries.forEach((line, i) => {
     let entry;
@@ -238,7 +100,7 @@ export function readLedger(lines, entity) {
       if (i === entries.length - 1) return;
       throw err;
     }
-    if ((entry.phase === 'pending' || entry.phase === 'reconcile') && entry.entity !== entity)
+    if ((entry.phase === 'pending' || entry.phase === 'touched') && entry.entity !== entity)
       throw new Error(
         `ledger: written for ${entry.entity}, this run is ${entity}; use a new ledger`
       );
@@ -248,29 +110,18 @@ export function readLedger(lines, entity) {
       if (!batch) throw new Error(`ledger: ${entry.phase} line for unknown batch ${entry.lo}`);
       if (entry.phase === 'abandoned') batches.delete(entry.lo);
       else batch.phase = 'committed';
-    } else if (entry.phase === 'reconcile') reconcile = { ...entry };
-    else if (entry.phase === 'restamped' || entry.phase === 'reconciled') {
-      if (!reconcile) throw new Error(`ledger: ${entry.phase} line before any reconcile`);
-      Object.assign(reconcile, entry);
-    } else throw new Error(`ledger: unknown phase ${entry.phase}`);
-    if (entry.stampMs != null) lastStampMs = Math.max(lastStampMs ?? 0, entry.stampMs);
+    } else if (entry.phase === 'touched') touched = true;
+    else throw new Error(`ledger: unknown phase ${entry.phase}`);
   });
   const all = [...batches.values()];
   const open = all.filter((b) => b.phase === 'pending');
   if (open.length > 1)
     throw new Error(`ledger: ${open.length} unfinished batches; the script only ever leaves one`);
-  if (open.length && reconcile)
-    throw new Error('ledger: a batch is unfinished after the reconcile; stopping for a human');
   const done = all.filter((b) => b.phase === 'committed');
   return {
     open: open[0] ?? null,
     resumeFrom: done.length ? Math.max(...done.map((b) => b.hi)) : null,
-    touched: {
-      entityIds: [...new Set(done.flatMap((b) => b.entityIds))],
-      collectionIds: [...new Set(done.flatMap((b) => b.collectionIds))],
-    },
-    reconcile,
-    lastStampMs,
+    touched,
   };
 }
 
@@ -298,16 +149,4 @@ export function openLedger(path) {
     },
     close: () => closeSync(fd),
   };
-}
-
-// Compares a batch's events with the rows found in ClickHouse at its stamp. A real event in the
-// same second can share a key, so a key only counts as landed when its value matches too.
-export function landedState(expected, found) {
-  if (!expected.length) return 'all';
-  const keyOf = (e) => `${e.entityType}:${e.entityId}:${e.metricType}:${e.userId}:${e.metricValue}`;
-  const foundKeys = new Set(found.map(keyOf));
-  const hits = expected.filter((e) => foundKeys.has(keyOf(e))).length;
-  if (hits === 0) return 'none';
-  if (hits === expected.length) return 'all';
-  return 'partial';
 }
