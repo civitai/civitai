@@ -18,6 +18,8 @@ const STATE_NOTE: Record<Sandbox['state'], string> = {
   starting: 'It is starting; its tools appear in a few seconds.',
   suspended:
     'It is paused, so you have no sandbox tools; its files are kept. It starts again by itself when the user sends a message. If it is still paused when you need it, call create_app with its name to start it again; its tools arrive with your next reply.',
+  seed_lost:
+    'It is a fork whose files never arrived, so it is empty and has no sandbox tools. Do not build in it: tell the user to use Try again on the page, which deletes it and starts a fresh fork.',
 };
 
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */

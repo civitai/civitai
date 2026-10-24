@@ -482,9 +482,17 @@ export async function settleStorylineContinuation({
 
       // Locked first, so an answer and the parent's removal take turns: the
       // removal's write waits for this lock, and this read waits for the
-      // removal's commit and then sees it.
-      if (parentPostId)
+      // removal's commit and then sees it. The storyline's shared lock comes
+      // before it, in the order an insert takes the two (`lockStorylineForAdd`).
+      if (parentPostId) {
+        await tx.$queryRaw`
+          SELECT st.id FROM "Storyline" st
+          JOIN "StorylineChapter" c ON c."storylineId" = st.id
+          WHERE c."postId" = ${parentPostId}
+          FOR SHARE OF st
+        `;
         await tx.$queryRaw`SELECT id FROM "StorylineChapter" WHERE "postId" = ${parentPostId} FOR NO KEY UPDATE`;
+      }
       const parent = parentPostId
         ? await tx.storylineChapter.findUnique({
             where: { postId: parentPostId },

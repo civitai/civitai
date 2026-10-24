@@ -5,8 +5,9 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * A muted or banned account cannot write to a storyline: start one, edit it, add a chapter, pick
- * the canon branch, join two branches, add or remove a collaborator, or caption a chapter image.
+ * A muted or banned account cannot write to a storyline: start one, edit it, add or insert a
+ * chapter, pick the canon branch, join two branches, add or remove a collaborator, or caption a
+ * chapter image.
  *
  * Every one of those changes what other people read or who can post into the story, so a muted
  * owner must not be able to steer a public story or hand posting rights around.
@@ -19,6 +20,7 @@ const writers = vi.hoisted(() => ({
   createStoryline: vi.fn(async () => ({ id: 1 })),
   updateStoryline: vi.fn(async () => ({ id: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
+  insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
@@ -52,6 +54,11 @@ const WRITE_CALLS = [
     name: 'addChapter',
     writer: writers.addOwnerChapter,
     input: { parentChapterId: 3, postId: 12 },
+  },
+  {
+    name: 'insertChapter',
+    writer: writers.insertStorylineChapter,
+    input: { storylineId: 10, parentChapterId: 3, childChapterId: 4, postId: 12 },
   },
   { name: 'setCanon', writer: writers.setCanonChapter, input: { chapterId: 3 } },
   {

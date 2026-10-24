@@ -100,7 +100,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   articleTagId: 128643, // Announcement.
   defaultJudgeId: 1, // CivBot
   defaultJudge: null, // Cached judge config - populated via setChallengeConfig
-  reviewShadow: { model: 'civitai/qwen3.8', sampleRate: 1 },
+  reviewShadow: null,
 };
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
