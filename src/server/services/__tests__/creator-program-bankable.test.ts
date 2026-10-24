@@ -474,6 +474,7 @@ describe('paidToUsersSql', () => {
         SELECT toInt64(amount) AS amount FROM buzzTransactions
         WHERE ${SERVICE_RELEASE_SQL} AND ${paidTo}
           AND JSONExtractInt(details, 'buyerId') = 42
+          AND JSONExtractInt(details, 'heldAt') >= 1793491200
         LIMIT 1 BY date, fromAccountId, toAccountId, transactionId
         UNION ALL
         SELECT intDiv(amount * arraySum(arrayMap((id, a, t) -> if(id = 42 AND t >= 1793491200, a, 0), ids, amts, ats)), arraySum(amts)) AS amount

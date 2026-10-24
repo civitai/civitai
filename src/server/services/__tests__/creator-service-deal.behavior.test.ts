@@ -1095,7 +1095,12 @@ describe('releasing to the seller', () => {
       externalTransactionId: `creator-service-${id}-release`,
       description: 'Creator service: released to the seller',
       // The bankable ledger nets the release against this buyer, and leaves a release without it out.
-      details: { entityType: 'ServiceDeal', entityId: id, buyerId: BUYER },
+      details: {
+        entityType: 'ServiceDeal',
+        entityId: id,
+        buyerId: BUYER,
+        heldAt: Math.floor((await deal(id)).heldAt!.getTime() / 1000),
+      },
     });
     expect(await releaseLeg(id)).toMatchObject({ amount: PRICE, transactionId: 'tx-release' });
     const settled = await deal(id);

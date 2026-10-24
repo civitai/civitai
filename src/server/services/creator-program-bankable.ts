@@ -245,10 +245,10 @@ export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: 
     AND date >= ${clickhouseDateTime(from)}${to ? ` AND date < ${clickhouseDateTime(to)}` : ''}`;
   // A closed window's total is stored.
   const dedupe = to ? ONE_ROW_PER_TRANSACTION : '';
-  // The creator's charges for a bounty award; the cutover balance already reflects one made before it.
-  const ownCharges = `(id, a, t) -> if(id = ${userId} AND t >= ${
-    BANKABLE_CUTOVER.getTime() / 1000
-  }, a, 0)`;
+  // A charge made before the cutover is already out of the cutover balance: a bounty contribution,
+  // or the hold behind a service release.
+  const cutoverSeconds = BANKABLE_CUTOVER.getTime() / 1000;
+  const ownCharges = `(id, a, t) -> if(id = ${userId} AND t >= ${cutoverSeconds}, a, 0)`;
   return `
     SELECT sum(amount) AS spent FROM (
       SELECT toInt64(amount) AS amount FROM buzzTransactions
@@ -264,6 +264,7 @@ export function paidToUsersSql(userId: number, { from, to }: { from: Date; to?: 
       SELECT toInt64(amount) AS amount FROM buzzTransactions
       WHERE ${SERVICE_RELEASE_SQL} AND ${paidTo}
         AND JSONExtractInt(details, 'buyerId') = ${userId}
+        AND JSONExtractInt(details, 'heldAt') >= ${cutoverSeconds}
       ${dedupe}
       UNION ALL
       SELECT intDiv(amount * arraySum(arrayMap(${ownCharges}, ids, amts, ats)), arraySum(amts)) AS amount
