@@ -79,6 +79,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import {
   DEFAULT_REVIEW_MODEL,
+  REVIEW_FALLBACK_MODEL,
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
@@ -86,6 +87,7 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
 import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -1045,29 +1047,38 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         return;
       }
 
+      const reviewContext = {
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+        nsfwLevel: entry.nsfwLevel,
+      };
+      const runReview = (model?: string) =>
+        generateReview({
+          theme: currentChallenge.theme,
+          themeElements,
+          resourceConcept,
+          creator: entry.username,
+          imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+          config: judgingConfig,
+          categories: userCategories?.map((c) => ({
+            key: c.key,
+            name: c.label,
+            criteria: c.criteria,
+          })),
+          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          model,
+        });
       const review = await reviewWithShadow({
         shadow: config.reviewShadow,
-        context: {
-          challengeId: currentChallenge.challengeId,
-          imageId: entry.imageId,
-          nsfwLevel: entry.nsfwLevel,
-        },
+        context: reviewContext,
         run: (model) =>
-          generateReview({
-            theme: currentChallenge.theme,
-            themeElements,
-            resourceConcept,
-            creator: entry.username,
-            imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-            config: judgingConfig,
-            categories: userCategories?.map((c) => ({
-              key: c.key,
-              name: c.label,
-              criteria: c.criteria,
-            })),
-            nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
-            model,
-          }),
+          model
+            ? runReview(model)
+            : reviewWithFallback({
+                run: runReview,
+                fallbackModel: REVIEW_FALLBACK_MODEL,
+                context: reviewContext,
+              }),
       });
       log('Review prepared', entry.imageId, review);
 

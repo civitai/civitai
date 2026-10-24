@@ -68,11 +68,11 @@ import {
   enqueueImageIngestion,
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
-  purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
 import type { StorylinePublishContext } from '~/server/services/storyline-publish.service';
@@ -103,7 +103,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { readImageUploadObjectHead } from '~/utils/s3-utils';
 import {
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
@@ -1419,6 +1419,8 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
   return detailData;
 };
 
+const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
@@ -1439,13 +1441,14 @@ export const addPostImage = async ({
   }
 
   // If no meta was supplied (headless/MCP upload), try to extract it from the
-  // image EXIF. The image is already on the CDN at this point so we can fetch
-  // it by URL. We only do this when meta is absent to avoid overwriting
-  // caller-supplied values.
+  // image EXIF, read from storage. We only do this when meta is absent to avoid
+  // overwriting caller-supplied values. Only the head of the file is read: JPEG
+  // EXIF sits at the start, and the PNG text chunks generators write come before IDAT.
   if (!meta && props.url && props.type !== MediaType.video) {
     try {
-      const edgeUrl = getEdgeUrl(props.url, { original: true });
-      const extracted = await getMetadata(edgeUrl);
+      const extracted = await getMetadata(
+        await readImageUploadObjectHead(props.url, { maxBytes: UPLOAD_METADATA_READ_BYTES })
+      );
       if (extracted && Object.keys(extracted).length > 0) meta = extracted;
     } catch {
       // Non-fatal — proceed without metadata rather than failing the upload
@@ -1698,7 +1701,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
         ...((currentImage.metadata as MixedObject) ?? {}),
       } as Prisma.JsonObject,
     },
-    select: { id: true, url: true, userId: true },
+    select: { id: true, url: true, userId: true, name: true, type: true },
   });
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
@@ -1708,23 +1711,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     imageMetaCache.refresh(image.id),
     userPostCountCache.refresh(result.userId),
   ];
-  if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
-    // 🔴 SCOPED — this image STAYS LIVE. The flip re-keys it (the cache key includes hideMeta), so
-    // what needs clearing is only the variants derived BEFORE the flip, which still carry the
-    // metadata the user just asked to hide and remain publicly fetchable at stable URLs until the
-    // cache bucket ages them out. The post-flip variants are what the page is serving right now;
-    // removing those too would blank a live image until each cache tier caught up.
-    //
-    // The delete path (deleteImageFromS3 below) deliberately does NOT pass a scope — there the row
-    // is already gone and the image must stop serving entirely.
-    cacheRefreshPromises.push(purgeResizeCache({ url: result.url, scope: 'hidden-meta-orphans' }));
-  }
-  // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
-  // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
-  // embedding (or keep stripping) generation metadata for up to its TTL. The privacy-
-  // sensitive direction (false -> true) is the reason this bust is explicit rather than
-  // TTL-bounded.
-  if (image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta) {
+  const hideMetaChanged =
+    image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta;
+  if (hideMetaChanged && image.hideMeta) {
+    cacheRefreshPromises.push(invalidateHiddenImageMetadata(result));
+  } else if (hideMetaChanged) {
+    // 🔴 No resize purge on un-hide: `keep=hm` retains the hidden variants, which in this direction
+    // are the orphans, so the scope would be inverted. The delivery cache still needs the bust so
+    // the shown state takes effect before its TTL.
     cacheRefreshPromises.push(bustImageDeliveryMetadataCache(result.url));
   }
   await Promise.all(cacheRefreshPromises);
