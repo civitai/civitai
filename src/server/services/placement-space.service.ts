@@ -9,6 +9,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { reservedFreeSlotsWhere } from '~/server/services/placement-count-predicates';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
@@ -30,7 +31,6 @@ import {
   isDeclineFeeHostAdjustable,
   resolveHostDeclineFeePercent,
   effectivePlacementPrice,
-  FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
   placementSurfaceLabel,
   resolvePlacementSpace,
@@ -272,14 +272,6 @@ export const reservedFreeSlots = (
 ) => client.placement.count({ where: reservedFreeSlotsWhere(target) });
 
 type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number };
-
-export const reservedFreeSlotsWhere = ({ surface, targetType, targetId }: SpaceTarget) => ({
-  surface,
-  targetType,
-  targetId,
-  free: true,
-  status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
-});
 
 /**
  * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on

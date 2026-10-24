@@ -4,6 +4,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import {
+  freePlacementsOnWhere,
+  freePlacementsTodayWhere,
+} from '~/server/services/placement-count-predicates';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import {
   reservedFreeSlots,
@@ -113,12 +117,6 @@ type SpaceTarget = {
 const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
   client.placement.count({ where: freePlacementsTodayWhere(placerId) });
 
-export const freePlacementsTodayWhere = (placerId: number) => ({
-  placerId,
-  free: true,
-  createdAt: { gte: freePlacementDayStart() },
-});
-
 /**
  * Never twice on the same target by the same placer, as one predicate.
  *
@@ -135,13 +133,6 @@ const countFreePlacementsOn = (
   client: PlacementClient,
   input: SpaceTarget & { placerId: number }
 ) => client.placement.count({ where: freePlacementsOnWhere(input) });
-
-export const freePlacementsOnWhere = ({
-  placerId,
-  surface,
-  targetType,
-  targetId,
-}: SpaceTarget & { placerId: number }) => ({ placerId, free: true, surface, targetType, targetId });
 
 export type CreateFreePlacement = SpaceTarget & {
   placerId: number;

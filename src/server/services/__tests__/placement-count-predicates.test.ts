@@ -4,8 +4,8 @@ import { compileHarness } from '@civitai/db-queries/test-harness';
 import {
   freePlacementsOnWhere,
   freePlacementsTodayWhere,
-} from '~/server/services/free-placement.service';
-import { reservedFreeSlotsWhere } from '~/server/services/placement-space.service';
+  reservedFreeSlotsWhere,
+} from '~/server/services/placement-count-predicates';
 import { freePlacementDayStart } from '~/shared/utils/placement';
 
 /**
