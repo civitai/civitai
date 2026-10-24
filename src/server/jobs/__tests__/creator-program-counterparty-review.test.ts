@@ -14,7 +14,11 @@ vi.mock('~/server/services/moderator-app.service', () => ({
   moderatorApp: { abuseReport: vi.fn() },
 }));
 
-import { readMinimum, sendWarning } from '~/server/jobs/creator-program-counterparty-review';
+import {
+  DEFAULT_COUNTERPARTY_REVIEW_MIN,
+  readMinimum,
+  sendWarning,
+} from '~/server/jobs/creator-program-counterparty-review';
 import { renderWarningMessage } from '~/server/services/creator-program-counterparty-review/report';
 
 beforeEach(() => {
@@ -22,12 +26,17 @@ beforeEach(() => {
 });
 
 describe('readMinimum', () => {
+  // The review runs from the cutover with no ops step; a stored value only overrides the default.
+  it('is 25,000 Buzz when nothing valid is stored', () => {
+    expect(DEFAULT_COUNTERPARTY_REVIEW_MIN).toBe(25_000);
+  });
+
   it.each([
-    [null, null],
-    ['', null],
-    ['abc', null],
-    ['0', null],
-    ['-5', null],
+    [null, DEFAULT_COUNTERPARTY_REVIEW_MIN],
+    ['', DEFAULT_COUNTERPARTY_REVIEW_MIN],
+    ['abc', DEFAULT_COUNTERPARTY_REVIEW_MIN],
+    ['0', DEFAULT_COUNTERPARTY_REVIEW_MIN],
+    ['-5', DEFAULT_COUNTERPARTY_REVIEW_MIN],
     ['1234', 1_234],
   ])('reads %j as %j', async (stored, expected) => {
     redisMock.sysRedis.get.mockResolvedValueOnce(stored);

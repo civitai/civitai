@@ -400,8 +400,8 @@ export async function deleteServiceDealFile({
 /**
  * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
  * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
- * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a delivered deal to the moderators; one not
- * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
+ * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a
+ * delivered deal to the moderators; one not yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
   fileId,
@@ -488,8 +488,21 @@ type FileRow = {
   status: ServiceDealFileStatus;
   failReason: string | null;
   scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
   watermarkedKey: string | null;
 };
+
+/**
+ * A Final's own scan verdicts let the buyer have it. Checked at the gate as well as by
+ * `recordFinalScanResult`, so a Final whose malware scan failed or never finished stays locked
+ * whatever its aggregate says. A scan skipped while the scan was off counts, as it did then.
+ */
+const finalScansClear = (row: {
+  scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
+}) =>
+  row.scanStatus === 'Passed' &&
+  (row.malwareScanStatus === 'Passed' || row.malwareScanStatus === 'NotScanned');
 
 /** The buyer's claim on a deal's final files: it is paid for, and not since reversed. */
 export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
@@ -527,7 +540,7 @@ export async function listServiceDealFiles({
 
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
-      f."status", f."failReason", f."scanStatus", f."watermarkedKey"
+      f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -543,7 +556,7 @@ export async function listServiceDealFiles({
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       (privileged ||
-        (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && row.scanStatus === 'Passed'));
+        (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
     const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
     const key = row.watermarkedKey;
 
@@ -600,6 +613,7 @@ export async function resolveServiceDealFileDownload({
       kind: ServiceDealFileKind;
       round: number;
       scanStatus: ServiceDealFileScanStatus;
+      malwareScanStatus: ServiceDealFileScanStatus;
       status: ServiceDealFileStatus;
       buyerId: number;
       sellerId: number;
@@ -608,7 +622,8 @@ export async function resolveServiceDealFileDownload({
       completedAt: Date | null;
     }[]
   >`
-    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus", f."status",
+    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
+      f."malwareScanStatus", f."status",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -621,7 +636,7 @@ export async function resolveServiceDealFileDownload({
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       row.round === row.revisionsUsed &&
-      row.scanStatus === 'Passed' &&
+      finalScansClear(row) &&
       buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
 

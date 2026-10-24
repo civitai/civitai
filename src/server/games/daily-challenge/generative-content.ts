@@ -24,9 +24,10 @@ import {
   type ReviewTemplateVariables,
 } from './template-engine';
 
-// Default model for the daily-challenge pipeline. Routed through OpenRouter.
+// Default model for every daily-challenge stage: Qwen 3.8 on the orchestrator, with GPT-4o Mini on
+// OpenRouter as the fallback when no model was asked for explicitly.
 //
-// One model drives every stage, chosen against the two failure modes this pipeline actually has:
+// MiMo had been the default since it was chosen against the two failure modes this pipeline has:
 //
 //   - REVIEW must handle NSFW entries without bailing. GPT-5 Nano silently returned "No content
 //     in response" on 1-4 of 24 explicit entries per run (R, X and XXX alike), which surfaces as
@@ -40,10 +41,35 @@ import {
 // MiMo is also cheaper on both token rates than GPT-4o Mini. It is slower per call (~29s vs ~13s
 // on an article), which is irrelevant for the once-per-challenge content stages.
 //
-// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator), pass its URN or
-// `civitai/*` alias as `input.model` from the call site or the Playground.
-const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-export const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.MIMO;
+// From 2026-10-23 OpenRouter's MiMo providers rejected every request carrying an image ("Supplied
+// image did not pass validation checks"), which is every stage but winners. The orchestrator also
+// rejects some images outright ("Input image may violate our terms and services"); the fallback
+// covers both. GPT-4o Mini over GPT-5 Nano because the fallback mostly sees explicit entries, where
+// Nano's empty responses (above) would fail the review again.
+const DEFAULT_MODEL: AIModel = 'civitai/qwen3.8';
+const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
+export const DEFAULT_REVIEW_MODEL: AIModel = DEFAULT_MODEL;
+export const REVIEW_FALLBACK_MODEL: AIModel = FALLBACK_MODEL;
+
+/** An explicit model (the Playground) is the experiment itself, so only the default falls back. */
+async function withFallback<T>(
+  stage: string,
+  explicitModel: AIModel | undefined,
+  run: (model: AIModel) => Promise<T>
+): Promise<{ result: T; model: AIModel }> {
+  if (explicitModel) return { result: await run(explicitModel), model: explicitModel };
+  try {
+    return { result: await run(DEFAULT_MODEL), model: DEFAULT_MODEL };
+  } catch (error) {
+    logToAxiom({
+      type: `daily-challenge-${stage}-fallback`,
+      model: DEFAULT_MODEL,
+      fallbackModel: FALLBACK_MODEL,
+      error: (error as Error).message,
+    });
+    return { result: await run(FALLBACK_MODEL), model: FALLBACK_MODEL };
+  }
+}
 
 function isCivitaiHostedModel(model: string) {
   return model.startsWith('urn:air:') || model.startsWith('civitai/');
@@ -129,36 +155,37 @@ type CollectionDetails = {
   description: string;
 };
 export async function generateCollectionDetails(input: GenerateCollectionDetailsInput) {
-  const model = input.model ?? DEFAULT_CONTENT_MODEL;
-  const results = await pickClient(model).getJsonCompletion<CollectionDetails>({
-    retries: 3,
-    model,
-    messages: [
-      prepareSystemMessage(
-        input.config,
-        'collection',
-        `{
+  const { result: results } = await withFallback('collection', input.model, (model) =>
+    pickClient(model).getJsonCompletion<CollectionDetails>({
+      retries: 3,
+      model,
+      messages: [
+        prepareSystemMessage(
+          input.config,
+          'collection',
+          `{
           "name": "title of the collection",
           "description": "short single sentence description of the collection"
         }`
-      ),
-      {
-        role: 'user' as const,
-        content: [
-          {
-            type: 'text' as const,
-            text: `Resource title: ${input.resource.title}\nCreator: ${input.resource.creator}`,
-          },
-          {
-            type: 'image_url' as const,
-            image_url: {
-              url: input.image.url,
+        ),
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: `Resource title: ${input.resource.title}\nCreator: ${input.resource.creator}`,
             },
-          },
-        ],
-      },
-    ],
-  });
+            {
+              type: 'image_url' as const,
+              image_url: {
+                url: input.image.url,
+              },
+            },
+          ],
+        },
+      ],
+    })
+  );
 
   return results;
 }
@@ -202,15 +229,15 @@ export async function generateArticle({
     : '';
   const userText = `${ARTICLE_FIELDS_PREAMBLE}\n\nResource title: ${resource.title}${conceptLine}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
 
-  const selectedModel = model ?? DEFAULT_CONTENT_MODEL;
-  const result = await pickClient(selectedModel).getJsonCompletion<GeneratedArticle>({
-    retries: 3,
-    model: selectedModel,
-    messages: [
-      prepareSystemMessage(
-        config,
-        'content',
-        `{
+  const { result } = await withFallback('article', model, (selectedModel) =>
+    pickClient(selectedModel).getJsonCompletion<GeneratedArticle>({
+      retries: 3,
+      model: selectedModel,
+      messages: [
+        prepareSystemMessage(
+          config,
+          'content',
+          `{
           "title": "title of the challenge/article",
           "invitation": "a single sentence invitation to participate in the challenge displayed in the on-site generator",
           "body": "the content of the article in markdown",
@@ -225,24 +252,25 @@ export async function generateArticle({
         - Do NOT swap the subject for an adjacent category. A Moroccan tagine resource is not a desserts theme; a scrimshaw resource is not a musical-instruments theme. If you cannot connect an idea to what the resource depicts, drop the idea, not the resource.
         - Generic mood words ("whimsical", "playful", "vibrant", "magical") are not subject matter. At most one element may be a mood; the rest must be things visible in an image.
         - Add your creative angle ON TOP of the resource's subject, never in place of it.`
-      ),
-      {
-        role: 'user' as const,
-        content: [
-          {
-            type: 'text' as const,
-            text: userText,
-          },
-          {
-            type: 'image_url' as const,
-            image_url: {
-              url: image.url,
+        ),
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: userText,
             },
-          },
-        ],
-      },
-    ],
-  });
+            {
+              type: 'image_url' as const,
+              image_url: {
+                url: image.url,
+              },
+            },
+          ],
+        },
+      ],
+    })
+  );
 
   const markdownContent = stripLeadingWhitespace(`
     ${result.body}
@@ -280,39 +308,40 @@ type GenerateThemeElementsInput = {
 };
 export async function generateThemeElements(input: GenerateThemeElementsInput): Promise<string[]> {
   try {
-    const model = input.model ?? DEFAULT_CONTENT_MODEL;
-    const result = await pickClient(model).getJsonCompletion<{ themeElements: string[] }>({
-      retries: 3,
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            {
-              type: 'text',
-              text: `${
-                input.config.prompts.systemMessage
-              }\n\nGenerate 5-8 keywords of 1-3 words each, naming one visible thing apiece, expected in images matching a given theme. A judge scores by counting how many are visibly present, so never return a sentence or a clause. Keep them broad enough to allow creative interpretation.${
-                input.resourceConcept?.trim()
-                  ? '\n\nEntries must use the featured resource, and these keywords are the only thing they are scored against. So they MUST name what the featured resource contributes - its material, style, technique or subject class - never an adjacent category and never the subject of one example image. Generic mood words are not subject matter.'
-                  : ''
-              }\n\nReply with json\n\n{"themeElements": ["keyword1", "keyword2", ...]}`,
-            },
-          ],
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${
-                input.theme
-              }${formatResourceConceptLine(input.resourceConcept)}`,
-            },
-          ],
-        },
-      ],
-    });
+    const { result } = await withFallback('theme-elements', input.model, (model) =>
+      pickClient(model).getJsonCompletion<{ themeElements: string[] }>({
+        retries: 3,
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              {
+                type: 'text',
+                text: `${
+                  input.config.prompts.systemMessage
+                }\n\nGenerate 5-8 keywords of 1-3 words each, naming one visible thing apiece, expected in images matching a given theme. A judge scores by counting how many are visibly present, so never return a sentence or a clause. Keep them broad enough to allow creative interpretation.${
+                  input.resourceConcept?.trim()
+                    ? '\n\nEntries must use the featured resource, and these keywords are the only thing they are scored against. So they MUST name what the featured resource contributes - its material, style, technique or subject class - never an adjacent category and never the subject of one example image. Generic mood words are not subject matter.'
+                    : ''
+                }\n\nReply with json\n\n{"themeElements": ["keyword1", "keyword2", ...]}`,
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `${UNTRUSTED_FIELDS_PREAMBLE}\n\nTheme: ${
+                  input.theme
+                }${formatResourceConceptLine(input.resourceConcept)}`,
+              },
+            ],
+          },
+        ],
+      })
+    );
 
     return result.themeElements ?? [];
   } catch (e) {
@@ -609,23 +638,28 @@ export async function generateWinners(
         }
         IMPORTANT: Select exactly 3 different winners (1st, 2nd, 3rd place) using creatorId and creator values from the entries provided.`;
 
-  const model = input.model ?? DEFAULT_CONTENT_MODEL;
-  const { content: result, usage } = await getCompletionWithUsage<GeneratedWinners>(
+  const pick = (model: AIModel) =>
+    getCompletionWithUsage<GeneratedWinners>(
+      model,
+      [
+        prepareSystemMessage(input.config, 'winner', responseStructure),
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: userText,
+            },
+          ],
+        },
+      ],
+      3
+    );
+
+  const {
+    result: { content: result, usage },
     model,
-    [
-      prepareSystemMessage(input.config, 'winner', responseStructure),
-      {
-        role: 'user' as const,
-        content: [
-          {
-            type: 'text' as const,
-            text: userText,
-          },
-        ],
-      },
-    ],
-    3
-  );
+  } = await withFallback('winners', input.model, pick);
 
   // The decided list is the answer, not whatever the model echoed — it was not asked for `winners`
   // and may not have returned the key at all.
@@ -705,16 +739,18 @@ export async function generateResourceConcept(input: {
     .join('\n');
 
   try {
-    const model = input.model ?? DEFAULT_CONTENT_MODEL;
-    const { content } = await getCompletionWithUsage<{ concept?: string }>(
-      model,
-      [
-        {
-          role: 'system',
-          content: [
-            {
-              type: 'text',
-              text: `You identify what an image-generation resource CONTRIBUTES to an image, so a challenge built on it can be judged fairly.
+    const {
+      result: { content },
+    } = await withFallback('resource-concept', input.model, (model) =>
+      getCompletionWithUsage<{ concept?: string }>(
+        model,
+        [
+          {
+            role: 'system',
+            content: [
+              {
+                type: 'text',
+                text: `You identify what an image-generation resource CONTRIBUTES to an image, so a challenge built on it can be judged fairly.
 
 Given a resource's title, its creator's description, its trained words, and several example images it produced, reply with ONE sentence (at most 20 words) naming what the resource itself applies: its material, style, technique, setting, or class of subject.
 
@@ -728,21 +764,22 @@ RULES:
 Reply with json
 
 {"concept": "one sentence naming what the resource contributes"}`,
-            },
-          ],
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `${RESOURCE_FIELDS_PREAMBLE}\n\n${facts}` },
-            ...input.images.map((image) => ({
-              type: 'image_url' as const,
-              image_url: { url: image.url },
-            })),
-          ],
-        },
-      ],
-      3
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: `${RESOURCE_FIELDS_PREAMBLE}\n\n${facts}` },
+              ...input.images.map((image) => ({
+                type: 'image_url' as const,
+                image_url: { url: image.url },
+              })),
+            ],
+          },
+        ],
+        3
+      )
     );
 
     // Truncated rather than rejected: the cap exists so an over-long return cannot crowd the real

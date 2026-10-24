@@ -299,7 +299,8 @@ export const useMutateCreatorShop = () => {
   });
 
   const reviewItem = trpc.creatorShop.reviewItem.useMutation({
-    async onSuccess() {
+    // Settled, not success: a verdict refused because the item changed needs the new version shown.
+    async onSettled() {
       await queryUtils.creatorShop.getReviewQueue.invalidate();
     },
     onError: onError('Failed to review item'),

@@ -2,8 +2,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  BANKABLE_EARNING_PREDICATE_SQL,
-  RECEIVED_FROM_USER_SQL,
+  clickhouseDateTime,
+  platformPaidFromUsersSql,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
@@ -39,24 +40,25 @@ export type Member = { id: number; username: string | null };
 /** `$query` is the only method used, so a test substitutes this port rather than the client. */
 export type ReviewClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
-const clickhouseDateTime = (at: Date) => `'${at.toISOString().slice(0, 19).replace('T', ' ')}'`;
+const earnedSince = (since: Date) =>
+  `date >= ${clickhouseDateTime(
+    since
+  )} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
 
 export function counterpartyPairsSql({ since, min }: { since: Date; min: number }) {
   return `
     SELECT received.recipient AS userId, received.payer AS counterpartyId,
       received.amount AS received, sent.amount AS sent
-    FROM (
-      SELECT toAccountId AS recipient, fromAccountId AS payer, sum(amount) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)}
-        AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})
-        AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-      GROUP BY recipient, payer
-    ) AS received
+    FROM (${receivedFromUsersSql(earnedSince(since))}) AS received
     INNER JOIN (
-      SELECT fromAccountId AS sender, toAccountId AS payee, sum(amount) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
+      SELECT sender, payee, sum(amount) AS amount FROM (
+        SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+          toInt64(amount) AS amount
+        FROM buzzTransactions
+        WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
+        UNION ALL
+        SELECT payer, recipient, amount FROM (${platformPaidFromUsersSql(earnedSince(since))})
+      )
       GROUP BY sender, payee
     ) AS sent ON sent.sender = received.recipient AND sent.payee = received.payer
     WHERE received.payer != received.recipient

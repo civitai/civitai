@@ -40,6 +40,7 @@ import {
   INTERRUPTED,
   interruptedResume,
   resumeOf,
+  sameMessage,
   savedTurn,
   shownMessages,
   startTurn,
@@ -58,6 +59,7 @@ import type {
 } from './interfaces';
 import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
+import type { StartRequest } from './protocol';
 import { runIdFor, stopMarkerFor } from './run-ids';
 import type { JournalEntry, RunService, StartOutcome } from './service';
 import type { VerifiedGrant } from './tokens';
@@ -117,6 +119,8 @@ export interface ReplyInput {
   seq: number;
   user: TurnUser;
   retry: boolean;
+  /** The user edited this turn's message: `user` replaces the saved one, and nothing carries on from its old reply. */
+  edit?: boolean;
   model: string;
   settings: RunSettings;
   page?: StartRunRequest['page'];
@@ -371,11 +375,7 @@ export class Runner implements RunService {
     return this.#ready;
   }
 
-  async start(
-    userId: string,
-    request: StartRunRequest,
-    grant: VerifiedGrant
-  ): Promise<StartOutcome> {
+  async start(userId: string, request: StartRequest, grant: VerifiedGrant): Promise<StartOutcome> {
     // Refused before anything is kept: not `unavailable`, which the page would ask again forever.
     if (this.#deps.startRefusal)
       return { ok: false, error: 'refused', message: this.#deps.startRefusal };
@@ -415,7 +415,16 @@ export class Runner implements RunService {
       await forget().catch(() => undefined);
       throw error;
     }
-    if (!acceptsTurn(head, request.turn.seq, request.turn.retry === true)) {
+    const edit = request.turn.edit === true;
+    const retry = !edit && request.turn.retry === true;
+    // A retry asks again for the reply to the message the head holds: one carrying another message
+    // (a page that edited it locally and whose edit never began, or a tab behind an edit made in
+    // another) would answer words the head does not show.
+    const saved = retry ? savedTurn(head, request.turn.seq) : undefined;
+    if (
+      !acceptsTurn(head, request.turn.seq, request.turn.retry === true, edit) ||
+      (saved !== undefined && !sameMessage(saved.user, request.turn.user))
+    ) {
       return refused({
         ok: false,
         error: 'stale-turn',
@@ -429,7 +438,9 @@ export class Runner implements RunService {
       ...(request.scope ? { scope: request.scope } : {}),
       seq: request.turn.seq,
       user: request.turn.user,
-      retry: request.turn.retry === true,
+      // An edit starts the turn afresh: it is not a retry, whatever the request said.
+      retry,
+      ...(edit ? { edit: true } : {}),
       model: request.model,
       settings: request.settings,
       ...(request.page ? { page: request.page } : {}),
@@ -700,6 +711,7 @@ export class Runner implements RunService {
         ...(from ? { from } : {}),
         // This run owns the turn now: an older run of it writes to it no more.
         runId: input.runId,
+        ...(input.edit ? { edit: true } : {}),
       })
     );
     const deadline = Math.min(
@@ -725,8 +737,13 @@ export class Runner implements RunService {
       status: 'SUCCESS',
       sortDesc: true,
       limit: 1,
+      loadInput: true,
       loadOutput: true,
     });
+    // Only a run that answered the message the turn holds now: an edit reuses the turn's seq for
+    // another message, and a run of the edit that ended without SUCCESS is not the one found here.
+    const asked = (previous?.input as [ReplyInput] | undefined)?.[0]?.user;
+    if (!asked || !sameMessage(asked, turn.user)) return undefined;
     const output = previous?.output as ReplyOutput | undefined;
     return output?.status === 'error' ? output.resume : undefined;
   }

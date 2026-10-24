@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
@@ -6,6 +6,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
+import type * as RemoteRunnerMod from '~/components/Apps/AppAssistant/remoteRunner';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -278,12 +279,39 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
     },
   };
 });
+// The server runner's Restart preview: the page's look for a live preview, the runner's restart,
+// and what the pane is handed (`restart`).
+const r = vi.hoisted(() => ({
+  /** `fetchPreviewFrame`: unanswered unless a test says otherwise, so no pane appears by itself. */
+  probe: vi.fn<(blockId: string) => Promise<unknown>>(),
+  restart: vi.fn<(app: string, options: unknown) => Promise<unknown>>(),
+  pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
+}));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
-  AppAssistantPreview: ({ session }: { session: unknown }) => {
+  AppAssistantPreview: ({
+    session,
+    restart,
+  }: {
+    session: unknown;
+    restart?: { onRestart: () => void; pending: boolean; error: string | null };
+  }) => {
     m.previewSession = session;
+    r.pane = restart;
     return <div data-testid="preview" />;
   },
 }));
+vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
+  fetchPreviewFrame: (blockId: string) => r.probe(blockId),
+}));
+vi.mock('~/components/Apps/AppAssistant/remoteRunner', async (importOriginal) => ({
+  ...(await importOriginal<typeof RemoteRunnerMod>()),
+  restartRunnerPreview: (app: string, options: unknown) => r.restart(app, options),
+}));
+beforeEach(() => {
+  r.probe.mockReset().mockImplementation(() => new Promise(() => undefined));
+  r.restart.mockReset();
+  r.pane = undefined;
+});
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
   useSandboxes: (client: { list: () => Promise<unknown> } | null) => {
     m.sandboxClient = client;
@@ -2122,6 +2150,138 @@ describe('AppAssistantWorkspace tool gate', () => {
   });
 });
 
+describe('AppAssistantWorkspace preview after a reload on the server runner', () => {
+  const HOST = 'dev-77aa88bb99cc00dd.civit.ai';
+  const RESTARTED = 'dev-1122334455667788.civit.ai';
+  const RATE_LIMITED =
+    'Too many previews were started in the last hour. Wait a few minutes, then try again.';
+  const pane = () => page.getByTestId('app-assistant-preview-pane');
+  /** A visit: the app worked on last (`app-aaaa`) runs, and opens by itself. */
+  async function reload({ remoteRunner = true }: { remoteRunner?: boolean } = {}) {
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-23T10:00:00.000Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', {
+        state: 'suspended',
+        lastActivityAt: '2026-10-22T10:00:00.000Z',
+      }),
+    ];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner={remoteRunner} />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
+  }
+
+  test('a live preview is shown at once, and the runner is asked for nothing', async () => {
+    r.probe.mockResolvedValue({ blockId: 'app-aaaa', host: HOST, iframeSrc: `https://${HOST}/` });
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toEqual({ blockId: 'app-aaaa', host: HOST, sessionId: null, view: 1 });
+    expect(r.probe.mock.calls).toEqual([['app-aaaa']]);
+    expect(r.restart).not.toHaveBeenCalled();
+  });
+
+  test('no live preview: the pane offers Restart preview, and shows no preview', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
+    expect(m.previewSession).toBeNull();
+    expect(r.restart).not.toHaveBeenCalled();
+  });
+
+  test('Restart preview asks the runner once, however often it is clicked, and shows its preview', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    let answer!: (shown: unknown) => void;
+    r.restart.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await reload();
+    await vi.waitFor(() => expect(r.pane).toBeDefined());
+    r.pane!.onRestart();
+    r.pane!.onRestart();
+    await vi.waitFor(() => expect(r.pane).toMatchObject({ pending: true }));
+    r.pane!.onRestart();
+    answer({ blockId: 'app-aaaa', host: RESTARTED });
+    await vi.waitFor(() =>
+      expect(m.previewSession).toEqual({
+        blockId: 'app-aaaa',
+        host: RESTARTED,
+        sessionId: null,
+        view: 1,
+      })
+    );
+    expect(r.restart).toHaveBeenCalledTimes(1);
+    expect(r.restart.mock.calls[0]![0]).toBe('app-aaaa');
+    expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null });
+  });
+
+  test('a refused restart (429) is told in the runner’s words, and the offer stays', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    r.restart.mockRejectedValue(new Error(RATE_LIMITED));
+    await reload();
+    await vi.waitFor(() => expect(r.pane).toBeDefined());
+    r.pane!.onRestart();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({
+        onRestart: expect.any(Function),
+        pending: false,
+        error: RATE_LIMITED,
+      })
+    );
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toBeNull();
+  });
+
+  test('opening another app looks for its preview too; a paused one is not looked at', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload();
+    await vi.waitFor(() => expect(r.probe).toHaveBeenCalledTimes(1));
+    await openFromSwitcher('app-bbbb');
+    await settle();
+    // Paused: no preview to look for, and no offer.
+    expect(r.probe).toHaveBeenCalledTimes(1);
+    expect(pane().query()).toBeNull();
+  });
+
+  test('an app the runner just made is not looked at: its preview opens with its dev server', async () => {
+    await mountRunnerEmpty();
+    m.chat!.onToolResult!({
+      name: 'create_app',
+      input: {},
+      output: { app: 'fresh-app' },
+      isError: false,
+    });
+    m.list = [...m.list, sandbox('sbx-fresh0000000', { app: 'fresh-app' })];
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: fresh-app,/);
+    await settle();
+    expect(r.probe).not.toHaveBeenCalled();
+    expect(pane().query()).toBeNull();
+  });
+
+  test('NEGATIVE CONTROL: replies in the browser never look for one', async () => {
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload({ remoteRunner: false });
+    await settle();
+    expect(r.probe).not.toHaveBeenCalled();
+    expect(pane().query()).toBeNull();
+  });
+
+  /** The runner, with no app open on the visit (none says when it was used). */
+  async function mountRunnerEmpty() {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
+});
+
 describe('AppAssistantWorkspace preview on the server runner', () => {
   const HOST = 'dev-0123456789abcdef.civit.ai';
   const RunnerWorkspace = () => (
@@ -2190,5 +2350,103 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await openFromSwitcher('app-bbbb');
     await expect.element(pane()).not.toBeInTheDocument();
     expect(m.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppAssistantWorkspace keeps the app awake while the user works in its preview', () => {
+  const HOST = 'dev-0123456789abcdef.civit.ai';
+  const MCP = `${BASE}/s/sbx-aaaaaaaaaaaa/mcp`;
+  const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const pings = () =>
+    (fetchSpy.mock.calls as unknown as [string, RequestInit][]).filter(([url]) => url === MCP);
+  const pressInPane = () =>
+    document
+      .querySelector('[data-testid="app-assistant-preview-pane"]')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+
+  function expectOnePing() {
+    expect(pings()).toHaveLength(1);
+    const init = pings()[0]![1];
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).authorization).toBe('Bearer sandbox-token');
+    expect(JSON.parse(init.body as string)).toEqual({
+      jsonrpc: '2.0',
+      id: 'keepalive',
+      method: 'ping',
+    });
+  }
+
+  test('a press in the preview pings the open app’s MCP endpoint, the activity its idle clock counts', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('my-app');
+    await expect.element(page.getByTestId('preview')).toBeInTheDocument();
+    await settle();
+    // NEGATIVE CONTROL: a preview on screen with no one working in it sends nothing.
+    expect(pings()).toHaveLength(0);
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('on the server runner too', async () => {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    m.chat!.onToolResult!({
+      name: 'start_preview',
+      input: {},
+      output: { shown: true, blockId: 'app-aaaa', host: HOST },
+      isError: false,
+    });
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).toBeInTheDocument();
+
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(1));
+    expectOnePing();
+  });
+
+  test('NEGATIVE CONTROL: on a phone with the Chat tab shown, a press in the hidden preview sends nothing', async () => {
+    // The suite loads no Tailwind utilities, so the pane's `hidden` class would not hide it here as
+    // it does in production (CI showed the pane still laid out, 0 px tall, and pinging). Give this
+    // test that one rule; at this width no `md:` rule applies.
+    const tailwindHidden = document.createElement('style');
+    tailwindHidden.textContent = '.hidden { display: none; }';
+    document.head.appendChild(tailwindHidden);
+    onTestFinished(() => tailwindHidden.remove());
+    await page.viewport(375, 900);
+    renderWithProviders(<Workspace />);
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    await startPreview('my-app');
+    await settle();
+    await page.getByRole('radio', { name: 'Chat' }).click();
+    await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
+    const before = pings().length;
+    // Past the one-minute interval, so a ping before this point cannot be what hides one now.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+
+    pressInPane();
+    await settle();
+    expect(pings()).toHaveLength(before);
+
+    // Positive control: the same press with Preview shown does ping.
+    await page.getByRole('radio', { name: 'Preview' }).click();
+    pressInPane();
+    await vi.waitFor(() => expect(pings()).toHaveLength(before + 1));
   });
 });

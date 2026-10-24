@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as NextRouterModule from 'next/router';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -71,6 +72,11 @@ const utilsLeaf = (path: string) => ({
   setData: (input: unknown, data: unknown) => spies.setData.push({ path, input, data }),
 });
 
+// The queue keeps its received/sent tab in the URL; these render it with no Next router mounted.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  useRouter: () => ({ query: {}, replace: vi.fn() }),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy(

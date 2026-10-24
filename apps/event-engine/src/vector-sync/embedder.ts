@@ -25,6 +25,7 @@ export const MAX_INPUTS_PER_WORKFLOW = 128;
 export const MAX_VIDEOS_PER_WORKFLOW = 8;
 const MAX_VIDEO_SECONDS = 60;
 const MAX_VIDEO_KB = 100 * 1024;
+const MAX_VIDEO_SIDE = 4096;
 // The embedding profile is 512x512 pixels; 512 is on the image cacher's width ladder.
 const EMBED_IMAGE_WIDTH = 512;
 const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
@@ -34,6 +35,7 @@ export type SkipReason =
   | 'video-disabled'
   | 'video-too-long'
   | 'video-too-large'
+  | 'video-too-large-dimensions'
   | 'unsupported-type';
 type Built = { input: EmbedInput } | { skip: SkipReason };
 type BuildOptions = { imageLocation: string; embedVideo: boolean };
@@ -56,6 +58,9 @@ const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOpti
     if (!embedVideo) return { skip: 'video-disabled' };
     if (row.duration != null && row.duration > MAX_VIDEO_SECONDS) return { skip: 'video-too-long' };
     if (row.sizeKB != null && row.sizeKB > MAX_VIDEO_KB) return { skip: 'video-too-large' };
+    if ((row.width ?? 0) > MAX_VIDEO_SIDE || (row.height ?? 0) > MAX_VIDEO_SIDE) {
+      return { skip: 'video-too-large-dimensions' };
+    }
     return {
       input: {
         id: String(row.id),

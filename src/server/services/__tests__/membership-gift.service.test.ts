@@ -175,6 +175,7 @@ const stripeSub = ({
   discount = null as any,
   interval = 'month',
   unitAmount = 5000,
+  tier = 'gold',
 } = {}) => ({
   id: 'sub_1',
   status,
@@ -188,7 +189,12 @@ const stripeSub = ({
     data: [
       {
         id: 'si_1',
-        price: { id: 'price_gold_usd', unit_amount: unitAmount, recurring: { interval } },
+        price: {
+          id: `price_${tier}_${currency}`,
+          product: `prod_${tier}`,
+          unit_amount: unitAmount,
+          recurring: { interval },
+        },
       },
     ],
   },
@@ -213,6 +219,14 @@ beforeEach(() => {
   mockDbWrite.membershipGift.findMany.mockResolvedValue([]);
   mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
   mockCreateCustomer.mockResolvedValue('cus_recipient');
+  mockDbWrite.product.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: string };
+  }) => ({
+    id: where.id,
+    metadata: { tier: where.id.replace('prod_', '') },
+  })) as never);
   mockStripe.paymentMethods.list.mockResolvedValue({ data: [] });
   mockStripe.billingPortal.sessions.create.mockResolvedValue({ url: 'https://portal.stripe/x' });
 });
@@ -712,6 +726,52 @@ describe('armNextGiftMonth', () => {
   });
 });
 
+// Webhooks write our CustomerSubscription row in no guaranteed order, so after a plan change it can
+// still name the old plan. The subscription retrieved from Stripe is the plan the gift will be billed on.
+describe('armNextGiftMonth prices against the live Stripe plan, not our row', () => {
+  const active = { ...baseGift, status: 'Active', monthsRemaining: 3, acceptedAt: new Date() };
+
+  it('a holder our row still calls bronze, now gold in Stripe, gets a silver gift as cash value', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ ...active, tier: 'silver' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'bronze' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ tier: 'gold' }));
+
+    await armNextGiftMonth({ userId: 2 });
+
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.percent_off).toBeUndefined();
+    expect(coupon).toMatchObject({ amount_off: 2500, currency: 'usd' });
+  });
+
+  it('a holder our row still calls monthly, now yearly in Stripe, gets cash value', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ ...active, tier: 'gold' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      dbSub({ tier: 'gold', interval: 'month' })
+    );
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      stripeSub({ tier: 'gold', interval: 'year', unitAmount: 50000 })
+    );
+
+    await armNextGiftMonth({ userId: 2 });
+
+    const coupon = mockStripe.coupons.create.mock.calls[0][0];
+    expect(coupon.percent_off).toBeUndefined();
+    expect(coupon).toMatchObject({ amount_off: 3 * 5000, currency: 'usd' });
+  });
+
+  it('does not arm when the live price names a product we have no row for', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([active]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ tier: 'gold' }));
+    mockDbWrite.product.findUnique.mockResolvedValue(null);
+
+    const result = await armNextGiftMonth({ userId: 2 });
+
+    expect(result).toMatchObject({ armed: false, reason: 'unknown-product' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('armNextGiftMonth on a subscription billed yearly', () => {
   const active = { ...baseGift, status: 'Active', monthsRemaining: 3, acceptedAt: new Date() };
   const armYearly = async ({ giftTier = 'gold', holderTier = 'gold', unitAmount = 50000 } = {}) => {
@@ -720,7 +780,7 @@ describe('armNextGiftMonth on a subscription billed yearly', () => {
       dbSub({ tier: holderTier, interval: 'year' })
     );
     mockStripe.subscriptions.retrieve.mockResolvedValue(
-      stripeSub({ interval: 'year', unitAmount })
+      stripeSub({ interval: 'year', unitAmount, tier: holderTier })
     );
     await armNextGiftMonth({ userId: 2 });
     return mockStripe.coupons.create.mock.calls[0][0];
@@ -1206,30 +1266,126 @@ describe('revokeMembershipGift', () => {
 });
 
 describe('keepGiftMembership', () => {
-  it('clears a scheduled cancellation when a payment method exists', async () => {
+  const card = (id: string) => ({ id, object: 'payment_method', type: 'card' });
+  const bankDebit = (id: string) => ({ id, object: 'payment_method', type: 'us_bank_account' });
+  const cancellingSub = (fields: Record<string, unknown>) => ({
+    ...stripeSub(),
+    cancel_at: dayjs().add(30, 'day').unix(),
+    default_payment_method: null,
+    default_source: null,
+    ...fields,
+  });
+
+  beforeEach(() => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
-    mockStripe.subscriptions.retrieve.mockResolvedValue({
-      ...stripeSub(),
-      cancel_at: dayjs().add(30, 'day').unix(),
-      customer: { id: 'cus_1', invoice_settings: { default_payment_method: 'pm_1' } },
-    });
+    mockStripe.checkout.sessions.create.mockResolvedValue({ url: 'https://checkout.stripe/setup' });
+  });
+
+  it('clears a scheduled cancellation and leaves a card default alone', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: { id: 'cus_1', invoice_settings: { default_payment_method: card('pm_card') } },
+      })
+    );
 
     expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
     const [, args] = mockStripe.subscriptions.update.mock.calls[0];
-    expect(args.cancel_at).toBe('');
-    expect(args.cancel_at_period_end).toBe(false);
+    expect(args).toEqual({ cancel_at: '', cancel_at_period_end: false });
   });
 
-  it('returns a billing-portal url when there is no way to pay', async () => {
-    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
-    mockStripe.subscriptions.retrieve.mockResolvedValue({
-      ...stripeSub(),
-      cancel_at: dayjs().add(30, 'day').unix(),
-      customer: { id: 'cus_1', invoice_settings: {} },
+  it('bills the customer default card when the subscription default is a bank debit', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        default_payment_method: bankDebit('pm_ach'),
+        customer: { id: 'cus_1', invoice_settings: { default_payment_method: card('pm_card') } },
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.default_payment_method).toBe('pm_card');
+    expect(args.cancel_at).toBe('');
+  });
+
+  it('bills a saved card when the customer default is a bank debit', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+      })
+    );
+    mockStripe.paymentMethods.list.mockResolvedValue({
+      data: [
+        { id: 'pm_expired_card', card: { exp_month: 1, exp_year: 2020 } },
+        { id: 'pm_saved_card', card: { exp_month: 12, exp_year: dayjs().year() + 2 } },
+      ],
     });
 
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    expect(mockStripe.paymentMethods.list.mock.calls[0][0]).toMatchObject({ type: 'card' });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.default_payment_method).toBe('pm_saved_card');
+  });
+
+  it.each([
+    ['subscription', { default_source: { id: 'card_1', object: 'card' } }],
+    [
+      'customer',
+      {
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: null },
+          default_source: { id: 'src_1', object: 'source', type: 'card' },
+        },
+      },
+    ],
+  ])('keeps a legacy card source on the %s as it is', async (_, fields) => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+        ...fields,
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args).toEqual({ cancel_at: '', cancel_at_period_end: false });
+  });
+
+  it('keeps the cancellation and offers a card-only setup when only a bank debit is on file', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+      })
+    );
+
     const result = await keepGiftMembership({ userId: 2 });
-    expect(result).toMatchObject({ kept: false, portalUrl: 'https://portal.stripe/x' });
+    expect(result).toEqual({ kept: false, portalUrl: 'https://checkout.stripe/setup' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    const [setup] = mockStripe.checkout.sessions.create.mock.calls[0];
+    expect(setup).toMatchObject({ mode: 'setup', payment_method_types: ['card'] });
+  });
+
+  it('treats a legacy bank-account source as not a card', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: null },
+          default_source: { id: 'ba_1', object: 'bank_account' },
+        },
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toMatchObject({ kept: false });
     expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
   });
 });
