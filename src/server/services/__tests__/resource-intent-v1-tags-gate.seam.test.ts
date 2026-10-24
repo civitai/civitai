@@ -9,8 +9,8 @@ import type * as TagsHolder from '~/server/services/resource-intent-tags/holder'
 import type { TagIndex, TagIndexKind } from '~/server/services/resource-intent-tags/score';
 
 /**
- * SEAM: the v1_tags arm without a caller baseModel, from the tag-chosen ecosystem to the served
- * list, through the real scorer, gate and matcher. Faked: Jev, both snapshot holders, the search
+ * SEAM: the v1_tags arm, from the tag-chosen or caller's add-on ecosystem to the served list,
+ * through the real scorer, gate and matcher. Faked: Jev, both snapshot holders, the search
  * index (which applies the type/baseModel clause of the filter it is handed, as Meilisearch would),
  * hydration and redis. Synthetic ids; real base-model names, since the gate reads their records.
  */
@@ -228,10 +228,13 @@ describe('🔴 v1_tags without a baseModel: the tag-chosen ecosystem gates by it
     expect(result.suggestions).toHaveLength(50);
   });
 
-  it("a caller's baseModel still gates by its exact name", async () => {
+  it("a caller's add-on baseModel gates by its compatible base models too", async () => {
     const result = await getResourceIntent({ prompt: 'zephyr', baseModel: 'Krea 2 Turbo' }, CTX);
-    expect(versionIds(result)).toEqual(
-      Array.from({ length: KREA_TURBO_OWN }, (_, r) => VERSION_ID(r))
+    expect(result).not.toHaveProperty('ecosystems');
+    // The ecosystem's own name covers only KREA_TURBO_OWN; the sibling's add-ons fill the rest.
+    expect(result.suggestions).toHaveLength(50);
+    expect(versionIds(result).slice(0, KREA_TURBO_OWN + 1)).toEqual(
+      Array.from({ length: KREA_TURBO_OWN + 1 }, (_, r) => VERSION_ID(r))
     );
   });
 });

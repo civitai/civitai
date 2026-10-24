@@ -364,12 +364,13 @@ describe('served v1_tags', () => {
     expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({
       modelIds: [101, 102],
       modelTypes: RESOURCE_INTENT_COOC_SPEC.addonTypes,
-      baseModel: 'SDXL 1.0',
       browsingLevel: 3,
       coverage: CTX.coverage,
       cap: 50,
       maxModels: 50,
     });
+    const { baseModel } = mockV1Candidates.mock.calls[0][0] as { baseModel: Map<string, string[]> };
+    expect(baseModel.get('LORA')).toEqual(expect.arrayContaining(['SDXL 1.0', 'SDXL Lightning']));
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });
     expect(result).not.toHaveProperty('coocFallback');
     expect(result).not.toHaveProperty('ecosystems');
@@ -674,7 +675,7 @@ describe('🔴 the base-model filter of the v1 list, by kind and by who chose th
 describe('🔴 the shadow beside another arm', () => {
   const SHADOW = { ...CTX, poolMerge: true, v1Shadow: true };
 
-  it('gates as the served arm does: the tag-chosen ecosystem by its gate, a caller baseModel exactly', async () => {
+  it("gates as the served arm does: the tag-chosen ecosystem and a caller's add-on baseModel by its gate", async () => {
     mockStage1();
     await getResourceIntent({ prompt: 'zephyr' }, SHADOW);
     await flush();
@@ -686,7 +687,8 @@ describe('🔴 the shadow beside another arm', () => {
     mockStage1();
     await getResourceIntent({ prompt: 'zephyr', baseModel: 'SDXL 1.0' }, SHADOW);
     await flush();
-    expect(mockV1Candidates.mock.calls[1][0]).toMatchObject({ baseModel: 'SDXL 1.0' });
+    const caller = mockV1Candidates.mock.calls[1][0] as { baseModel: Map<string, string[]> };
+    expect(caller.baseModel.get('LORA')).toEqual(expect.arrayContaining(['SDXL Lightning']));
   });
 
   it('records the v1 list it would have served, and serves the POOL_MERGE list unchanged', async () => {
