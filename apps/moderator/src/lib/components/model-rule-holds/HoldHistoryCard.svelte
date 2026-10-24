@@ -35,7 +35,7 @@
               <MetaChip tone={entry.status === 'Pending' ? 'amber' : entry.status === 'Confirmed' ? 'red' : 'neutral'}>
                 {entry.status === 'Pending'
                   ? 'pending'
-                  : heldOutcome({ status: entry.status, decision: entry.decision, mode: entry.mode })}
+                  : heldOutcome({ status: entry.status, decision: entry.decision, mode: entry.mode, clearsRules: entry.clearsRules })}
               </MetaChip>
               <MetaChip>{modeLabel(entry.mode)}</MetaChip>
               <span>

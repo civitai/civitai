@@ -169,6 +169,36 @@ async function restoreModel(
   });
 }
 
+/**
+ * A training hold has nothing to restore, and neither has a hold on a model that is neither live nor
+ * taken down: the dismissal clears the matched rules for this text instead, which the next
+ * training run or publish of it reads.
+ */
+const clearsRulesInsteadOfRestoring = (model: ModelRow | null, source: 'training' | undefined) =>
+  !!model &&
+  !model.deletedAt &&
+  model.status !== ModelStatus.Deleted &&
+  (source === 'training' || (!isLive(model) && model.status !== ModelStatus.UnpublishedViolation));
+
+async function clearModelRules(
+  hold: { entityId: number; textHash: string },
+  model: ModelRow,
+  ruleIds: number[]
+) {
+  const earlier = (model.meta as ModelMeta | null)?.modelRulesCleared;
+  const kept = earlier?.textHash === hold.textHash ? earlier.ruleIds : [];
+  const cleared = {
+    textHash: hold.textHash,
+    ruleIds: [...kept, ...ruleIds.filter((id) => !kept.includes(id))],
+  };
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('modelRulesCleared', ${JSON.stringify(cleared)}::jsonb)
+    WHERE "id" = ${hold.entityId}
+  `;
+}
+
 async function keepModelDown(
   hold: { entityId: number; textHash: string },
   model: ModelRow | null,
@@ -259,6 +289,8 @@ export async function decideModelRulesHold(args: DecideArgs) {
     };
 
     if (plan.confirm) await keepModelDown(target, model, ruleIds, args);
+    else if (model && clearsRulesInsteadOfRestoring(model, meta.source))
+      await clearModelRules(target, model, ruleIds);
     else if (meta.mode === 'active' && !effects.restored) {
       await restoreModel(target, model, meta.versionIds ?? [], args);
       await done('restored');

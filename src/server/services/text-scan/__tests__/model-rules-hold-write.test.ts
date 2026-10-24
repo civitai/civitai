@@ -213,6 +213,47 @@ describe('syncModelRulesHold', () => {
     expect(await rows()).toHaveLength(1);
   });
 
+  describe('a training detection', () => {
+    const training = (over: Record<string, unknown> = {}) =>
+      detection({ source: 'training', ...over });
+
+    it('records its source on the hold', async () => {
+      await syncModelRulesHold(7, training());
+      const [hold] = await rows();
+      expect(hold.meta).toMatchObject({ source: 'training' });
+    });
+
+    it('records its source on the hold that replaces an older training hold', async () => {
+      await syncModelRulesHold(7, training());
+      await syncModelRulesHold(7, training({ textHash: 'hash-2' }));
+      const [, next] = await rows();
+      expect(next.meta).toMatchObject({ source: 'training', kind: 'redetected' });
+    });
+
+    it('leaves a pending hold of a publish alone, which has already taken the model down', async () => {
+      await syncModelRulesHold(7, detection({ mode: 'active', applied: true }));
+      await expect(syncModelRulesHold(7, training({ textHash: 'hash-2' }))).resolves.toBe(
+        'skipped'
+      );
+
+      const held = await rows();
+      expect(held).toHaveLength(1);
+      expect(held[0]).toMatchObject({ status: 'Pending', textHash: 'hash-1' });
+    });
+
+    it('closes a stale training hold when its text no longer matches', async () => {
+      await syncModelRulesHold(7, training());
+      await expect(syncModelRulesHold(7, null, { onlySource: 'training' })).resolves.toBe('closed');
+      expect((await rows())[0]).toMatchObject({ status: 'Dismissed' });
+    });
+
+    it('does not close the pending hold of a publish when a training check finds nothing', async () => {
+      await syncModelRulesHold(7, detection({ mode: 'active', applied: true }));
+      await expect(syncModelRulesHold(7, null, { onlySource: 'training' })).resolves.toBe('none');
+      expect((await rows())[0]).toMatchObject({ status: 'Pending' });
+    });
+  });
+
   it('takes the per-model advisory lock before reading the pending hold', async () => {
     await syncModelRulesHold(7, detection());
 
