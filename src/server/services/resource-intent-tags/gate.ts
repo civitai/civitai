@@ -26,7 +26,9 @@ export function ecosystemBaseModelGate(
 }
 
 // The base-model records are constants, so a gate never changes for a process. Bounded only while
-// every caller passes an index's ecosystem name, never request input.
+// it is keyed by an index's ecosystem names and the fingerprint's fixed ones, never raw request
+// input: a caller's baseModel reaches it only after the scorer has matched it to an index ecosystem
+// (`scoreTagRequest` returns `unknown_ecosystem` for one that is not in the index).
 const gateCache = new Map<string, BaseModelGate>();
 
 function buildGate(baseModel: string, modelTypes: readonly ModelType[]): BaseModelGate {
@@ -41,6 +43,22 @@ function buildGate(baseModel: string, modelTypes: readonly ModelType[]): BaseMod
       return [type, [...names]];
     })
   );
+}
+
+/**
+ * The base-model filter of a v1 list for `ecosystem`, the scorer's index ecosystem. An add-on list is
+ * gated by the ecosystem's gate whether the caller or the tags chose it; a checkpoint list for a
+ * caller's baseModel lists that exact name, and a tag-chosen checkpoint ecosystem its gate.
+ */
+export function v1ListBaseModelFilter(
+  kind: TagKind,
+  callerBaseModel: boolean,
+  ecosystem: string,
+  modelTypes: readonly ModelType[]
+): string | BaseModelGate {
+  return kind === 'checkpoint' && callerBaseModel
+    ? ecosystem
+    : ecosystemBaseModelGate(ecosystem, modelTypes);
 }
 
 export function gateBaseModels(gate: BaseModelGate): string[] {
@@ -145,8 +163,9 @@ export function modalityEligibleEcosystems(
 }
 
 /**
- * Hashes the floor, the request's media type, and what the gate, the eligibility count and the
- * modality predicate produce on fixed inputs, so the v1 cache key moves when any of them does.
+ * Hashes the floor, the request's media type, and what the gate, the add-on list's base-model
+ * filter (for a caller-chosen and a tag-chosen ecosystem), the eligibility count and the modality
+ * predicate produce on fixed inputs, so the v1 cache key moves when any of them does.
  * Request-path only: the snapshot is keyed by `RESOURCE_INTENT_TAGS_SPEC_HASH`, which this must not
  * feed. Exported for its test.
  */
@@ -178,6 +197,11 @@ export function v1GateFingerprint() {
   return {
     minResources: n,
     gates: names.map((name) => [...ecosystemBaseModelGate(name, types)]),
+    // The v1 cache key is add-on only, so the checkpoint filter is not hashed.
+    addonListFilters: [true, false].map((callerBaseModel) => {
+      const filter = v1ListBaseModelFilter('addon', callerBaseModel, 'Krea 2 Turbo', types);
+      return typeof filter === 'string' ? filter : [...filter];
+    }),
     eligible: [...gateEligibleEcosystems(index, 'addon', types)],
     mediaType: V1_TAGS_REQUEST_MEDIA_TYPE,
     modalityEligible: [...modalityEligibleEcosystems(modalityIndex, V1_TAGS_REQUEST_MEDIA_TYPE)],

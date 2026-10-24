@@ -9,9 +9,11 @@
  *     start) in the background, and answers 202 at once: one tick can outlast the request
  *     timeout. A Completed challenge (with no winners) replays through `endsAt + 10min`; an
  *     Active one only up to its live review watermark, so the regular job keeps the ticks after
- *     it. Each tick logs `challenge-review-replay` to Axiom with the next cursor, so an
- *     interrupted run resumes from the last one logged. Re-running is safe: entries the judge
- *     already commented on are skipped.
+ *     it. Pass `until` to stop earlier, at the point live judging started working again: the job
+ *     has already sampled every tick after it, and replaying one samples it a second time. Each
+ *     tick logs `challenge-review-replay` to Axiom with the next cursor, so an interrupted run
+ *     resumes from the last one logged. Re-running is safe: entries the judge already commented
+ *     on are skipped.
  *
  *   { "challengeId": 601, "step": "status" }
  *     Whether a replay is running on this pod, and how many entries are judged so far.
@@ -42,6 +44,7 @@ const schema = z.object({
   challengeId: z.number().int().positive(),
   step: z.enum(['review', 'status', 'winners']),
   cursor: z.coerce.date().optional(),
+  until: z.coerce.date().optional(),
 });
 
 // Per pod only: call `review` once, and check `status` before starting another.
@@ -71,7 +74,7 @@ export default ModEndpoint(
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
     }
-    const { challengeId, step, cursor } = parsed.data;
+    const { challengeId, step, cursor, until } = parsed.data;
 
     const challenge = await getChallengeById(challengeId);
     if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
@@ -115,6 +118,8 @@ export default ModEndpoint(
         }
         lastTickStart = Number(state.reviewedAt);
       }
+      const clampLastTick = isActive || !!until;
+      if (until) lastTickStart = Math.min(lastTickStart, until.getTime());
       const firstTickStart = (cursor ?? challenge.startsAt).getTime();
 
       running.add(challengeId);
@@ -122,7 +127,7 @@ export default ModEndpoint(
         let tickStart = firstTickStart;
         try {
           while (tickStart < lastTickStart) {
-            const tickEnd = isActive
+            const tickEnd = clampLastTick
               ? Math.min(tickStart + TICK_MS, lastTickStart)
               : tickStart + TICK_MS;
             await challengeReviewInternals.reviewEntriesForChallenge(details, {
