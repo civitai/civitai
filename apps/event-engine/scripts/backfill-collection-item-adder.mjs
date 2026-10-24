@@ -39,6 +39,9 @@
  *   node scripts/backfill-collection-item-adder.mjs                     # dry run: counts per range
  *   node scripts/backfill-collection-item-adder.mjs --execute --ledger ./adder-ledger.jsonl
  *
+ * Env: DATABASE_URL / DATABASE_REPLICA_URL as below, and CLICKHOUSE_URL or CLICKHOUSE_HOST +
+ * CLICKHOUSE_USERNAME + CLICKHOUSE_PASSWORD. Nothing is read from files; a missing one stops the run.
+ *
  * Options:
  *   --execute          Write. Needs DATABASE_URL (the primary); the dry run reads
  *                      DATABASE_REPLICA_URL when set.
@@ -56,35 +59,16 @@
 import { createClient } from '@clickhouse/client';
 import pg from 'pg';
 import { readFileSync, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import {
   METRIC_PAIRS,
   buildEvents,
   landedState,
-  entityScope,
+  backfillSql,
+  clickhouseConfig,
   nextStampMs,
   openLedger,
   readLedger,
 } from './lib/collection-item-adder.mjs';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-function loadEnvFile(path) {
-  if (!existsSync(path)) return {};
-  const out = {};
-  for (const line of readFileSync(path, 'utf-8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq === -1) continue;
-    out[trimmed.slice(0, eq)] = trimmed.slice(eq + 1).replace(/^["']|["']$/g, '');
-  }
-  return out;
-}
-
-const chEnv = loadEnvFile(resolve(__dirname, '../.claude/skills/clickhouse-query/.env'));
-const pgEnv = loadEnvFile(resolve(__dirname, '../.claude/skills/postgres-query/.env'));
 
 const args = process.argv.slice(2);
 const arg = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -96,21 +80,7 @@ const FROM = arg('--from') != null ? Number(arg('--from')) : null;
 const TO = arg('--to') != null ? Number(arg('--to')) : null;
 const ENTITY = arg('--entity') ?? 'Article';
 
-const SCOPE = `
-  ci."collectionId" = c.id
-  AND ci.id >= $1 AND ci.id < $2
-  AND ci."addedById" IS NULL
-  AND ci."imageId" IS NULL
-  AND ${entityScope(ENTITY)}
-  AND c."userId" > 0`;
-
-const COUNT_SQL = `SELECT count(*)::int AS n FROM "CollectionItem" ci, "Collection" c WHERE ${SCOPE}`;
-
-const UPDATE_SQL = `
-  UPDATE "CollectionItem" ci SET "addedById" = c."userId"
-  FROM "Collection" c
-  WHERE ${SCOPE}
-  RETURNING ci.id, ci."collectionId", ci."articleId", ci."modelId", ci."postId", ci."addedById"`;
+const SQL = backfillSql(ENTITY);
 
 // Longer than the client's request_timeout, so an insert from the crashed run is settled.
 const LANDING_WAIT_MS = 15 * 60 * 1000;
@@ -131,7 +101,7 @@ async function main() {
 
   const pgUrl = EXECUTE
     ? process.env.DATABASE_URL
-    : process.env.DATABASE_REPLICA_URL ?? pgEnv.DATABASE_REPLICA_URL ?? process.env.DATABASE_URL;
+    : process.env.DATABASE_REPLICA_URL ?? process.env.DATABASE_URL;
   if (!pgUrl)
     fail(
       EXECUTE
@@ -139,21 +109,13 @@ async function main() {
         : 'Error: set DATABASE_REPLICA_URL (or DATABASE_URL) for the dry run.'
     );
 
-  const chUrl = process.env.CLICKHOUSE_URL ?? chEnv.CLICKHOUSE_URL;
-  const ch = createClient(
-    chUrl
-      ? { url: chUrl, request_timeout: 300000 }
-      : {
-          url: process.env.CLICKHOUSE_HOST ?? chEnv.CLICKHOUSE_HOST,
-          username:
-            process.env.CLICKHOUSE_USERNAME ??
-            process.env.CLICKHOUSE_USER ??
-            chEnv.CLICKHOUSE_USERNAME ??
-            chEnv.CLICKHOUSE_USER,
-          password: process.env.CLICKHOUSE_PASSWORD ?? chEnv.CLICKHOUSE_PASSWORD,
-          request_timeout: 300000,
-        }
-  );
+  let chConfig;
+  try {
+    chConfig = clickhouseConfig(process.env);
+  } catch (err) {
+    fail(`Error: ${err.message}`);
+  }
+  const ch = createClient({ ...chConfig, request_timeout: 300000 });
   const query = async (sql, params) =>
     (await ch.query({ query: sql, query_params: params, format: 'JSONEachRow' })).json();
 
@@ -182,13 +144,21 @@ async function main() {
   if (!EXECUTE) {
     console.log('MODE: dry run, nothing is written.\n');
     let total = 0;
+    const skipped = {};
     for (let lo = FROM ?? 0; lo < to; lo += RANGE) {
       const hi = Math.min(lo + RANGE, to);
-      const { rows } = await pool.query(COUNT_SQL, [lo, hi]);
-      total += rows[0].n;
-      if (rows[0].n) console.log(`[${lo}, ${hi})  ${rows[0].n} rows  running total ${total}`);
+      const { rows } = await pool.query(SQL.breakdown, [lo, hi]);
+      for (const { mode, n } of rows) {
+        if (mode === 'Bookmark') {
+          total += n;
+          console.log(`[${lo}, ${hi})  ${n} rows  running total ${total}`);
+        } else skipped[mode ?? 'none'] = (skipped[mode ?? 'none'] ?? 0) + n;
+      }
     }
-    console.log(`\nDry run complete: ${total} rows would get an adder and a +1.`);
+    console.log(`\nDry run complete: ${total} ${ENTITY} rows would get an adder and a +1.`);
+    console.log(
+      `Skipped, not in a Bookmark collection, by Collection.mode: ${JSON.stringify(skipped)}`
+    );
     await pool.end();
     await ch.close();
     return;
@@ -302,7 +272,7 @@ async function main() {
     let stampMs;
     try {
       await client.query('BEGIN');
-      ({ rows } = await client.query(UPDATE_SQL, [lo, hi]));
+      ({ rows } = await client.query(SQL.update, [lo, hi]));
       if (!rows.length) {
         await client.query('ROLLBACK');
         continue;
