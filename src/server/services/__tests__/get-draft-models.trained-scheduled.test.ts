@@ -27,7 +27,10 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-type OrBranch = { uploadType: ModelUploadType; status: { in?: ModelStatus[]; notIn?: ModelStatus[] } };
+type OrBranch = {
+  uploadType: ModelUploadType;
+  status: { in?: ModelStatus[]; notIn?: ModelStatus[] };
+};
 
 async function draftWhereOr() {
   const findMany = dbMock.dbRead.model.findMany as ReturnType<typeof vi.fn>;
