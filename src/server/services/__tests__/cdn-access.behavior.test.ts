@@ -1375,7 +1375,7 @@ describe('takedown persist', () => {
       await expect(
         sendTakedownPersistOrRetry(u(1), { retract: false, purgeEdge: true }, { imageId: 1 })
       ).resolves.toBeUndefined();
-      expect(logsOf('warning', 'takedown-persist-retry-not-queued')).toHaveLength(1);
+      expect(errorLogs('takedown-persist-retry-not-queued')).toHaveLength(1);
       await expect(retryTakedownPersists()).resolves.toMatchObject({ queued: 0 });
     } finally {
       await bare.close();

@@ -580,7 +580,7 @@ export async function queueTakedownPersistRetry({
     `;
   } catch (error) {
     await logToAxiom({
-      type: 'warning',
+      type: 'error',
       name: 'takedown-persist-retry-not-queued',
       message: 'takedown persist retry was not queued',
       imageId,
