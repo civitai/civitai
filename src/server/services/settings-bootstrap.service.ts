@@ -291,3 +291,29 @@ export async function resolveSettingsBootstrapForRender(
   }
   return JSON.parse(JSON.stringify(payload));
 }
+
+/**
+ * The bootstrap members that are the same for every viewer, for a static shell render
+ * (`~/server/shell/shell-mode`): read from the same request a full render's bootstrap reads, with
+ * no session lookup and nothing per user. The viewer's own members arrive with the page data.
+ * Never rejects: each member degrades as it does in the full bootstrap.
+ */
+export async function resolveShellSeeds(request: BootstrapSourceRequest) {
+  let domainColor: ReturnType<typeof getRequestDomainColor> | undefined;
+  try {
+    domainColor = getRequestDomainColor(settingsBootstrapRequest(request));
+  } catch {
+    domainColor = undefined;
+  }
+  const [tosMeta, browsingSettingsAddons, liveNow] = await Promise.all([
+    settle(getTosMeta({ domainColor: domainColor ?? 'blue' }), undefined, 'getTosMeta'),
+    settle(getBrowsingSettingAddons(), undefined, 'getBrowsingSettingAddons'),
+    settle(getLiveNow(), false, 'getLiveNow'),
+  ]);
+  // JSON round-tripped as the full render's bootstrap is, so server and client read equal values.
+  return JSON.parse(JSON.stringify({ tosMeta, browsingSettingsAddons, liveNow })) as {
+    tosMeta?: Awaited<ReturnType<typeof getTosMeta>>;
+    browsingSettingsAddons?: Awaited<ReturnType<typeof getBrowsingSettingAddons>>;
+    liveNow: boolean;
+  };
+}
