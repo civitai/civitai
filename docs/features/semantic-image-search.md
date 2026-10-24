@@ -74,11 +74,11 @@ locally until the orchestration client ships it.
   together. The first response's quota and buzz window are logged at info level
   (`vector-sync: orchestrator rate limits`).
 - **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
-  `Retry-After`, and every submit on that process waits it out too. There is no other
-  client-side throttling.
+  `Retry-After` (at least 250 ms), and every submit on that process waits it out too. 429s
+  are budgeted by time (2 h), not count, since another process can hold the account's quota
+  for a whole workflow. There is no other client-side throttling.
 - **Retries:** a 5xx or network error backs off exponentially with jitter (or by its
-  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`; 429s have a separate, larger
-  retry allowance. Each attempt at a workflow has
+  `Retry-After`) and gives up after `VECTOR_EMBED_MAX_RETRIES`. Each attempt at a workflow has
   one `externalId`, reused across its retries, so a submit that succeeded server-side is not
   paid for twice. It is random rather than derived from the inputs, because the orchestrator
   would also return a _failed_ workflow for its key.
@@ -98,9 +98,10 @@ locally until the orchestration client ships it.
   consumer never embeds into a collection whose model is not yet recorded: **the backfill canary
   records it first**. Until then the consumer only deletes and updates payloads.
 - **Ephemeral workflows:** the orchestrator keeps no document for them. The result comes back
-  on the submit (`wait=60`) or on a long poll. One that finishes between polls is gone (a 404),
-  and the whole workflow is sent again, which the orchestrator mostly answers from its cache of
-  identical inputs.
+  on the submit (`wait=60`) or on a long poll. A poll that fails is retried as a poll, never by
+  submitting again, which would run the steps twice. One that finishes between polls is gone
+  (a 404), and the whole workflow is sent again under a new key, which the orchestrator mostly
+  answers from its cache of identical inputs.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
 
 ## Keeping it in sync

@@ -1532,6 +1532,65 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(result.vectors.size).toBe(2);
   });
 
+  test('a poll that fails is retried as a poll, never by submitting the running workflow again', async () => {
+    let posts = 0;
+    let gets = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'GET') {
+        if (++gets === 1) return new Response('blip', { status: 503 });
+        return new Response(workflowBody(['1', '2']), { status: 200 });
+      }
+      posts++;
+      return new Response(JSON.stringify({ id: 'wf1', status: 'processing' }), { status: 202 });
+    }) as unknown as typeof fetch;
+    const { e } = clocked(fetchImpl);
+    const result = await e.embed(inputs(2));
+    expect(posts).toBe(1);
+    expect(gets).toBe(2);
+    expect(result.vectors.size).toBe(2);
+  });
+
+  test('a lost result is sent again under a new key', async () => {
+    const keys: string[] = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'GET') return new Response('', { status: 404 });
+      keys.push(JSON.parse(String(init?.body)).externalId);
+      if (keys.length === 1)
+        return new Response(JSON.stringify({ id: 'wf1', status: 'processing' }), { status: 202 });
+      return ok(init, 50);
+    }) as unknown as typeof fetch;
+    const { e } = clocked(fetchImpl);
+    await e.embed(inputs(1));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  test('Retry-After: 0 still waits, so a 429 is never a tight loop', async () => {
+    let calls = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      if (++calls <= 3) return new Response('', { status: 429, headers: { 'Retry-After': '0' } });
+      return ok(init, 50);
+    }) as unknown as typeof fetch;
+    const run = clocked(fetchImpl);
+    await run.e.embed(inputs(1));
+    expect(run.now()).toBeGreaterThanOrEqual(3 * 250);
+  });
+
+  test('429s are budgeted by time (2 h), longer than one workflow can hold the quota', async () => {
+    const times: number[] = [];
+    let now = () => 0;
+    const fetchImpl = (async () => {
+      times.push(now());
+      return new Response('', { status: 429, headers: { 'Retry-After': '600' } });
+    }) as unknown as typeof fetch;
+    const run = clocked(fetchImpl);
+    now = run.now;
+    const result = await run.e.embed(inputs(1));
+    expect(String(result.error)).toMatch(/gave up/);
+    expect(Math.max(...times)).toBeGreaterThanOrEqual(2 * 60 * 60_000 - 600_000);
+    expect(times.length).toBeGreaterThan(10);
+  });
+
   test('a step with no profile or revision is failed, not kept unchecked', async () => {
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(workflowBody(stepIds(init)));

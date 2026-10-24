@@ -235,8 +235,18 @@ export class MixedStampError extends Error {
 
 /** A rejected workflow is split at most this many times (128 down to groups of 8). */
 const MAX_SPLIT_DEPTH = 4;
-/** 429s are the orchestrator's flow control, so they get far more retries than errors do. */
-const MAX_RATE_LIMITED_RETRIES = 600;
+/**
+ * 429s are the orchestrator's flow control, not errors: they are budgeted by time, and longer
+ * than one workflow can run (30 min), since another process may hold the account's quota.
+ */
+const RATE_LIMITED_FOR_MS = 2 * 60 * 60_000;
+/** A Retry-After of 0 still waits this long, so a 429 never becomes a tight resubmit loop. */
+const MIN_RETRY_AFTER_MS = 250;
+/** Retries of a poll after a network error or 5xx; the workflow keeps running meanwhile. */
+const POLL_RETRIES = 8;
+
+/** An ephemeral workflow finished between two polls and is gone, with its result. */
+class LostResultError extends RetryableError {}
 
 export type EmbedderOptions = {
   endpoint: string;
@@ -446,13 +456,14 @@ export class Embedder {
   }
 
   private async runWithRetry(batch: EmbedInput[]): Promise<Workflow> {
-    // One key per attempt at this workflow, reused across its retries, so a submit that
-    // succeeded server-side but failed on our side returns the existing workflow instead of
-    // paying twice. Not derived from the inputs: the orchestrator returns a failed workflow for
-    // its key too, which would make a transient failure permanent.
-    const externalId = `vs-${randomUUID()}`;
+    // One key per submit attempt, reused when a submit itself fails (a network error or 5xx on
+    // the POST), in case it was accepted server-side. A lost result gets a new key: the old one
+    // could only return the workflow that is already gone. Not derived from the inputs: the
+    // orchestrator returns a failed workflow for its key too.
+    let externalId = `vs-${randomUUID()}`;
     let errors = 0;
     let rateLimited = 0;
+    const rateLimitedSince = this.now();
     for (;;) {
       const hold = this.limits.holdUntil - this.now();
       if (hold > 0) await this.sleep(hold);
@@ -460,9 +471,12 @@ export class Embedder {
         return await this.run(batch, externalId);
       } catch (err) {
         if (!(err instanceof RetryableError)) throw err;
+        if (err instanceof LostResultError) externalId = `vs-${randomUUID()}`;
         const attempt = err.rateLimited ? rateLimited++ : errors++;
-        const limit = err.rateLimited ? MAX_RATE_LIMITED_RETRIES : this.opts.maxRetries;
-        if (attempt >= limit) {
+        const exhausted = err.rateLimited
+          ? this.now() - rateLimitedSince >= RATE_LIMITED_FOR_MS
+          : attempt >= this.opts.maxRetries;
+        if (exhausted) {
           throw new Error(`embedding gave up after ${attempt + 1} attempts: ${err.message}`);
         }
         // A 429's Retry-After is already the embedder-wide hold the loop waits out above.
@@ -501,13 +515,22 @@ export class Embedder {
       externalId,
       tags: ['vector-sync'],
     });
+    // A poll that fails is retried as a poll: re-POSTing a workflow that is still running would
+    // run (and pay for) its steps twice.
+    let pollErrors = 0;
     while (!TERMINAL.has(workflow.status)) {
-      workflow = await this.request<Workflow>(
-        'GET',
-        `/v2/consumer/workflows/${encodeURIComponent(workflow.id)}?wait=${wait}&until=completion`,
-        undefined,
-        { lostIfNotFound: true }
-      );
+      try {
+        workflow = await this.request<Workflow>(
+          'GET',
+          `/v2/consumer/workflows/${encodeURIComponent(workflow.id)}?wait=${wait}&until=completion`,
+          undefined,
+          { lostIfNotFound: true }
+        );
+      } catch (err) {
+        if (!(err instanceof RetryableError) || err instanceof LostResultError) throw err;
+        if (++pollErrors > POLL_RETRIES) throw new Error(`poll gave up: ${err.message}`);
+        await this.sleep(err.retryAfterMs ?? Math.min(60_000, 1000 * 2 ** pollErrors));
+      }
     }
     return workflow;
   }
@@ -537,7 +560,7 @@ export class Embedder {
     const retryAfter = Number(res.headers.get('retry-after'));
     const retryAfterMs =
       Number.isFinite(retryAfter) && retryAfter >= 0 && res.headers.has('retry-after')
-        ? retryAfter * 1000
+        ? Math.max(MIN_RETRY_AFTER_MS, retryAfter * 1000)
         : undefined;
     if (res.status === 429) {
       // The in-flight quota or the buzz window. Every submit on this embedder waits it out.
@@ -549,7 +572,7 @@ export class Embedder {
       throw new RetryableError(`${res.status} ${text.slice(0, 200)}`, retryAfterMs);
     // An ephemeral workflow that finished between polls is gone; send it again.
     if (res.status === 404 && lostIfNotFound)
-      throw new RetryableError('ephemeral workflow gone before its result was read');
+      throw new LostResultError('ephemeral workflow gone before its result was read');
     // 400 is a bad input in the workflow; 401/403 is configuration and would fail every half too.
     if (res.status === 400) throw new WorkflowRejectedError(`400 ${text.slice(0, 500)}`);
     throw new Error(
