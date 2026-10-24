@@ -137,11 +137,40 @@ export function assertTrainingModerationApproved(workflow: Workflow): void {
  */
 type TrainingModelInfoEntry = (typeof trainingModelInfo)[TrainingDetailsBaseModelList];
 
+/** Bases that train in the Training Studio only, so have no `trainingModelInfo` entry. Mirrors the
+ *  Studio catalog (apps/training-studio/src/lib/data/trainingModels.ts). A draft from one records the
+ *  base checkpoint's AIR as its `trainingDetails.baseModel` (the custom-base form) and no
+ *  `baseModelType`, which the in-app trainer has no value for. */
+const studioOnlyTrainingBases: {
+  ecosystem: string;
+  modelVariant?: string;
+  air: string;
+  baseModel: BaseModel;
+}[] = [
+  {
+    ecosystem: 'mossImage',
+    modelVariant: 'base',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    baseModel: 'MOSS Image',
+  },
+  {
+    ecosystem: 'mossImage',
+    modelVariant: 'sft',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+    baseModel: 'MOSS Image',
+  },
+  {
+    ecosystem: 'flux3klein',
+    air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+    baseModel: 'Flux.3 Klein-base',
+  },
+];
+
 export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   baseModel: BaseModel;
-  trainingBaseModelType: TrainingBaseModelType;
-  trainingKey: TrainingDetailsBaseModelList;
-  info: TrainingModelInfoEntry;
+  trainingBaseModelType?: TrainingBaseModelType;
+  trainingKey: NonNullable<TrainingDetailsObj['baseModel']>;
+  info?: TrainingModelInfoEntry;
 } {
   const { step } = getTrainingStep(workflow);
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
@@ -161,6 +190,17 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   }
   if (!match && input.ecosystem)
     match = entries.find(([, info]) => info.aiToolkit?.ecosystem === input.ecosystem);
+
+  if (!match) {
+    const studioBases = studioOnlyTrainingBases.filter(
+      (base) => base.ecosystem === input.ecosystem
+    );
+    const studioBase =
+      studioBases.find((base) => base.air === input.model) ??
+      studioBases.find((base) => base.modelVariant === input.modelVariant) ??
+      studioBases[0];
+    if (studioBase) return { baseModel: studioBase.baseModel, trainingKey: studioBase.air };
+  }
 
   if (!match)
     throw throwBadRequestError(
@@ -338,13 +378,14 @@ export async function createDraftModelFromWorkflow({
   // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
   // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the
   // orchestrator workflow, which stays the source of truth) with the length knobs carried from the step.
-  const mediaType = (trainingBaseModelTypesVideo as readonly string[]).includes(
-    trainingBaseModelType
-  )
-    ? 'video'
-    : (trainingBaseModelTypesAudio as readonly string[]).includes(trainingBaseModelType)
-    ? 'audio'
-    : 'image';
+  const mediaType =
+    trainingBaseModelType &&
+    (trainingBaseModelTypesVideo as readonly string[]).includes(trainingBaseModelType)
+      ? 'video'
+      : trainingBaseModelType &&
+        (trainingBaseModelTypesAudio as readonly string[]).includes(trainingBaseModelType)
+      ? 'audio'
+      : 'image';
 
   const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
 
@@ -355,7 +396,7 @@ export async function createDraftModelFromWorkflow({
     baseModelType: trainingBaseModelType,
     params: {
       engine: 'ai-toolkit',
-      ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
+      ecosystem: input.ecosystem ?? trainingInfo?.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
       ...(typeof input.steps === 'number' && { steps: input.steps }),
       ...(typeof input.epochs === 'number' && { epochs: input.epochs }),
