@@ -113,53 +113,81 @@ async function toCard(
 }
 
 /**
- * What a card's token stands for, for the moderator it was minted for: their claim (with its lease
- * expiry), or once the claim is gone, the vote they cast with it (no expiry). Null for anyone else's
- * token. The one owner check: the vote and the card's media both resolve through it.
+ * The item a card's token stands for, for the moderator it was minted for: through their claim, or
+ * once the claim is gone, through the vote they cast with it, so a repeat is told it already landed.
+ * Null for anyone else's token. The one owner check: the vote and the card's media both resolve
+ * through it.
  */
-async function resolveToken(
-  token: string,
-  userId: number
-): Promise<{ itemId: number; claimExpiresAt: Date | null } | null> {
+export async function itemForToken(token: string, userId: number): Promise<number | null> {
   const claim = await dbWrite
     .selectFrom('ScanLabelClaim')
-    .select(['itemId', 'expiresAt'])
+    .select('itemId')
     .where('token', '=', token)
     .where('userId', '=', userId)
     .executeTakeFirst();
-  if (claim) return { itemId: claim.itemId, claimExpiresAt: claim.expiresAt };
+  if (claim) return claim.itemId;
   const vote = await dbWrite
     .selectFrom('ScanLabelVote')
     .select('itemId')
     .where('claimToken', '=', token)
     .where('userId', '=', userId)
     .executeTakeFirst();
-  return vote ? { itemId: vote.itemId, claimExpiresAt: null } : null;
+  return vote?.itemId ?? null;
 }
 
-/** The item a card's token stands for, so a repeat vote from a second tab is told it already landed. */
-export async function itemForToken(token: string, userId: number): Promise<number | null> {
-  return (await resolveToken(token, userId))?.itemId ?? null;
+type VoteRefusal = Extract<VoteResult, { ok: false }>['reason'];
+
+/**
+ * Why `userId` cannot vote on the item now, or null when their vote would land. The rule castVote
+ * applies, and the card's media is served exactly while it holds.
+ */
+async function voteRefusal(
+  db: Db,
+  item: { votes: number; status: string } | undefined,
+  itemId: number,
+  userId: number,
+  now: Date
+): Promise<VoteRefusal | null> {
+  if (!item) return 'not-open';
+  // Before the other refusals, so a repeat vote from a second tab is told it already landed.
+  if (await hasVoted(db, itemId, userId)) return 'already-voted';
+  if (item.status !== 'open' || item.votes >= VOTES_PER_ITEM) return 'not-open';
+
+  const mine = await db
+    .selectFrom('ScanLabelClaim')
+    .select('expiresAt')
+    .where('itemId', '=', itemId)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  const holdsLiveLease = !!mine && mine.expiresAt > now;
+  if (!holdsLiveLease) {
+    const leases = await otherLiveLeases(db, itemId, userId, now);
+    if (item.votes + leases >= VOTES_PER_ITEM) return 'full';
+  }
+  return null;
 }
 
 export type CardMedia = { url: string; type: string; name: string | null };
 
-/**
- * The media of a card the moderator still holds: only through their own unexpired claim. A voted,
- * expired, unknown or another moderator's token has none.
- */
+/** The media of a card, served exactly while the moderator's vote on it would still land. */
 export async function mediaForToken(
   token: string,
   userId: number,
   now = new Date()
 ): Promise<CardMedia | null> {
-  const owner = await resolveToken(token, userId);
-  if (!owner?.claimExpiresAt || owner.claimExpiresAt <= now) return null;
+  const itemId = await itemForToken(token, userId);
+  if (itemId === null) return null;
+  const item = await dbWrite
+    .selectFrom('ScanLabelItem')
+    .select(['votes', 'status'])
+    .where('id', '=', itemId)
+    .executeTakeFirst();
+  if (await voteRefusal(dbWrite, item, itemId, userId, now)) return null;
   const row = await dbWrite
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
     .select(['img.url', 'img.type', 'img.name'])
-    .where('i.id', '=', owner.itemId)
+    .where('i.id', '=', itemId)
     .executeTakeFirst();
   return row ? { url: row.url, type: String(row.type), name: row.name } : null;
 }
@@ -338,23 +366,8 @@ export async function castVote(
       .where('id', '=', itemId)
       .forUpdate()
       .executeTakeFirst();
-    if (!item) return { ok: false, reason: 'not-open' };
-    // Before the other refusals, so a repeat vote from a second tab is told it already landed.
-    if (await hasVoted(trx, itemId, userId)) return { ok: false, reason: 'already-voted' };
-    if (item.status !== 'open' || item.votes >= VOTES_PER_ITEM)
-      return { ok: false, reason: 'not-open' };
-
-    const mine = await trx
-      .selectFrom('ScanLabelClaim')
-      .select('expiresAt')
-      .where('itemId', '=', itemId)
-      .where('userId', '=', userId)
-      .executeTakeFirst();
-    const holdsLiveLease = !!mine && mine.expiresAt > now;
-    if (!holdsLiveLease) {
-      const leases = await otherLiveLeases(trx, itemId, userId, now);
-      if (item.votes + leases >= VOTES_PER_ITEM) return { ok: false, reason: 'full' };
-    }
+    const refusal = await voteRefusal(trx, item, itemId, userId, now);
+    if (refusal || !item) return { ok: false, reason: refusal ?? 'not-open' };
 
     const inserted = await trx
       .insertInto('ScanLabelVote')

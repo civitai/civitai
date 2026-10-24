@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mediaForToken = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/scan-label.service', () => ({ mediaForToken }));
-vi.mock('$env/dynamic/public', () => ({ env: { PUBLIC_IMAGE_LOCATION: 'https://cdn.test' } }));
+const publicEnv = vi.hoisted(() => ({
+  PUBLIC_IMAGE_LOCATION: 'https://cdn.test' as string | undefined,
+}));
+vi.mock('$env/dynamic/public', () => ({ env: publicEnv }));
 
 const { GET } = await import('../+server');
 const { getEdgeUrl, getVideoUrls } = await import('$lib/media/edge-url');
@@ -35,6 +38,7 @@ function call({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  publicEnv.PUBLIC_IMAGE_LOCATION = 'https://cdn.test';
   mediaForToken.mockResolvedValue(IMAGE);
 });
 
@@ -190,11 +194,30 @@ describe('GET /images/scan-labels/media/[token]', () => {
     expect(new Headers(init.headers).get('accept')).toBe('image/avif,image/webp,*/*');
   });
 
-  it('refuses a stored full URL rather than fetching it from the server', async () => {
-    mediaForToken.mockResolvedValue({ ...IMAGE, url: 'https://elsewhere.test/x.png' });
+  // Keys getEdgeUrl passes through as they are, which would otherwise be fetched from here.
+  it.each(['https://elsewhere.test/x.png', 'httpfoo', 'blob-key', ''])(
+    'fetches nothing but the CDN (key %j)',
+    async (key) => {
+      mediaForToken.mockResolvedValue({ ...IMAGE, url: key });
+      const { res, fetch } = call();
+      expect((await res).status).toBe(404);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  );
+
+  it('fetches nothing when the CDN base is not configured', async () => {
+    publicEnv.PUBLIC_IMAGE_LOCATION = undefined;
+    mediaForToken.mockResolvedValue({ ...IMAGE, url: '//elsewhere.test/x' });
     const { res, fetch } = call();
     expect((await res).status).toBe(404);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps a path-like key on the CDN host', async () => {
+    mediaForToken.mockResolvedValue({ ...IMAGE, url: '//elsewhere.test/x' });
+    const { res, fetch } = call();
+    expect((await res).status).toBe(200);
+    expect(new URL(String((fetch.mock.calls[0] as unknown[])[0])).origin).toBe('https://cdn.test');
   });
 
   it('drops the length of an encoded response, which fetch has already decoded', async () => {

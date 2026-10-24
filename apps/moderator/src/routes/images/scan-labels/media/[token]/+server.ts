@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { z } from 'zod';
+import { env } from '$env/dynamic/public';
 import { getEdgeUrl, getVideoUrls } from '$lib/media/edge-url';
 import { mediaForToken, type CardMedia } from '$lib/server/scan-label.service';
 
@@ -31,6 +32,14 @@ const PASSED_HEADERS = ['content-type', 'content-length', 'accept-ranges', 'cont
 // The browser's own, so the CDN negotiates the format it would have for a direct load.
 const FORWARDED_REQUEST_HEADERS = ['range', 'accept'];
 
+const absolute = (value: string): URL | null => {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+};
+
 const empty = (status: number) =>
   new Response(null, { status, headers: { 'cache-control': 'private, no-store' } });
 
@@ -38,8 +47,12 @@ export const GET: RequestHandler = async ({ params, url, locals, request, fetch 
   if (!locals.user) return empty(401);
   const token = z.string().uuid().safeParse(params.token);
   const media = token.success ? await mediaForToken(token.data, locals.user.id) : null;
-  // A full URL is not a CDN key: getEdgeUrl would pass it through, and the pod would fetch it.
-  if (!media || /^[a-z][a-z0-9+.-]*:/i.test(media.url)) return empty(404);
+  if (!media) return empty(404);
+  // Only the CDN itself is ever fetched: a key getEdgeUrl passes through untouched, or a missing
+  // base, would otherwise send this request somewhere else, this app included.
+  const target = absolute(upstreamUrl(media, variantSchema.parse(url.searchParams.get('v'))));
+  const cdn = absolute(env.PUBLIC_IMAGE_LOCATION ?? '');
+  if (!target || !cdn || target.origin !== cdn.origin) return empty(404);
 
   const forwarded = new Headers();
   for (const name of FORWARDED_REQUEST_HEADERS) {
@@ -48,9 +61,7 @@ export const GET: RequestHandler = async ({ params, url, locals, request, fetch 
   }
   let upstream: Response;
   try {
-    upstream = await fetch(upstreamUrl(media, variantSchema.parse(url.searchParams.get('v'))), {
-      headers: forwarded,
-    });
+    upstream = await fetch(target.href, { headers: forwarded });
   } catch {
     return empty(502);
   }
