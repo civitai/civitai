@@ -520,7 +520,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
   renderRequest[SHELL_REQ_KEY] = shellRender?.route;
-  if (!shellRender) for (const name of SHELL_EDGE_HEADERS) appContext.ctx.res?.removeHeader(name);
+  if (!shellRender) {
+    const { res } = appContext.ctx;
+    for (const name of SHELL_EDGE_HEADERS) {
+      if (res?.getHeader?.(name) !== undefined) res?.removeHeader(name);
+    }
+  }
   if (shellRender) {
     // 🔴 The shell must not carry its URL. Next 16.3.1 writes this very query object into
     // `__NEXT_DATA__.query` and renders with this router (`render.js`), so both are emptied here,
