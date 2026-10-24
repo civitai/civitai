@@ -1102,9 +1102,9 @@ function buildDocStore(deps: DocStoreDeps) {
     try {
       client = await deps.db.connect();
     } catch (err) {
-      // Every connect() rejection — the pool's connection timeout among them — means no
-      // connection could be had: an availability fault, not a bug.
-      throw connectionUnavailable(err);
+      // An outage (the pool's connection timeout, a refused or dropped socket, too many
+      // connections, a server restarting) is retryable; misconfiguration is not.
+      throw isPgConnectionFault(err) ? connectionUnavailable(err) : connectConfigFault(err);
     }
     let broken = false;
     try {
@@ -1884,11 +1884,25 @@ function buildDocStore(deps: DocStoreDeps) {
 
 /**
  * SQLSTATEs that say the server cannot serve this connection: too_many_connections,
- * admin_shutdown, crash_shutdown, cannot_connect_now. All of class 08 (connection exception) is
- * matched by prefix in `isPgConnectionFault`.
+ * admin_shutdown, crash_shutdown, cannot_connect_now. Class 08 (connection exception) is
+ * matched by prefix in `isPgConnectionFault`, except 08P01 (below).
  */
 const PG_CONNECTION_SQLSTATES = new Set(['53300', '57P01', '57P02', '57P03']);
-/** Node socket errors a broken or unreachable database connection surfaces as. */
+/**
+ * 08P01 protocol_violation is retryable ONLY with one of these PgBouncer messages. Postgres also
+ * raises 08P01 for a malformed message from US (e.g. "bind message supplies 1 parameters, but
+ * prepared statement requires 2") — a bug, which must stay a 500 — and PgBouncer uses it for
+ * permanent refusals too ("unsupported startup parameter"). Trade-off: a PgBouncer outage
+ * message not listed here is a 500 rather than a retryable 503; widen the list when one is seen,
+ * rather than matching 08P01 by code alone.
+ */
+const PGBOUNCER_TRANSIENT_08P01 =
+  /server conn crashed\?|no more connections allowed|pgbouncer cannot connect to server|query_wait_timeout/i;
+/**
+ * Node socket errors a broken or unreachable database connection surfaces as. Name-resolution
+ * failures (ENOTFOUND, EAI_AGAIN) are deliberately absent: they are a wrong host far more often
+ * than a blip, and a retry loop would hide the misconfiguration.
+ */
 const SOCKET_FAULT_CODES = new Set([
   'ECONNRESET',
   'ECONNREFUSED',
@@ -1897,7 +1911,6 @@ const SOCKET_FAULT_CODES = new Set([
   'ETIMEDOUT',
   'EHOSTUNREACH',
   'ENETUNREACH',
-  'EAI_AGAIN',
 ]);
 /**
  * The driver's own connection-loss messages, which carry no code: pg's `Connection terminated`
@@ -1916,8 +1929,12 @@ function isPgConnectionFault(err: unknown): boolean {
   for (let depth = 0; depth < 5 && e && typeof e === 'object'; depth++) {
     const { code, message } = e as { code?: unknown; message?: unknown };
     if (typeof code === 'string') {
-      // A SQLSTATE is exactly five characters; class 08 is its first two.
-      if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) return true;
+      if (code === '08P01') {
+        if (typeof message === 'string' && PGBOUNCER_TRANSIENT_08P01.test(message)) return true;
+      } else if (PG_CONNECTION_SQLSTATES.has(code) || /^08[0-9A-Z]{3}$/.test(code)) {
+        // A SQLSTATE is exactly five characters; class 08 is its first two.
+        return true;
+      }
       if (SOCKET_FAULT_CODES.has(code)) return true;
     }
     if (typeof message === 'string' && CONNECTION_FAULT_MESSAGE.test(message)) return true;
@@ -1949,6 +1966,26 @@ function connectionUnavailable(err: unknown): unknown {
   return new DocStoreError('service_unavailable', `storage is temporarily unavailable: ${cause}`, {
     retryAfter: 1,
   });
+}
+
+/**
+ * A connect() rejection that is NOT a connection fault: a wrong password or auth rule (class 28),
+ * a missing database (3D000), a host that does not resolve, a pooler refusing a startup
+ * parameter, an ended pool. Retrying never helps, so it stays a 500 (rethrown as-is), logged
+ * under its own name so a broken deploy is not mistaken for an outage.
+ */
+function connectConfigFault(err: unknown): unknown {
+  logToAxiom(
+    {
+      name: 'app-blocks-doc-store-config-fault',
+      type: 'error',
+      error: err instanceof Error ? err.name : typeof err,
+      code: (err as { code?: unknown } | null)?.code,
+      message: err instanceof Error ? err.message : String(err),
+    },
+    'app-blocks'
+  ).catch(() => undefined);
+  return err;
 }
 
 function translatePgError(err: unknown, opts: { outcomeUnknown?: boolean } = {}): unknown {
