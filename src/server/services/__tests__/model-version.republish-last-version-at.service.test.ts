@@ -128,11 +128,7 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
     dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
 
-    await unpublishModelVersionById({
-      id: VERSION_ID,
-      enforceTakedown: false,
-      user: { id: OWNER_ID } as never,
-    });
+    await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
 
     expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({ id: MODEL_ID });
   });

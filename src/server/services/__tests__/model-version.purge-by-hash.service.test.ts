@@ -201,11 +201,7 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
   it('resolves the version hashes and purges the by-hash URL(s)', async () => {
     stubUnpublish();
 
-    await unpublishModelVersionById({
-      id: VERSION_ID,
-      enforceTakedown: false,
-      user: { id: USER_ID } as never,
-    });
+    await unpublishModelVersionById({ id: VERSION_ID, user: { id: USER_ID } as never });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
       where: { file: { modelVersionId: VERSION_ID } },

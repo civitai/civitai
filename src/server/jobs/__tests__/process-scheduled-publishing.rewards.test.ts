@@ -429,7 +429,11 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     await runJob();
 
     const sql = txQueryRaw.mock.calls.map(([strings]) => (strings as string[]).join(' '));
-    const lock = sql.findIndex((q) => q.includes('FOR NO KEY UPDATE OF mv'));
+    const lock = sql.findIndex(
+      (q) =>
+        q.includes('JOIN "Post" p ON p."modelVersionId" = mv.id') &&
+        q.includes('FOR NO KEY UPDATE OF mv, p')
+    );
     const publish = sql.findIndex((q) => q.includes('UPDATE "Post" p'));
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(publish).toBeGreaterThan(lock);

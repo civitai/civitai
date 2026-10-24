@@ -234,14 +234,15 @@ export const processScheduledPublishing = createJob(
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
-          // Lock the posts' versions first. A moderator's version takedown locks the version, then
-          // unpublishes its owner's live posts, which these are not yet: unlocked, a takedown in
-          // flight is unseen by the UPDATE below and its cascade misses the posts it publishes.
+          // Lock the posts' versions, then the posts, in the order a moderator's version takedown
+          // takes them before unpublishing its owner's live posts, which these are not yet: unlocked,
+          // a takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
+          // The posts are locked too, so none can move to another, unlocked, version meanwhile.
           await tx.$queryRaw`
             SELECT mv.id FROM "ModelVersion" mv
             JOIN "Post" p ON p."modelVersionId" = mv.id
             WHERE p.id IN (${Prisma.join(scheduledPostIds)})
-            FOR NO KEY UPDATE OF mv
+            FOR NO KEY UPDATE OF mv, p
           `;
 
           await tx.$queryRaw<{ id: number }[]>`
