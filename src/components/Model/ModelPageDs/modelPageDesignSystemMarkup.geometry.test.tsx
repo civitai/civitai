@@ -189,6 +189,9 @@ const { HeadManagerContext } = await import(
   'next/dist/shared/lib/head-manager-context.shared-runtime'
 );
 const { TrainedWords } = await import('~/components/TrainedWords/TrainedWords');
+const { DsTooltip } = await import('~/components/AppLayout/ShellDs/ContentDs');
+const { Tooltip } = await import('@mantine/core');
+const { createPortal } = await import('react-dom');
 
 const DESKTOP: Viewport = { width: 1280, height: 900 };
 const PHONE: Viewport = { width: 390, height: 844 };
@@ -598,5 +601,89 @@ describe('model page design-system markup: shared components elsewhere', () => {
     );
     expect(document.querySelectorAll('[data-civitai-ui]')).toHaveLength(0);
     expect(document.querySelectorAll('.mantine-Badge-root')).toHaveLength(2);
+  });
+});
+
+/**
+ * The Share button's shape: the tooltip's child holds a trigger AND a portaled descendant (the share
+ * popover is `withinPortal`). Mantine's tooltip follows the DOM, so the portal is "outside" it; the
+ * design-system tooltip must agree. Each arm runs the same script; the Mantine arm is the control
+ * that the expectations are Mantine's behaviour.
+ */
+describe('model page design-system markup: tooltip interactions', () => {
+  function Portaled() {
+    return createPortal(
+      <div
+        data-portaled
+        style={{ position: 'fixed', top: 400, left: 400, width: 120, height: 80, zIndex: 400 }}
+      />,
+      document.body
+    );
+  }
+  function Fixture({ ds }: { ds: boolean }) {
+    const child = (
+      <div style={{ display: 'inline-block', marginTop: 120, marginLeft: 120 }}>
+        <button type="button" data-trigger>
+          trigger
+        </button>
+        <Portaled />
+      </div>
+    );
+    return ds ? (
+      <DsTooltip label="Tip">{child}</DsTooltip>
+    ) : (
+      <Tooltip label="Tip" position="top" withArrow>
+        {child}
+      </Tooltip>
+    );
+  }
+  const el = (sel: string) => document.querySelector<HTMLElement>(sel) as HTMLElement;
+  const tip = () => document.querySelector<HTMLElement>('[role="tooltip"]');
+  const settled = async () => {
+    await nextLayout();
+    await new Promise((r) => setTimeout(r, 250)); // past Mantine's 100ms fade-out
+  };
+
+  test.each([false, true])(
+    'ds=%s: a portaled descendant neither keeps nor reopens it',
+    async (ds) => {
+      await renderAtViewport(
+        <>
+          <Fixture ds={ds} />
+          <div
+            data-pointer-park
+            style={{ position: 'fixed', top: 0, left: 0, width: 4, height: 4, zIndex: 10000 }}
+          />
+        </>,
+        DESKTOP
+      );
+      await userEvent.hover(el('[data-trigger]'));
+      await settled();
+      expect(tip()?.textContent, 'open on hover').toBe('Tip');
+
+      await userEvent.hover(el('[data-portaled]'));
+      await settled();
+      expect(tip(), 'closed once the pointer is in the portaled descendant').toBeNull();
+
+      await userEvent.hover(el('[data-pointer-park]'));
+      await userEvent.hover(el('[data-portaled]'));
+      await settled();
+      expect(tip(), 'not reopened by entering the portaled descendant').toBeNull();
+    }
+  );
+
+  test.each([false, true])('ds=%s: aria-describedby while open, Escape dismisses', async (ds) => {
+    await renderAtViewport(<Fixture ds={ds} />, DESKTOP);
+    const reference = el('[data-trigger]').parentElement as HTMLElement;
+    await userEvent.hover(el('[data-trigger]'));
+    await settled();
+    const bubble = tip();
+    expect(bubble?.id, 'bubble has an id').toBeTruthy();
+    expect(reference.getAttribute('aria-describedby')).toBe(bubble?.id);
+
+    await userEvent.keyboard('{Escape}');
+    await settled();
+    expect(tip(), 'Escape closes it').toBeNull();
+    expect(reference.hasAttribute('aria-describedby')).toBe(false);
   });
 });
