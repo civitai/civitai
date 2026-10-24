@@ -58,6 +58,7 @@ import {
   MODEL_VERSION_NOT_FOUND,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
+import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   createImage,
   createImageResources,
@@ -928,7 +929,7 @@ export const createPost = async ({
   const post =
     linkPendingChapter || guardedVersionId
       ? await dbWrite.$transaction(async (tx) => {
-          if (guardedVersionId && (await readDownedVersion(tx, guardedVersionId, true)))
+          if (guardedVersionId && (await readDownedVersion(tx, guardedVersionId, 'share')))
             throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
           const created = await insertPost(tx);
           if (linkPendingChapter)
@@ -995,31 +996,6 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
-/**
- * Whether this version or its model is taken down. With `lock`, both rows are read under a share
- * lock, so call it in the publish's transaction: a take-down already in flight is waited for and
- * seen, and one that starts later waits for the publish to commit, then its own cascade unpublishes
- * the post. The model is locked first, in the order a model take-down and publishModelById take them.
- */
-async function readDownedVersion(
-  tx: Prisma.TransactionClient,
-  modelVersionId: number,
-  lock: boolean
-) {
-  const forShare = lock ? Prisma.sql`FOR SHARE` : Prisma.empty;
-  const [model] = await tx.$queryRaw<{ downed: boolean }[]>`
-    SELECT status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}) AS downed
-    FROM "Model" WHERE id = (SELECT "modelId" FROM "ModelVersion" WHERE id = ${modelVersionId})
-    ${forShare}
-  `;
-  const [version] = await tx.$queryRaw<{ downed: boolean }[]>`
-    SELECT status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}) AS downed
-    FROM "ModelVersion" WHERE id = ${modelVersionId}
-    ${forShare}
-  `;
-  return !!model?.downed || !!version?.downed;
-}
-
 export const updatePost = async ({
   id,
   user,
@@ -1084,7 +1060,7 @@ export const updatePost = async ({
     // the lock. Taken before the post row: a take-down locks the version and then its posts, and the
     // other order deadlocks with it.
     const downed = target
-      ? await readDownedVersion(tx, target.modelVersionId, target.ownsModel)
+      ? await readDownedVersion(tx, target.modelVersionId, target.ownsModel ? 'share' : false)
       : false;
     const updated = await tx.post.update({
       where: { id, userId: !user.isModerator ? user.id : undefined },
