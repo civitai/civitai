@@ -1,7 +1,8 @@
 import { Text } from '@mantine/core';
-import { IconGitFork, IconGitMerge } from '@tabler/icons-react';
+import { IconGitFork, IconGitMerge, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { StorylineLaneBand } from '~/components/Storyline/storyline-lane-map.utils';
 import {
@@ -9,6 +10,7 @@ import {
   buildStorylineLaneList,
   buildStorylineLaneMap,
   laneColor,
+  storylineInsertableEdges,
   storylineMayBranch,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import {
@@ -54,9 +56,15 @@ const RATIO = 5 / 4;
 export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
   const compact = !!useIsMobile({ type: 'media' });
   const size = compact ? SIZES.compact : SIZES.wide;
+  const isOwner = storyline.viewerRole === 'owner';
+  // The owner's graph also says which edges refuse an insert, so a straight story reads it too.
   const { data: graph } = useStorylineGraph(storyline.id, {
-    enabled: storylineMayBranch(storyline),
+    enabled: storylineMayBranch(storyline) || isOwner,
   });
+  const insertable = useMemo(
+    () => (isOwner && graph ? storylineInsertableEdges(graph) : null),
+    [isOwner, graph]
+  );
   const map = useMemo(() => (graph ? buildStorylineLaneMap(graph) : null), [graph]);
   const canonById = useMemo(
     () => new Map(storyline.mainPath.map((c) => [c.chapterId, c])),
@@ -110,6 +118,24 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
       return band === undefined ? at(point) : { x: 0, y: band };
     });
   const canonRows = rows.flatMap((r, i) => (r.canon ? [i] : []));
+  const insertSlots = insertable
+    ? canonRows.flatMap((row, n) => {
+        const parent = rows[row].canon;
+        const child = rows[canonRows[n + 1]]?.canon;
+        const parentPostId = parent?.chapter.post?.id;
+        if (!parent || !child || !parentPostId) return [];
+        if (!insertable.has(`${parent.chapterId}:${child.chapterId}`)) return [];
+        return [
+          {
+            parentChapterId: parent.chapterId,
+            childChapterId: child.chapterId,
+            parentPostId,
+            // Halfway along the rail between one chapter's number and the next's.
+            y: (tops[row].top + 26 + tops[canonRows[n + 1]].top + 2) / 2,
+          },
+        ];
+      })
+    : [];
 
   return (
     <div data-testid="storyline-lanes">
@@ -154,6 +180,9 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
               ) : null
             )}
           </ol>
+          {insertSlots.map((slot) => (
+            <InsertHere key={`${slot.parentChapterId}:${slot.childChapterId}`} {...slot} />
+          ))}
         </div>
 
         {branchLanes > 0 && (
@@ -222,6 +251,50 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
           Showing the first {map.nodes.length} chapters.
         </Text>
       )}
+    </div>
+  );
+}
+
+function InsertHere({
+  parentChapterId,
+  childChapterId,
+  parentPostId,
+  y,
+}: {
+  parentChapterId: number;
+  childChapterId: number;
+  parentPostId: number;
+  y: number;
+}) {
+  const [active, setActive] = useState(false);
+  return (
+    <div
+      className="absolute left-0 z-10 flex h-8 w-9 -translate-y-1/2 items-center"
+      style={{ top: y }}
+      onPointerEnter={(e) => e.pointerType !== 'touch' && setActive(true)}
+      onPointerLeave={() => setActive(false)}
+      data-testid="storyline-insert-slot"
+    >
+      <button
+        type="button"
+        aria-label="Insert a chapter here"
+        onFocus={() => setActive(true)}
+        onBlur={() => setActive(false)}
+        onClick={() =>
+          openStorylineContinueModal({
+            parentPostId,
+            parentChapterId,
+            insertBeforeChapterId: childChapterId,
+          })
+        }
+        className={clsx(
+          'flex h-8 cursor-pointer items-center gap-1 rounded-full border border-solid border-[var(--mantine-color-blue-6)] bg-white px-1 py-0 text-xs font-bold text-[var(--mantine-color-blue-6)] dark:bg-dark-6',
+          !active && '[@media(hover:hover)]:opacity-0'
+        )}
+      >
+        <IconPlus size={16} aria-hidden />
+        {active && <span className="whitespace-nowrap pr-1.5">Insert here</span>}
+      </button>
     </div>
   );
 }

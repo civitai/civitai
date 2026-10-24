@@ -63,6 +63,29 @@ export const storylineMayBranch = (storyline: { chapterCount: number; mainPath: 
   storyline.chapterCount > storyline.mainPath.length;
 
 /**
+ * The edges (`parentChapterId:chapterId`) an owner may put a chapter into: not the way into a
+ * contributor's chapter from its first parent, which the server refuses because the placement
+ * names the chapter it continued. The first parent is the first edge listed for a chapter, the
+ * order the graph is read in. Chapter 1 has no parent, so no edge above it.
+ */
+export function storylineInsertableEdges(graph: {
+  chapters: { chapterId: number; viaPlacement: boolean }[];
+  edges: { chapterId: number; parentChapterId: number }[];
+}) {
+  const viaPlacement = new Set(
+    graph.chapters.flatMap((c) => (c.viaPlacement ? [c.chapterId] : []))
+  );
+  const seen = new Set<number>();
+  const insertable = new Set<string>();
+  for (const { chapterId, parentChapterId } of graph.edges) {
+    const first = !seen.has(chapterId);
+    seen.add(chapterId);
+    if (!(first && viaPlacement.has(chapterId))) insertable.add(`${parentChapterId}:${chapterId}`);
+  }
+  return insertable;
+}
+
+/**
  * The lane layout of a storyline graph, and for each chapter the name and link the chapters list
  * shows. Both follow the route the layout draws to the chapter, so the number in an untitled
  * chapter's name is the one the reader shows when the link opens it. Null without chapter 1.
