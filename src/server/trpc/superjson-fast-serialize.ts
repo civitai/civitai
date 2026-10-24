@@ -39,7 +39,7 @@ type Walked = { value: unknown; annotations: Annotations };
 
 // superjson `escapeKey` (pathstringifier).
 function escapeKey(key: string): string {
-  return key.replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+  return key; // MUTANT: no key escaping
 }
 
 const UNDEFINED_ANNOTATION = 'undefined';
@@ -66,7 +66,7 @@ function walk(object: unknown, seen: Set<object>): Walked {
   }
   if (object === null) return { value: null, annotations: undefined };
 
-  if (seen.has(object)) throw BAIL;
+  // MUTANT: no repeated-reference bail
   seen.add(object);
 
   if (object instanceof Date) {
