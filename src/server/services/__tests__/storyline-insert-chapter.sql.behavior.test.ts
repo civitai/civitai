@@ -27,9 +27,13 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
  * moved branch choices all live in SQL, which a mocked client cannot see.
  */
 
-const { addOwnerChapter, insertStorylineChapter, getStorylinePath, canonRouteWalk } = await import(
-  '~/server/services/storyline.service'
-);
+const {
+  addOwnerChapter,
+  canonRouteWalk,
+  getStorylinePath,
+  insertStorylineChapter,
+  setCanonChapter,
+} = await import('~/server/services/storyline.service');
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
 
 const migration = (name: string) =>
@@ -583,6 +587,102 @@ describe('a chapter add whose parent changes after its first read', () => {
       code: 'BAD_REQUEST',
       message: 'A removed chapter cannot be continued',
     });
+  });
+});
+
+describe('around the insert', () => {
+  it("gives the new chapter the child's place among the parent's ways on", async () => {
+    const { chapterId: X } = await insert(await post());
+    expect(
+      await rows(
+        `SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "parentChapterId" = $1
+         ORDER BY "createdAt", "chapterId"`,
+        [P]
+      )
+    ).toEqual([{ chapterId: X }, { chapterId: 30 }]);
+  });
+
+  it('reports a committed insert as done when the cached counts cannot be busted', async () => {
+    vi.mocked(bustFetchThroughCache).mockRejectedValueOnce(new Error('redis down'));
+    const { chapterId: X } = await insert(await post());
+    expect(await rows(`SELECT id FROM "StorylineChapter" WHERE id = $1`, [X])).toEqual([{ id: X }]);
+  });
+
+  it('turns losing the post to another chapter since the check into a 400', async () => {
+    w.storylineChapter.create.mockRejectedValueOnce(
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }) as never
+    );
+    await expect(insert(await post())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This post is already in a storyline',
+    });
+  });
+
+  // setCanonChapter reads the edge before its transaction; an insert can move it in between.
+  it('refuses to make the moved edge canon rather than leave the parent with no canon child', async () => {
+    w.storylineChapterEdge.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { chapterId: number; parentChapterId: number };
+    }) =>
+      (
+        await rows<{ parentChapterId: number; storylineId: number; removedAt: Date | null }>(
+          `SELECT e."parentChapterId", e."storylineId", c."removedAt" FROM "StorylineChapterEdge" e
+           JOIN "StorylineChapter" c ON c.id = e."chapterId"
+           WHERE e."chapterId" = $1 AND e."parentChapterId" = $2`,
+          [where.chapterId, where.parentChapterId]
+        )
+      ).map(({ removedAt, ...edge }) => ({ ...edge, chapter: { removedAt } }))) as never);
+    w.storylineChapterEdge.updateMany.mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: { parentChapterId: number; chapterId?: number; canon?: boolean };
+      data: { canon: boolean };
+    }) => ({
+      count:
+        (
+          await db.pg.query(
+            `UPDATE "StorylineChapterEdge" SET canon = $1 WHERE "parentChapterId" = $2
+             AND ($3::int IS NULL OR "chapterId" = $3) AND ($4::boolean IS NULL OR canon = $4)`,
+            [data.canon, where.parentChapterId, where.chapterId ?? null, where.canon ?? null]
+          )
+        ).affectedRows ?? 0,
+    })) as never);
+    w.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) => {
+      await db.pg.exec('BEGIN');
+      try {
+        const result = await fn(w);
+        await db.pg.exec('COMMIT');
+        return result;
+      } catch (error) {
+        await db.pg.exec('ROLLBACK');
+        throw error;
+      }
+    }) as never);
+    const insertedPost = await post();
+    // Held at its owner check, after it has read the edge and before its transaction.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let paused!: () => void;
+    const pausedAt = new Promise<void>((resolve) => (paused = resolve));
+    const findStoryline = w.storyline.findUnique.getMockImplementation()!;
+    w.storyline.findUnique.mockImplementationOnce((async (args: never) => {
+      paused();
+      await released;
+      return findStoryline(args);
+    }) as never);
+
+    const setting = setCanonChapter({ chapterId: C, parentChapterId: P, userId: OWNER });
+    await pausedAt;
+    const { chapterId: X } = await insert(insertedPost);
+    release();
+
+    await expect(setting).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'That chapter no longer follows this one',
+    });
+    expect(await mainRoute()).toEqual([1, 2, P, X, C, 5, 6, 60]);
   });
 });
 

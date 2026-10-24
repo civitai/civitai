@@ -778,6 +778,7 @@ describe('authorization', () => {
       w.storylineChapterEdge.findMany.mockResolvedValue([
         { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
       ] as never);
+      w.storylineChapterEdge.updateMany.mockResolvedValue({ count: 1 } as never);
     });
 
     it('moves canon for the owner: clears the old one, then sets the new one', async () => {

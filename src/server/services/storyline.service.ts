@@ -1142,10 +1142,12 @@ export async function setCanonChapter({
       where: { parentChapterId: edge.parentChapterId, canon: true },
       data: { canon: false },
     });
-    await tx.storylineChapterEdge.updateMany({
+    const { count } = await tx.storylineChapterEdge.updateMany({
       where: { chapterId, parentChapterId: edge.parentChapterId },
       data: { canon: true },
     });
+    // An insert can have moved the edge since it was read; rolls back the line above with it.
+    if (!count) throw throwBadRequestError('That chapter no longer follows this one');
   });
 }
 
@@ -1308,7 +1310,11 @@ export async function insertStorylineChapter({
     // The whole storyline, as `linkStorylineChapter` does: the depth shift below must not run
     // beside a link, another insert, or a chapter add (`lockStorylineForAdd`).
     await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE`;
-    await lockParentChapter(tx, parentChapterId);
+    await tx.$queryRaw`
+      SELECT id FROM "StorylineChapter"
+      WHERE id = ${parentChapterId} AND "storylineId" = ${storylineId}
+      FOR NO KEY UPDATE
+    `;
     const [edge] = await tx.$queryRaw<InsertEdgeRow[]>`
       SELECT e.canon,
         e."parentChapterId" = (
@@ -1341,19 +1347,30 @@ export async function insertStorylineChapter({
       authorId: ownerId,
       maxNsfwLevel: storylineCeiling(edge),
     });
-    const { id } = await tx.storylineChapter.create({
-      data: { storylineId, postId, userId: ownerId, depth: edge.parentDepth + 1 },
-      select: { id: true },
-    });
+    const { id } = await tx.storylineChapter
+      .create({
+        data: { storylineId, postId, userId: ownerId, depth: edge.parentDepth + 1 },
+        select: { id: true },
+      })
+      .catch((error: unknown) => {
+        // The post became a chapter elsewhere since it was checked.
+        if (isUniqueViolation(error))
+          throw throwBadRequestError('This post is already in a storyline');
+        throw error;
+      });
     // Moved, not recreated: its createdAt keeps the child's parent order, so a child whose first
-    // parent was `parent` has the new chapter as its first parent.
+    // parent was `parent` has the new chapter as its first parent. The new edge takes the same
+    // createdAt, so the new chapter has the child's place among the parent's ways on.
     await tx.$executeRaw`
       UPDATE "StorylineChapterEdge" SET "parentChapterId" = ${id}, canon = true
       WHERE "parentChapterId" = ${parentChapterId} AND "chapterId" = ${childChapterId}
     `;
-    await tx.storylineChapterEdge.create({
-      data: { storylineId, chapterId: id, parentChapterId, canon: edge.canon },
-    });
+    await tx.$executeRaw`
+      INSERT INTO "StorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId", canon, "createdAt")
+      SELECT "storylineId", ${id}, ${parentChapterId}, ${edge.canon}, "createdAt"
+      FROM "StorylineChapterEdge"
+      WHERE "parentChapterId" = ${id} AND "chapterId" = ${childChapterId}
+    `;
     if (edge.firstParent)
       await tx.$executeRaw`
         WITH RECURSIVE below AS (
@@ -1382,7 +1399,8 @@ export async function insertStorylineChapter({
     return id;
   });
 
-  await bustFetchThroughCache(forkCountsKey(parentChapterId));
+  // The insert has committed; stale counts until the entry expires beat reporting it as failed.
+  await bustFetchThroughCache(forkCountsKey(parentChapterId)).catch(() => undefined);
   return { chapterId };
 }
 
