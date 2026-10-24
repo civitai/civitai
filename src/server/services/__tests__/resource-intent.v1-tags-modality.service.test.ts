@@ -283,7 +283,7 @@ describe('🔴 without a baseModel, the tags choose only an ecosystem that gener
   });
 });
 
-describe("with a caller's baseModel the tags choose no ecosystem (invariant guards)", () => {
+describe("with a caller's baseModel the tags choose no ecosystem", () => {
   it("the caller's ecosystem gates by its compatible base models, and the row says so", async () => {
     const result = await getResourceIntent({ prompt: 'zephyr', baseModel: 'Illustrious' }, V1);
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });

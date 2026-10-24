@@ -208,7 +208,7 @@ beforeEach(() => {
 const versionIds = (r: { suggestions: { versionId: number }[] }) =>
   r.suggestions.map((s) => s.versionId);
 
-describe('🔴 v1_tags without a baseModel: the tag-chosen ecosystem gates by its compatible base models', () => {
+describe("🔴 v1_tags: an add-on ecosystem, tag-chosen or the caller's, gates by its compatible base models", () => {
   it("fills the list from add-ons published under a sibling base model's name", async () => {
     const result = await getResourceIntent({ prompt: 'zephyr' }, CTX);
     expect(result).toMatchObject({ degraded: false, arm: 'v1_tags', v1Fallback: false });
