@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import type { Stripe } from 'stripe';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationCategory } from '~/server/common/enums';
@@ -427,7 +428,8 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
 
   // Moving the holder UP to the gifted tier is the one thing acceptance itself does, and it
   // happens once rather than per month. proration_behavior 'none' means Stripe raises no
-  // invoice for the change — the accept click is what consents to the new recurring price.
+  // invoice for the change. The price they paid before is kept so they go back to it once the
+  // gifted months run out (revertGiftTierChange): a gift never raises what someone pays.
   // Only for monthly billing: swapping a yearly price for a monthly one restarts their billing.
   if (live && isBilledMonthly(subscription)) {
     const holderTier =
@@ -436,10 +438,23 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
       const stripeSub = await stripe.subscriptions.retrieve(subscription.id);
       if (!TERMINAL_STATUSES.includes(stripeSub.status)) {
         const priceId = await getTierPriceIdForCurrency(gift.tier, stripeSub.currency);
-        await stripe.subscriptions.update(stripeSub.id, {
-          items: [{ id: stripeSub.items.data[0].id, price: priceId }],
-          proration_behavior: 'none',
+        // Saved first: a member moved up with nothing recorded is never moved back.
+        await dbWrite.membershipGift.update({
+          where: { id: gift.id },
+          data: { revertPriceId: stripeSub.items.data[0].price.id },
         });
+        try {
+          await stripe.subscriptions.update(stripeSub.id, {
+            items: [{ id: stripeSub.items.data[0].id, price: priceId }],
+            proration_behavior: 'none',
+          });
+        } catch (error) {
+          await dbWrite.membershipGift.update({
+            where: { id: gift.id },
+            data: { revertPriceId: null },
+          });
+          throw error;
+        }
       }
     }
   }
@@ -817,33 +832,184 @@ export async function honorGiftResidualsForUser({ userId }: { userId: number }) 
  * price for a month we owe them.
  */
 export async function sweepGiftArming({ limit = 200 }: { limit?: number } = {}) {
+  const { candidates, succeeded } = await sweepHolders({
+    stage: 'sweep',
+    where: { status: MembershipGiftStatus.Active, monthsRemaining: { gt: 0 }, armedCouponId: null },
+    limit,
+    run: async (userId) => (await armNextGiftMonth({ userId })).armed,
+  });
+  return { candidates, armed: succeeded };
+}
+
+async function sweepHolders({
+  stage,
+  where,
+  limit,
+  run,
+}: {
+  stage: string;
+  where: Prisma.MembershipGiftWhereInput;
+  limit: number;
+  run: (userId: number) => Promise<boolean>;
+}) {
   const pending = await dbWrite.membershipGift.findMany({
-    where: {
-      status: MembershipGiftStatus.Active,
-      monthsRemaining: { gt: 0 },
-      armedCouponId: null,
-    },
+    where,
     select: { holderId: true },
     distinct: ['holderId'],
     take: limit,
   });
 
-  let armed = 0;
+  let succeeded = 0;
   for (const { holderId } of pending) {
-    const result = await armNextGiftMonth({ userId: holderId }).catch((error) => {
-      log({
-        type: 'error',
-        stage: 'sweep',
-        userId: holderId,
-        message: `arming failed: ${String(error)}`,
-      });
-      return null;
+    const ok = await run(holderId).catch((error) => {
+      log({ type: 'error', stage, userId: holderId, message: String(error) });
+      return false;
     });
-    if (result?.armed) armed++;
+    if (ok) succeeded++;
   }
 
-  await log({ type: 'info', stage: 'sweep', candidates: pending.length, armed });
-  return { candidates: pending.length, armed };
+  await log({ type: 'info', stage, candidates: pending.length, succeeded });
+  return { candidates: pending.length, succeeded };
+}
+
+// Every period end gets several hourly runs inside this window, so one failed run or missed hour
+// does not bill a renewal at the gifted price. The price must change before Stripe raises it.
+const TIER_REVERT_WINDOW_HOURS = 6;
+
+/**
+ * Put a holder whom a gift moved up a tier back on the price they paid before, once no gift
+ * still owes them months at that tier. Lands just before the period after the last gifted
+ * month ends, so they keep the gifted tier for all of it and are never billed for it.
+ */
+export async function revertGiftTierChange({ userId }: { userId: number }) {
+  const stripe = await getServerStripe();
+  if (!stripe) return { reverted: false as const, reason: 'stripe-unavailable' };
+
+  const pending = await dbWrite.membershipGift.findMany({
+    where: { holderId: userId, revertPriceId: { not: null } },
+    orderBy: [{ acceptedAt: 'asc' }],
+    select: { id: true, tier: true, revertPriceId: true },
+  });
+  if (!pending.length) return { reverted: false as const, reason: 'nothing-to-revert' };
+
+  const clearPending = async (reason: string) => {
+    await clearGiftTierReverts({ userId });
+    await log({ type: 'info', stage: 'revert', userId, reverted: false, reason });
+    return { reverted: false as const, reason };
+  };
+
+  const subscription = await getGreenSubscription(userId);
+  if (
+    !subscription ||
+    TERMINAL_STATUSES.includes(subscription.status) ||
+    subscription.product.provider !== PaymentProvider.Stripe ||
+    !isBilledMonthly(subscription)
+  )
+    return clearPending('no-monthly-subscription');
+
+  // Gifts can stack (bronze → silver gift → gold gift); the latest moved them to the tier they
+  // are on, the earliest holds what they paid before any of it.
+  const holderTier = (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
+  if (holderTier !== pending[pending.length - 1].tier) return clearPending('plan-changed');
+
+  const owed = await dbWrite.membershipGift.findMany({
+    where: { holderId: userId, status: MembershipGiftStatus.Active, monthsRemaining: { gt: 0 } },
+    select: { id: true, tier: true },
+  });
+  if (owed.some((g) => tierRank(g.tier) >= tierRank(holderTier)))
+    return { reverted: false as const, reason: 'months-owed' };
+
+  const revertBy = dayjs().add(TIER_REVERT_WINDOW_HOURS, 'hour');
+  if (dayjs(subscription.currentPeriodEnd).isAfter(revertBy))
+    return { reverted: false as const, reason: 'not-yet' };
+
+  const stripeSub = await stripe.subscriptions.retrieve(subscription.id);
+  if (TERMINAL_STATUSES.includes(stripeSub.status)) return clearPending('no-monthly-subscription');
+  if (stripeSub.pending_update) return { reverted: false as const, reason: 'plan-change-pending' };
+
+  const originalPriceId = pending[0].revertPriceId as string;
+  const original = await getRevertPrice({ priceId: originalPriceId, currency: stripeSub.currency });
+  // A gift still owed above the original tier was accepted as cash off the gifted plan's bills;
+  // moved onto the original plan it would shrink to free months of a cheaper one. Its own tier
+  // free is what it is worth, and the move back to the original price waits for it.
+  const stepTo = original.tier
+    ? owed
+        .filter((g) => tierRank(g.tier) > tierRank(original.tier as string))
+        .sort((a, b) => tierRank(b.tier) - tierRank(a.tier))[0]
+    : undefined;
+  const priceId = stepTo
+    ? await getTierPriceIdForCurrency(stepTo.tier, stripeSub.currency)
+    : original.priceId;
+
+  // A month armed for a lower-tier gift was priced against the plan being left.
+  const releasedGiftMonth = await releaseArmedGiftMonth({ userId });
+  try {
+    await stripe.subscriptions.update(stripeSub.id, {
+      items: [{ id: stripeSub.items.data[0].id, price: priceId }],
+      proration_behavior: 'none',
+      ...(releasedGiftMonth ? { coupon: '' } : {}),
+    });
+  } catch (error) {
+    if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
+    throw error;
+  }
+
+  await clearGiftTierReverts({ userId });
+  if (stepTo)
+    await dbWrite.membershipGift.update({
+      where: { id: stepTo.id },
+      data: { revertPriceId: originalPriceId },
+    });
+  await invalidateSubscriptionCaches(userId);
+  await refreshSession(userId, { caller: 'membership' });
+
+  await log({
+    type: 'info',
+    stage: 'revert',
+    userId,
+    reverted: true,
+    priceId,
+    steppedToGiftId: stepTo?.id,
+    giftIds: pending.map((g) => g.id),
+  });
+  return { reverted: true as const, priceId };
+}
+
+// Stripe refuses an archived price on a subscription, so a price retired since the gift was
+// accepted falls back to that tier's current one.
+async function getRevertPrice({ priceId, currency }: { priceId: string; currency: string }) {
+  const price = await dbWrite.price.findUnique({
+    where: { id: priceId },
+    select: { active: true, product: { select: { metadata: true } } },
+  });
+  const tier = (price?.product.metadata as SubscriptionProductMetadata | undefined)?.tier;
+  if (!price || price.active || !tier) return { priceId, tier };
+  return { priceId: await getTierPriceIdForCurrency(tier, currency), tier };
+}
+
+/** The holder chose a plan themselves, so nothing a gift did is ours to undo any more. */
+export async function clearGiftTierReverts({ userId }: { userId: number }) {
+  await dbWrite.membershipGift.updateMany({
+    where: { holderId: userId, revertPriceId: { not: null } },
+    data: { revertPriceId: null },
+  });
+}
+
+export async function sweepGiftTierReverts({ limit = 200 }: { limit?: number } = {}) {
+  const revertBy = dayjs().add(TIER_REVERT_WINDOW_HOURS, 'hour').toDate();
+  const { candidates, succeeded } = await sweepHolders({
+    stage: 'revert-sweep',
+    // Bounded to periods ending soon, so holders still mid-gift cannot crowd out the limit.
+    where: {
+      revertPriceId: { not: null },
+      holder: {
+        subscriptions: { some: { buzzType: 'green', currentPeriodEnd: { lte: revertBy } } },
+      },
+    },
+    limit,
+    run: async (userId) => (await revertGiftTierChange({ userId })).reverted,
+  });
+  return { candidates, reverted: succeeded };
 }
 
 /**

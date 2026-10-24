@@ -108,8 +108,10 @@ import {
   recordGiftMonthConsumed,
   releaseArmedGiftMonth,
   restoreArmedGiftMonth,
+  revertGiftTierChange,
   revokeMembershipGift,
   sweepGiftArming,
+  sweepGiftTierReverts,
 } from '~/server/services/membership-gift.service';
 
 const plan = (tier: string, usd: number) => ({
@@ -472,6 +474,19 @@ describe('acceptMembershipGift', () => {
     expect(args.items[0].price).toBe('price_gold_usd');
     // Anything other than 'none' bills them on the spot for a tier change they were given.
     expect(args.proration_behavior).toBe('none');
+  });
+
+  it('keeps the price the holder paid before, to go back to once the gift is used', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, tier: 'gold' });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'bronze' }));
+    const bronzeSub = stripeSub();
+    bronzeSub.items.data[0].price.id = 'price_bronze_usd';
+    mockStripe.subscriptions.retrieve.mockResolvedValue(bronzeSub);
+
+    await acceptMembershipGift({ giftId: 'gift_1', userId: 2 });
+
+    const [{ data }] = mockDbWrite.membershipGift.update.mock.calls[0];
+    expect(data.revertPriceId).toBe('price_bronze_usd');
   });
 
   it('does NOT move a holder who is already on a higher tier', async () => {
@@ -939,6 +954,187 @@ describe('sweepGiftArming', () => {
       .mockResolvedValue([]);
 
     await expect(sweepGiftArming()).resolves.toMatchObject({ candidates: 2 });
+  });
+});
+
+describe('revertGiftTierChange', () => {
+  // Not a price getPlans lists: the holder kept an older bronze price than today's.
+  const movedUp = { id: 'gift_1', tier: 'gold', revertPriceId: 'price_bronze_legacy' };
+  const endingSoon = (overrides = {}) => ({
+    ...dbSub({ tier: 'gold' }),
+    currentPeriodEnd: dayjs().add(30, 'minute').toDate(),
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockDbWrite.price.findUnique.mockResolvedValue({
+      active: true,
+      product: { metadata: { tier: 'bronze' } },
+    });
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub());
+  });
+
+  it('puts the holder back on the price they paid, without an invoice, before the renewal', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([movedUp]).mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({ reverted: true });
+
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.items[0].price).toBe('price_bronze_legacy');
+    expect(args.proration_behavior).toBe('none');
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalledWith({
+      where: { holderId: 2, revertPriceId: { not: null } },
+      data: { revertPriceId: null },
+    });
+  });
+
+  it('waits while a gift still owes months at the gifted tier', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([movedUp])
+      .mockResolvedValueOnce([{ tier: 'gold' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({ reason: 'months-owed' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('does not wait on a gift below the original tier, and clears its armed month in the same call', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([movedUp])
+      .mockResolvedValueOnce([{ tier: 'bronze' }]);
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({
+      id: 'gift_2',
+      armedCouponId: 'gift_gift_2_m1',
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({ reverted: true });
+
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.coupon).toBe('');
+    expect(args.items[0].price).toBe('price_bronze_legacy');
+    expect(mockStripe.coupons.del).toHaveBeenCalledWith('gift_gift_2_m1');
+  });
+
+  it('moves a holder still owed a mid-tier gift onto that tier, and back to their price after it', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([movedUp])
+      .mockResolvedValueOnce([{ id: 'gift_silver', tier: 'silver' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+
+    await revertGiftTierChange({ userId: 2 });
+
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.items[0].price).toBe('price_silver_usd');
+    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith({
+      where: { id: 'gift_silver' },
+      data: { revertPriceId: 'price_bronze_legacy' },
+    });
+  });
+
+  it('points the gift back at its month and keeps the revert when Stripe refuses the change', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([movedUp]).mockResolvedValueOnce([]);
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({
+      id: 'gift_2',
+      armedCouponId: 'gift_gift_2_m1',
+    });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+    mockStripe.subscriptions.update.mockRejectedValue(new Error('stripe down'));
+
+    await expect(revertGiftTierChange({ userId: 2 })).rejects.toThrow('stripe down');
+
+    expect(mockDbWrite.membershipGift.update.mock.calls.at(-1)?.[0]).toMatchObject({
+      where: { id: 'gift_2' },
+      data: { armedCouponId: 'gift_gift_2_m1' },
+    });
+    expect(mockDbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not land on top of an upgrade held for payment', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([movedUp]).mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+    mockStripe.subscriptions.retrieve.mockResolvedValue({
+      ...stripeSub(),
+      pending_update: { expires_at: 1 },
+    });
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({
+      reason: 'plan-change-pending',
+    });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('leaves the holder on the gifted tier until the period after the gift is about to end', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([movedUp]).mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({ reason: 'not-yet' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('drops the revert when the holder has since changed plan themselves', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([movedUp]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      endingSoon({
+        product: { id: 'prod_silver', provider: 'Stripe', metadata: { tier: 'silver' } },
+      })
+    );
+
+    expect(await revertGiftTierChange({ userId: 2 })).toMatchObject({ reason: 'plan-changed' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.membershipGift.updateMany).toHaveBeenCalled();
+  });
+
+  it('goes back to what they paid before the FIRST of several stacked gifts', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([
+        { id: 'gift_silver', tier: 'silver', revertPriceId: 'price_bronze_usd' },
+        { id: 'gift_gold', tier: 'gold', revertPriceId: 'price_silver_usd' },
+      ])
+      .mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+
+    await revertGiftTierChange({ userId: 2 });
+
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.items[0].price).toBe('price_bronze_usd');
+  });
+
+  it('uses the tier’s current price in their currency when the old one was archived', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([{ ...movedUp, revertPriceId: 'price_bronze_eur_old' }])
+      .mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(endingSoon());
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ currency: 'eur' }));
+    mockDbWrite.price.findUnique.mockResolvedValue({
+      active: false,
+      product: { metadata: { tier: 'bronze' } },
+    });
+
+    await revertGiftTierChange({ userId: 2 });
+
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.items[0].price).toBe('price_bronze_eur');
+  });
+});
+
+describe('sweepGiftTierReverts', () => {
+  it('only looks at holders whose period ends soon, and keeps going past one that fails', async () => {
+    mockDbWrite.membershipGift.findMany
+      .mockResolvedValueOnce([{ holderId: 2 }, { holderId: 3 }])
+      .mockRejectedValueOnce(new Error('db blew up'))
+      .mockResolvedValueOnce([{ id: 'gift_3', tier: 'gold', revertPriceId: 'price_bronze_usd' }])
+      .mockResolvedValueOnce([]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      ...dbSub({ tier: 'gold' }),
+      currentPeriodEnd: dayjs().add(30, 'minute').toDate(),
+    });
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub());
+
+    expect(await sweepGiftTierReverts()).toEqual({ candidates: 2, reverted: 1 });
+    const { where } = mockDbWrite.membershipGift.findMany.mock.calls[0][0];
+    expect(where.holder.subscriptions.some.currentPeriodEnd.lte).toBeInstanceOf(Date);
   });
 });
 

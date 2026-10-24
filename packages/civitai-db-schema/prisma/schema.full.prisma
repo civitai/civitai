@@ -741,6 +741,10 @@ model MembershipGift {
   armedCouponId String?
   armedAt       DateTime?
 
+  // The price the holder paid before accepting this gift moved them up a tier. They go back to
+  // it once the gifted months run out; cleared when that happens or when they change plan.
+  revertPriceId String?
+
   fulfilledAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

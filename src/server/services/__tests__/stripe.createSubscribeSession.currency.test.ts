@@ -448,6 +448,23 @@ describe('createSubscribeSession — a gifted month armed for the plan being lef
     });
   });
 
+  it('drops any pending move back from a gift, because the member chose this plan', async () => {
+    await changePlan();
+
+    expect(dbMock.dbWrite.membershipGift.updateMany).toHaveBeenCalledWith({
+      where: { holderId: USER.id, revertPriceId: { not: null } },
+      data: { revertPriceId: null },
+    });
+  });
+
+  it('keeps the pending move back when the plan change fails', async () => {
+    mockSubscriptionsUpdate.mockRejectedValue(new Error('card_declined'));
+
+    await expect(changePlan()).rejects.toThrow('card_declined');
+
+    expect(dbMock.dbWrite.membershipGift.updateMany).not.toHaveBeenCalled();
+  });
+
   it('leaves the call as it was for a member with no month armed', async () => {
     dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue(null);
 
