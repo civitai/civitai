@@ -468,7 +468,8 @@
     ],
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
-      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch"
+      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch",
+      "next@16.3.1": "patches/next@16.3.1.patch"
     }
   }
 }
