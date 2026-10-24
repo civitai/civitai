@@ -202,6 +202,17 @@ function Reader({ placement }: { placement: 'toolbar' | 'mobile' }) {
   );
 }
 
+// The harness loads no Tailwind. Embla measures its slides, and unstyled ones are not 100% wide,
+// so without these rules it snaps to the wrong image (CI run 40122629075 landed on chapter 2).
+const layout = document.createElement('style');
+layout.textContent = `
+.flex{display:flex}.flex-1{flex:1 1 0%}.min-h-0{min-height:0}.h-full{height:100%}
+.items-stretch{align-items:stretch}.justify-stretch{justify-content:stretch}
+.overflow-hidden{overflow:hidden}.relative{position:relative}
+.flex-\\[0_0_100\\%\\]{flex:0 0 100%;min-width:0}
+`;
+document.head.appendChild(layout);
+
 async function openReader(storylineChapter: number, width: number) {
   await page.viewport(width, 800);
   const asPath = `/images/70?storylineChapter=${storylineChapter}`;
