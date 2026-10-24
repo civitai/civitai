@@ -263,7 +263,7 @@ export const processScheduledPublishing = createJob(
             .filter((item) => !!item.extras?.hasEarlyAccess)
             .map(({ id }) => id);
 
-          await tx.$executeRaw`
+          const published = await tx.$queryRaw<{ id: number }[]>`
             -- Update scheduled versions published
             UPDATE "ModelVersion" mv 
             SET status = 'Published', availability = 'Public'
@@ -272,14 +272,20 @@ export const processScheduledPublishing = createJob(
               AND mv."modelId" = m.id
               AND mv.status = 'Scheduled'
               AND mv."publishedAt" <= ${now}
-              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
+              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+            RETURNING mv.id;
           `;
+          // Only what that statement published: it re-checks the status, so a version a moderator
+          // took down after the select above drops out here, and the early-access publish, which
+          // writes by id, never sees it.
+          const publishedIds = new Set(published.map(({ id }) => id));
+          const earlyAccessPublished = earlyAccess.filter((id) => publishedIds.has(id));
 
-          if (earlyAccess.length) {
+          if (earlyAccessPublished.length) {
             // The only downside to this failing is that the model version will be published with no early access.
             // Initially, I think this will be OK.
             await publishModelVersionsWithEarlyAccess({
-              modelVersionIds: earlyAccess,
+              modelVersionIds: earlyAccessPublished,
               continueOnError: true,
               tx,
             });

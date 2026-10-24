@@ -96,6 +96,19 @@ describe('publishModelVersionHandler — publishable state', () => {
 
     expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
   });
+
+  // This check runs before the write transaction; the service re-checks under a lock for everyone
+  // a takedown binds, so a takedown landing in between is still refused.
+  it('has the service re-check under a lock for an owner, not for a moderator', async () => {
+    await call('Unpublished', 'Published');
+    await call('Unpublished', 'Published', true);
+
+    expect(
+      mockPublishModelVersionById.mock.calls.map(
+        ([args]) => (args as { enforceTakedown?: boolean }).enforceTakedown
+      )
+    ).toEqual([true, false]);
+  });
 });
 
 describe('publishModelVersionHandler — unpublish stamp', () => {
@@ -164,6 +177,20 @@ describe('publishPrivateModelVersionHandler — the same publishable state', () 
   // Negative control. This handler does a great deal after the guard, so rather than mocking all of
   // it, the assertion is that the call gets PAST the guard — it reads the version's files, and
   // whatever it fails on afterwards is not an authorization refusal.
+  it('has the version write re-check under a lock for an owner, not for a moderator', async () => {
+    dbMock.dbWrite.modelFile.findMany.mockResolvedValue([
+      { id: 1, metadata: { selectedEpochUrl: 'https://example.com/epoch' } },
+    ]);
+    await callPrivate('Unpublished', 'Published').catch(() => undefined);
+    await callPrivate('Unpublished', 'Published', true).catch(() => undefined);
+
+    expect(
+      mockUpdateModelVersionById.mock.calls.map(
+        ([args]) => (args as { enforceTakedown?: boolean }).enforceTakedown
+      )
+    ).toEqual([true, false]);
+  });
+
   it('lets an ordinary publish through the guard', async () => {
     dbMock.dbWrite.modelFile.findMany.mockResolvedValue([]);
 

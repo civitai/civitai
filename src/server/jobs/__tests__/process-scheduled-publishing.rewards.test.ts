@@ -73,6 +73,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 const mockLogToAxiom = loggingMock.logToAxiom;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -387,6 +388,33 @@ describe('processScheduledPublishing :: lastVersionAt', () => {
       `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
     );
     expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
+  });
+});
+
+describe('processScheduledPublishing :: early access after a takedown', () => {
+  // The early-access publish writes by id with no status check. A version a moderator took down
+  // after the job selected it drops out of the status-checked UPDATE, and must not be republished.
+  it('publishes early access only for versions the status-checked UPDATE published', async () => {
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        $executeRaw: vi.fn(),
+        $queryRaw: vi.fn(async (strings: string[]) =>
+          strings.join(' ').includes('RETURNING mv.id') ? [{ id: 101 }] : []
+        ),
+      })
+    );
+    stubReads({
+      versions: [
+        { id: 101, userId: 10, extras: { modelId: 11, hasEarlyAccess: true } },
+        { id: 102, userId: 10, extras: { modelId: 12, hasEarlyAccess: true } },
+      ] as never,
+    });
+
+    await runJob();
+
+    expect(publishModelVersionsWithEarlyAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ modelVersionIds: [101] })
+    );
   });
 });
 

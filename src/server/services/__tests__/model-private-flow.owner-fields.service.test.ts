@@ -443,7 +443,10 @@ describe('publishPrivateModel', () => {
       meta: null,
       ...overrides,
     });
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 1 }]);
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 1 }]);
+    // The in-transaction re-read: the version is still Published, the model is not taken down.
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? [{ id: 1 }] : []) as never);
     mockDbWrite.post.findMany.mockResolvedValue([{ modelVersionId: 1 }]);
     mockDbRead.image.findMany.mockResolvedValue([]);
   }
@@ -459,6 +462,44 @@ describe('publishPrivateModel', () => {
     const meta = updateData().meta as Record<string, unknown>;
     expect(meta.cannotPromote).toBe(true);
     expect(meta).not.toHaveProperty('restoreCannotPromote');
+  });
+
+  // The checks above run before the write transaction; a takedown can land in between.
+  const takenDownMeanwhile = ({ model = false, versions = [{ id: 1 }] }) =>
+    mockDbWrite.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? versions : [{ downed: model }]) as never);
+
+  it('refuses a version taken down after it was read, and writes nothing', async () => {
+    mockPrivateModel({});
+    takenDownMeanwhile({ versions: [] });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses the owner when the model was taken down after it was read', async () => {
+    mockPrivateModel({});
+    takenDownMeanwhile({ model: true });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('still lets a moderator publish a model taken down after it was read', async () => {
+    mockPrivateModel({});
+    takenDownMeanwhile({ model: true });
+
+    await expect(publish(true)).resolves.toEqual({ versionIds: [1], held: false });
+  });
+
+  it("republishes only the owner's posts", async () => {
+    mockPrivateModel({});
+
+    await publish(false);
+    const republish = mockDbWrite.$executeRaw.mock.calls
+      .map(([strings]) => (strings as string[]).join('?'))
+      .find((sql) => sql.includes('UPDATE "Post"'));
+    expect(republish).toMatch(/"userId" = \?/);
   });
 
   it('reads the stored row from the primary, never the replica', async () => {

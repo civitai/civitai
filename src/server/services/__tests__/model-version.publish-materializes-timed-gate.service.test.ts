@@ -236,3 +236,52 @@ describe('publish materializes a timed gate from the publishedAt the version car
     expect(dbMock.dbWrite.paidAccess.update).not.toHaveBeenCalled();
   });
 });
+
+describe('publishing a version a moderator took down after the caller checked', () => {
+  // The handler's status check runs before the write transaction; a takedown can land in between,
+  // so the write re-reads the model and version under a lock first.
+  beforeEach(() => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ downed: true }] as never);
+    dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      name: 'v1',
+      baseModel: 'Illustrious',
+      publishedAt: null,
+      meta: {},
+      model: {
+        userId: OWNER_ID,
+        type: 'LORA',
+        name: 'model',
+        availability: 'Public',
+        publishedAt: new Date('2026-01-01'),
+        nsfw: false,
+        meta: {},
+      },
+    });
+    dbMock.dbWrite.paidAccess.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ model: { meta: {} } });
+  });
+
+  it('publishModelVersionById refuses the owner and writes nothing', async () => {
+    await expect(
+      publishModelVersionById({ id: VERSION_ID, enforceTakedown: true })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('publishModelVersionById lets a moderator through', async () => {
+    await publishModelVersionById({ id: VERSION_ID }).catch(() => undefined);
+    expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
+  });
+
+  it('updateModelVersionById refuses the owner and writes nothing', async () => {
+    await expect(
+      updateModelVersionById({
+        id: VERSION_ID,
+        data: { status: 'Published', publishedAt: new Date() },
+        enforceTakedown: true,
+      })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.modelVersion.update).not.toHaveBeenCalled();
+  });
+});
