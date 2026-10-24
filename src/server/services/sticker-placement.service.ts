@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
+import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import {
@@ -730,6 +733,26 @@ async function keptOffPlacementIds(
   );
 }
 
+const stickerPlacementRowSelect = {
+  id: true,
+  targetId: true,
+  placerId: true,
+  ownerId: true,
+  status: true,
+  amount: true,
+  // Beside `amount` rather than derived from it. Zero is what a free row
+  // carries, but it is not what makes it free — and the owner controls the
+  // copy that depends on the answer, so an inference is a wrong sentence
+  // about money rather than a missing one.
+  free: true,
+  data: true,
+  createdAt: true,
+} satisfies Prisma.PlacementSelect;
+
+type StickerPlacementRow = Prisma.PlacementGetPayload<{
+  select: typeof stickerPlacementRowSelect;
+}>;
+
 /**
  * The rows behind the listing: approved placements on these images, plus the
  * pending ones the viewer is a party to.
@@ -746,7 +769,15 @@ async function readStickerPlacementRows({
 }: {
   imageIds: number[];
   viewerId?: number;
-}) {
+}): Promise<StickerPlacementRow[]> {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return (await listStickerPlacementRows(kyselyRead, {
+      surface: SURFACE,
+      targetType: TARGET_TYPE,
+      targetIds: imageIds,
+      viewerId,
+    })) as StickerPlacementRow[];
+
   return dbRead.placement.findMany({
     where: {
       surface: SURFACE,
@@ -766,26 +797,10 @@ async function readStickerPlacementRows({
           : []),
       ],
     },
-    select: {
-      id: true,
-      targetId: true,
-      placerId: true,
-      ownerId: true,
-      status: true,
-      amount: true,
-      // Beside `amount` rather than derived from it. Zero is what a free row
-      // carries, but it is not what makes it free — and the owner controls the
-      // copy that depends on the answer, so an inference is a wrong sentence
-      // about money rather than a missing one.
-      free: true,
-      data: true,
-      createdAt: true,
-    },
+    select: stickerPlacementRowSelect,
     orderBy: { createdAt: 'asc' },
   });
 }
-
-type StickerPlacementRow = Awaited<ReturnType<typeof readStickerPlacementRows>>[number];
 
 /** Each row with its `data` parsed ONCE, for both the kept-off check and the listing. */
 function parseRows<T extends { data: Prisma.JsonValue }>(rows: T[]) {
@@ -889,15 +904,21 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
 
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      status: 'approved',
-    },
-    select: { id: true, targetId: true, status: true, data: true },
-  });
+  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? ((await listApprovedPlacementRows(kyselyRead, {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetIds: imageIds,
+      })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[])
+    : await dbRead.placement.findMany({
+        where: {
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          targetId: { in: imageIds },
+          status: 'approved',
+        },
+        select: { id: true, targetId: true, status: true, data: true },
+      });
 
   return countApprovedPlacements(rows, await keptOffPlacementIds(keptOffInputs(parseRows(rows))));
 }

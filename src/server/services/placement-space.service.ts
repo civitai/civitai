@@ -1,5 +1,14 @@
 import type { Prisma } from '@prisma/client';
+import {
+  countReservedFreeSlots,
+  getChapterPlacementTarget,
+  getImagePlacementTarget,
+  getModelPlacementTarget,
+  listPlacementSpacesFor,
+} from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
@@ -35,7 +44,18 @@ import {
  * charges, and a replica that is seconds behind an owner turning their space off
  * would let a placement through against a decision already made.
  */
-async function resolveImageTarget(imageId: number) {
+async function resolveImageTarget(imageId: number, useKysely: boolean) {
+  if (useKysely) {
+    const row = await getImagePlacementTarget(kyselyWrite, imageId);
+    if (!row) throw throwBadRequestError('placement: that image no longer exists');
+    return {
+      ownerId: row.userId,
+      postId: row.postId,
+      mediaType: stickerMediaTypeOf(row.type),
+      ownerUsername: row.username ?? null,
+    };
+  }
+
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
     // The username rides along on the lookup that was already happening. It is
@@ -61,7 +81,13 @@ async function resolveImageTarget(imageId: number) {
 }
 
 /** A model's space is configured on its owner's account only; there is no model or post level. */
-async function resolveModelTarget(modelId: number) {
+async function resolveModelTarget(modelId: number, useKysely: boolean) {
+  if (useKysely) {
+    const row = await getModelPlacementTarget(kyselyWrite, modelId);
+    if (!row) throw throwBadRequestError('placement: that model no longer exists');
+    return { ownerId: row.userId, postId: null, ownerUsername: row.username ?? null };
+  }
+
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { userId: true, user: { select: { username: true } } },
@@ -83,22 +109,41 @@ async function resolveModelTarget(modelId: number) {
  * Its space cascades storyline -> the creator's account -> surface default,
  * with no post or image level.
  */
-async function resolveChapterTarget(postId: number) {
-  const chapter = await dbWrite.storylineChapter.findUnique({
-    where: { postId },
-    select: {
-      removedAt: true,
-      storyline: {
-        select: {
-          id: true,
-          userId: true,
-          status: true,
-          tosViolation: true,
-          user: { select: { username: true } },
+async function readChapterTarget(postId: number, useKysely: boolean) {
+  if (!useKysely)
+    return dbWrite.storylineChapter.findUnique({
+      where: { postId },
+      select: {
+        removedAt: true,
+        storyline: {
+          select: {
+            id: true,
+            userId: true,
+            status: true,
+            tosViolation: true,
+            user: { select: { username: true } },
+          },
         },
       },
-    },
-  });
+    });
+
+  const row = await getChapterPlacementTarget(kyselyWrite, postId);
+  return row
+    ? {
+        removedAt: row.removedAt,
+        storyline: {
+          id: row.storylineId,
+          userId: row.storylineUserId,
+          status: row.storylineStatus,
+          tosViolation: row.storylineTosViolation,
+          user: { username: row.username },
+        },
+      }
+    : null;
+}
+
+async function resolveChapterTarget(postId: number, useKysely: boolean) {
+  const chapter = await readChapterTarget(postId, useKysely);
   // A taken-down storyline or a removed chapter is not a target at all:
   // refusing here, where the space is resolved, keeps every read of it (the
   // contributor's price, the submit) from showing it as open.
@@ -116,7 +161,8 @@ async function resolveChapterTarget(postId: number) {
 
 const resolveTarget = (
   targetType: PlacementTargetType,
-  targetId: number
+  targetId: number,
+  useKysely: boolean
 ): Promise<{
   ownerId: number;
   postId: number | null;
@@ -126,9 +172,9 @@ const resolveTarget = (
   mediaType?: StickerMediaType;
   ownerUsername: string | null;
 }> => {
-  if (targetType === 'model') return resolveModelTarget(targetId);
-  if (targetType === 'post') return resolveChapterTarget(targetId);
-  return resolveImageTarget(targetId);
+  if (targetType === 'model') return resolveModelTarget(targetId, useKysely);
+  if (targetType === 'post') return resolveChapterTarget(targetId, useKysely);
+  return resolveImageTarget(targetId, useKysely);
 };
 
 export type ResolvedPlacementSpace = {
@@ -211,6 +257,8 @@ export type ResolvedPlacementSpace = {
  *
  * Paid placements are not counted. The two counters are independent, so a
  * fully-booked paid image still shows its free slots as available.
+ *
+ * ⚠️ The display path's Kysely twin, `countReservedFreeSlots`, must change with it.
  */
 export const reservedFreeSlots = (
   /**
@@ -236,6 +284,18 @@ export const reservedFreeSlots = (
   });
 
 /**
+ * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
+ * `reservedFreeSlots(tx, …)` under its lock.
+ */
+const displayedReservedFreeSlots = (
+  useKysely: boolean,
+  target: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
+) =>
+  useKysely
+    ? countReservedFreeSlots(kyselyRead, { ...target, statuses: FREE_SLOT_HOLDING_STATUSES })
+    : reservedFreeSlots(dbRead, target);
+
+/**
  * The space that governs one target, with the cascade already applied.
  *
  * The effective price is computed at read on purpose: a membership lapse or a
@@ -254,23 +314,27 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
+  const target = { surface, targetType, targetId };
+  // Once per resolution, so every read below takes the same path.
+  const useKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS);
   const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await resolveTarget(
     targetType,
-    targetId
+    targetId,
+    useKysely
   );
 
-  const rows = await dbWrite.placementSpace.findMany({
-    where: {
-      surface,
-      OR: [
-        ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
-        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
-        ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
-        { entityType: 'user', entityId: ownerId },
-      ],
-    },
-    select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
-  });
+  const levels = [
+    ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
+    ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
+    ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
+    { entityType: 'user', entityId: ownerId },
+  ];
+  const rows = useKysely
+    ? await listPlacementSpacesFor(kyselyWrite, { surface, levels })
+    : await dbWrite.placementSpace.findMany({
+        where: { surface, OR: levels },
+        select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
+      });
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
     const row = rows.find((candidate) => candidate.entityType === entityType);
@@ -325,8 +389,7 @@ export async function resolvePlacementSpaceFor({
   // Skipped when there is no capacity to reserve against. That is rarer than it
   // looks: the default and the bottom band are both 1, so it fires only for a
   // creator who has explicitly closed their slots.
-  const reserved =
-    freeSlots > 0 ? await reservedFreeSlots(dbRead, { surface, targetType, targetId }) : 0;
+  const reserved = freeSlots > 0 ? await displayedReservedFreeSlots(useKysely, target) : 0;
 
   return {
     ownerId,

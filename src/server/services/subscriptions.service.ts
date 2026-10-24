@@ -1,6 +1,9 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
+import { listUserSubscriptionRows } from '@civitai/db-queries/placement';
 import { dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { inStripeKeyMode, stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
   subscriptionProductMetadataSchema,
@@ -343,8 +346,22 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
  * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
  */
 export const getCapTier = async (userId: number): Promise<string | null> => {
-  const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
+  const subscriptions = (await getCapTierSubscriptions(userId)).filter((s) => !s.isBadState);
   return pickHighestTier(subscriptions)?.tier ?? null;
+};
+
+/**
+ * `getAllUserSubscriptions`, read through Kysely under `kysely-placement-reads`. The primary on
+ * both paths: a cap decides what a write may charge. Only `getCapTier` takes this path.
+ */
+const getCapTierSubscriptions = async (userId: number) => {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS)))
+    return getAllUserSubscriptions(userId);
+  const rows = (await listUserSubscriptionRows(kyselyWrite, {
+    userId,
+    excludedStatuses: activeSubscriptionStatuses.notIn,
+  })) as UserSubscriptionRow[];
+  return rows.map(toUserSubscription).filter((sub) => sub !== null);
 };
 
 /**

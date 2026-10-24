@@ -1,5 +1,11 @@
 import type { Prisma } from '@prisma/client';
+import {
+  countFreePlacementsOnTarget,
+  countFreePlacementsSince,
+} from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import {
@@ -104,7 +110,8 @@ type SpaceTarget = {
  *
  * Written once because the claim decides on it and the UI displays it. Scope it
  * by status later in one of two copies and the surface offers a placement the
- * mutation refuses.
+ * mutation refuses. ⚠️ The display path's Kysely twin (`countFreePlacementsSince`
+ * in @civitai/db-queries/placement, under `kysely-placement-reads`) must change with it.
  */
 const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
   client.placement.count({
@@ -120,7 +127,8 @@ const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
  * on the same image and one should not consume the other — and the daily
  * allowance already makes that pair cost two days, so it raises no farm rate.
  *
- * Shared with the display path for the same reason as the daily count.
+ * Shared with the display path for the same reason as the daily count, and
+ * twinned the same way (`countFreePlacementsOnTarget`).
  */
 const countFreePlacementsOn = (
   client: PlacementClient,
@@ -303,7 +311,9 @@ export async function createFreePlacement({
  */
 export async function getFreePlacementAllowance({ placerId }: { placerId: number }) {
   const dayStart = freePlacementDayStart();
-  const used = await countFreePlacementsToday(dbRead, placerId);
+  const used = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? await countFreePlacementsSince(kyselyRead, { placerId, since: dayStart })
+    : await countFreePlacementsToday(dbRead, placerId);
 
   return {
     used,
@@ -320,4 +330,6 @@ export async function getFreePlacementAllowance({ placerId }: { placerId: number
  * never the thing a mutation decides on.
  */
 export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) =>
-  (await countFreePlacementsOn(dbRead, input)) > 0;
+  ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    ? await countFreePlacementsOnTarget(kyselyRead, input)
+    : await countFreePlacementsOn(dbRead, input)) > 0;

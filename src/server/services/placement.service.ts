@@ -1,5 +1,11 @@
 import { z } from 'zod';
+import {
+  countPendingPlacementsBySurface,
+  getUserPlacementScore,
+} from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -142,12 +148,7 @@ export async function placementPriceRange(
   config?: PlacementConfig
 ): Promise<PlacementPriceRange> {
   const [scoreRow, capTier, resolvedConfig] = await Promise.all([
-    // Cast through `numeric`: `::int` raises on a fractional stored total rather
-    // than truncating it. Text that isn't a number at all still raises.
-    dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
-      FROM "User" WHERE id = ${userId}
-    `,
+    readUserScore(userId),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
@@ -157,6 +158,17 @@ export async function placementPriceRange(
   ]);
 
   return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+async function readUserScore(userId: number) {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return getUserPlacementScore(kyselyRead, userId);
+  // Cast through `numeric`: `::int` raises on a fractional stored total rather
+  // than truncating it. Text that isn't a number at all still raises.
+  return dbRead.$queryRaw<{ score: number | null }[]>`
+    SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+    FROM "User" WHERE id = ${userId}
+  `;
 }
 
 function toPlacementPriceRange(
@@ -261,16 +273,24 @@ const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
  * slot and still expires, so counting it is the honest answer.
  */
 export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
-  const rows = await dbRead.placement.groupBy({
-    by: ['surface'],
-    where: { ownerId, status: 'pending' },
-    _count: { _all: true },
-  });
-
-  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+  const bySurface = new Map(await readPendingCounts(ownerId));
 
   return {
     sticker: bySurface.get('sticker') ?? 0,
     remix: bySurface.get('remixGallery') ?? 0,
   };
+}
+
+async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return (await countPendingPlacementsBySurface(kyselyRead, ownerId)).map((row) => [
+      row.surface,
+      row.count,
+    ]);
+  const rows = await dbRead.placement.groupBy({
+    by: ['surface'],
+    where: { ownerId, status: 'pending' },
+    _count: { _all: true },
+  });
+  return rows.map((row) => [row.surface, row._count._all]);
 }
