@@ -15,7 +15,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { postReportUrl, userLookupUrl, userReportUrl } from '$lib/entity-url';
+  import { postReportUrl, userReportUrl } from '$lib/entity-url';
   import {
     getReportItemUrl,
     reportDetailEntries,
@@ -33,8 +33,18 @@
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
-    import { sidebarCounts } from '$lib/sidebar-counts.svelte';
-  import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
+  import { sidebarCounts, sidebarLastActioned } from '$lib/sidebar-counts.svelte';
+  import {
+    URGENT_REPORT_COUNT,
+    ageSeverityClass,
+    queueSeverityClass,
+  } from '$lib/queue-thresholds';
+  import { needsAttention, type AttentionItem } from '$lib/needs-attention';
+  import { minuteClock } from '$lib/minute-clock.svelte';
+  import ShortAge from '$lib/components/ShortAge.svelte';
+  import NeedsAttentionPanel from './NeedsAttentionPanel.svelte';
+  import { keepLast } from '$lib/keep-last.svelte';
+  import type { ModPresencePayload } from './api/mod-presence/types';
   import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -102,7 +112,7 @@
   };
 
   // Retool's "Urgent Content (N)" banner — a pile-up on one item is a live incident, not a long queue,
-  // stated at the top because the table is below three screens of queue counts.
+  // stated at the top because the table sits below Needs attention.
   //
   // Counted server-side over the whole window, not over the page on screen: paging past the worst ones
   // is exactly when this must not go quiet.
@@ -131,6 +141,29 @@
         })
       : SSR_PENDING
   );
+
+  const lastActioned = sidebarLastActioned();
+  const clock = minuteClock();
+
+  const oldest = $derived(
+    browser
+      ? fetch('/api/queue-oldest').then((r): Promise<Record<string, string>> => {
+          if (!r.ok) throw new Error(`queue-oldest ${r.status}`);
+          return r.json();
+        })
+      : SSR_PENDING
+  );
+
+  // Refetched on the clock: "working now" is the one panel whose claim expires. keepLast so the
+  // refetch does not blank it every minute.
+  const presence = keepLast(() => {
+    if (!browser) return null;
+    void clock.now;
+    return fetch('/api/mod-presence').then((r): Promise<ModPresencePayload> => {
+      if (!r.ok) throw new Error(`mod-presence ${r.status}`);
+      return r.json();
+    });
+  });
 
   onMount(loadMostReported);
 
@@ -229,92 +262,110 @@
     await loadMostReported();
   };
 
-  // `count: null` = nothing to count (no countKey), which is not the same as an empty queue — the
-  // empty-row collapsing below keys off that difference.
-  type Item = {
-    path: string;
-    label: string;
-    informational?: boolean;
-    count: number | null;
-    countKey?: string;
-  };
-  type Section = { label: string; items: Item[]; total: number };
-
   const loading = $derived(counts.value === null);
 
-  const severity = (item: Item) =>
-    item.countKey ? queueSeverityClass(item.countKey, item.count) : null;
-
-  // Oldest first: the queue nobody has touched is the one worth seeing, not the busiest.
+  // Newest first, as the title reads; stale queues surface in Needs attention instead.
   const recentlyWorked = (b: Board) =>
-    [...b.activity].sort((a, c) => new Date(a.at).getTime() - new Date(c.at).getTime());
+    [...b.activity].sort((a, c) => new Date(c.at).getTime() - new Date(a.at).getTime());
 
   // Refetches the board rather than invalidating: the swept count lives behind /api/moderation-board,
   // which `load` does not touch.
   const onSweep = new FormState({ onSuccess: () => (boardVersion += 1) });
 
-  const ago = (iso: string) => {
-    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-    if (mins < 60) return `${Math.max(0, mins)}m ago`;
-    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
-    return `${Math.round(mins / 1440)}d ago`;
-  };
 
-  const sections = $derived.by(() => {
-    const toItem = (link: (typeof data.nav)[number]): Item => ({
+  // Every queue the viewer can open, as one list: a tabs group counts as one queue, as in the sidebar.
+  const attentionItems = $derived.by((): AttentionItem[] => {
+    const countFor = (key: string | undefined) => (key ? (counts.value?.[key] ?? null) : null);
+    const toItem = (link: (typeof data.nav)[number], section: string): AttentionItem => ({
+      section,
       path: navHref(link) as string,
       label: link.label,
       informational: link.informational,
-      // `?? null`, not `?? 0`: a key the counts endpoint omitted is one it could not measure, and 0
-      // both reads as "empty" and hides the row under the quiet-queue filter.
-      count: link.tabs
-        ? navCount(link, (key) => (key ? (counts.value?.[key] ?? null) : null))
-        : link.countKey
-          ? (counts.value?.[link.countKey] ?? null)
-          : null,
+      count: link.tabs ? navCount(link, countFor) : countFor(link.countKey),
       countKey: link.countKey,
     });
-    const byCount = (a: Item, b: Item) => (b.count ?? -1) - (a.count ?? -1);
-
-    const grouped: Section[] = [];
-    const loose: Item[] = [];
-    for (const link of data.nav) {
-      if (link.children) {
-        const items = link.children.filter((c) => c.path && !c.external).map(toItem).sort(byCount);
-        grouped.push({
-          label: link.label,
-          items,
-          total: items.reduce((sum, i) => sum + (i.informational ? 0 : (i.count ?? 0)), 0),
-        });
-      } else if (link.path && link.path !== '/') {
-        loose.push(toItem(link));
-      }
-    }
-    if (loose.length) grouped.push({ label: 'Pages', items: loose, total: 0 });
-    return grouped;
+    return data.nav.flatMap((link) =>
+      link.children
+        ? link.children.filter((c) => c.path && !c.external).map((c) => toItem(c, link.label))
+        : link.path && link.path !== '/'
+          ? [toItem(link, 'Pages')]
+          : []
+    );
   });
+  const attention = $derived(loading ? null : needsAttention(attentionItems, lastActioned.value));
 
-  let expanded = $state<Record<string, boolean>>({});
-  const quietCount = (section: Section) => section.items.filter((i) => i.count === 0).length;
-  const visibleItems = (section: Section) =>
-    expanded[section.label] ? section.items : section.items.filter((i) => i.count !== 0);
+  // One row per catch-up queue: when it was last caught up, and for the queues that count arrivals,
+  // how many since. Never-caught-up queues first, then oldest.
+  type CatchUpRow = {
+    task: string;
+    label: string;
+    lastUpdate: string | null;
+    lastUpdateBy: string | null;
+    sweep: Board['sweeps'][number] | null;
+  };
+  const catchUpRows = (b: Board): CatchUpRow[] => {
+    const rows = new Map<string, CatchUpRow>(
+      b.lag.map((t) => [
+        t.task,
+        {
+          task: t.task,
+          label: SWEEP_LABELS[t.task] ?? t.label,
+          lastUpdate: t.lastUpdate,
+          lastUpdateBy: t.lastUpdateBy,
+          sweep: null,
+        },
+      ])
+    );
+    for (const s of b.sweeps) {
+      const row = rows.get(s.task);
+      if (row) row.sweep = s;
+      else
+        rows.set(s.task, {
+          task: s.task,
+          label: SWEEP_LABELS[s.task] ?? s.task,
+          lastUpdate: null,
+          lastUpdateBy: null,
+          sweep: s,
+        });
+    }
+    const at = (r: CatchUpRow) => (r.lastUpdate ? Date.parse(r.lastUpdate) : -Infinity);
+    return [...rows.values()].sort((x, y) => at(x) - at(y));
+  };
+
+  const MOST_REPORTED_PREVIEW = 5;
+  let showAllReported = $state(false);
+  const reportedRows = $derived(
+    reported && !showAllReported ? reported.slice(0, MOST_REPORTED_PREVIEW) : reported
+  );
 
   const format = (n: number) => n.toLocaleString();
 </script>
 
-<header class="page-header">
-  <h1>Dashboard</h1>
-  <p class="flex flex-wrap items-center gap-1.5">
-    <span>Welcome back, {name}.</span>
-    {#each data.roles as role (role)}
-      <span class="rounded bg-blue-8/15 px-2 py-0.5 text-xs font-medium text-blue-4">{role}</span>
-    {/each}
-  </p>
+<header class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+  <h1 class="m-0 text-xl font-semibold text-white">Dashboard</h1>
+  <span class="sr-only">Signed in as {name}.</span>
+  {#each data.roles as role (role)}
+    <span class="rounded bg-blue-8/15 px-2 py-0.5 text-xs font-medium text-blue-4">{role}</span>
+  {/each}
+  {#if presence.value}
+    {@const p = presence.value}
+    {@const working = p.working.filter((w) => w.active).length}
+    <span class="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-dark-2">
+      <span>You today: <strong class="text-white tabular-nums">{p.today.actions}</strong> actions</span>
+      <span class="flex items-center gap-1.5">
+        <span
+          class="size-2 rounded-full {working ? 'bg-green-400' : 'bg-dark-3'}"
+          aria-hidden="true"
+        ></span>
+        {working} working now
+      </span>
+    </span>
+  {/if}
 </header>
 
 {#if denied}
   <div
-    class="mt-8 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+    class="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
     role="alert"
   >
     You don't have access to <code>{denied}</code>, so you were sent here. An admin can grant it on the
@@ -328,7 +379,7 @@
 {#if urgentCount > 0}
   <a
     href="#most-reported"
-    class="mt-8 flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
+    class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
   >
     <span>
       <strong>Urgent content ({urgentCount})</strong>
@@ -339,14 +390,90 @@
   </a>
 {/if}
 
-<!-- Above the queue board, not below it: a pile-up on one item is a live incident and the counts
-     are a backlog. The mod team asked for the table itself to lead, not a banner pointing at it. -->
-<h2 id="most-reported" class="mt-8 mb-1 scroll-mt-4 text-base font-semibold text-white">
-  Most reported
-</h2>
-<p class="mb-3 text-sm text-dark-2">
-  Pending reports from the last week with more than one reporter, worst first — this is the same data
-  the urgent-content banner counts, at {URGENT_REPORT_COUNT}+ reports. Already-blocked images are excluded. Resolving closes the <em>report</em> — it does not remove the content.
+<div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+  <NeedsAttentionPanel
+    rows={attention}
+    lastActioned={lastActioned.value}
+    {oldest}
+    now={clock.now}
+  />
+
+  <div class="flex flex-col gap-4">
+    <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+      <h2 class="mb-1 text-sm font-semibold text-white">Working now</h2>
+      <p class="mb-3 text-xs text-dark-2">
+        Green: an action in the last 15 minutes. Otherwise the last moderators on.
+      </p>
+      {#if presence.value}
+        {@const p = presence.value}
+        {#if p.working.length === 0}
+          <p class="text-sm text-dark-2">No moderator activity in the last two days.</p>
+        {:else}
+          <ul class="space-y-1.5 text-sm">
+            {#each p.working as w (w.username ?? w.at)}
+              <li class="flex items-baseline gap-2">
+                <span
+                  class="size-2 shrink-0 self-center rounded-full {w.active
+                    ? 'bg-green-400'
+                    : 'bg-dark-3'}"
+                  title={w.active ? 'Working now' : 'Not in the last 15 minutes'}
+                  aria-hidden="true"
+                ></span>
+                <span class="text-dark-0">{w.username ?? 'unknown'}</span>
+                <span class="min-w-0 flex-1 truncate text-dark-2">{w.label}</span>
+                <ShortAge at={w.at} now={clock.now} class="text-xs text-dark-2" />
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {:else if presence.failed}
+        <p class="text-sm text-red-300">Could not load who is working.</p>
+      {:else}
+        <div class="h-16 animate-pulse rounded bg-dark-5"></div>
+      {/if}
+    </section>
+
+    <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+      <h2 class="mb-3 text-sm font-semibold text-white">You today</h2>
+      {#if presence.value}
+        {@const p = presence.value}
+        <dl class="grid grid-cols-3 gap-2">
+          {#each [{ label: 'actions', value: p.today.actions }, { label: 'reports actioned', value: p.today.actioned }, { label: 'reports dismissed', value: p.today.dismissed }] as stat (stat.label)}
+            <div class="rounded-lg bg-dark-5 p-2.5">
+              <dd class="text-xl font-semibold text-white tabular-nums">{stat.value}</dd>
+              <dt class="text-xs text-dark-2">{stat.label}</dt>
+            </div>
+          {/each}
+        </dl>
+        <p class="mt-2 text-xs text-dark-2">Since midnight UTC.</p>
+      {:else if presence.failed}
+        <p class="text-sm text-red-300">Could not load your activity.</p>
+      {:else}
+        <div class="h-16 animate-pulse rounded bg-dark-5"></div>
+      {/if}
+    </section>
+  </div>
+</div>
+
+<!-- Below Needs attention: at full height it kept every queue off screen. -->
+<header class="mt-6 mb-1 flex flex-wrap items-baseline justify-between gap-2">
+  <h2 id="most-reported" class="scroll-mt-4 text-base font-semibold text-white">Most reported</h2>
+  {#if (mostReported?.totalItems ?? 0) > MOST_REPORTED_PREVIEW}
+    <button
+      type="button"
+      class="text-sm {LINK_CLASS}"
+      onclick={async () => {
+        showAllReported = !showAllReported;
+        if (!showAllReported && reportPage !== 1) await turnPage(1);
+      }}
+    >
+      {showAllReported ? `Show top ${MOST_REPORTED_PREVIEW}` : `Show all (${mostReported?.totalItems})`}
+    </button>
+  {/if}
+</header>
+<p class="mb-2 text-xs text-dark-2">
+  Pending reports from the last week with more than one reporter, worst first; blocked images excluded.
+  Resolving closes the <em>report</em>, not the content.
 </p>
 
 {#if saveResult}
@@ -397,13 +524,17 @@
   </form>
 {/if}
 
-<!-- One box, always this height, whatever is inside it. Rows vary several-fold in height — an
-     unlinked report renders its details inline — and a page turn empties the list for as long as the
-     query takes, so anything sized to its contents moves the pager under the cursor mid-click. -->
-<div class="h-[32rem] overflow-auto rounded-xl border border-dark-4 bg-dark-6">
-  {#if reported === null || reported.length === 0}
-    <div class="flex h-full flex-col items-center justify-center gap-2 p-5 text-center">
-      {#if reported === null}
+<!-- Fixed height once paged: rows vary several-fold in height — an unlinked report renders its
+     details inline — and a page turn empties the list for as long as the query takes, so a box sized
+     to its contents moves the pager under the cursor mid-click. -->
+<div
+  class="overflow-auto rounded-xl border border-dark-4 bg-dark-6 {showAllReported
+    ? 'h-[32rem]'
+    : 'min-h-40'}"
+>
+  {#if reportedRows === null || reportedRows.length === 0}
+    <div class="flex h-full min-h-40 flex-col items-center justify-center gap-2 p-5 text-center">
+      {#if reportedRows === null}
         <div class="h-6 w-48 animate-pulse rounded bg-dark-5"></div>
         <div class="h-4 w-64 animate-pulse rounded bg-dark-5"></div>
       {:else}
@@ -432,7 +563,7 @@
         </TableRow>
       </TableHeader>
       <TableBody>
-        {#each reported as row (row.id)}
+        {#each reportedRows as row (row.id)}
           {@const mark = staged.get(row.id)}
           <TableRow class={mark ? 'opacity-40' : undefined}>
             <TableCell>
@@ -518,236 +649,194 @@
   {/if}
 </div>
 
-<NumberedPager
-  page={mostReported?.page ?? 1}
-  total={mostReported?.totalItems ?? 0}
-  perPage={MOST_REPORTED_PAGE_SIZE}
-  label="reports"
-  onPageChange={turnPage}
-/>
-
-{#if loading}
-  <div class="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {#each { length: 4 } as _, i (i)}
-      <div class="h-40 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
-    {/each}
-  </div>
-{:else}
-  <div class="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {#each sections as section (section.label)}
-      {@const items = visibleItems(section)}
-      {@const quiet = quietCount(section)}
-      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
-        <header class="mb-1 flex items-baseline justify-between gap-2">
-          <h2 class="text-sm font-semibold text-white">{section.label}</h2>
-          {#if section.total > 0}
-            <span class="text-sm font-semibold tabular-nums text-blue-4">
-              {format(section.total)}
-            </span>
-          {/if}
-        </header>
-
-        {#if items.length === 0}
-          <p class="py-1 text-sm text-dark-2">All clear</p>
-        {:else}
-          <ul>
-            {#each items as item (item.path)}
-              <li>
-                <a
-                  href={item.path}
-                  class="-mx-1 flex items-center justify-between gap-3 rounded px-1 py-1 text-sm hover:bg-dark-5"
-                >
-                  <span class={item.count ? 'text-dark-0' : 'text-dark-2'}>{item.label}</span>
-                  {#if item.count !== null}
-                    <!-- Retool's threshold colouring. The scales are per-queue and not comparable —
-                         2 comment reports is amber where 200 tags is still green — so a queue with no
-                         standard renders plainly rather than borrowing another's. -->
-                    <span
-                      class="tabular-nums {severity(item) ??
-                        (item.count ? 'text-white' : 'text-dark-2')}"
-                    >
-                      {format(item.count)}
-                    </span>
-                  {/if}
-                </a>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-
-        {#if quiet > 0}
-          <button
-            type="button"
-            class="mt-1 text-xs text-dark-2 hover:text-dark-0"
-            onclick={() => (expanded[section.label] = !expanded[section.label])}
-          >
-            {expanded[section.label] ? 'Hide empty' : `${quiet} empty`}
-          </button>
-        {/if}
-      </section>
-    {/each}
-  </div>
+{#if showAllReported}
+  <NumberedPager
+    page={mostReported?.page ?? 1}
+    total={mostReported?.totalItems ?? 0}
+    perPage={MOST_REPORTED_PAGE_SIZE}
+    label="reports"
+    onPageChange={turnPage}
+  />
 {/if}
 
 <!-- OUTSIDE the {#await}: bumping boardVersion drops the subtree back to pending, so a
      banner nested inside it vanishes on success and is replaced by the catch branch if the refetch
      then fails — reporting an error for an action that worked. -->
 {#if form?.error}
-  <ErrorAlert class="mt-8" message={form.error} />
+  <ErrorAlert class="mt-6" message={form.error} />
 {:else if form && 'swept' in form && form.swept}
-  <div class="mt-8 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
+  <div class="mt-6 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
     Marked {form.swept} swept.
   </div>
 {/if}
 
-{#await board}
-  <div class="mt-8 grid gap-3 lg:grid-cols-3">
-    {#each { length: 3 } as _, i (i)}
-      <div class="h-32 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
+<!-- One fixed height for both, each scrolling inside: side-by-side cards of different heights read
+     as unfinished. -->
+<div class="mt-6 grid gap-4 lg:grid-cols-2">
+  {#await board}
+    {#each { length: 2 } as _, i (i)}
+      <div class="h-[22rem] animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
     {/each}
-  </div>
-{:then loaded}
-  {@const board = loaded}
-  {@const worked = board ? recentlyWorked(board) : []}
-  {#if board}
-    <div class="mt-8 grid gap-3 lg:grid-cols-3">
-    <!-- Retool's `RecentReports`, which fed the "last touched by <mod> N minutes ago" on every queue
-         row. Its point is telling a queue nobody is working from one being actively drained — a count
-         alone cannot. Listed rather than attached per row: the report-source labels and the sidebar's
-         count keys are named independently, and three of them do not correspond. -->
-    {#if worked.length}
-      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
-        <h2 class="mb-1 text-sm font-semibold text-white">Recently worked</h2>
-        <p class="mb-3 text-xs text-dark-2">
-          Last report resolved, and last moderator action logged, per kind of work.
+  {:then loaded}
+    {#if loaded}
+      {@const worked = recentlyWorked(loaded)}
+      {@const rows = catchUpRows(loaded)}
+      <section class="flex flex-col rounded-xl border border-dark-4 bg-dark-6 p-4 lg:h-[22rem]">
+        <h2 class="mb-1 text-sm font-semibold text-white">Catch-up checks</h2>
+        <!-- Retool's task-timer protocol. A row's time is an acknowledgement a moderator wrote ("caught
+             up to now"), not a job run — so "3d" means nobody has caught up on it in 3 days. -->
+        <p class="mb-2 text-xs text-dark-2">
+          Queues reviewed in batches: skim what's new, then mark it caught up. Oldest first.
         </p>
-        <ul class="space-y-1 text-sm">
-          {#each worked as a (a.type)}
-            <li class="flex flex-wrap items-baseline justify-between gap-x-3">
-              <span class="text-dark-0">{a.type}</span>
-              <span class="text-xs text-dark-2">
-                {ago(a.at)}{a.moderator ? ` · ${a.moderator}` : ''}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/if}
-
-    <!-- Retool's per-queue lag strip. The rows are acknowledgements a moderator wrote ("I have swept
-         this up to now"), not job runs — so "3d ago" means nobody has claimed the queue in 3 days. -->
-    {#if board.lag.length}
-      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
-        <h2 class="mb-1 text-sm font-semibold text-white">Queue sweeps</h2>
-        <p class="mb-3 text-xs text-dark-2">
-          When each queue was last claimed, oldest first. Nothing sweeps automatically.
-        </p>
-        <ul class="space-y-1 text-sm">
-          {#each board.lag as t (t.task)}
-            <li class="flex items-baseline justify-between gap-3">
-              <span class="text-dark-0">{t.label}</span>
-              <span class="text-xs text-dark-2">
-                {ago(t.lastUpdate)}{t.lastUpdateBy ? ` · ${t.lastUpdateBy}` : ''}
-              </span>
-            </li>
-          {/each}
-        </ul>
-
-        <!-- The two queues whose count is "what has arrived since the mark". Marking swept is what
-             advances it; without the button the counts only ever grow. -->
-        {#if modelsReview !== null}
-          <div class="mt-3 border-t border-dark-4 pt-3">
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <a
-                href="{data.civitaiUrl}/moderator/models"
-                target="_blank"
-                rel="noreferrer"
-                class="text-sm text-blue-4 hover:underline"
-              >
-                Models awaiting re-review ↗
-              </a>
-              <span
-                class="text-sm tabular-nums {queueSeverityClass('modelsReview', modelsReview) ??
-                  (modelsReview ? 'text-white' : 'text-dark-2')}"
-              >
-                {format(modelsReview)}
-              </span>
-            </div>
-            <p class="mt-1 text-xs text-dark-2">
-              Unpublished for a violation, with the owner asking for another look.
-            </p>
+        {#if rows.length}
+          <div class="min-h-0 flex-1 overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead class="h-8">Queue</TableHead>
+                  <TableHead class="h-8">Last caught up</TableHead>
+                  <TableHead class="h-8 text-right">New since</TableHead>
+                  <TableHead class="h-8 w-px"><span class="sr-only">Mark caught up</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {#each rows as row (row.task)}
+                  <TableRow>
+                    <TableCell class="text-dark-0">{row.label}</TableCell>
+                    <TableCell class="text-xs text-dark-2">
+                      {#if row.lastUpdate}
+                        <ShortAge
+                          at={row.lastUpdate}
+                          now={clock.now}
+                          class="rounded bg-white/5 px-1 font-semibold tabular-nums {ageSeverityClass(
+                            row.lastUpdate,
+                            clock.now
+                          )}"
+                        />{row.lastUpdateBy ? ` · ${row.lastUpdateBy}` : ''}
+                      {:else}
+                        never
+                      {/if}
+                    </TableCell>
+                    <TableCell class="text-right tabular-nums">
+                      {#if row.sweep}
+                        <span
+                          class={queueSeverityClass(
+                            row.task,
+                            row.sweep.since ? row.sweep.count : null
+                          ) ?? (row.sweep.count ? 'text-white' : 'text-dark-2')}
+                        >
+                          {row.sweep.since ? format(row.sweep.count) : '—'}
+                        </span>
+                      {:else}
+                        <span class="text-dark-3">—</span>
+                      {/if}
+                    </TableCell>
+                    <TableCell class="text-right">
+                      <!-- Only the queues with a since-mark count advance it from here; without the
+                           button those counts only ever grow. -->
+                      {#if row.sweep}
+                        <form method="POST" action="?/sweep" use:enhance={onSweep.enhance}>
+                          <input type="hidden" name="task" value={row.task} />
+                          <Button type="submit" variant="outline" size="sm" class="h-7 px-2 text-xs">
+                            Mark swept
+                          </Button>
+                        </form>
+                      {/if}
+                    </TableCell>
+                  </TableRow>
+                {/each}
+              </TableBody>
+            </Table>
           </div>
+        {:else}
+          <p class="text-sm text-dark-2">No catch-up marks recorded.</p>
         {/if}
 
-        {#each board.sweeps as s (s.task)}
-          <div class="mt-3 border-t border-dark-4 pt-3">
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="text-sm text-dark-0">{SWEEP_LABELS[s.task] ?? s.task}</span>
-              <span class="text-sm tabular-nums {queueSeverityClass(s.task, s.since ? s.count : null) ?? (s.count ? 'text-white' : 'text-dark-2')}">
-                {s.since ? format(s.count) : 'never swept'}
-              </span>
-            </div>
-            <form method="POST" action="?/sweep" use:enhance={onSweep.enhance} class="mt-1">
-              <input type="hidden" name="task" value={s.task} />
-              <Button type="submit" variant="outline" size="sm">Mark swept</Button>
-            </form>
-          </div>
-        {/each}
+        {#if modelsReview !== null}
+          <p class="mt-3 text-sm" title="Unpublished for a violation, with the owner asking for another look.">
+            <a
+              href="{data.civitaiUrl}/moderator/models"
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}
+            >
+              Models awaiting re-review ↗
+            </a>
+            <span
+              class="ml-2 tabular-nums {queueSeverityClass('modelsReview', modelsReview) ??
+                (modelsReview ? 'text-white' : 'text-dark-2')}"
+            >
+              {format(modelsReview)}
+            </span>
+          </p>
+        {/if}
       </section>
-    {/if}
 
-    <!-- Retool's `AutoBlockedUsers`. Nobody decided these individually, so this list is the only place
-         a false positive is visible — a muted account with no moderator behind it. -->
-    {#if board.autoBlocked.length}
-      <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
-        <h2 class="mb-1 text-sm font-semibold text-white">
-          Auto-muted for scam ({board.autoBlocked.length}{board.autoBlocked.length === 50 ? '+' : ''})
-        </h2>
-        <p class="mb-3 text-xs text-dark-2">
-          Muted by the detector, not by a moderator. Review the ones that look wrong.
+      <section class="flex flex-col rounded-xl border border-dark-4 bg-dark-6 p-4 lg:h-[22rem]">
+        <h2 class="mb-1 text-sm font-semibold text-white">Recently worked</h2>
+        <!-- Retool's `RecentReports`: tells a queue nobody is working from one being drained, which a
+             count alone cannot. Kept as a list because it covers every kind of work, `ModActivity`
+             included; the per-row last-actioned badges (sidebar, Needs attention) only know report
+             queues. -->
+        <p class="mb-2 text-xs text-dark-2">
+          Last report resolved, and last moderator action logged, per kind of work. Newest first.
         </p>
-        <ul class="space-y-1 text-sm">
-          {#each board.autoBlocked.slice(0, 12) as u (u.id)}
-            <li class="flex flex-wrap items-baseline justify-between gap-x-3">
-              <a href={userLookupUrl(u.userId)} class={LINK_CLASS}>
-                {u.username ?? `#${u.userId}`}
-              </a>
-              <span class="flex items-baseline gap-2 text-xs text-dark-2">
-                {#if u.bannedAt}<Badge variant="destructive">banned since</Badge>{/if}
-                {#if !u.muted}<Badge variant="secondary">already unmuted</Badge>{/if}
-                {ago(u.createdAt)}
-              </span>
-              {#if u.scanReason}
-                <p class="w-full text-xs text-dark-2">
-                  {u.scanEntityType} #{u.scanEntityId}: {u.scanReason}
-                  {#if u.restrictionStatus}· {u.restrictionStatus}{/if}
-                </p>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        {#if worked.length}
+          <ul class="min-h-0 flex-1 space-y-1 overflow-auto pr-1 text-sm">
+            {#each worked as a (a.type)}
+              <li class="flex items-baseline justify-between gap-3">
+                <span class="min-w-0 truncate text-dark-0">{a.type}</span>
+                <span class="shrink-0 text-xs text-dark-2">
+                  <ShortAge
+                    at={a.at}
+                    now={clock.now}
+                    class="rounded bg-white/5 px-1 font-semibold tabular-nums {ageSeverityClass(
+                      a.at,
+                      clock.now
+                    )}"
+                  />{a.moderator ? ` · ${a.moderator}` : ''}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="text-sm text-dark-2">No recent activity recorded.</p>
+        {/if}
       </section>
     {/if}
-    </div>
-  {/if}
-{:catch}
-  <!-- Absence must not read as "every queue is clear": these panels hide themselves when empty, so a
-       failed fetch would otherwise be indistinguishable from a quiet day. -->
-  <p class="mt-8 text-sm text-red-300">
-    Could not load the queue board. The counts above are unaffected.
-  </p>
-{/await}
+  {:catch}
+    <!-- Absence must not read as "every queue is clear": a failed fetch would otherwise be
+         indistinguishable from a quiet day. -->
+    <p class="text-sm text-red-300 lg:col-span-2">
+      Could not load the queue board. The counts above are unaffected.
+    </p>
+  {/await}
+</div>
 
 <!-- Its own await, not folded into the board's: this reads a different table on a different cadence,
      and the board's "Mark swept" refetch must not drop this panel back to a skeleton. -->
-<div class="mt-8">
-  {#await jobQueue}
-    <div class="h-32 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
-  {:then health}
-    {#if health}
-      <JobQueueHealthPanel {health} />
-    {/if}
-  {:catch}
-    <p class="text-sm text-red-300">Could not load background job health.</p>
-  {/await}
-</div>
+<details class="mt-6 rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
+  <summary class="cursor-pointer text-sm text-dark-0">
+    Background jobs
+    {#await jobQueue}
+      <span class="text-dark-2">· loading</span>
+    {:then health}
+      {#if health}
+        <span class={health.overdue ? 'text-amber-300' : 'text-green-400'}>
+          · {health.overdue ? `${health.overdue.toLocaleString()} overdue` : 'healthy'}
+        </span>
+      {/if}
+    {:catch}
+      <span class="text-red-300">· could not load</span>
+    {/await}
+  </summary>
+  <div class="mt-3">
+    {#await jobQueue then health}
+      {#if health}
+        <JobQueueHealthPanel {health} />
+      {/if}
+    {:catch}
+      <p class="text-sm text-red-300">Could not load background job health.</p>
+    {/await}
+  </div>
+</details>

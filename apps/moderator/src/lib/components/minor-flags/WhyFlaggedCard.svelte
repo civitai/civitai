@@ -4,12 +4,12 @@
   import ScanProvenance from '$lib/components/minor-flags/ScanProvenance.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { dateTime } from '$lib/format';
-  import { effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
+  import { SOURCE_LABELS, effectiveSource, sourceLabel } from '$lib/minor-flags/appeal-filters';
   import { ago } from '$lib/minor-flags/appeal-row';
   import {
-    HASH_FLAG_REASON,
     flagPromptId,
     flagScanSource,
+    hashFlagReason,
     hashSweepText,
     type ModelFlagDetail,
   } from '$lib/minor-flags/model-detail';
@@ -46,9 +46,15 @@
   // every label in force reads the same way: label, Flagged chip, reason, where it came from.
   const minorBlock = $derived.by(() => {
     if (!row.minor || verdicts.some((v) => v.label === 'minor')) return null;
+    // The row's source is the real-person snapshot's when minor has none.
+    if (row.flagSnapshotLabel === 'poi')
+      return {
+        reason: 'Nothing stored says what set this flag.',
+        provenance: SOURCE_LABELS.none.toLowerCase(),
+      };
     const source = effectiveSource(row.flagSource, row.flagConfirmedFrom);
     if (source === 'hash')
-      return { reason: HASH_FLAG_REASON, provenance: hashSweepText(row.flaggedAt, null) };
+      return { reason: hashFlagReason('minor'), provenance: hashSweepText(row.flaggedAt, null) };
     const at = row.flaggedAt ? `, ${ago(row.flaggedAt)}` : '';
     return source === 'moderator'
       ? { reason: 'A moderator set this model as minor.', provenance: `set as minor${at}` }
@@ -57,6 +63,11 @@
           provenance: `${sourceLabel(row.flagSource, row.flagConfirmedFrom).toLowerCase()}${at}`,
         };
   });
+
+  // A hash-applied real-person flag has no text-scan verdict to explain it.
+  const poiHashBlock = $derived(
+    row.poi && row.poiHashFlag && !verdicts.some((v) => v.label === 'poi')
+  );
 </script>
 
 <TriageCard dense title="Why it was flagged">
@@ -65,9 +76,19 @@
       <FlagVerdictBlock label="minor" reason={minorBlock.reason}>
         {#snippet provenance()}
           <span title={row.flaggedAt ? dateTime(row.flaggedAt) : undefined}>{minorBlock.provenance}</span
-          >{#if row.flaggedByUsername}{' · '}set by {row.flaggedByUsername}{#if row.flaggedByAt}{' '}<span
+          >{#if row.flaggedByUsername && row.flagSnapshotLabel !== 'poi'}{' · '}set by {row.flaggedByUsername}{#if row.flaggedByAt}{' '}<span
                 title={dateTime(row.flaggedByAt)}>{ago(row.flaggedByAt)}</span
               >{/if}{/if}
+        {/snippet}
+      </FlagVerdictBlock>
+    {/if}
+
+    {#if poiHashBlock}
+      <FlagVerdictBlock label="poi" reason={hashFlagReason('poi')}>
+        {#snippet provenance()}
+          <span title={row.poiFlaggedAt ? dateTime(row.poiFlaggedAt) : undefined}
+            >{hashSweepText(row.poiFlaggedAt, null)}</span
+          >{#if row.flaggedByUsername && row.flagSnapshotLabel === 'poi'}{' · '}confirmed by {row.flaggedByUsername}{/if}
         {/snippet}
       </FlagVerdictBlock>
     {/if}

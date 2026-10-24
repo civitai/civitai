@@ -23,6 +23,34 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
+/** The real-person half: set-poi applies the flag with every restriction it carries (and takes the
+ *  model off the match queue); the hash flag's own endpoints sign it off, roll it back and drop a lead.
+ *  Those three answer 200 with a 0 count when there was nothing to act on, which is reported as a
+ *  failure rather than as done. */
+export const setModelPoiFlag = (modelId: number): Promise<ActionResult> =>
+  toResult(callModEndpoint('model/set-poi', { modelId, poi: true }, 'Flag as real person'));
+
+export const confirmPoiFlag = (modelId: number): Promise<ActionResult> =>
+  toCountedResult(
+    callModEndpoint('poi-flag/confirm', { modelId }, 'Confirm flag'),
+    'confirmed',
+    'Nothing was confirmed: this model carries no hash-applied real-person flag. Reload the queue.'
+  );
+
+export const revertPoiFlag = (modelId: number): Promise<ActionResult> =>
+  toCountedResult(
+    callModEndpoint('poi-flag/revert', { modelId }, 'Revert flag'),
+    'reverted',
+    'Nothing was reverted: this model carries no hash-applied real-person flag. Check the model before retrying.'
+  );
+
+export const dismissPoiHashMatch = (modelId: number): Promise<ActionResult> =>
+  toCountedResult(
+    callModEndpoint('poi-flag/dismiss', { modelId }, 'Dismiss match'),
+    'dismissed',
+    'Nothing was dismissed: this model is no longer waiting on a real-person match. Reload the queue.'
+  );
+
 export type RulingReason = Exclude<ReturnType<typeof checkedResolutionReason>, string>;
 
 /** `rescanQueued` is always false now: the endpoint keeps it for compatibility. */
@@ -146,6 +174,18 @@ const toAppealResult = async (call: Promise<JsonResult>): Promise<AppealResult> 
 const toResult = async (call: Promise<JsonResult>): Promise<ActionResult> => {
   const result = await call;
   if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  return { ok: true };
+};
+
+const toCountedResult = async (
+  call: Promise<JsonResult>,
+  key: string,
+  none: string
+): Promise<ActionResult> => {
+  const result = await call;
+  if (!result.ok) return result;
+  if (!(Number(result.body[key] ?? 0) > 0)) return { ok: false, error: none };
   await bustMinorQueueCounts();
   return { ok: true };
 };

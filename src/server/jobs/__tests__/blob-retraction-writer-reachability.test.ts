@@ -232,6 +232,9 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     : (strings as unknown as { sql: string }).sql;
 
   if (sql.includes('FROM "CsamReport"')) return [];
+  // The hold marker's view exists, as on prod, and holds nobody.
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
   // `toggleBan`'s pre-block read: the rows its remove-all-media UPDATE is about to block that
   // still carry a grace breadcrumb. Narrowly scoped on purpose — see the note at that call site.

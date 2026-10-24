@@ -5,11 +5,12 @@ import {
 } from '@civitai/shared/resolution-reasons';
 import { decisionReasonProblem } from '$lib/triage/decision-reasons';
 import { appealVerdict } from './appeal-split';
+import type { FlagLabel } from './text-scan-verdicts';
 
 /** What raised a flag or lead: an applied hash or text-scan flag (Auto-flagged), or a held detection
  *  or file match nothing was applied for (Needs review). */
 export type FlaggedSource = 'hash' | 'redetected' | 'text-scan' | 'file-match';
-export type FlaggedLabel = 'minor' | 'poi';
+export type FlaggedLabel = FlagLabel;
 
 /** Key order: 1 keeps the flag, 2 lifts it. Syncs with the main app's `ruleModelTextScanFlag` and
  *  `resolveTextScanRedetection`, which refuse a ruling while the owner's appeal is open: a hash or
