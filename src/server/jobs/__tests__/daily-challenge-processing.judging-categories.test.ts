@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
 const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
 const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
@@ -64,7 +65,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: mockIsFlipt };
 });
 
