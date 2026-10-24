@@ -4,6 +4,7 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { parse as devalueParse, stringify as devalueStringify } from 'devalue';
 import superjson from 'superjson';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -160,6 +161,35 @@ function containsPayload(value: unknown): boolean {
 function singleData(served: Served): unknown {
   expect(served.status).toBe(200);
   return JSON.parse(served.text).result.data;
+}
+
+/**
+ * `civitai_app_trpc_fast_superjson_writes_total`, read from the shared registry by name, as
+ * `{ 'path|outcome': value }`. A missing metric reads as no series, so a case that expects the
+ * counter to move fails when the counter is not registered.
+ */
+async function fastWriteCounts(): Promise<Record<string, number>> {
+  const metric = instrumentationRegistry.getSingleMetric(
+    'civitai_app_trpc_fast_superjson_writes_total'
+  );
+  if (!metric) return {};
+  const { values } = await metric.get();
+  return Object.fromEntries(
+    values.map((v) => [`${String(v.labels.path)}|${String(v.labels.outcome)}`, v.value])
+  );
+}
+
+/** How the counter moved while `fn` ran: only the series that changed, by how much. */
+async function fastWriteDelta(fn: () => Promise<unknown>): Promise<Record<string, number>> {
+  const before = await fastWriteCounts();
+  await fn();
+  const after = await fastWriteCounts();
+  const delta: Record<string, number> = {};
+  for (const [key, value] of Object.entries(after)) {
+    const moved = value - (before[key] ?? 0);
+    if (moved !== 0) delta[key] = moved;
+  }
+  return delta;
 }
 
 const asDevalue = (value: unknown) => devalueStringify(value);
@@ -322,5 +352,88 @@ describe('trpc-fast-superjson-write — the superjson write without superjson.se
     const spy = vi.spyOn(superjson, 'serialize');
     expect(singleData(await get('plain'))).toEqual(plainSuperjson);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('trpc-fast-superjson-write — the outcome counter', () => {
+  beforeEach(() => {
+    h.writeDevalue = true;
+    flag.fastSuperjson = true;
+  });
+  afterEach(() => {
+    flag.fastSuperjson = null;
+  });
+
+  it('counts a write the walk handled as fast, under the procedure path', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+    });
+    expect(delta).toEqual({ 'plain|fast': 1 });
+  });
+
+  it('counts a payload the walk handed to superjson (a Map) as bail', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('payload'))).toEqual(asSuperjson(PAYLOAD));
+    });
+    expect(delta).toEqual({ 'payload|bail': 1 });
+  });
+
+  it('counts a write while a superjson registration disables the walk as registry_off', async () => {
+    superjson.registerCustom<string, string>(
+      {
+        isApplicable: (v): v is string => typeof v === 'string' && v.startsWith('money:'),
+        serialize: (v) => v.slice('money:'.length),
+        deserialize: (v) => `money:${v}`,
+      },
+      'test-money-route'
+    );
+    try {
+      const delta = await fastWriteDelta(async () => {
+        expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+      });
+      expect(delta).toEqual({ 'plain|registry_off': 1 });
+    } finally {
+      delete (
+        superjson as unknown as {
+          defaultInstance: { customTransformerRegistry: { transfomers: Record<string, unknown> } };
+        }
+      ).defaultInstance.customTransformerRegistry.transfomers['test-money-route'];
+    }
+    // Control: with the registration gone the same request is fast again.
+    expect(await fastWriteDelta(() => get('plain'))).toEqual({ 'plain|fast': 1 });
+  });
+
+  it('labels a multi-procedure batch as batch, one count per procedure', async () => {
+    const input = encodeURIComponent(JSON.stringify({ 0: {}, 1: {} }));
+    const delta = await fastWriteDelta(async () => {
+      const served = await get(`plain,plain?batch=1&input=${input}`);
+      expect(served.status).toBe(200);
+    });
+    expect(delta).toEqual({ 'batch|fast': 2 });
+  });
+
+  it('folds a path that names no procedure into other (the URL is client-controlled)', async () => {
+    const delta = await fastWriteDelta(async () => {
+      expect((await get('no.such.procedure')).status).toBe(404);
+    });
+    // The 404 error body is still a superjson write; its label must not be the raw path.
+    expect(Object.keys(delta).length).toBeGreaterThan(0);
+    expect(Object.keys(delta).every((key) => key.startsWith('other|'))).toBe(true);
+  });
+
+  it('does not move for a devalue response', async () => {
+    expect(await fastWriteDelta(() => get('plain', CAPABLE_WEB))).toEqual({});
+  });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])('does not move when the flag is %s', async (_label, value) => {
+    flag.fastSuperjson = value;
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('plain'))).toEqual(asSuperjson(PLAIN));
+      expect(singleData(await get('payload'))).toEqual(asSuperjson(PAYLOAD));
+    });
+    expect(delta).toEqual({});
   });
 });
