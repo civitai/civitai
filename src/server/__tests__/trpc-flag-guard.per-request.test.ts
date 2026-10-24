@@ -211,8 +211,8 @@ describe('one HTTP request', () => {
     // evaluation per distinct flag, plus the switch itself.
     expect(flipt.calls.map((c) => c.flag).sort()).toEqual([
       'collection-ai-review',
+      SWITCH_KEY, // 'trpc-flag-guard-per-request' — the list is sorted
       'user-hubs',
-      SWITCH_KEY,
     ]);
   });
 
