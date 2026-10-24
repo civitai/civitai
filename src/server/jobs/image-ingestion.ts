@@ -7,7 +7,6 @@ import { createJob, type JobContext } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
-import { persistDeletedTakedowns } from '~/server/services/cdn-access.service';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -919,6 +918,8 @@ export const removeBlockedImages = createJob(
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
       // and the retention window outlasts anything cached before the deny, so no CDN purge here.
+      // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
+      const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
       await persistDeletedTakedowns(rows);
     }
     if (deletedWithoutRetraction.length > 0) {
