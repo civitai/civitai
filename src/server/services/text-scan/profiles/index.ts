@@ -13,4 +13,4 @@ import './user-profile.profile';
 import './crucible.profile';
 import './collection.profile';
 import './storyline.profile';
-import './model-rules.profile';
+import './image-caption.profile';

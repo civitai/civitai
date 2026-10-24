@@ -434,6 +434,7 @@ export const ApiKeyType = {
   User: 'User',
   Access: 'Access',
   Refresh: 'Refresh',
+  Worker: 'Worker',
 } as const;
 export type ApiKeyType = (typeof ApiKeyType)[keyof typeof ApiKeyType];
 export const CommentEntityType = {
@@ -450,6 +451,7 @@ export const CommentEntityType = {
   model3dReview: 'model3dReview',
   appListing: 'appListing',
   crucible: 'crucible',
+  storyline: 'storyline',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {

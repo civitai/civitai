@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { movePin, resolveUserMenu, togglePin, type UserMenuRegistry } from './resolveUserMenu';
 import {
+  findUserMenuGroup,
   USER_MENU_LAYOUT,
   USER_MENU_MAX_DEPTH,
   USER_MENU_SIGNED_OUT_LAYOUT,
@@ -76,6 +77,33 @@ describe('resolveUserMenu', () => {
     expect(nodes.map((node) => node.kind === 'group' && node.badge)).toEqual([5, 1]);
   });
 
+  it('keeps a muted count on its row and out of the group and pinned totals', () => {
+    const registry: UserMenuRegistry = {
+      collections: entry('collections', { badge: 2 }),
+      vault: entry('vault'),
+      downloads: entry('downloads', { badge: 3 }),
+      inventory: entry('inventory', { badge: 1 }),
+    };
+
+    const { nodes, pinned } = resolveUserMenu(
+      layout,
+      registry,
+      ['collections'],
+      new Set(['collections', 'inventory'])
+    );
+
+    // Only downloads still counts; the muted rows keep their own number, marked muted.
+    expect(nodes.map((node) => node.kind === 'group' && node.badge)).toEqual([3, 0]);
+    const collections = pinned[0];
+    expect(collections).toMatchObject({ badge: 2, badgeMuted: true });
+    const stuff = nodes[0];
+    const inGroup = stuff.kind === 'group' && stuff.children[0];
+    expect(inGroup && inGroup.kind === 'item' && inGroup.item).toMatchObject({
+      badge: 2,
+      badgeMuted: true,
+    });
+  });
+
   it('lists pins in saved order, skipping hidden, unknown, repeated and unpinnable ids', () => {
     const registry: UserMenuRegistry = {
       collections: entry('collections'),
@@ -134,5 +162,30 @@ describe('layouts', () => {
     const ids: string[] = [];
     expect(walk(nodes, 0, ids)).toBeLessThanOrEqual(USER_MENU_MAX_DEPTH);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('moving items between groups', () => {
+  it('puts each moved item in its new group', () => {
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'inventory')).toBe('your-stuff');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'auctions')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'crucibles')).toBe('rewards');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'browse-challenges')).toBe('rewards');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'civitai-link')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'link-app')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'getting-started')).toBe('help');
+  });
+
+  it('keeps Download Link App last in Creator tools and Getting started first in Get help', () => {
+    const childIds = (id: string) => {
+      const node = USER_MENU_LAYOUT.find((n) => n.kind === 'group' && n.id === id);
+      return node?.kind === 'group' ? node.children.map((c) => c.id) : [];
+    };
+    expect(childIds('creator-tools').at(-1)).toBe('link-app');
+    expect(childIds('help')[0]).toBe('getting-started');
+  });
+
+  it('keeps Download Link App in the signed-out menu, which has no Creator tools', () => {
+    expect(findUserMenuGroup(USER_MENU_SIGNED_OUT_LAYOUT, 'link-app')).toBeNull();
   });
 });

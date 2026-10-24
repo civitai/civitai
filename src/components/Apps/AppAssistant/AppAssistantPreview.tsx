@@ -24,7 +24,8 @@ export function AppAssistantPreview({
   session: PreviewSession | null;
 }) {
   const frame = useQuery({
-    queryKey: ['app-assistant', 'preview', session?.sessionId],
+    // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
+    queryKey: ['app-assistant', 'preview', session?.blockId, session?.sessionId, session?.view],
     queryFn: () => fetchPreviewFrame((session as PreviewSession).blockId),
     enabled: !!session,
     // The entry token in `iframeSrc` is short-lived and used once, on load; never reuse an old one.
@@ -84,6 +85,9 @@ export function AppAssistantPreview({
             key={frame.data.iframeSrc}
             {...frame.data}
             fit="fill"
+            // The app reloaded itself (Vite live reload): the Reload button's own path. Not
+            // `cancelRefetch`, so reports arriving mid-fetch join it rather than restart it.
+            onGuestReloaded={() => void frame.refetch({ cancelRefetch: false })}
             tokenErrorFallback={
               <Stack p="md">
                 <Alert color="red" variant="light">

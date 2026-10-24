@@ -38,9 +38,10 @@ import { describe, expect, it } from 'vitest';
  *     What used to be true: the pinned nixpkgs' newest Node 24 was older than the
  *     version pinned here, so agreeing would have meant moving the nixpkgs pin too,
  *     and asserting it would have produced a red gate nobody could fix in the change
- *     that tripped it. That is no longer the case. The flake.lock bump to the
- *     2026-08-18 nixpkgs made `nodejs_24` exactly 24.19.0, and `flake.nix` now
- *     DERIVES its Node major by reading this `.nvmrc` rather than naming one.
+ *     that tripped it. The flake.lock bump to the 2026-08-18 nixpkgs made
+ *     `nodejs_24` exactly 24.19.0, and `flake.nix` now DERIVES its Node major by
+ *     reading this `.nvmrc` rather than naming one. It can still lag: the 24.22.1
+ *     security bump landed before nixpkgs carried 24.22.1 (see `flake.nix`).
  *
  *     Why it still does not belong in this file: answering "which Node does the dev
  *     shell provide?" means evaluating Nix, which a Vitest suite cannot do. The
@@ -50,8 +51,8 @@ import { describe, expect, it } from 'vitest';
  *     three declarations below; this file owns them, and a predicate open-coded at
  *     two sites is how the two start disagreeing.
  *
- *     `engines.node` is still bracketed at MAJOR granularity, but no longer because
- *     the dev shell would violate a patch-exact floor — it does not any more.
+ *     `engines.node` is bracketed at MAJOR granularity, which also keeps a lagging
+ *     dev shell (an older 24.x patch) inside it.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../..');

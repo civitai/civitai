@@ -16,7 +16,7 @@ import {
 } from '../test-component-run.mjs';
 
 /**
- * Tests for the `preview / component-tests` positive control
+ * Tests for the browser `component` suite's positive control
  * (scripts/ci/assert-component-suite-ran.mjs) and the one branch of its caller that can be
  * wrong invisibly (`isNarrowed`).
  *

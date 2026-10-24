@@ -46,7 +46,10 @@ import {
 } from '~/components/Apps/AppAssistant/assistantToken';
 import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
-import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
+import {
+  createPreviewTools,
+  runnerPreviewAction,
+} from '~/components/Apps/AppAssistant/previewTools';
 import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
@@ -60,7 +63,13 @@ import {
   appsError,
   YourAppsList,
 } from '~/components/Apps/AppAssistant/YourApps';
+import {
+  ForkSetupCard,
+  ForkStatus,
+  useAppFork,
+} from '~/components/Apps/AppAssistant/AppAssistantFork';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { FORK_SETUP_MESSAGE } from '~/shared/constants/app-fork.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
@@ -258,6 +267,25 @@ export function AppAssistantWorkspace({
   const previewShown = useRef(false);
   const pickedOnLoad = useRef(false);
 
+  // FORKABLE APPS — `?fork=<slug>`: the fork's app is created with its files (or, if it exists,
+  // opened), and a fresh one gets a new chat once the chat has started. See `AppAssistantFork`.
+  const [chatReady, setChatReady] = useState(false);
+  const newChatFor = useRef<string | null>(null);
+  const fork = useAppFork({
+    sandboxes,
+    active,
+    onOpened: (sandbox, fresh) => {
+      if (fresh) newChatFor.current = sandbox.name;
+      setActiveName(sandbox.name);
+    },
+  });
+  useEffect(() => {
+    if (!chatReady || !newChatFor.current || newChatFor.current !== activeName) return;
+    newChatFor.current = null;
+    chatRef.current?.newChat();
+  }, [chatReady, activeName]);
+  const dismissForkSetup = fork.dismissSetup;
+
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
@@ -271,12 +299,26 @@ export function AppAssistantWorkspace({
   const openRef = useRef(sandboxes.open.mutateAsync);
   openRef.current = sandboxes.open.mutateAsync;
 
+  // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
     const current = live.current.session;
     if (!current) return;
+    live.current.session = null;
     setSession(null);
-    stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
+    if (current.sessionId) stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
+  /** Shows a preview that (re)started: the first one of an app moves a phone to the Preview tab. */
+  const showPreview = useCallback((next: PreviewSession | null) => {
+    live.current.session = next;
+    setSession(next);
+    // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
+    if (next && !previewShown.current) {
+      previewShown.current = true;
+      setTab('preview');
+    }
+  }, []);
+  // Each preview the server runner starts gets its own frame, even on the same host.
+  const runnerViews = useRef(0);
 
   const appTools = useMemo(
     () =>
@@ -323,20 +365,12 @@ export function AppAssistantWorkspace({
         startDevTunnel: (input) => startRef.current(input),
         stopDevTunnel: (input) => stopRef.current(input),
         getSession: () => live.current.session,
-        setSession: (next) => {
-          live.current.session = next;
-          setSession(next);
-          // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
-          if (next && !previewShown.current) {
-            previewShown.current = true;
-            setTab('preview');
-          }
-        },
+        setSession: showPreview,
       }),
       ...appTools.tools,
       ...gate.tools,
     }),
-    [canPreview, gate, appTools]
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
@@ -360,11 +394,18 @@ export function AppAssistantWorkspace({
       })),
     [remoteRunner]
   );
-  // On the runner, create_app opens an app the page did not: it follows, once its list has it.
+  // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
+  // the runner's start_preview says only which block it shows and where (never the tunnel's id):
+  // the pane fetches that block's frame, which civitai finds by the user's live tunnel.
   const onToolResult = useCallback(
     (result: ChatToolResult) => {
       gate.onToolResult(result);
-      if (!remoteRunner || result.name !== CREATE_APP || result.isError) return;
+      if (!remoteRunner || result.isError) return;
+      const preview = runnerPreviewAction(result);
+      if (preview && 'show' in preview)
+        return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
+      if (preview) return stopPreview();
+      if (result.name !== CREATE_APP) return;
       const app = (result.output as { app?: unknown } | null)?.app;
       if (typeof app !== 'string') return;
       void refetchRef.current().then(({ data }) => {
@@ -372,7 +413,7 @@ export function AppAssistantWorkspace({
         if (opened) setActiveName(opened.name);
       });
     },
-    [gate, remoteRunner]
+    [gate, remoteRunner, showPreview, stopPreview]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
@@ -575,13 +616,16 @@ export function AppAssistantWorkspace({
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
+  // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
+  // commit with the pre-fork `activeName`, would otherwise open the recent app over it.
+  const forkClaimsActiveApp = fork.claimsActiveApp;
   useEffect(() => {
     if (pickedOnLoad.current || !sandboxes.list.data) return;
     pickedOnLoad.current = true;
-    if (activeName) return;
+    if (activeName || forkClaimsActiveApp) return;
     const recent = mostRecentApp(sandboxes.list.data);
     if (recent) setActiveName(recent.name);
-  }, [sandboxes.list.data, activeName]);
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
 
   const resumeRef = useRef(sandboxes.open.mutate);
   resumeRef.current = sandboxes.open.mutate;
@@ -671,6 +715,13 @@ export function AppAssistantWorkspace({
   // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
   // app's tools, and nothing would wake the app. It comes back to the user instead.
   const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
+  const forkSetUp = () => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    dismissForkSetup();
+    void chat.send(FORK_SETUP_MESSAGE);
+  };
   useEffect(() => {
     if (runningWithTools || !released.current) return;
     released.current.cancel();
@@ -701,14 +752,17 @@ export function AppAssistantWorkspace({
     (text: string, queue: BeforeSendDetail['queue']) => {
       // Before the message may be kept back: a resume ask and a waiting message never both act.
       endResumeAsk();
+      // A message of the user's (or Set up itself) answers the fork's Set up card.
+      dismissForkSetup();
       // A new turn: the chat's own asks for a reply after it start afresh.
       const chat = `\n${chatIdRef.current}`;
       for (const keys of [autoGaveUp.current, autoWoke.current])
         keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
       onBeforeSend(text, queue);
     },
-    [endResumeAsk, onBeforeSend]
+    [endResumeAsk, onBeforeSend, dismissForkSetup]
   );
+  const onChatReady = useCallback(() => setChatReady(true), []);
   const onChatOpened = useCallback(
     (id: string | null) => {
       if (id !== chatIdRef.current) endResumeAsk();
@@ -829,6 +883,19 @@ export function AppAssistantWorkspace({
         </Popover>
       )}
       {!switcherOpen && <AppError error={appsError(sandboxes)} />}
+      <ForkStatus
+        creating={fork.creating}
+        problem={fork.problem}
+        retry={fork.retry}
+        retrying={fork.retrying}
+      />
+      {fork.setup && active?.app === fork.setup.app && (
+        <ForkSetupCard
+          parentName={fork.setup.parentName}
+          ready={runningWithTools}
+          onSetUp={forkSetUp}
+        />
+      )}
       {session && (
         <SegmentedControl
           className="shrink-0 md:hidden"
@@ -869,6 +936,7 @@ export function AppAssistantWorkspace({
             onChatChange={onChatOpened}
             subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
             remoteRunner={runner}
+            onReady={onChatReady}
           />
         </Paper>
         {session && (

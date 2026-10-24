@@ -251,11 +251,11 @@ async function searchModels(
 // `retryCount: 0` and the catch keep the pin off the critical path. On a cold key
 // with the refresh lock already held, fetchThroughCache's default retry sleeps
 // lockTTL/2 (5s) up to three times before giving up — inside the request. This runs
-// only while officialPinActive, i.e. the picker's initial state, so that stall lands
+// on the picker's initial state and the browse feed's Hot + base-model view, so that stall lands
 // on every concurrent modal open after a deploy or a Redis eviction even though the
 // lock winner populates the key in ~300ms. Failing to [] instead costs the pin for
 // one request and nothing else.
-async function getOfficialModelIds() {
+export async function getOfficialModelIds() {
   try {
     return await fetchThroughCache(
       REDIS_KEYS.CACHES.OFFICIAL_MODELS,
@@ -272,6 +272,45 @@ async function getOfficialModelIds() {
     console.error('getOfficialModelIds :: pin unavailable, continuing without it', err);
     return [];
   }
+}
+
+// Meilisearch only, never `getModelSearchIndexRecords`: the index holds published, searchable models
+// and `buildFilter` adds the rest of the visibility rules, so a pasted id finds nothing a search
+// could not.
+async function lookupResourceSelectModel(
+  input: GetResourceSelectInput,
+  { modelId, modelVersionId }: NonNullable<GetResourceSelectInput['lookup']>,
+  {
+    user,
+    signal,
+    coverageNext,
+    member,
+  }: { user: ServiceUser; signal?: AbortSignal; coverageNext: boolean; member: boolean }
+) {
+  const filter = and(
+    buildFilter({
+      input: {
+        ...input,
+        tab: 'all',
+        tagName: undefined,
+        resources: [],
+        filterTypes: [],
+        filterBaseModels: [],
+        filterLoaded: false,
+        filterTurbo: false,
+        hidePaid: false,
+      },
+      user,
+      tabIds: null,
+      coverageNext,
+      member,
+    }),
+    !!modelId && eq('id', modelId),
+    !!modelVersionId && eq('versions.id', modelVersionId)
+  );
+
+  const results = await searchModels('', { filter: filter ?? undefined, limit: 1 }, signal);
+  return { items: transformModelHits(results.hits), nextCursor: undefined, coverageNext, member };
 }
 
 export async function getResourceSelectModels(
@@ -291,6 +330,9 @@ export async function getResourceSelectModels(
   } = input;
 
   const { next: coverageNext, member } = await coverageAudience(user);
+  if (input.lookup)
+    return lookupResourceSelectModel(input, input.lookup, { user, signal, coverageNext, member });
+
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 

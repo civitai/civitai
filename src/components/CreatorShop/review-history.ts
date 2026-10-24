@@ -11,6 +11,12 @@ export const HISTORY_FIELD_LABELS: Record<string, string> = {
   pricePerUse: 'Price per extra use',
   price: 'Price',
   quantity: 'Quantity',
+  acceptsBlueBuzz: 'Accepts Blue Buzz',
+  sellableByOthers: 'Resellable by others',
+  sellerShare: 'Reseller share (%)',
+  cover: 'Cover',
+  members: 'Contents (cosmetic ids)',
+  paidToUserIds: 'Paid to (user ids)',
 };
 
 const adverseActions = ['reject', 'request-changes', 'revert'] as const;

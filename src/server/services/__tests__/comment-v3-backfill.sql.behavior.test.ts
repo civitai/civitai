@@ -325,9 +325,11 @@ describe('comment v3 backfill', () => {
         'v2_dead_parent',
         'v2_unresolved_entity',
         'v2_no_topic',
+        'v2_pending_unexplained',
         'v1_pending',
         'v1_dead_parent',
         'v1_no_topic',
+        'v1_pending_unexplained',
       ])
     ).toEqual({
       v2_reactions_pending: { count: 3, sample: [1, 2, 3] },

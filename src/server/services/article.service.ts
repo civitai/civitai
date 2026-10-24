@@ -1,5 +1,7 @@
 import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
@@ -1642,12 +1644,27 @@ async function withoutOfferingCovers(
   return imageIds.filter((id) => !used.has(id));
 }
 
-/** An owner with a safety report on file keeps every image: the report's review needs them. */
-async function ownerUnderSafetyReport(
-  db: Pick<Prisma.TransactionClient, 'csamReport'>,
+/**
+ * An owner with a safety report on file, or under any legal hold, keeps every image: the review
+ * needs them. Held when the hold cannot be read. Read outside any transaction: a failed read would
+ * abort it.
+ */
+export async function ownerUnderSafetyReport(
+  db: Pick<Prisma.TransactionClient, 'csamReport' | '$queryRaw'>,
   ownerId: number
 ) {
-  return (await db.csamReport.count({ where: { userId: ownerId } })) > 0;
+  try {
+    if ((await db.csamReport.count({ where: { userId: ownerId } })) > 0) return true;
+    const owner = Prisma.sql`${ownerId}::int`;
+    const [row] =
+      (await db.$queryRaw<{ held: unknown }[]>`
+        SELECT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, true)}) AS held
+      `) ?? [];
+    return row?.held !== false;
+  } catch (error) {
+    handleLogError(error as Error, 'article-image-cleanup-hold-read', { ownerId });
+    return true;
+  }
 }
 
 export const deleteArticleById = async ({
@@ -1692,40 +1709,43 @@ export const deleteArticleById = async ({
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // Delete cover image (DB + S3 + cache). Guarded like the content-image loop below:
-    // unguarded, a rejection here skips the articles-index `Delete` at the end of this
-    // function and the deleted article stays in that index indefinitely.
-    if (deleted.coverId)
-      await deleteImageById({ id: deleted.coverId }).catch((error) => {
-        handleLogError(error, 'article-cover-image-cleanup', {
-          articleId: id,
-          imageId: deleted.coverId,
+    // The cover goes through the same checks as the content images: it can be someone else's
+    // upload, or still shown elsewhere.
+    const imageIds = [
+      ...new Set([
+        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...contentImageConnections.map((conn) => conn.imageId),
+      ]),
+    ];
+
+    // The article is already gone, so a failed cleanup is logged rather than reported as a failed
+    // delete, and it must not skip the articles-index `Delete` below.
+    try {
+      if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
+        const trulyOrphanedImages = await dbWrite.image.findMany({
+          where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
+          select: { id: true },
         });
-      });
 
-    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    const contentImageIds = contentImageConnections
-      .map((conn) => conn.imageId)
-      .filter((imageId) => imageId !== deleted.coverId);
-
-    if (contentImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
-      const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, ...unusedAuthorImage(article.userId) },
-        select: { id: true },
-      });
-
-      const deletable = await withoutOfferingCovers(
-        dbWrite,
-        trulyOrphanedImages.map((img) => img.id)
-      );
-      for (const imageId of deletable) {
-        await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(error, 'article-content-image-cleanup', {
-            articleId: id,
-            imageId,
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          trulyOrphanedImages.map((img) => img.id)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable) {
+          await deleteImageById({ id: imageId }).catch((error) => {
+            handleLogError(
+              error,
+              imageId === deleted.coverId
+                ? 'article-cover-image-cleanup'
+                : 'article-content-image-cleanup',
+              { articleId: id, imageId }
+            );
           });
-        });
+        }
       }
+    } catch (error) {
+      handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
     }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
@@ -1998,7 +2018,7 @@ export async function linkArticleContentImages({
     }
 
     let trulyOrphanedIds: number[] = [];
-    if (orphanedIds.length > 0 && !(await ownerUnderSafetyReport(tx, ownerId))) {
+    if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
         select: { id: true },
@@ -2012,6 +2032,12 @@ export async function linkArticleContentImages({
     return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
 
+  // After the commit: the hold read must not be able to roll back the edit's image linking.
+  const deletable =
+    orphanedImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, ownerId))
+      ? orphanedImageIds
+      : [];
+
   if (imagesToIngest.length > 0) {
     // TODO.articleImageScan: remove the lowPriority flag
     enqueueImageIngestion({
@@ -2022,7 +2048,7 @@ export async function linkArticleContentImages({
     });
   }
 
-  return { orphanedImageIds };
+  return { orphanedImageIds: deletable };
 }
 
 /**

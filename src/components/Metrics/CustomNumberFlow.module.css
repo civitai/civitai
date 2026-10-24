@@ -1,15 +1,26 @@
 .wrapper {
+  /* The digit row pitch, snapped to whole px: a fractional pitch (non-default root font size) makes
+     each digit round differently from plain text. Same as 1em at 12/14/16/20px. */
+  --cnf-row: 1em;
   display: inline-flex;
   align-items: baseline;
   font-variant-numeric: tabular-nums;
   position: relative;
   white-space: nowrap;
-  /* Pin line-height: the digit stack rolls in 1em steps inside a
-     height:1em; overflow:hidden window, so any inherited line-height drift
+  /* Pin line-height: the digit stack rolls in --cnf-row steps inside a
+     height:--cnf-row; overflow:hidden window, so any inherited line-height drift
      (e.g. CurrencyBadge sets lineHeight:1.5) bleeds adjacent stack rows into
      the clip window — garbled half-glyphs / misaligned digits. Self-protect
-     here so every caller is safe without a per-call-site lh={1}. */
-  line-height: 1 !important;
+     here so every caller is safe without a per-call-site lh={1}. Set here and not
+     only on the stack because Mantine's `.mantine-Badge-label *` forces
+     `line-height: inherit`, which would hand the stack the unitless 1 and skip the rounding. */
+  line-height: var(--cnf-row) !important;
+}
+
+@supports (height: round(1em, 1px)) {
+  .wrapper {
+    --cnf-row: round(1em, 1px);
+  }
 }
 
 .srOnly {
@@ -26,8 +37,8 @@
 
 .digit {
   display: inline-block;
-  height: 1em;
-  line-height: 1em;
+  height: var(--cnf-row);
+  line-height: var(--cnf-row);
   overflow: hidden;
   vertical-align: baseline;
   font-variant-numeric: inherit;
@@ -36,9 +47,14 @@
 .stack {
   display: block;
   white-space: pre;
-  line-height: 1em;
-  transform: translateY(calc(var(--cnf-n, 0) * -1em));
-  transition: transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  line-height: var(--cnf-row);
+  /* Roll with a layout offset, not a transform. Firefox rounds a translated line to device pixels
+     separately from the same glyph laid out normally, so with a fractional device pixel ratio
+     (a 225% Windows display, DPR 2.25) digit columns painted 1 device pixel apart. Layout offsets
+     snap the same way for every digit, in Firefox and Chromium. */
+  position: relative;
+  top: calc(var(--cnf-n, 0) * -1 * var(--cnf-row));
+  transition: top 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .gradient .stack,
@@ -48,6 +64,10 @@
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+.gradient .stack {
+  background-size: 100% var(--cnf-row);
 }
 
 .symbol {

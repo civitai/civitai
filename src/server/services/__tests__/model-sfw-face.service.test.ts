@@ -9,7 +9,7 @@ const { mockPreviewTextScanNsfw, mockSubmitWorkflow } = vi.hoisted(() => ({
 }));
 
 // The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: vi.fn(() => ({})),
   submitWorkflow: mockSubmitWorkflow,
 }));

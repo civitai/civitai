@@ -62,8 +62,10 @@ import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { HistoryCard } from '~/components/CreatorShop/HistoryCard';
 import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
+import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
 import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
+import { shopItemReviewVersion } from '~/server/services/creator-shop.data';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -532,12 +534,13 @@ function CreatorShopReviewPage() {
   // A pack's verdict names its edit; re-read after every attempt, since a success or an "edit
   // changed" refusal leaves the pane on a stale one.
   const review = async (
-    input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId'>
+    input: Omit<Parameters<typeof reviewItem.mutateAsync>[0], 'boxRevisionId' | 'reviewedVersion'>
   ) => {
     try {
       await reviewItem.mutateAsync({
         ...input,
         boxRevisionId: boxRevision?.id,
+        reviewedVersion: shopItemReviewVersion(selectedMeta),
       });
       setReason('');
     } catch {
@@ -1261,10 +1264,14 @@ function CreatorShopReviewPage() {
                           isMysteryPack
                             ? 'Mystery packs are sold only through their own page.'
                             : selected.cosmetic && !selectedMeta.sellableByOthers
-                            ? "The creator hasn't allowed resale, so it can't be placed in an official section."
+                            ? "The creator hasn't allowed resale, so it can't be placed by hand. An event tag below still adds it to sections with that tag."
                             : true
                         }
                       />
+                    )}
+
+                    {selected.status !== CosmeticShopItemStatus.Archived && !isMysteryPack && (
+                      <ShopItemEventTagsPanel shopItemId={selected.id} />
                     )}
 
                     <Stack gap={8}>

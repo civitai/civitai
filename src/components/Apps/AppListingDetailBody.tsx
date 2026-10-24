@@ -71,6 +71,9 @@ import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/market
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { ListingForkAttribution } from '~/components/Apps/ListingForkAttribution';
+import { ListingForksSection } from '~/components/Apps/ListingForksSection';
+import { ListingForkButton } from '~/components/Apps/ForkAppAction';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import {
@@ -146,9 +149,8 @@ import type {
  * not, and must not become, an embedded runtime.
  *
  * Structurally pinned in the node `unit` project
- * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), because the
- * browser `component` suite runs only in the PR preview pipeline — report-only, and not a
- * required check — so a guard pinned only there is not reliably exercised.
+ * (`__tests__/appListingDetailView.test.ts`, "no raw `<iframe>` may return"), as well as in
+ * the browser `component` suite (`Component tests` in CI).
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in the
  * pure view-model (`safeExternalHref`) + rendered with rel="noopener noreferrer"
@@ -309,8 +311,7 @@ function HeroCover({
  * 🔴 THE WIRING IS NOT — do not read the line above as licence to skip the browser
  * tier. That this component hands the view-model the REAL `preview` value, rather than
  * a literal or an inverted one, is pinned ONLY in `AppListingDetailBody.browser.test.tsx`,
- * which runs solely as `preview / component-tests` in the PR preview pipeline — report-only,
- * not a required check, and not reported at all when the preview build fails. Mutating the
+ * which runs in CI as `Component tests`. Mutating the
  * call site to `{ preview: false }` leaves the whole node suite green. Rule and wiring are
  * separate claims; only the first one is gated.
  *
@@ -1033,6 +1034,10 @@ export function AppListingDetailBody({
                   {detail.tagline}
                 </Text>
               )}
+              {/* FORK PROVENANCE — "Forked from …". In the identity block, and rendered in preview
+                  too: it is presentational, and the server has already decided whether the
+                  parent may be named for this viewer. Not behind the fork rollout flag. */}
+              <ListingForkAttribution forkOf={detail.forkOf} />
               {/* 🔴 The PUBLIC collaborator byline. `detail.collaborators` has ALREADY been
                   filtered server-side to ACCEPTED **and** `displayed` seats and projected
                   to `{id, username, image}` — this renders it verbatim and applies no
@@ -1124,6 +1129,9 @@ export function AppListingDetailBody({
                 </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">
                   <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
+                      flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
+                  <ListingForkButton listing={detail} />
                 </Card.Section>
               </Card>
             )}
@@ -1210,6 +1218,11 @@ export function AppListingDetailBody({
             )}
 
             <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
+
+            {/* "N forks" + the published forks. Live surface only (a preview's `detail.id` is not
+                guaranteed to be a listing id), and the section gates itself on the fork rollout
+                flag — it issues no request while the flag is off. */}
+            {!preview && <ListingForksSection listingId={detail.id} />}
 
             {/* Off-site external destination disclosure (mirrors the live detail).
                 🔴 The condition lives in `shouldShowOffsiteDisclosure`, NOT here —

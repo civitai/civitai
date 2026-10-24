@@ -7,6 +7,7 @@ import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimat
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 
 export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
@@ -1318,6 +1319,57 @@ export const BLOCK_READY_TIMEOUT_MS = 10_000;
 export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 
 /**
+ * The BLOCK_READY window for the author's DEV TUNNEL only (`surface === 'dev-tunnel'`).
+ *
+ * A dev tunnel serves an unbundled dev server — one request per module — through a
+ * tunnel, so a healthy app can take seconds to ack. Measured 2026-10-23 on a good
+ * network: ready in 2.5–7.0 s against the 10 s limit above, with no headroom for a
+ * slower link. Every other surface serves a built bundle and keeps 10 s.
+ */
+export const DEV_TUNNEL_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * How a surface waits for BLOCK_READY. Produced ONLY by `readyWaitPolicyFor`.
+ *
+ *  - `readyTimeoutMs`     — the readiness window. Throughout it the init controller
+ *                           keeps re-posting BLOCK_INIT to the SAME frame.
+ *  - `autoRetryOnTimeout` — whether a `timeout` terminal schedules an automatic
+ *                           attempt. An automatic attempt RELOADS the frame (re-keys
+ *                           the iframe), which for a dev server restarts every module
+ *                           download — so on the dev tunnel the long window above IS
+ *                           the retry, and a timeout after it settles immediately.
+ *                           Other terminals (`fatal`, auth) are unaffected.
+ *  - `timeoutCopy`        — which `BlockFallback` copy a `timeout` renders.
+ */
+export type ReadyWaitPolicy = {
+  readyTimeoutMs: number;
+  autoRetryOnTimeout: boolean;
+  timeoutCopy: 'default' | 'dev-server';
+};
+
+const DEFAULT_READY_WAIT_POLICY: ReadyWaitPolicy = {
+  readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+  autoRetryOnTimeout: true,
+  timeoutCopy: 'default',
+};
+
+const DEV_TUNNEL_READY_WAIT_POLICY: ReadyWaitPolicy = {
+  readyTimeoutMs: DEV_TUNNEL_READY_TIMEOUT_MS,
+  autoRetryOnTimeout: false,
+  timeoutCopy: 'dev-server',
+};
+
+/**
+ * 🔴 THE ONE surface check for the ready wait. Every dev-tunnel render path — the
+ * `/apps/dev/<blockId>` page and the App Assistant preview pane — mounts
+ * `DevTunnelBlockHost`, which passes `surface="dev-tunnel"` to `PageBlockHost`, which
+ * reads its window, retry and copy from here and nowhere else.
+ */
+export function readyWaitPolicyFor(surface: BlockHostSurface): ReadyWaitPolicy {
+  return surface === 'dev-tunnel' ? DEV_TUNNEL_READY_WAIT_POLICY : DEFAULT_READY_WAIT_POLICY;
+}
+
+/**
  * The longest wall-clock a SUCCESSFUL launch can legitimately take, derived from
  * the constants above rather than asserted.
  *
@@ -1349,6 +1401,17 @@ export const TOKEN_WAIT_TIMEOUT_MS = 15_000;
  * second), and a post-`timeout` attempt cannot re-pay the token wait. Both of
  * those are why the naive `3 x (15 + 10) + backoffs` = 82s over-states it, and
  * why treating every attempt as ~15s under-states it.
+ *
+ * 🔴 SCOPE: this is the bound for every surface on `BLOCK_READY_TIMEOUT_MS` — i.e.
+ * every surface EXCEPT the dev tunnel (`DEV_TUNNEL_READY_TIMEOUT_MS`, see
+ * `readyWaitPolicyFor`). A dev-tunnel launch that succeeds within its FIRST
+ * attempt (token wait + 30 s) is always inside the sample cap — a test pins that.
+ * A dev-tunnel launch that also needed an automatic attempt (an auth re-mint, or a
+ * `fatal` remount) can run past the cap; that sample is DROPPED (never clamped).
+ * Accepted: the dev tunnel's latency measures the author's own dev server and
+ * tunnel, not the platform. (This bound covers the AUTOMATIC path only on every
+ * surface — repeated manual Retry can exceed it anywhere; see
+ * `worstReachableInitPosts`.)
  */
 export function worstReachableLaunchMs(): number {
   const backoffs = AUTO_RETRY_BACKOFF_MS.slice(0, MAX_AUTO_RETRIES).reduce((a, b) => a + b, 0);
@@ -1396,6 +1459,10 @@ export function worstReachableLaunchMs(): number {
  * at `BLOCK_READY_TIMEOUT_MS`, whatever else the attempt spent waiting on a
  * token. So `TOKEN_WAIT_TIMEOUT_MS` deliberately does NOT appear here — that is
  * the one place this bound's shape differs from `worstReachableLaunchMs`'s.
+ *
+ * 🔴 Same scope as `worstReachableLaunchMs`: surfaces on `BLOCK_READY_TIMEOUT_MS`.
+ * A single 30 s dev-tunnel attempt stays under the post cap (test-pinned); a
+ * multi-attempt dev-tunnel launch can exceed it and is dropped, as documented there.
  */
 export function worstReachableInitPosts(): number {
   const attempts = MAX_AUTO_RETRIES + 1;
@@ -1450,6 +1517,8 @@ export type AutoRetryDecision =
  *
  * Returns `{kind:'none'}` — i.e. the host has SETTLED on this terminal state — when:
  *   - the status is non-terminal (loading/ready) or not auto-retryable;
+ *   - the status is `timeout` and the surface's policy says not to retry it
+ *     (`autoRetryOnTimeout:false` — the dev tunnel);
  *   - the total attempt budget is spent;
  *   - the status is an AUTH terminal and either (a) the re-mint budget is spent,
  *     or (b) no re-mint is wired (`canRemint:false`). In both cases a further
@@ -1464,9 +1533,16 @@ export function decideAutoRetry(args: {
   reminted: number;
   /** Whether the host actually has a token re-mint available (`onRetryToken`). */
   canRemint: boolean;
+  /**
+   * Whether a `timeout` terminal may be auto-retried — `readyWaitPolicyFor(surface)`.
+   * `false` on the dev tunnel, whose long ready window already was the wait.
+   * Omitted = `true` (every other surface, unchanged).
+   */
+  autoRetryOnTimeout?: boolean;
 }): AutoRetryDecision {
-  const { status, attempts, reminted, canRemint } = args;
+  const { status, attempts, reminted, canRemint, autoRetryOnTimeout = true } = args;
   if (!isAutoRetryableStatus(status)) return { kind: 'none' };
+  if (status === 'timeout' && !autoRetryOnTimeout) return { kind: 'none' };
   if (attempts >= MAX_AUTO_RETRIES) return { kind: 'none' };
 
   const remint = isAuthTerminalStatus(status);

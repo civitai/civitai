@@ -133,6 +133,7 @@
 
 {#snippet fields()}
   <InlineReasonFields
+    compact
     options={reasonOptions}
     bind:reason={
       () => reason,
@@ -159,6 +160,7 @@
 <form method="POST" action={actionHref('resolve')} use:enhance={decide} class="w-full">
   <input type="hidden" name="userRestrictionId" value={restrictionId} />
   <TriageDecisionBar
+    compact
     buttons={decisionButtons}
     picker={reasonPicker.open !== null ? picker : undefined}
     fields={draft.verdict ? fields : undefined}

@@ -3,11 +3,7 @@ import { z } from 'zod';
 import { recordModActivity } from '$lib/server/mod-activity';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { jsonField, parseForm } from '$lib/server/query';
-import {
-  promptChangesField,
-  ruleOverridesField,
-  validatePromptChanges,
-} from '$lib/server/text-scan-lab/try';
+import { promptChangesField, validatePromptChanges } from '$lib/server/text-scan-lab/try';
 import { requestCookie } from '$lib/server/user-actions.service';
 import type { Workspace } from '$lib/text-scan-tests/types';
 import { runsDeps } from './deps';
@@ -28,7 +24,6 @@ type Db = RunsDeps['db'];
 const runSchema = z.object({
   setId: id,
   prompts: promptChangesField.optional().default({}),
-  rules: ruleOverridesField.optional().default([]),
   stamp: z.string().max(128).optional(),
 });
 type RunForm = z.infer<typeof runSchema>;
@@ -47,7 +42,7 @@ const editSchema = caseRef.extend({
 
 function draftOf(input: RunForm): DraftInput | null {
   const prompts = validatePromptChanges(input.prompts);
-  return Object.keys(prompts).length || input.rules.length ? { prompts, rules: input.rules } : null;
+  return Object.keys(prompts).length ? { prompts } : null;
 }
 
 async function openSetFor(event: RequestEvent, db: Db, setId: number) {

@@ -609,3 +609,9 @@ export function getCrucibleJudgingBadge(
   if (judging.votesUsedUp) return { kind: 'caughtUp', label: "You're caught up here" };
   return null;
 }
+
+/** Its start has passed, but it opens only once its review finishes. */
+export const isCrucibleAwaitingReviewToStart = (
+  crucible: { status: CrucibleStatus; startAt: Date | null },
+  now = new Date()
+) => crucible.status === CrucibleStatus.Pending && !!crucible.startAt && crucible.startAt <= now;

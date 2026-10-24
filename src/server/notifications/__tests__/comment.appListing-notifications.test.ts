@@ -439,6 +439,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       root."bountyEntryId",
       root."challengeId",
       root."crucibleId",
+      root."storylineId",
       root."model3dId",
       root."comicProjectId"
       ),
@@ -454,6 +455,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
       WHEN root."challengeId" IS NOT NULL THEN 'challenge'
       WHEN root."crucibleId" IS NOT NULL THEN 'crucible'
+      WHEN root."storylineId" IS NOT NULL THEN 'storyline'
       WHEN root."model3dId" IS NOT NULL THEN 'model3d'
       WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
       WHEN al.slug IS NOT NULL THEN 'appListing'
@@ -566,6 +568,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       root."bountyEntryId",
       root."challengeId",
       root."crucibleId",
+      root."storylineId",
       root."model3dId",
       root."comicProjectId",
       t."imageId",
@@ -579,6 +582,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       t."bountyEntryId",
       t."challengeId",
       t."crucibleId",
+      t."storylineId",
       t."model3dId",
       t."comicProjectId"
       ),
@@ -594,6 +598,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
       WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
       WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+      WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
       WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
       WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
       WHEN al.slug IS NOT NULL THEN 'appListing'
@@ -612,6 +617,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       t."bountyEntryId",
       t."challengeId",
       t."crucibleId",
+      t."storylineId",
       t."model3dId",
       t."commentId"
       ),
@@ -627,6 +633,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
       WHEN t."challengeId" IS NOT NULL THEN 'challenge'
       WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+      WHEN t."storylineId" IS NOT NULL THEN 'storyline'
       WHEN t."model3dId" IS NOT NULL THEN 'model3d'
       ELSE 'comment'
       END,
@@ -680,6 +687,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       root."bountyEntryId",
       root."challengeId",
       root."crucibleId",
+      root."storylineId",
       root."model3dId",
       root."comicProjectId",
       t."imageId",
@@ -693,6 +701,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       t."bountyEntryId",
       t."challengeId",
       t."crucibleId",
+      t."storylineId",
       t."model3dId",
       t."comicProjectId"
       ),
@@ -708,6 +717,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
       WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
       WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+      WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
       WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
       WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
       WHEN al.slug IS NOT NULL THEN 'appListing'
@@ -726,6 +736,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       t."bountyEntryId",
       t."challengeId",
       t."crucibleId",
+      t."storylineId",
       t."model3dId",
       t."commentId"
       ),
@@ -741,6 +752,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
       WHEN t."challengeId" IS NOT NULL THEN 'challenge'
       WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+      WHEN t."storylineId" IS NOT NULL THEN 'storyline'
       WHEN t."model3dId" IS NOT NULL THEN 'model3d'
       ELSE 'comment'
       END,

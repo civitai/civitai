@@ -17,6 +17,8 @@ import {
 export type ScanLabelCard = {
   itemId: number;
   imageId: number;
+  /** The claim's opaque token: what the page carries instead of either id. */
+  token: string;
   url: string;
   type: string;
   name: string | null;
@@ -38,6 +40,9 @@ export type VoteResult =
 
 type Db = Kysely<DB> | Transaction<DB>;
 
+/** Control items are a blind calibration sample: their flag version must never be a way to pick them. */
+const CONTROL_SOURCE = 'control-sample';
+
 function openItems(db: Db, filters: ScanLabelFilters) {
   let q = db.selectFrom('ScanLabelItem as i').where('i.status', '=', 'open');
   if (filters.day) {
@@ -52,6 +57,7 @@ function openItems(db: Db, filters: ScanLabelFilters) {
           .select(sql`1`.as('one'))
           .whereRef('f.itemId', '=', 'i.id')
           .where('f.flaggerVersion', '=', version)
+          .where('f.source', '<>', CONTROL_SOURCE)
       )
     );
   }
@@ -68,13 +74,31 @@ const otherLiveLeases = (db: Db, itemId: number, userId: number, now: Date) =>
     .executeTakeFirstOrThrow()
     .then((r) => Number(r.n));
 
-async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<ScanLabelCard | null> {
+const hasVoted = (db: Db, itemId: number, userId: number) =>
+  db
+    .selectFrom('ScanLabelVote')
+    .select('itemId')
+    .where('itemId', '=', itemId)
+    .where('userId', '=', userId)
+    .executeTakeFirst()
+    .then((r) => !!r);
+
+async function toCard(
+  db: Db,
+  itemId: number,
+  userId: number,
+  leaseExpiresAt: Date
+): Promise<ScanLabelCard | null> {
   const row = await db
     .selectFrom('ScanLabelItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .innerJoin('ScanLabelClaim as c', (j) =>
+      j.onRef('c.itemId', '=', 'i.id').on('c.userId', '=', userId)
+    )
     .select([
       'i.id as itemId',
       'i.imageId',
+      'c.token',
       'img.url',
       'img.type',
       'img.name',
@@ -83,7 +107,31 @@ async function toCard(db: Db, itemId: number, leaseExpiresAt: Date): Promise<Sca
     ])
     .where('i.id', '=', itemId)
     .executeTakeFirst();
-  return row ? { ...row, type: String(row.type), leaseExpiresAt } : null;
+  // Every claim has a token (column default, backfilled); a row without one has no card to vote on.
+  if (!row?.token) return null;
+  return { ...row, token: row.token, type: String(row.type), leaseExpiresAt };
+}
+
+/**
+ * The item a card's token stands for, for the moderator it was minted for: through their claim, or
+ * once the claim is gone, through the vote they cast with it, so a repeat is told it already landed.
+ * Null for anyone else's token.
+ */
+export async function itemForToken(token: string, userId: number): Promise<number | null> {
+  const claim = await dbWrite
+    .selectFrom('ScanLabelClaim')
+    .select('itemId')
+    .where('token', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  if (claim) return claim.itemId;
+  const vote = await dbWrite
+    .selectFrom('ScanLabelVote')
+    .select('itemId')
+    .where('claimToken', '=', token)
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+  return vote?.itemId ?? null;
 }
 
 const MAX_CLAIM_ATTEMPTS = 20;
@@ -107,6 +155,19 @@ function inSource(source: QueueSource) {
   };
 }
 
+function notVotedBy(userId: number) {
+  return (eb: ExpressionBuilder<DB & { i: DB['ScanLabelItem'] }, 'i'>) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ScanLabelVote as v')
+          .select(sql`1`.as('one'))
+          .whereRef('v.itemId', '=', 'i.id')
+          .where('v.userId', '=', userId)
+      )
+    );
+}
+
 /** One source drawn by weight, then the others by descending weight to fall back on. */
 export function sourceOrder(rng: () => number): QueueSource[] {
   const sources = Object.keys(QUEUE_MIX) as QueueSource[];
@@ -118,10 +179,10 @@ export function sourceOrder(rng: () => number): QueueSource[] {
 }
 
 /**
- * A live lease on an open item in the current filter is returned as-is, so a reload cannot pile up
- * leases. A live lease outside the filter is released. A new claim draws its source by `QUEUE_MIX`.
- * A filtered claim skips the mix: a filter can empty a source, and each empty source would walk the
- * whole queue.
+ * A live lease on an open item the moderator has not voted on is returned as-is, so a reload cannot
+ * pile up leases. A held card is kept across a filter change; the filter applies from the next claim.
+ * A new claim draws its source by `QUEUE_MIX`. A filtered claim skips the mix: a filter can empty a
+ * source, and each empty source would walk the whole queue.
  */
 export async function claimNext(
   userId: number,
@@ -137,23 +198,16 @@ export async function claimNext(
       .where('c.expiresAt', '>', now)
       .orderBy('c.expiresAt', 'desc')
       .execute();
+    // 🔴 Unlocked: it only hands back a lease the moderator already holds. Renewing or rewriting
+    // the lease here would need the row lock the claim path below takes.
     for (const lease of held) {
-      const inView = await openItems(trx, filters)
+      const open = await openItems(trx, {})
         .select('i.id')
         .where('i.id', '=', lease.itemId)
+        .where(notVotedBy(userId))
         .executeTakeFirst();
-      if (inView) return toCard(trx, lease.itemId, lease.expiresAt);
+      if (open) return toCard(trx, lease.itemId, userId, lease.expiresAt);
     }
-    if (held.length)
-      await trx
-        .deleteFrom('ScanLabelClaim')
-        .where('userId', '=', userId)
-        .where(
-          'itemId',
-          'in',
-          held.map((l) => l.itemId)
-        )
-        .execute();
 
     const tried: number[] = [];
     let attempts = 0;
@@ -163,16 +217,7 @@ export async function claimNext(
         attempts++;
         let q = openItems(trx, filters)
           .select(['i.id', 'i.votes'])
-          .where(({ not, exists, selectFrom }) =>
-            not(
-              exists(
-                selectFrom('ScanLabelVote as v')
-                  .select(sql`1`.as('one'))
-                  .whereRef('v.itemId', '=', 'i.id')
-                  .where('v.userId', '=', userId)
-              )
-            )
-          )
+          .where(notVotedBy(userId))
           .where(
             (eb) =>
               eb(
@@ -200,16 +245,21 @@ export async function claimNext(
           .executeTakeFirst();
         if (!candidate) break;
 
-        // 🔴 Re-count AFTER taking the row lock, in a new statement. The candidate query's lease count
-        // came from a snapshot that can predate a rival claimer's commit; every claimer and voter takes
-        // this lock first, so only a count read under it is current.
+        // 🔴 Re-count, and re-check this moderator's own vote, AFTER taking the row lock, in new
+        // statements. The candidate query came from a snapshot that can predate a rival claimer's or
+        // another tab's commit; every claimer and voter takes this lock first, so only a read under it
+        // is current.
         const fresh = await trx
           .selectFrom('ScanLabelItem')
           .select(['votes', 'status'])
           .where('id', '=', candidate.id)
           .executeTakeFirstOrThrow();
         const leases = await otherLiveLeases(trx, candidate.id, userId, now);
-        if (fresh.status !== 'open' || fresh.votes + leases >= VOTES_PER_ITEM) {
+        if (
+          fresh.status !== 'open' ||
+          fresh.votes + leases >= VOTES_PER_ITEM ||
+          (await hasVoted(trx, candidate.id, userId))
+        ) {
           tried.push(candidate.id);
           continue;
         }
@@ -220,7 +270,7 @@ export async function claimNext(
           .values({ itemId: candidate.id, userId, expiresAt })
           .onConflict((oc) => oc.columns(['itemId', 'userId']).doUpdateSet({ expiresAt }))
           .execute();
-        const card = await toCard(trx, candidate.id, expiresAt);
+        const card = await toCard(trx, candidate.id, userId, expiresAt);
         if (card) return card;
         tried.push(candidate.id);
       }
@@ -239,7 +289,15 @@ export async function castVote(
     userId,
     choice,
     msOnItem,
-  }: { itemId: number; userId: number; choice: VoteChoice; msOnItem: number | null },
+    claimToken = null,
+  }: {
+    itemId: number;
+    userId: number;
+    choice: VoteChoice;
+    msOnItem: number | null;
+    /** The card's token, kept on the vote so a repeat from another tab still finds the card. */
+    claimToken?: string | null;
+  },
   now: Date = new Date()
 ): Promise<VoteResult> {
   const { block } = choice;
@@ -250,7 +308,10 @@ export async function castVote(
       .where('id', '=', itemId)
       .forUpdate()
       .executeTakeFirst();
-    if (!item || item.status !== 'open' || item.votes >= VOTES_PER_ITEM)
+    if (!item) return { ok: false, reason: 'not-open' };
+    // Before the other refusals, so a repeat vote from a second tab is told it already landed.
+    if (await hasVoted(trx, itemId, userId)) return { ok: false, reason: 'already-voted' };
+    if (item.status !== 'open' || item.votes >= VOTES_PER_ITEM)
       return { ok: false, reason: 'not-open' };
 
     const mine = await trx
@@ -274,10 +335,12 @@ export async function castVote(
         reason: choice.block ? choice.reason : null,
         reasonComment: choice.block ? choice.reasonComment : null,
         msOnItem,
+        claimToken,
         createdAt: now,
       })
       .onConflict((oc) => oc.columns(['itemId', 'userId']).doNothing())
       .executeTakeFirst();
+    // Backstop only: the row lock and `hasVoted` above already refuse a repeat.
     if (!inserted.numInsertedOrUpdatedRows) return { ok: false, reason: 'already-voted' };
 
     const votes = item.votes + 1;
@@ -381,6 +444,25 @@ export async function getCounters(
   };
 }
 
+/** A version from the URL that control flags carry. The page treats it as no version filter. */
+export async function isControlFlaggerVersion(
+  version: string,
+  db: Kysely<DB> = dbRead
+): Promise<boolean> {
+  // From the control lane's partial index: a real version has no control flags, so looking it up
+  // by version alone reads every flag of that version to prove it.
+  const row = await db
+    .selectFrom('ScanLabelItem as i')
+    .innerJoin('ScanLabelFlag as f', 'f.itemId', 'i.id')
+    .select(sql`1`.as('one'))
+    .where(sql<boolean>`i.lane = 'control'`)
+    .where('f.flaggerVersion', '=', version)
+    .where('f.source', '=', CONTROL_SOURCE)
+    .limit(1)
+    .executeTakeFirst();
+  return !!row;
+}
+
 /** Flagger versions that have at least one open item, newest flag first, for the filter. */
 export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<string[]> {
   const rows = await db
@@ -389,6 +471,7 @@ export async function getOpenFlaggerVersions(db: Kysely<DB> = dbRead): Promise<s
     .select('f.flaggerVersion')
     .select((eb) => eb.fn.max('f.flaggedAt').as('latest'))
     .where('i.status', '=', 'open')
+    .where('f.source', '<>', CONTROL_SOURCE)
     .groupBy('f.flaggerVersion')
     .orderBy('latest', 'desc')
     .execute();

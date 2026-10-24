@@ -2,14 +2,16 @@
   import type { Snippet } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   import ReportFilters from '$lib/components/ReportFilters.svelte';
+  import { LINK_CLASS, num } from '$lib/format';
   import { clearPaging } from '$lib/paging';
   import type { ReportQueueData } from '$lib/server/report-queue-load';
 
   /**
-   * The queue column every non-table report queue shares: its title, the filters (or the note for a
-   * single `?report=` view), the striped list, and Prev/Next.
+   * The queue column every non-table report queue shares: the filters (or the note for a single
+   * `?report=` view), the list, and a footer with the range and Prev/Next — styled as the triage
+   * pages' list (`TriageShell`'s `flush`, `TriageRow`). The page title is `ReportQueueShell`'s.
    *
    * Every filter and page change goes to `basePath` — the bare queue — so the new view opens on its own
    * first item rather than one the last view had open. `clearPaging` drops the open item's own pagers.
@@ -19,7 +21,6 @@
    * the row, not on a link or button inside it, and not a drag to copy text out of it.
    */
   let {
-    title,
     basePath,
     queue,
     items,
@@ -30,7 +31,6 @@
     onNavigate,
     toolbar,
   }: {
-    title: string;
     /** The bare queue, e.g. `/reports/model`. */
     basePath: string;
     /** The layout's `loadReportQueue` result: filter state and paging. */
@@ -49,6 +49,8 @@
   } = $props();
 
   const totalPages = $derived(Math.max(1, Math.ceil(queue.totalItems / queue.limit)));
+  const firstShown = $derived((queue.page - 1) * queue.limit + 1);
+  const lastShown = $derived((queue.page - 1) * queue.limit + items.length);
 
   function navigate(href: string) {
     const url = new URL(href, page.url);
@@ -78,35 +80,32 @@
   }
 </script>
 
-<header>
-  <h1 class="m-0 text-xl font-semibold text-white">{title}</h1>
-</header>
+<div class="flex shrink-0 flex-col gap-2 border-b border-dark-4 px-3 py-2.5">
+  {#if queue.singleReport}
+    <p class="m-0 text-xs text-dark-2">
+      Showing report #{queue.singleReport} only.
+      <a href={basePath} class={LINK_CLASS}>Back to the queue</a>
+    </p>
+  {:else}
+    <ReportFilters
+      statuses={queue.statuses}
+      reasons={queue.reasons}
+      reportedBy={queue.reportedBy}
+      hidingAutomated={queue.hidingAutomated}
+      statusCounts={queue.statusCounts}
+      dates={dates ? { from: queue.reportedFrom, to: queue.reportedTo } : undefined}
+      {navigate}
+    />
+    {#if toolbar}{@render toolbar()}{/if}
+  {/if}
+</div>
 
-{#if queue.singleReport}
-  <p class="m-0 text-xs text-muted-foreground">
-    Showing report #{queue.singleReport} only.
-    <a href={basePath} class="link">Back to the queue</a>
-  </p>
-{:else}
-  <ReportFilters
-    statuses={queue.statuses}
-    reasons={queue.reasons}
-    reportedBy={queue.reportedBy}
-    hidingAutomated={queue.hidingAutomated}
-    statusCounts={queue.statusCounts}
-    dates={dates ? { from: queue.reportedFrom, to: queue.reportedTo } : undefined}
-    {navigate}
-  />
-  {#if toolbar}{@render toolbar()}{/if}
-{/if}
-
-<!-- Striped, and the open item marked in blue. The stripe is dropped on the open row rather than
-     layered under it, so which wins never depends on Tailwind's variant order. `min-h-0` or the list
-     refuses to shrink and the column overflows; `relative` for the reason in `ReportDetailColumns`. -->
+<!-- The open item marked as a triage row is: a blue edge on a raised row. `min-h-0` or the list refuses
+     to shrink and the column overflows; `relative` for the reason in `ReportDetailColumns`. -->
 <ul
   role="listbox"
   aria-label="Reports"
-  class="relative flex flex-col gap-1 text-sm xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1"
+  class="relative m-0 flex list-none flex-col p-0 text-sm xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
 >
   {#each items as item (item.id)}
     {@const open = isOpen(item)}
@@ -114,39 +113,44 @@
       role="option"
       tabindex={0}
       aria-selected={open}
-      class="cursor-pointer rounded-md border px-3 py-2 {open
-        ? 'border-blue-500/40 bg-blue-500/15 shadow-[inset_3px_0_0_var(--color-blue-500)]'
-        : 'border-transparent odd:bg-dark-7/40 hover:bg-dark-7/70'}"
+      class={cn(
+        'cursor-pointer border-l-2 px-3 py-2.5 transition-colors hover:bg-dark-5',
+        open ? 'border-blue-500 bg-dark-5' : 'border-transparent'
+      )}
       onclick={(e) => onRowClick(e, item)}
       onkeydown={(e) => onRowKeydown(e, item)}
     >
       {@render row(item)}
     </li>
   {:else}
-    <li class="py-8 text-center text-muted-foreground">No reports match this view.</li>
+    <li role="presentation" class="py-8 text-center text-dark-2">No reports match this view.</li>
   {/each}
 </ul>
 
-<!-- Prev/next rather than numbered pages, which do not fit a column this narrow. Buttons, not links:
-     a page change also opens the new page's first item. -->
-{#if totalPages > 1}
-  <div class="flex items-center justify-between gap-2 text-sm">
-    <Button
-      size="sm"
-      variant="ghost"
-      disabled={queue.page <= 1}
-      onclick={() => navigate(pageHref(queue.page - 1))}
-    >
-      ← Previous
-    </Button>
-    <span class="text-muted-foreground">Page {queue.page} of {totalPages}</span>
-    <Button
-      size="sm"
-      variant="ghost"
-      disabled={queue.page >= totalPages}
-      onclick={() => navigate(pageHref(queue.page + 1))}
-    >
-      Next →
-    </Button>
-  </div>
+<!-- Buttons, not links: a page change also opens the new page's first item. -->
+<!-- Also on an empty later page (a stale ?page=, or its last report ruled), so Prev still leads back. -->
+{#if items.length || queue.page > 1}
+  <footer
+    class="flex shrink-0 items-center justify-between gap-3 border-t border-dark-4 px-3 py-2 text-xs text-dark-2"
+  >
+    <span class="tabular-nums">
+      {items.length ? `${num(firstShown)} to ${num(lastShown)} of ${num(queue.totalItems)}` : `Page ${queue.page}`}
+    </span>
+    <span class="flex gap-2.5">
+      {#if queue.page > 1}
+        <button type="button" class={LINK_CLASS} onclick={() => navigate(pageHref(queue.page - 1))}>
+          Prev
+        </button>
+      {:else}
+        <span aria-disabled="true">Prev</span>
+      {/if}
+      {#if queue.page < totalPages}
+        <button type="button" class={LINK_CLASS} onclick={() => navigate(pageHref(queue.page + 1))}>
+          Next
+        </button>
+      {:else}
+        <span aria-disabled="true">Next</span>
+      {/if}
+    </span>
+  </footer>
 {/if}

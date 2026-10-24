@@ -45,6 +45,9 @@ Public collections readable as Public or Unlisted → `nsfw`, a floor on the col
 replaces Clavata only once Collection is cut over with `disableClavataFor`.
 Storyline's (title → a rating and a takedown or restriction on the storyline) is applied by
 `text-scan/actions/storyline.ts`; what readers see is in `docs/features/storylines.md`.
+ImageCaption's (an author's caption on one image of a storyline chapter, keyed by `imageId` → a
+rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
+has no Clavata counterpart.
 
 ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
@@ -53,58 +56,40 @@ workflow per window.
 
 ### Model rules
 
-`ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
-prompt changes never move the `Model` verdicts. It reads the same text as `Model` (name,
-description, version names and descriptions, trained words), but only what the public can see: a
-Published or Scheduled, non-Private model and its public versions. It runs on publish and on every
-edit of a public model. Its one label, `modelRules`, asks which of the moderators' rules the model
-matches.
+Model rules are matched deterministically (no LLM) against each enabled `ModerationRule` row with
+`entityType = Model` and a `semantic` definition (`subject`, `description`, `aliases`). A match is
+recorded as a `TextScanHold` with label `modelRules`, held for a moderator rather than acted on by the
+scan.
 
-The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
-definition (`subject`, `description`, `aliases`). They are appended to the `label:modelRules` prompt
-as a numbered list at scan time, so the rule text lives only in the database. Moderators manage both
-the rules and that prompt on the moderator app's `/text-scan/model-rules` page: edits are drafts in
-the moderator's browser until saved, and every create, edit, enable/disable and restore of a rule
-writes a row to `ModerationRuleVersion` in the same transaction, so each rule has a history that can
-be compared and restored. A rule saved before that table existed gets its earlier state recorded on
-its next save. The `ModerationRuleVersion` table is created by a hand-applied migration; apply it
-before deploying the moderator app, since a rule save writes its version row in the same
-transaction. The page's Try panel judges a pasted link, id or text as `ModelRules` with the saved
-rules and, side by side, with the drafts (new rules carry negative ids that exist only in the lab);
-literal hits show there even when the model gives no answer. A literal hold at publish also writes
-the model's `ModelRules` scan row (no content hash, so the scan after a moderator's republish still
-runs); Matches marks it "held at publish", and the model page's moderator panel names the matched
-rules. The owner sees "being reviewed" without a review request. Rules written
-before the scan are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules` (`count`, then
-`apply`), converts them in place once per environment. A rule that does not reduce to plain text, or
-was an Approve rule, ends disabled and flagged until a moderator rewrites it, and nothing in the
-response or its log carries rule text. A verdict can
-only name rules the prompt listed, and it stores the matched rules as they read when the scan ran.
-When it is active, a match unpublishes the model for review (`needsReview`) with a notice that does
-not name the rule, and a match on a rule disabled since the scan began is dropped. A moderator who
-republishes the model approves those matches for the text they reviewed; edited text is judged
-again.
+Moderators rule on a hold in the moderator app's `/models/rule-matches` queue, through
+`POST /api/mod/text-scan/model-rules-hold/resolve`, with one of four rulings: Confirm, Confirm +
+strike, Dismiss not this subject, or Dismiss allowed use. A ruling and its label-store rows are written
+in one transaction. Model-rule takedowns are not listed in Models Needing Review.
 
-Beside the model, a deterministic literal check compares the same text with each rule's `subject` and
-`aliases`. Both sides are normalized the same way (case, accents, look-alike and invisible
-characters, punctuation and separators), and a term matches only as a whole word or phrase; very
-short terms are ignored. Each field (name, description, each version's name, description and trained
-words) is matched on its own, so a phrase never matches across two fields. It follows the `ModelRules` mode and never runs for moderators:
+The `ModelRules` mode decides what a match does:
 
-- **active** — a publish, schedule or Private to Public change by a non-moderator whose text
-  matches is held instead of going live: the model ends `UnpublishedViolation` with `needsReview`
-  and the same notice, and is never published first. A new version published on an already public
-  model that matches takes the model down the same way. The held text is the text the post-publish
-  scan will read, so a moderator's republish clears those rules for it and edited text is checked
-  again. If the check or the hold itself fails, it is logged, the publish goes through and the model
-  scan is the backstop. The owner sees a neutral "Submitted for review" message instead of
-  "published". A model held while Private stays private; a moderator republishes it first, then makes it public.
-- **shadow** — nothing is held. Each scan stores the rules the text names literally next to the
-  model's verdict, so the two can be compared. The same record is kept in active mode.
-- **off**, or the Flipt switch off — the check does not run and no rules are loaded for it.
+- **active** (Auto): the model is held for review instead of publishing, and a dismissal republishes
+  it. The owner sees a neutral "being reviewed" message.
+- **shadow** (Review): the model stays live until a moderator confirms the match.
+- **off**, or the Flipt switch off: the check does not run.
 
-The `/text-scan/model-rules` Matches tab marks each rule as matched by the model, literally, or both,
-and lists literal-only hits the model did not match.
+Rules are managed on the moderator app's `/text-scan/model-rules` page. Every create, edit,
+enable/disable and restore of a rule writes a row to `ModerationRuleVersion` in the same transaction,
+so each rule has a history that can be compared and restored; a rule saved before that table existed
+gets its earlier state recorded on its next save. The `ModerationRuleVersion` table is created by a
+hand-applied migration; apply it before deploying the moderator app, since a rule save writes its
+version row in the same transaction. Alias suggestions come from an orchestrator call with web search
+and are applied only when a moderator approves them; an Alias backfill tab does this across existing
+rules. A search outlasts any request, so it is asynchronous: `suggestModelRuleAliases` submits the
+billed workflow (tagged `model-rule-aliases`) and returns its id, and `aliasSuggestionResult` reads it
+back (only workflows with that tag). The moderator app stores the id per rule in the browser as soon
+as it exists and polls; a reload resumes polling and never submits again, and only a search that
+really failed is re-submitted, by an explicit retry. The page's Try panel runs the matcher on pasted text, a link or an id (no LLM, no prompt).
+
+Rules written before this check are regex; a one-off endpoint, `/api/admin/temp/convert-model-rules`
+(`count`, then `apply`), converts them in place once per environment. A rule that cannot be converted
+ends disabled and flagged until a moderator rewrites it, and nothing in the response or its log
+carries rule text.
 
 Image moderation rules are separate and stay in Retool; `/api/mod/mod-rules` now accepts Image rules
 only, so a Model rule can only be managed on `/text-scan/model-rules`. An Image rule is built from
@@ -114,9 +99,11 @@ stored. Each create or update writes a `ModerationRuleVersion` row in the same t
 ## Actions
 
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
-(the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
-the model for review. Disputes, appeals and mute reviews go through the existing moderator queues
+(the owner can appeal), mute the account pending moderator review, or, for `modelRules`, hold the
+match for a moderator (see Model rules). Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals).
+A refused `ImageCaption` is only hidden from readers: its author is not notified, there is no
+appeal, and a clean scan of the caption's current text lets it back.
 
 `csam` is the exception: a positive verdict writes a `TextScanHold` row and nothing else (no report,
 mute, strike, hide or notification). Every type except `ChatMessage` keeps one Pending hold per
@@ -245,14 +232,14 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
-  (`sampleShadow`). `scanEntity` and `scanTexts` also take lab-only `ruleOverrides` (a positive id
-  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it).
+  (`sampleShadow`). The `literalModelRules` action takes lab-only `ruleOverrides` (a positive id
+  replaces that Model rule, a negative id adds an unsaved one, `enabled: false` drops it) and returns
+  the enabled `rules` (`id`, `subject`) plus, per text, the rules it matched.
   `batchEntities` and `scanTexts` take an optional `labels` list that replaces the profile's labels,
   so a label no profile requests yet can be scanned; a label without a prompt row or override comes
   back as that item's missing-prompt error. A scan
-  returns the `system` prompt it sent and, for `ModelRules`, the `rules` listed and the
-  `literalRuleIds`; `batchEntities` and `scanTexts` return `{ results, system, rules, ... }`, carrying
-  `system` and `rules` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a
+  returns the `system` prompt it sent; `batchEntities` and `scanTexts` return `{ results, system, ... }`,
+  carrying `system` once for all results. `scanEntity`, `batchEntities` and `scanTexts` refuse a
   request whose worst case, `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
   scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
   and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
@@ -266,28 +253,25 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   The two passes are separate calls; each result names its `pass` and the `labels` it judged, with the
   per-label verdicts under `parse.output` and `costTotal` when the orchestrator returned one. The
   search pass is a harness option, not gated by the search rollout, and still writes nothing.
-- The moderator app's text-scan lab drives those actions from two workspaces with the same layout.
+- The moderator app's text-scan lab drives those actions from two pages.
   Prompts (`/text-scan/prompts`) lists every prompt key; a key's edits are a draft kept in that
   moderator's browser, Save writes a new version in one step (a note is optional), and a save is
   refused if someone saved a newer version after the draft started (`putPrompt`'s `baseId`, checked
   inside the insert's transaction). History compares any two of the last 20 versions and restores one
-  as a new version, reading its text by id. Model rules (`/text-scan/model-rules`) does the same for
-  the `label:modelRules` prompt and for the rules. Both pages share a Try panel: paste text, links or
-  ids and see the current and the edited verdicts side by side, the system prompt each side sent, and
-  Model rules matches by rule subject with literal hits marked. The lab reads a model's text whatever
-  its visibility; it records nothing. Saving prompts needs `textScan.prompt.publish` on Prompts and
-  `textScan.modelRules.edit` on Model rules (which also covers the `label:modelRules` prompt there);
-  both are held by no one until granted on `/admin`, as are the pages. `/text-scan`, `/text-scan/check`
+  as a new version, reading its text by id. Its Try panel takes pasted text, links or ids and shows the
+  current and the edited verdicts side by side with the system prompt each side sent. Model rules
+  (`/text-scan/model-rules`) manages the rules with their history and has its own literal Try (no LLM,
+  no prompt). The lab reads a model's text whatever its visibility; it records nothing. Saving prompts
+  needs `textScan.prompt.publish` on Prompts and `textScan.modelRules.edit` on Model rules; both are held by no one until granted on `/admin`, as are the pages. `/text-scan`, `/text-scan/check`
   and `/text-scan/playground` redirect to Prompts; roles granted the old Check or Playground pages
   are moved to Prompts by a one-off migration applied after the moderator deploy.
-  The lab, Try on both pages included, accepts up to 600,000 characters per text, so a long text scans
+  The lab, both Try panels included, accepts up to 600,000 characters per text, so a long text scans
   as up to three segments; its quotes and results report the segment count.
-  Both workspaces also have a **Test sets** tab beside Try. "Add to test set" on a Try result or a Matches
-  row saves the text (re-composed on the server for an entity) with the verdict the moderator expects:
-  an nsfw range, yes/no per flag, or the Model rules that should match, any of them left unscored. A run
-  scores the production prompts (the baseline) and the moderator's draft against those expectations in
-  the background and lists cases whose verdict flipped first; Model rules are scored on LLM matches and
-  literal hits together, and matches on unsaved rules are shown as new rule hits. Sets, runs and results
-  live in the moderator database (`apps/moderator/text-scan-test-sets/`); curating sets and cancelling
-  another moderator's run need `textScan.testSets.edit`, running them only the workspace page.
+  The Prompts workspace also has a **Test sets** tab beside Try. "Add to test set" on a Try result saves
+  the text (re-composed on the server for an entity) with the verdict the moderator expects: an nsfw
+  range or yes/no per flag, any of them left unscored. A run scores the production prompts (the
+  baseline) and the moderator's draft against those expectations in the background and lists cases
+  whose verdict flipped first. Sets, runs and results live in the moderator database
+  (`apps/moderator/text-scan-test-sets/`); curating sets and cancelling another moderator's run need
+  `textScan.testSets.edit`, running them only the workspace page.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.

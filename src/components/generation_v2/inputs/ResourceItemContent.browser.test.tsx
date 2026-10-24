@@ -22,12 +22,11 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //   children. What each mock shadows, and why:
 //
 //   * useAppContext (`~/providers/AppProvider`) — a REQUIRED context hook that
-//     THROWS when there's no <AppProvider>. The component reads ONLY `domain`
-//     (verified by grep: the sole references are `const { domain } = ...` and
-//     `!domain.green && ...`). So the mock returns just `{ domain }` cast `as any`;
-//     every other AppContext field is intentionally omitted — nothing in this
-//     component reads them, so a fuller fixture would add no coverage. The mock
-//     is what makes `isSfwOnly = !domain.green && (sfwOnly || minor)` drivable.
+//     THROWS when there's no <AppProvider>. The component reads ONLY `domain`.
+//     So the mock returns just `{ domain }` cast `as any`; every other AppContext
+//     field is intentionally omitted — nothing in this component reads them, so a
+//     fuller fixture would add no coverage. The mock is what makes the shield
+//     (`domain.green` off, and sfwOnly, minor or an SFW-only base) drivable.
 //
 //   * NumberSlider (`~/libs/form/components/NumberSlider`) — the real one is a
 //     Mantine Slider+NumberInput composite with its own focus/precision/preset
@@ -424,7 +423,7 @@ describe('ResourceItemContent (render)', () => {
   });
 
   test('minor model (domain not green) ALSO renders the shield (the || operand)', async () => {
-    // isSfwOnly = !domain.green && (sfwOnly || minor) — the second operand.
+    // The minor operand of the shield condition.
     const r = makeResource({
       model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: false, minor: true },
     });
@@ -439,6 +438,67 @@ describe('ResourceItemContent (render)', () => {
     // shield (green is the SFW-only surface, so the indicator is redundant).
     appContextMock.mockReturnValue({ domain: { green: true, blue: false, red: false } } as any);
     const r = makeResource({ model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: true } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(countIcon('shield')).toBe(0);
+  });
+
+  // The shield is the generator's SFW-only marker on .red: it also covers resources on a base whose
+  // licence bars mature content, with copy about posting, since generation is not refused there.
+  const hoverShield = async () => {
+    const shield = document.querySelector('.tabler-icon-shield');
+    expect(shield, 'shield rendered').toBeTruthy();
+    await page.elementLocator(shield as Element).hover();
+  };
+
+  test.each(['Ideogram 4.5', 'SD 3.5 Large', 'SDXL Turbo'])(
+    '%s checkpoint (domain not green) renders the shield with the posting copy',
+    async (baseModel) => {
+      const r = makeResource({ baseModel, model: { id: 1, name: 'M', type: 'Checkpoint' } });
+      renderWithProviders(<ResourceItemContent resource={r} />);
+
+      await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+      expect(countIcon('shield')).toBe(1);
+      await hoverShield();
+      await expect
+        .element(page.getByText("Mature content can't be posted with this base model."))
+        .toBeInTheDocument();
+    }
+  );
+
+  test('sfwOnly on a restricted base keeps the sfwOnly copy', async () => {
+    const r = makeResource({
+      baseModel: 'SDXL Turbo',
+      model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: true },
+    });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(countIcon('shield')).toBe(1);
+    await hoverShield();
+    await expect
+      .element(page.getByText('This resource cannot be used to generate mature content'))
+      .toBeInTheDocument();
+  });
+
+  test.each(['Illustrious', 'SDXL 1.0', 'Flux.2 D'])(
+    '%s checkpoint renders no shield',
+    async (baseModel) => {
+      const r = makeResource({ baseModel, model: { id: 1, name: 'M', type: 'Checkpoint' } });
+      renderWithProviders(<ResourceItemContent resource={r} />);
+
+      await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+      expect(countIcon('shield')).toBe(0);
+    }
+  );
+
+  test('green domain SUPPRESSES the shield on a restricted base', async () => {
+    appContextMock.mockReturnValue({ domain: { green: true, blue: false, red: false } } as any);
+    const r = makeResource({
+      baseModel: 'Ideogram 4.5',
+      model: { id: 1, name: 'M', type: 'Checkpoint' },
+    });
     renderWithProviders(<ResourceItemContent resource={r} />);
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();

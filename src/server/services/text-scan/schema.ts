@@ -27,23 +27,6 @@ function labelSchema(label: TextScanLabel): Record<string, unknown> {
         required: ['detected', 'names', 'reason'],
         additionalProperties: false,
       };
-    case 'modelRules':
-      return {
-        type: 'object',
-        properties: {
-          matched: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: { ruleId: { type: 'integer' }, reason: { ...reason } },
-              required: ['ruleId', 'reason'],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ['matched'],
-        additionalProperties: false,
-      };
     case 'minor':
     case 'scam':
     case 'csam':

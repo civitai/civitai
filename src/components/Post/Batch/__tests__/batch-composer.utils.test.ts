@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   POST_BATCH_CHUNK_MAX_IMAGES,
   POST_BATCH_CHUNK_POSTS,
+  POST_BATCH_MIN_EVERY_MINUTES,
+  POST_BATCH_MIN_GAP_MINUTES,
   seededRng,
   utcDayKey,
   validateBatchSchedule,
@@ -35,6 +37,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const date = (iso: string) => new Date(iso);
+const inMinutes = (minutes: number, from: Date) => new Date(from.getTime() + minutes * 60_000);
 
 describe('expandTitleTemplate', () => {
   const tokens = {
@@ -161,12 +164,12 @@ describe('generateBatchDates', () => {
     expect(first.dates.every((d) => d.getUTCMinutes() !== 0)).toBe(true);
   });
 
-  it('reports an issue for a cadence under an hour', () => {
+  it('reports an issue for a cadence the jitter could collapse below the gap', () => {
     const result = generateBatchDates(
       {
         mode: 'every',
         start: date('2026-10-07T15:00:00Z'),
-        every: 30,
+        every: POST_BATCH_MIN_EVERY_MINUTES - 1,
         unit: 'minutes',
         from: new Date(),
         to: new Date(),
@@ -182,11 +185,14 @@ describe('fixSpacing', () => {
   const now = date('2026-10-07T12:00:00Z');
 
   it('pushes a post forward out of a gap violation, never backward', () => {
-    const dates = [date('2026-10-07T15:07:00Z'), date('2026-10-07T15:17:00Z')];
+    const first = date('2026-10-07T15:07:00Z');
+    const dates = [first, inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, first)];
     const { dates: fixed, moved } = fixSpacing({ dates, existing: [], dailyLimit: 10, now });
     expect(moved).toBe(1);
     expect(fixed[0]).toEqual(dates[0]);
-    expect(fixed[1].getTime() - fixed[0].getTime()).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(fixed[1].getTime() - fixed[0].getTime()).toBeGreaterThanOrEqual(
+      POST_BATCH_MIN_GAP_MINUTES * 60_000
+    );
     expect(fixed[1] >= dates[1]).toBe(true);
   });
 
@@ -200,9 +206,11 @@ describe('fixSpacing', () => {
 
   it('keeps the gap from an existing post', () => {
     const existing = [date('2026-10-07T18:00:00Z')];
-    const dates = [date('2026-10-07T18:10:00Z')];
+    const dates = [inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, existing[0])];
     const { dates: fixed } = fixSpacing({ dates, existing, dailyLimit: 10, now });
-    expect(fixed[0].getTime() - existing[0].getTime()).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(fixed[0].getTime() - existing[0].getTime()).toBeGreaterThanOrEqual(
+      POST_BATCH_MIN_GAP_MINUTES * 60_000
+    );
   });
 
   it('produces a schedule the validator accepts and returns dates in input order', () => {

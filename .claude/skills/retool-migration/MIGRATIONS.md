@@ -261,7 +261,8 @@ A queue/stat board rather than a lookup tool.
 - [x] **Queue-lag indicators + the `Mods_TaskTimers` protocol** — built on the dashboard, with the acknowledge ("Mark swept") write so the mark actually advances.
 - [x] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
       "last touched by `<mod>`, N minutes ago", coloured against a per-type threshold table that exists in
-      no query. The board here is count-only.
+      no query. The dashboard now shows it: *Recently worked*, *Working now* and per-queue last-actioned
+      ages.
 - [x] **The `Graphs` tab** — built as `/retool/queue-stats`, its own route because Retool put it behind a "Load Graphs" button. Inline SVG rather than a charting dependency. `RRatingStats` is bounded to 30 days (Retool was unbounded over ModActivity) and the window is stated on the page.
 - [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
       screenshot before it can be scoped.

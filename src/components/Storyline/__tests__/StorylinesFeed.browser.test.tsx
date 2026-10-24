@@ -308,3 +308,39 @@ describe('StorylinesFeed', () => {
     await expect.element(page.getByText('No storylines match.')).toBeVisible();
   });
 });
+
+describe('a storyline with no chapter 1 yet', () => {
+  test('its owner is told so and can go write it', async () => {
+    mocks.user = { id: 18 };
+    mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByText('No chapter 1 yet')).toBeVisible();
+    await expect
+      .element(page.getByRole('link', { name: 'Write chapter 1' }))
+      .toHaveAttribute('href', '/posts/create?storyline=8');
+    // The title still opens the storyline.
+    await expect
+      .element(page.getByRole('link', { name: /Story 8/ }))
+      .toHaveAttribute('href', '/storylines/8');
+  });
+
+  test('a chapter-less storyline is not offered for writing to anyone but its owner', async () => {
+    mocks.user = { id: 99 };
+    mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByRole('link', { name: /Story 8/ })).toBeVisible();
+    expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);
+    expect(page.getByRole('link', { name: 'Write chapter 1' }).elements()).toHaveLength(0);
+  });
+
+  test("the owner's storylines that have chapters read as before", async () => {
+    mocks.user = { id: 17 };
+    mocks.items = [card(7, cover(701, 'cover-of-7'))];
+    renderWithProviders(<StorylinesFeed />);
+
+    await expect.element(page.getByRole('link', { name: /Story 7/ })).toBeVisible();
+    expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);
+  });
+});

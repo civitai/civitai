@@ -1,6 +1,7 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { StorylineCaptionNote } from '~/components/Storyline/StorylineCaptionNote';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
@@ -48,28 +49,43 @@ export function StorylineToolbarChip({
   );
 }
 
-/** Rendered over the carousel: the way on past the last image, and the fork point. */
-export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean }) {
+/**
+ * Rendered over the carousel: the image's caption, the way on past the last image, and the fork
+ * point.
+ */
+export function StorylineStageOverlay({
+  isLastImage,
+  imageId,
+}: {
+  isLastImage: boolean;
+  imageId: number | undefined;
+}) {
   const storyline = useStorylineMode();
   const currentUser = useCurrentUser();
   if (!storyline.active) return null;
 
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
+  const caption = imageId ? storyline.path.captions[imageId] : undefined;
+  const showNext = isLastImage && !storyline.endOpen;
 
   return (
     <>
-      {isLastImage && !storyline.endOpen && (
-        <div className="absolute bottom-4 right-4 z-10">
-          <Button
-            radius="xl"
-            variant="gradient"
-            gradient={{ from: 'violet', to: 'blue', deg: 90 }}
-            rightSection={<IconArrowRight size={16} />}
-            onClick={() => storyline.setEndOpen(true)}
-            data-testid="storyline-next"
-          >
-            What happens next
-          </Button>
+      {(showNext || caption) && !storyline.endOpen && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-col items-end gap-2.5 @md:inset-x-4 @md:bottom-4 @md:items-center [&>*]:pointer-events-auto">
+          {showNext && (
+            <Button
+              className="@md:self-end"
+              radius="xl"
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'blue', deg: 90 }}
+              rightSection={<IconArrowRight size={16} />}
+              onClick={() => storyline.setEndOpen(true)}
+              data-testid="storyline-next"
+            >
+              What happens next
+            </Button>
+          )}
+          {caption && <StorylineCaptionNote key={imageId} caption={caption} />}
         </div>
       )}
       {storyline.endOpen && (

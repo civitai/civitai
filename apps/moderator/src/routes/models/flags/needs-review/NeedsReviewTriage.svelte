@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import ModelFlagTabs from '../ModelFlagTabs.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import { rulingDraft } from '$lib/ruling-draft.svelte';
   import CrossTabChips from '$lib/components/minor-flags/CrossTabChips.svelte';
@@ -40,7 +41,7 @@
   let {
     data,
     form,
-  }: { data: NeedsReviewQueueData & { civitaiUrl: string }; form: QueueForm | undefined } =
+  }: { data: NeedsReviewQueueData & { civitaiUrl: string; canViewTrainingData: boolean }; form: QueueForm | undefined } =
     $props();
 
   type Verdict = ResolutionVerdict<'heldDetection'> | ResolutionVerdict<'flagReview'>;
@@ -110,15 +111,19 @@
 
   const ondecision = (_row: NeedsReviewRow, index: number) => pressDecisionKey(index);
 
-  // A held detection is timed by when the scan held it; a match-only row by its file's upload.
+  // A held detection is timed by when the scan held it; a minor match by its file's upload; a
+  // real-person match by when it was matched.
   const rowMeta = (row: NeedsReviewRow) => {
-    const verb = row.flags.length ? 'detected' : 'uploaded';
+    const verb = row.flags.length ? 'detected' : row.match ? 'uploaded' : 'matched';
     return row.flaggedAt ? `${verb} ${shortAge(row.flaggedAt)}` : verb;
   };
 </script>
 
 {#snippet listHeader()}
-  <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  <div class="flex flex-col gap-2.5">
+    <ModelFlagTabs />
+    <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+  </div>
 {/snippet}
 
 {#snippet empty()}
@@ -186,6 +191,15 @@
             shares file with {row.match.minorModelName ?? `model #${row.match.minorModelId}`}
           </MetaChip>
         {/if}
+        {#if row.poiMatch}
+          {#if !row.match}<MetaChip tone="blue">hash</MetaChip>{/if}
+          {#if !row.flags.some((f) => f.label === 'poi')}<FlagBadge label="poi" />{/if}
+          {#if row.poiMatch.seedModelId}
+            <MetaChip truncate>
+              shares file with {row.poiMatch.seedModelName ?? `model #${row.poiMatch.seedModelId}`}
+            </MetaChip>
+          {/if}
+        {/if}
         <CrossTabChips
           chips={crossTabChips(
             { appeals: row.hasPendingAppeal, auto: row.alsoInAutoFlagged },
@@ -200,6 +214,7 @@
     <NeedsReviewDetail
       {row}
       civitaiUrl={data.civitaiUrl}
+      canViewTrainingData={data.canViewTrainingData}
       verdict={state.verdict}
       error={state.error}
       submit={state.submit}

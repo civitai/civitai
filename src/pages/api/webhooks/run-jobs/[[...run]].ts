@@ -55,6 +55,7 @@ import { challengeActivationJob } from '~/server/jobs/challenge-activation';
 import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
+import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
@@ -120,11 +121,13 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
+import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
@@ -200,6 +203,7 @@ export const jobs: Job[] = [
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
   autoFeatureHealthCheckJob,
+  commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
@@ -268,11 +272,13 @@ export const jobs: Job[] = [
   challengeCompletionJob,
   challengeAutoQueueJob,
   challengeHealthCheckJob,
+  evidenceHoldExpiryAlertJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
   retroactiveHashBlocking,
   minorHashSweep,
+  poiHashSweep,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,

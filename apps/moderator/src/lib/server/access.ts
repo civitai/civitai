@@ -8,6 +8,7 @@ import {
   MODEL_FLAGS_NEEDS_REVIEW_PATH,
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
+import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -98,8 +99,11 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
+      { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
+      { path: '/images/scan-probe', label: 'Scan Probe' },
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
@@ -135,6 +139,7 @@ export const NAVIGATION: NavLink[] = [
           },
         ],
       },
+      { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
     ],
   },
   {
@@ -148,7 +153,10 @@ export const NAVIGATION: NavLink[] = [
   {
     label: 'Storylines',
     path: '/storylines',
-    children: [{ path: '/storylines/title-appeals', label: 'Title Appeals' }],
+    children: [
+      { path: '/storylines/title-appeals', label: 'Title Appeals' },
+      { path: '/storylines/early-access', label: 'Early Access Sign-ups' },
+    ],
   },
   {
     label: 'Articles',
@@ -162,7 +170,7 @@ export const NAVIGATION: NavLink[] = [
       },
     ],
   },
-  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  // Every rated entity's owner disputes.
   { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
@@ -211,6 +219,9 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/model-lookup', label: 'Model Lookup' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
       { path: '/retool/chat-audit', label: 'Chat Audit' },
+      // Its own grant, not Chat Audit's: it shows which moderator read whose conversations, which is
+      // oversight of the moderators themselves.
+      { path: '/retool/chat-audit-log', label: 'Chat Audit Log' },
       { path: '/retool/front-page-audit', label: 'Front Page Audit' },
       { path: '/retool/image-help', label: 'Image Help Requests' },
       { path: '/retool/queue-stats', label: 'Queue Stats' },
@@ -281,7 +292,7 @@ export const NAVIGATION: NavLink[] = [
     children: [
       { path: '/users', label: 'Users' },
       { path: '/users/newest', label: 'Newest Users' },
-      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
     ],
   },
@@ -440,6 +451,11 @@ export function permissionGrantsSnapshot(): Record<string, Role[]> {
 /** The Investigate button: the assistant page AND the right to run it. */
 export const canInvestigate = (locals: App.Locals) =>
   canAccess(locals.user, '/assistant') && !!locals.grants['assistant.use'];
+
+/** The training-data viewer: whoever `/api/training-data` would serve, so a page never shows a
+ *  button that only answers 403. */
+export const canViewTrainingData = (user: RoleUser) =>
+  canAccess(user, '/audit/training-data') || canAccess(user, '/audit/training-models');
 
 /** Same grant as User Lookup. */
 export const canSeeAddresses = (locals: App.Locals) =>

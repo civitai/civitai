@@ -42,13 +42,17 @@ describe('applyChallengeTextScan', () => {
     [NsfwLevel.XXX, true],
   ])('detected %s escalates as isNsfw=%s', async (level, isNsfw) => {
     await applyChallengeTextScan(args(level) as never);
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw, level });
     expect(recordChallengeScanResult).toHaveBeenCalledWith({ source: 'User', result: 'scanned' });
   });
 
   it('stays NSFW on a rescan after its own escalation raised the declared level', async () => {
     await applyChallengeTextScan(args(NsfwLevel.R, false) as never);
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw: true });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 3,
+      isNsfw: true,
+      level: NsfwLevel.R,
+    });
   });
 
   it('ignores a deleted challenge and a verdict without nsfw', async () => {
@@ -75,7 +79,11 @@ describe('settleSkippedChallengeScan', () => {
         where: { entityType_entityId: { entityType: 'Challenge', entityId: 3 } },
       })
     );
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw: true });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 3,
+      isNsfw: true,
+      level: NsfwLevel.X,
+    });
   });
 
   it('does not count a re-applied verdict as a new scan', async () => {
@@ -85,7 +93,11 @@ describe('settleSkippedChallengeScan', () => {
       result: { version: 1 },
     });
     await settleSkippedChallengeScan(3, 'unchanged');
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw: false });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 3,
+      isNsfw: false,
+      level: NsfwLevel.PG,
+    });
     expect(recordChallengeScanResult).not.toHaveBeenCalled();
   });
 
@@ -97,7 +109,11 @@ describe('settleSkippedChallengeScan', () => {
 
   it('settles text too short to scan as clean', async () => {
     await settleSkippedChallengeScan(3, 'too-short');
-    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw: false });
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 3,
+      isNsfw: false,
+      level: NsfwLevel.PG,
+    });
     expect(recordChallengeScanResult).toHaveBeenCalledTimes(1);
   });
 

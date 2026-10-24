@@ -4,17 +4,12 @@ import {
   modelRuleAliasesField,
   modelRuleDescriptionField,
   modelRuleSubjectField,
-  parseModelRulesStoredResult,
   semanticModelRuleSchema,
   type SemanticModelRule,
 } from '@civitai/moderation/model-rules';
 import { z } from 'zod';
-import type { LabRule } from '$lib/text-scan-lab/types';
 
 export { MODEL_RULE_LIMITS, isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 // One per line, never split on commas: a name can contain one ("Doe, Jane"), and splitting it would
 // turn one alias into two far broader ones on an unrelated save.
@@ -50,75 +45,25 @@ export function ruleMatchesText(
   );
 }
 
-/** `llm`: the model matched the rule. `literal`: the text names the rule's subject or an alias. */
-export type RuleMatch = {
-  ruleId: number;
-  subject: string | null;
-  reason: string | null;
-  llm: boolean;
-  literal: boolean;
-};
+/** The words of an alias as the literal matcher compares them, approximated: no confusable folding. */
+const aliasWords = (alias: string) =>
+  alias
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
 
-/** One entry per rule: the model's first match for it, then literal-only hits. */
-export function mergeRuleMatches(
-  matched: readonly unknown[],
-  literalIds: Iterable<number>,
-  subjects: ReadonlyMap<number, string>
-): RuleMatch[] {
-  const literal = new Set(literalIds);
-  const byRule = new Map<number, RuleMatch>();
-  for (const m of matched) {
-    if (!isRecord(m) || typeof m.ruleId !== 'number' || byRule.has(m.ruleId)) continue;
-    byRule.set(m.ruleId, {
-      ruleId: m.ruleId,
-      subject: subjects.get(m.ruleId) ?? null,
-      reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
-      llm: true,
-      literal: literal.has(m.ruleId),
-    });
-  }
-  for (const ruleId of literal)
-    if (!byRule.has(ruleId))
-      byRule.set(ruleId, {
-        ruleId,
-        subject: subjects.get(ruleId) ?? null,
-        reason: null,
-        llm: false,
-        literal: true,
-      });
-  return [...byRule.values()];
+export const BROAD_ALIAS_WARNING = 'May match unrelated models — prefer a full name.';
+
+/** `single-word` and `short` aliases match far beyond their subject; a full name rarely does. */
+export function aliasBreadth(alias: string): 'single-word' | 'short' | null {
+  const words = aliasWords(alias);
+  if (!words.length) return null;
+  if (words.length === 1) return 'single-word';
+  return words.join(' ').length < 5 ? 'short' : null;
 }
 
-/** The saved rules among `matches`, once each, as the choices a captured case can expect. Ad hoc rules (id <= 0) are left out. */
-export function ruleChoicesOf(
-  matches: readonly Pick<RuleMatch, 'ruleId' | 'subject'>[]
-): LabRule[] {
-  const seen = new Map<number, string>();
-  for (const m of matches)
-    if (m.ruleId > 0 && !seen.has(m.ruleId)) seen.set(m.ruleId, m.subject ?? `Rule ${m.ruleId}`);
-  return [...seen].map(([id, subject]) => ({ id, subject }));
+export function appendAliases(raw: string, added: readonly string[]): string {
+  return parseAliases([raw, ...added].join('\n')).join('\n');
 }
-
-export function parseRuleMatches(result: unknown): RuleMatch[] {
-  const { matched, snapshot, literalRuleIds } = parseModelRulesStoredResult(result);
-  const subjects = new Map(snapshot.map((rule) => [rule.id, rule.subject]));
-  return mergeRuleMatches(matched, literalRuleIds, subjects);
-}
-
-export const matchSourceLabel = (match: Pick<RuleMatch, 'llm' | 'literal'>) =>
-  !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
-
-export const matchSourceVariant = (
-  match: Pick<RuleMatch, 'llm' | 'literal'>
-): 'secondary' | 'outline' | 'default' =>
-  !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
-
-/** The cursor is a row's `updatedAt` as Postgres prints it plus its id: `YYYY-MM-DD HH:MM:SS(.ffffff)|id`. */
-export function parseMatchCursor(cursor: string | undefined) {
-  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
-  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
-}
-
-/** A row written by the publish-time literal hold rather than by a scan. */
-export const isHeldAtPublish = (result: unknown): boolean =>
-  parseModelRulesStoredResult(result).heldAtPublish;

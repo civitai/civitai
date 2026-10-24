@@ -4,6 +4,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 /**
  * `PaidAccess.ownerId` is a denormalised copy of the model owner. It decides who generates free from a
@@ -36,8 +37,10 @@ const {
   mockBustDonationGoals,
   mockDeleteBasicDataForUser,
   mockPreventModelLag,
+  mockAssertNotHeld,
 } = vi.hoisted(() => ({
   mockPreventModelLag: vi.fn(async () => undefined),
+  mockAssertNotHeld: vi.fn(),
   mockBustPaidAccessCache: vi.fn(),
   mockBustMvCache: vi.fn(),
   mockQueueModelsIndex: vi.fn(),
@@ -48,6 +51,10 @@ const {
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLagBatch: mockPreventModelLag,
+}));
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  assertOwnersNotUnderLegalHold: mockAssertNotHeld,
 }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: vi.fn() },
@@ -111,6 +118,12 @@ vi.mock('~/server/search-index', () => ({
 import { transferModelOwnership } from '~/server/services/model.service';
 import { constants } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LegalHoldError,
+  LegalHoldUnconfirmedError,
+} from '~/server/services/legal-hold.service';
 
 /** The operations handed to the ONE $transaction call, in order. */
 let transactionOps: unknown[] = [];
@@ -179,6 +192,7 @@ beforeEach(() => {
       return Promise.resolve();
     });
 
+  mockAssertNotHeld.mockResolvedValue(undefined);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: TARGET_USER_ID });
   dbMock.dbWrite.model.findMany.mockResolvedValue(
     MODEL_IDS.map((id) => ({ id, userId: SOURCE_USER_ID, nsfw: false }))
@@ -489,5 +503,39 @@ describe('transferModelOwnership marks a model official on arrival', () => {
     const args = modelUpdateArgs();
     expect(args?.data).toEqual({ userId: TARGET_USER_ID });
     expect(args?.data).not.toHaveProperty('isOfficial');
+  });
+});
+
+// Every hold is keyed on the owner, so a transfer would move a held owner's content out of it.
+describe('transferModelOwnership under a legal hold', () => {
+  it.each([
+    ['held', () => new LegalHoldError(), LEGAL_HOLD_REFUSAL],
+    ['unreadable', () => new LegalHoldUnconfirmedError(), HOLD_UNCONFIRMED],
+  ])('refuses, and moves nothing, when the hold is %s', async (_name, error, message) => {
+    mockAssertNotHeld.mockRejectedValueOnce(error());
+
+    await expect(
+      transferModelOwnership({
+        modelIds: MODEL_IDS,
+        targetUserId: TARGET_USER_ID,
+        modUserId: MOD_USER_ID,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message });
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('checks every owner the models come from', async () => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      { id: MODEL_IDS[0], userId: SOURCE_USER_ID, nsfw: false },
+      { id: MODEL_IDS[1], userId: SOURCE_USER_ID + 1, nsfw: false },
+    ]);
+
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockAssertNotHeld).toHaveBeenCalledWith([SOURCE_USER_ID, SOURCE_USER_ID + 1]);
   });
 });

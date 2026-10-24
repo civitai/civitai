@@ -16,6 +16,7 @@ import {
   PLACEHOLDER_OWNER_ID,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 import {
@@ -31,6 +32,9 @@ const IMAGE_SCANNING_RETRY_LIMIT = 9;
 // closes reopens; overshooting costs one cron tick of delay for an image whose submit
 // died without writing the row at all.
 const SUBMIT_IN_FLIGHT_GRACE = 2;
+
+// Hours a Pending upload that keeps getting 429s is spared the age-out to Error.
+const RATE_LIMIT_AGE_OUT_GRACE_HOURS = 6;
 
 // Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
 // Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
@@ -87,6 +91,11 @@ type IngestImageRow = IngestImageInput & {
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
+  /**
+   * When its current run of 429 submits began; null unless the last submit was a 429.
+   * A successful submit clears `scanJobs.error`, and with it this.
+   */
+  rateLimitedSince: Date | null;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -150,6 +159,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
+             THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
+           END as "rateLimitedSince",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -209,10 +221,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Pending image is flipped to Error (below, in the prod block), which routes it
   // into the EXISTING capped Error-retry machinery — it gets a bounded number of
   // real retries and then terminalizes, instead of being Pending forever.
+  //
+  // A rate-limited upload is exempt: it is old because the orchestrator told us to wait,
+  // not because a scan went missing, and it keeps being re-sent as Pending. Only for
+  // RATE_LIMIT_AGE_OUT_GRACE_HOURS, so a limit that never lifts still surfaces as Error and
+  // a long storm can't hold the oldest-first window forever.
   const pendingTimeoutDate = decreaseDate(now, env.IMAGE_SCANNING_PENDING_TIMEOUT, 'minutes');
+  const rateLimitGraceDate = decreaseDate(now, RATE_LIMIT_AGE_OUT_GRACE_HOURS, 'hours');
+  const isRateLimitExempt = (img: IngestImageRow) =>
+    !!img.rateLimitedSince && img.rateLimitedSince > rateLimitGraceDate;
   const agedOutPendingIds = images
     .filter(
-      (img) => img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
+      (img) =>
+        img.ingestion === 'Pending' &&
+        !img.isBackfill &&
+        !isRateLimitExempt(img) &&
+        img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);
   const agedOutPendingSet = new Set(agedOutPendingIds);
@@ -244,8 +268,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Error retries use a reason-aware ceiling: transient infra churn (Siglip
   // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
   // bounded cap; permanent (unscannable media) gives up almost immediately;
-  // unknown keeps the historical 9-cap. retryCount always increments, so the cap
-  // is a hard backstop against re-flooding the scanner.
+  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt
+  // (not on a 429), so the cap is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
@@ -515,6 +539,34 @@ export async function sendImagesForScanBulk(
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
 /**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
+ * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
+ * Blocked image.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT c."userId" FROM (
+      SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+      UNION
+      SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+      UNION
+      SELECT ri."userId"
+      FROM "CsamReport" rr
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+    ) c
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+  )
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
+`;
+
+/**
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
  * on a statement over an unaliased "Image".
@@ -523,8 +575,10 @@ export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: b
   return Prisma.sql`
     "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
     AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
     ${
       holdForTrainingCopy
         ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
@@ -537,6 +591,18 @@ export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
+    const startedAt = Date.now();
+    // The run's counts, in Axiom: the job runner logs only that a run succeeded.
+    const finished = <T extends Record<string, number>>(summary: T) => {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'finished',
+        ...summary,
+        durationMs: Date.now() - startedAt,
+      }).catch(() => undefined);
+      return summary;
+    };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
 
     // Fails closed: a run that cannot read the legal holds deletes nothing.
@@ -593,6 +659,31 @@ export const removeBlockedImages = createJob(
       return { skipped: 'legal-hold-lookup-failed' };
     }
 
+    // The hold marker's statements below name its view, so on a database without it (a restore or a
+    // copy from before its migration) they would fail part-way through: nothing is deleted there.
+    if (!(await holdMarkerViewExists())) {
+      logToAxiom({
+        type: 'warning',
+        name: 'remove-blocked-images',
+        message: 'hold marker view missing: nothing deleted this run',
+      }).catch(() => undefined);
+      return { skipped: 'hold-marker-view-missing' };
+    }
+
+    // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
+    // its own. A failure costs only the sweep. Gated like the deletes below, and kept above every
+    // early return but the failed hold lookup and the missing view (which it names): it is also what
+    // clears a copy made in a race with the release.
+    if (env.DATABASE_IS_PROD)
+      await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
+        logToAxiom({
+          type: 'error',
+          name: 'remove-blocked-images',
+          message: 'evidence hold sweep failed',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
     // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
     // strands the Appeal as Pending forever.
@@ -605,7 +696,37 @@ export const removeBlockedImages = createJob(
     const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
     const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
-    const held = [...heldActive, ...appealHeld, ...csamReviewHeld];
+    // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
+    // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
+    // planner misjudges how many owners match and scans every Blocked image instead of each owner's.
+    const evidenceHeldUserIds = (
+      await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
+    ).map((x) => x.userId);
+    const evidenceHeld = evidenceHeldUserIds.length
+      ? (
+          await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "userId" = ANY(${evidenceHeldUserIds}::int[])
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+        ).map((x) => x.id)
+      : [];
+
+    // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
+    // reason above.
+    const accountHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
+    ).map((x) => x.id);
+
+    const held = [
+      ...new Set([
+        ...heldActive,
+        ...appealHeld,
+        ...csamReviewHeld,
+        ...evidenceHeld,
+        ...accountHeld,
+      ]),
+    ];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -621,13 +742,17 @@ export const removeBlockedImages = createJob(
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
       });
-      return {
+      return finished({
         processed: 0,
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
         csamReviewHeld: csamReviewHeld.length,
-      };
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
+      });
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -677,6 +802,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -809,7 +935,7 @@ export const removeBlockedImages = createJob(
     `;
     }
 
-    return {
+    return finished({
       deleted: deleted.length,
       heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
@@ -823,7 +949,9 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
-    };
+      evidenceHeld: evidenceHeld.length,
+      accountHeld: accountHeld.length,
+    });
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
   // grabbing the lock mid-run would double-delete and hit S3/DB twice.

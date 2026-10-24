@@ -7,10 +7,8 @@ import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 /**
  * The app must ship `viewport-fit=cover` in its ONE `<meta name="viewport">`.
  *
- * Node `unit` project — the GATING suite. The `.browser.test.tsx` component
- * suites run in CI only as the report-only `preview / component-tests` status,
- * and that tier is red on `main` independently of anything here, so a coupling
- * that must not silently revert is pinned in this tier.
+ * Node `unit` project. A coupling that must not silently revert is pinned in
+ * this tier as well as in the browser tier (`Component tests`).
  *
  * WHAT WAS BROKEN. The meta content was `initial-scale=1, width=device-width`.
  * Absent a `viewport-fit` token the UA defaults to `auto`, which lays the page
@@ -82,6 +80,9 @@ const INSET_CONSUMERS = [
   // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
   'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
+  // The phone account menu's sheet: starts under the header plus the top inset and pads its
+  // bottom by the home indicator's, because it is `fixed` and the page pads only `#__next`.
+  'src/components/AppLayout/AppHeader/UserMenuV2/UserMenuMobile.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
   'src/components/Consent/ConsentBanner.tsx',

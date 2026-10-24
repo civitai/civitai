@@ -3,15 +3,13 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
-  CRUCIBLE_EVENT_TAG_MAX_LENGTH,
-  CRUCIBLE_EVENT_TAG_PATTERN,
-  CRUCIBLE_MAX_EVENT_TAGS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
@@ -33,7 +31,6 @@ import {
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
-  normalizeCrucibleEventTag,
 } from '~/shared/constants/crucible.constants';
 
 // Re-export CrucibleSort for convenience
@@ -350,24 +347,12 @@ export const getJudgingPairSchema = z.object({
   judgingSessionId: judgingSessionIdSchema,
 });
 
-export const crucibleEventTagSchema = z
-  .string()
-  .transform(normalizeCrucibleEventTag)
-  .pipe(
-    z
-      .string()
-      .min(1)
-      .max(CRUCIBLE_EVENT_TAG_MAX_LENGTH)
-      .regex(CRUCIBLE_EVENT_TAG_PATTERN, 'Use letters, numbers and dashes')
-  );
+export const crucibleEventTagSchema = eventTagSchema;
 
 export type SetCrucibleEventTagsSchema = z.infer<typeof setCrucibleEventTagsSchema>;
 export const setCrucibleEventTagsSchema = z.object({
   id: z.number(),
-  eventTags: z
-    .array(crucibleEventTagSchema)
-    .max(CRUCIBLE_MAX_EVENT_TAGS)
-    .transform((tags) => [...new Set(tags)]),
+  eventTags: eventTagsSchema,
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted

@@ -19,6 +19,15 @@ import {
   sweep,
   unmirroredReport,
 } from '~/server/services/comment-v3-backfill.service';
+import {
+  reverseComments,
+  reverseDeletes,
+  reverseDryCount,
+  reverseLinks,
+  reverseRootThreads,
+  reverseTopicMutes,
+  reverseUpdates,
+} from '~/server/services/comment-v3-reverse-copy.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -45,7 +54,7 @@ import { booleanString } from '~/utils/zod-helpers';
  * being entities that no longer exist), then the link steps and `mutes`, then `unmirrored`,
  * `sweep` (only once `topics` has converged) and `parity`.
  *
- * Drive it from the no-timeout dev server pointed at prod and keep the client connected:
+ * Run it from a server without a statement timeout (ask an infra owner) and keep the client connected:
  *   GET  /api/admin/temp/comment-v3-backfill?token=$WEBHOOK_TOKEN&step=v2            (dry run: pending counts for the range steps)
  *   POST /api/admin/temp/comment-v3-backfill?token=$WEBHOOK_TOKEN&step=v2&dryRun=false
  *   optional: &batchSize=2000 (ids per statement, one transaction each; the deferred topic-count trigger
@@ -54,7 +63,45 @@ import { booleanString } from '~/utils/zod-helpers';
  *   back; topics and reports are safe at 2; mutes is a single pass) &start=<id> &end=<id>
  *   unmirrored and parity are read-only, ignore dryRun, and run on pgDbReadLong, which falls back to
  *   the primary (write timeout) without DATABASE_REPLICA_LONG_URL; run them once replica lag has cleared.
+ *
+ * Rollback of a Phase 4 write flip: brings the old tables up to date with CommentV3. The reverse
+ * steps require &since=<end of the forward pass run right before the flip: an old comment made
+ * between that pass and the flip, then hard-deleted on v3, would otherwise come back>,
+ * &until=<a time after the last v3 write, e.g. the first reverse run; a v3 write that committed
+ * seconds after the flag flipped has a later createdAt than the flip> and &entityTypes=image,post
+ * (the flipped surface, from the entity enum), with since < until <= now and a zone offset on
+ * both. Pass the same values on every step and every re-run: [since, until) is the window a
+ * v3-only row must have been created in to be copied, and an old row with no v3 row is removed
+ * only if it predates since. Run with old-side writes still off where possible, concurrency=1, in
+ * this order, reverseComments until `copied` is zero (a `pending` that stays above zero is replies
+ * under a v3-native parent that was tombstoned in the window: they have no old parent to land
+ * under and stay), and reverseDeletes once more after the rollback has settled and before any
+ * forward pass or sweep (a blanked v1 tombstone whose last reply went is only an orphan then, and
+ * a forward pass would re-mirror it live):
+ *   reverseRootThreads  Thread rows for entities only v3 knows (by entity id; batchSize=50000)
+ *   reverseComments     old rows and reply threads for v3-only comments (by v3 id)
+ *   reverseUpdates      edits, flags and locks on rows both sides hold (by v3 id)
+ *   reverseDeletes      old rows whose v3 row is tombstoned or, if older than since, gone (by old id)
+ *   reverseLinks        reactions, report links and comment mutes, both ways (by v3 comment id)
+ *   reverseTopicMutes   topic mutes onto and off root threads (by entity id; batchSize=50000)
  */
+
+const ENTITY_TYPES = [
+  'model',
+  'image',
+  'post',
+  'article',
+  'review',
+  'bounty',
+  'bountyEntry',
+  'comicChapter',
+  'challenge',
+  'model3d',
+  'model3dReview',
+  'appListing',
+  'crucible',
+  'storyline',
+] as const;
 
 const STEPS = [
   'topics',
@@ -68,7 +115,20 @@ const STEPS = [
   'unmirrored',
   'parity',
   'sweep',
+  'reverseRootThreads',
+  'reverseComments',
+  'reverseUpdates',
+  'reverseDeletes',
+  'reverseLinks',
+  'reverseTopicMutes',
 ] as const;
+
+// Without an offset, a date-time parses in the process zone; the scope would shift silently.
+const zonedDate = z
+  .string()
+  .regex(/(Z|[+-]\d{2}:?\d{2})$/, 'needs a zone offset, e.g. 2026-10-22T10:00:00Z')
+  .transform((s) => new Date(s))
+  .refine((d) => !Number.isNaN(d.getTime()), 'not a date');
 
 const schema = z.object({
   step: z.enum(STEPS),
@@ -77,11 +137,25 @@ const schema = z.object({
   concurrency: z.coerce.number().min(1).max(8).default(1),
   start: z.coerce.number().min(0).default(0),
   end: z.coerce.number().min(0).optional(),
+  since: zonedDate.optional(),
+  until: zonedDate.optional(),
+  entityTypes: z
+    .string()
+    .optional()
+    .transform(
+      (v) =>
+        v
+          ?.split(',')
+          .map((t) => t.trim())
+          .filter(Boolean) ?? []
+    )
+    .pipe(z.array(z.enum(ENTITY_TYPES))),
 });
 
 type RangeStep = {
   maxId: string;
-  dryCount: (r: { start: number; end: number }) => Promise<number>;
+  /** Absent when the step has no cheap pending predicate; a dry run then says so instead of 0. */
+  dryCount?: (r: { start: number; end: number }) => Promise<number>;
   run: (r: { start: number; end: number }) => Promise<Record<string, number>>;
 };
 
@@ -123,6 +197,40 @@ const RANGE_STEPS: Partial<Record<(typeof STEPS)[number], RangeStep>> = {
   },
 };
 
+type Scope = { since: Date; until: Date; entityTypes: string[] };
+const TOPIC_RANGE = `SELECT max("entityId") AS max FROM "CommentTopic"`;
+const V3_RANGE = `SELECT max(id) AS max FROM "CommentV3"`;
+const reverseSteps = (s: Scope): Partial<Record<(typeof STEPS)[number], RangeStep>> => ({
+  reverseRootThreads: {
+    maxId: TOPIC_RANGE,
+    run: (r) => reverseRootThreads(pgDbWrite, r, s),
+  },
+  reverseComments: {
+    maxId: V3_RANGE,
+    dryCount: (r) => reverseDryCount(pgDbWrite, 'reverseComments', r, s),
+    run: (r) => reverseComments(pgDbWrite, r, s),
+  },
+  reverseUpdates: {
+    maxId: V3_RANGE,
+    dryCount: (r) => reverseDryCount(pgDbWrite, 'reverseUpdates', r, s),
+    run: (r) => reverseUpdates(pgDbWrite, r),
+  },
+  reverseDeletes: {
+    maxId: `SELECT greatest((SELECT max(id) FROM "CommentV2"), (SELECT max(id) FROM "Comment")) AS max`,
+    dryCount: (r) => reverseDryCount(pgDbWrite, 'reverseDeletes', r, s),
+    run: (r) => reverseDeletes(pgDbWrite, r, s),
+  },
+  reverseLinks: {
+    maxId: V3_RANGE,
+    dryCount: (r) => reverseDryCount(pgDbWrite, 'reverseLinks', r, s),
+    run: (r) => reverseLinks(pgDbWrite, r, s),
+  },
+  reverseTopicMutes: {
+    maxId: TOPIC_RANGE,
+    run: (r) => reverseTopicMutes(pgDbWrite, r, s),
+  },
+});
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const params = schema.parse(req.query);
   if (!params.dryRun && req.method !== 'POST')
@@ -140,17 +248,42 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json(report);
   }
 
-  if (params.step === 'sweep' || params.step === 'mutes') {
+  const onePass = {
+    sweep: () => sweep(pgDbWrite),
+    mutes: () => copyMutes(pgDbWrite),
+  } as const;
+  if (params.step in onePass) {
     if (params.dryRun) {
       console.timeEnd(label);
       return res.status(200).json({ dryRun: true, step: params.step });
     }
-    const result = params.step === 'sweep' ? await sweep(pgDbWrite) : await copyMutes(pgDbWrite);
+    const result = await onePass[params.step as keyof typeof onePass]();
     console.timeEnd(label);
     return res.status(200).json(result);
   }
 
-  const step = RANGE_STEPS[params.step]!;
+  let step = RANGE_STEPS[params.step];
+  if (!step) {
+    if (!params.since || !params.until || !params.entityTypes.length)
+      return res.status(400).json({ error: 'reverse steps need since, until and entityTypes' });
+    // A since past the real one turns yielded old-side writes into v3 deletes; an empty window reads as converged.
+    if (!(params.since < params.until) || params.until > new Date())
+      return res.status(400).json({ error: 'reverse scope needs since < until <= now' });
+    step = reverseSteps({
+      since: params.since,
+      until: params.until,
+      entityTypes: params.entityTypes,
+    })[params.step]!;
+  }
+  const dryCount = step.dryCount;
+  if (params.dryRun && !dryCount) {
+    console.timeEnd(label);
+    return res.status(200).json({
+      dryRun: true,
+      step: params.step,
+      note: 'no dry count for this step; it is idempotent, run it live',
+    });
+  }
   const totals: Record<string, number> = {};
   let batches = 0;
   const failedRanges: { start: number; end: number }[] = [];
@@ -166,9 +299,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     processor: async ({ start, end }) => {
       batches++;
       try {
-        const result = params.dryRun
-          ? { pending: await step.dryCount({ start, end }) }
-          : await step.run({ start, end });
+        const result =
+          params.dryRun && dryCount
+            ? { pending: await dryCount({ start, end }) }
+            : await step.run({ start, end });
         for (const [k, v] of Object.entries(result)) totals[k] = (totals[k] ?? 0) + v;
         lastEnd = Math.max(lastEnd, end);
         console.log(`${label}: ${start}-${end}`, result);

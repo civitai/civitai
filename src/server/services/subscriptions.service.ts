@@ -419,7 +419,8 @@ export const deliverMonthlyCosmetics = async ({
         SELECT
           "userId",
           COALESCE(pdl.id, pr.id) "productId",
-          NOW() as "createdAt"
+          NOW() as "createdAt",
+          (pr.metadata->>'buzzPurchase') IS NOT DISTINCT FROM 'true' as "buzzPurchase"
         FROM "CustomerSubscription" cs
         JOIN "Product" pr ON pr.id = cs."productId"
         JOIN "Price" p ON p.id = cs."priceId"
@@ -438,11 +439,12 @@ export const deliverMonthlyCosmetics = async ({
         AND "currentPeriodEnd" > NOW()
         AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
         AND pr.provider = 'Civitai'
-        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
-        -- Buzz-purchased memberships buy perks, not the monthly badge. Explicit rather
-        -- than relying on them having no monthlyBuzz key, so adding one can't quietly
-        -- start granting badges.
-        AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
+        -- Buzz-purchased memberships earn the monthly badge whether or not their product
+        -- carries a monthlyBuzz key (prod rows hold 0; the seed omits it).
+        AND (
+          pr.metadata->>'monthlyBuzz' IS NOT NULL
+          OR (pr.metadata->>'buzzPurchase') = 'true'
+        )
       )
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
       SELECT DISTINCT
@@ -459,6 +461,13 @@ export const deliverMonthlyCosmetics = async ({
         -- their badge (cron fired 10h before the window opened, then never retried).
         AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
+        -- Buzz memberships get the monthly badge only: a Badge with both ends of its window
+        -- set, as upsertProductBadge creates them. Anything else (the undated Supporter
+        -- Nameplate, open-ended items) would never be revoked: Buzz rows have no cancelAt.
+        AND (
+          NOT p."buzzPurchase"
+          OR (c.type = 'Badge' AND c."availableStart" IS NOT NULL AND c."availableEnd" IS NOT NULL)
+        )
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
@@ -600,52 +609,58 @@ export const purchaseMembershipWithBuzz = async ({
   });
 
   try {
-    await dbWrite.$transaction(async (tx) => {
-      // Re-check inside the transaction: the balance check above is a network round trip,
-      // so a concurrent purchase could have created a membership in the meantime.
-      const conflicting = await tx.customerSubscription.findFirst({
-        where: {
-          userId,
-          status: { notIn: ['canceled', 'incomplete_expired'] },
-          currentPeriodEnd: { gt: now.toDate() },
-        },
-        select: { id: true },
-      });
-      if (conflicting) throw new Error('You already have an active membership');
+    await dbWrite.$transaction(
+      async (tx) => {
+        // Re-check inside the transaction: the balance check above is a network round trip,
+        // so a concurrent purchase could have created a membership in the meantime.
+        const conflicting = await tx.customerSubscription.findFirst({
+          where: {
+            userId,
+            status: { notIn: ['canceled', 'incomplete_expired'] },
+            currentPeriodEnd: { gt: now.toDate() },
+          },
+          select: { id: true },
+        });
+        if (conflicting) throw new Error('You already have an active membership');
 
-      // Upsert rather than insert: a repeat buyer's lapsed row still holds the
-      // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
-      // conflicting check above already proved this row carries no live benefit.
-      const period = {
-        productId: price.product.id,
-        priceId: price.id,
-        status: 'active',
-        currentPeriodStart: now.toDate(),
-        currentPeriodEnd: now.add(1, 'month').toDate(),
-        // Never renews — buying another month is an explicit purchase.
-        cancelAtPeriodEnd: true,
-        cancelAt: null,
-        canceledAt: null,
-        endedAt: null,
-        metadata: {},
-      };
+        // Upsert rather than insert: a repeat buyer's lapsed row still holds the
+        // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
+        // conflicting check above already proved this row carries no live benefit.
+        const period = {
+          productId: price.product.id,
+          priceId: price.id,
+          status: 'active',
+          currentPeriodStart: now.toDate(),
+          currentPeriodEnd: now.add(1, 'month').toDate(),
+          // Never renews — buying another month is an explicit purchase.
+          cancelAtPeriodEnd: true,
+          cancelAt: null,
+          canceledAt: null,
+          endedAt: null,
+          metadata: {},
+        };
 
-      await tx.customerSubscription.upsert({
-        where: {
-          userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
-        },
-        create: {
-          id: externalTransactionId,
-          userId,
-          buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-          createdAt: now.toDate(),
-          ...period,
-        },
-        update: { ...period, updatedAt: now.toDate() },
-      });
+        await tx.customerSubscription.upsert({
+          where: {
+            userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+          },
+          create: {
+            id: externalTransactionId,
+            userId,
+            buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+            createdAt: now.toDate(),
+            ...period,
+          },
+          update: { ...period, updatedAt: now.toDate() },
+        });
 
-      // No deliverMonthlyCosmetics here: Buzz memberships don't earn the monthly badge.
-    });
+        // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
+        // any other client reads no active sub and silently inserts nothing.
+        await deliverMonthlyCosmetics({ userIds: [userId], tx });
+      },
+      // Same allowance as code redemption, which delivers cosmetics in its transaction too.
+      { timeout: 30000 }
+    );
   } catch (error) {
     if (transactionId)
       await refundTransaction(transactionId, 'Failed to purchase membership with Buzz');
@@ -1088,6 +1103,9 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
     AND cs."currentPeriodEnd"::date > ${date}::date
     AND pr.provider = 'Civitai'
     AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+    -- Buzz-purchased memberships never earn monthly Buzz. Their products carry
+    -- monthlyBuzz: 0 in prod, which the line above lets through.
+    AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
   `;
 
   if (!memberships.length) {
