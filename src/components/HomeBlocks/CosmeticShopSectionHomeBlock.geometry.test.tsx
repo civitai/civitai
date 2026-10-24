@@ -64,7 +64,7 @@ async function cardBoxes(width: number, { count, meta }: { count: number; meta: 
 }
 
 const rounded = (values: number[]) => values.map((v) => Math.round(v));
-const rowOf = (boxes: { top: number }[], top: number) =>
+const rowOf = <T extends { top: number }>(boxes: T[], top: number) =>
   boxes.filter((b) => Math.round(b.top) === Math.round(top));
 
 const ITEM_COUNT = 6;
