@@ -74,7 +74,7 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { POST as TOKEN } from '../+server';
 import { POST as INTROSPECT } from '../../introspect/+server';
 import { POST as REVOKE } from '../../revoke/+server';
-import { blockWorkerDevice } from '$lib/server/oauth/worker-admin';
+import { blockWorkerDevice, createIntrospectorClient } from '$lib/server/oauth/worker-admin';
 import { db } from '$lib/server/db/db';
 
 const GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
@@ -207,19 +207,19 @@ beforeEach(() => {
   h.tables.WorkerClient = [
     {
       clientId: POOL,
-      provider: 'dp',
+      provider: 'Submodel',
       subjectTokenTypes: [DEVICE_ID_TYPE],
       saladContainerGroupIds: [],
     },
     {
       clientId: SALAD_POOL,
-      provider: 'salad',
+      provider: 'SaladML',
       subjectTokenTypes: [JWT_TYPE],
       saladContainerGroupIds: [SALAD_GROUP],
     },
     {
       clientId: OTHER_POOL,
-      provider: 'dp-other',
+      provider: 'RunPods',
       subjectTokenTypes: [DEVICE_ID_TYPE],
       saladContainerGroupIds: [],
     },
@@ -562,7 +562,7 @@ describe('worker token introspection', () => {
     expect(await introspect(token)).toEqual({
       active: true,
       client_id: POOL,
-      worker_provider: 'dp',
+      worker_provider: 'Submodel',
       device_id: DEVICE,
       device_issuer: 'self',
       scope: String(WORKER),
@@ -659,5 +659,48 @@ describe('worker token introspection', () => {
       }),
     } as never);
     expect(res.status).toBe(401);
+  });
+});
+
+describe('introspector client made by createIntrospectorClient', () => {
+  const INTROSPECTOR = 'orchestrator-workers';
+
+  beforeEach(async () => {
+    h.tables.UserRole = [{ userId: OWNER, role: 'system:workload' }];
+    secrets[INTROSPECTOR] = (
+      await createIntrospectorClient(db as never, { id: INTROSPECTOR, name: 'Orchestrator' })
+    ).secret;
+  });
+
+  it('reads a worker token once it is on the worker allowlist', async () => {
+    const res = await exchange();
+    const token = res.body.access_token as string;
+    process.env.OAUTH_WORKER_INTROSPECTION_CLIENT_IDS = INTROSPECTOR;
+    expect(await introspect(token, INTROSPECTOR)).toMatchObject({ active: true, client_id: POOL });
+  });
+
+  it.each([
+    ['authorization_code', { code: 'some-code', redirect_uri: 'https://app.example/cb' }],
+    ['refresh_token', { refresh_token: 'some-refresh-token' }],
+    ['client_credentials', {}],
+    ['password', { username: 'link-user', password: 'some-password' }],
+    [GRANT, { subject_token: DEVICE, subject_token_type: DEVICE_ID_TYPE }],
+  ])('is refused a token through the %s grant', async (grant, params) => {
+    const res = await TOKEN({
+      request: form('token', {
+        grant_type: grant,
+        client_id: INTROSPECTOR,
+        client_secret: secrets[INTROSPECTOR],
+        ...params,
+      }),
+    } as never);
+    // The token-exchange grant refuses a client with no WorkerClient row by the same error name, so
+    // the description is what shows the grants list refused it.
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'unauthorized_client',
+      error_description: 'Unauthorized client: `grant_type` is invalid',
+    });
+    expect(rows('ApiKey')).toHaveLength(0);
   });
 });
