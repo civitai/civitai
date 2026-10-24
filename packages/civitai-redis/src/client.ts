@@ -2319,6 +2319,20 @@ export const REDIS_SYS_KEYS = {
      */
     APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
     /**
+     * FORKABLE APPS — one server-side fork session per fork slug, keyed
+     * `system:blocks:fork-session:${forkSlug}`. JSON: who forked, the parent block and the
+     * approved parent commit, the parent listing, and the seed handed to the sandbox service.
+     * Written `SET NX` (the write is also the slug's reservation), TTL 30 days. The ONLY
+     * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
+     */
+    FORK_SESSION: 'system:blocks:fork-session',
+    /**
+     * FORKABLE APPS — per-user fork-start counters, keyed
+     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
+     * MULTI (always created with its TTL); fail-closed on a redis error.
+     */
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always

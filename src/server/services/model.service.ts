@@ -5617,6 +5617,7 @@ export async function migrateResourceToCollection({
         data: modelIds.map((id) => ({
           collectionId: collection.id,
           modelId: id,
+          addedById: model.userId,
         })),
       });
 
