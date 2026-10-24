@@ -563,6 +563,9 @@ jobs:
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # ONE-OFF (do not merge): run the opt-in Prisma-vs-Kysely parity suites against this job's
+      # throwaway Postgres, for PR 6737.
+      KYSELY_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
