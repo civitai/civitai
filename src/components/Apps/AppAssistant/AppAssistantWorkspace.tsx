@@ -137,6 +137,14 @@ function EnableCard({
  */
 export const RESUME_ASK_TIMEOUT_MS = 3 * 60_000;
 
+/**
+ * While the open app starts, the page asks for its apps this often itself, whatever the list's own
+ * polling does (a stalled poll once left the page on "Starting…" long after the app ran).
+ */
+export const APP_START_POLL_MS = 3_000;
+/** How long the page keeps asking before it says the start is taking long and offers Check again. */
+export const APP_START_TIMEOUT_MS = 5 * 60_000;
+
 /** How long the page waits for its app list when the chat asks for a failed reply by itself. */
 export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
 
@@ -869,9 +877,43 @@ export function AppAssistantWorkspace({
     if (active?.state === 'suspended') setPausedSeen(active.name);
     else if (active?.state !== 'starting') setPausedSeen(null);
   }, [active?.name, active?.state]);
+  // The open app is starting (by any path): the page asks for its apps itself until it runs, a
+  // stop at APP_START_TIMEOUT_MS saying so. Check again asks afresh.
+  const waitingToRun = !!active && (active.state === 'starting' || starting);
+  const [startSlow, setStartSlow] = useState<string | null>(null);
+  const [checks, setChecks] = useState(0);
+  useEffect(() => {
+    if (!waitingToRun || !active) {
+      setStartSlow(null);
+      return;
+    }
+    const name = active.name;
+    // Never cancelling a list request already on its way.
+    const poll = setInterval(
+      () => void refetchRef.current({ cancelRefetch: false }),
+      APP_START_POLL_MS
+    );
+    const timeout = setTimeout(() => {
+      clearInterval(poll);
+      setStartSlow(name);
+    }, APP_START_TIMEOUT_MS);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restarts per app and per Check again
+  }, [waitingToRun, active?.name, checks]);
+  const checkAgain = () => {
+    setStartSlow(null);
+    setChecks((n) => n + 1);
+    void refetchRef.current();
+  };
+  const slow = !!active && waitingToRun && startSlow === active.name;
   const showNotice =
-    !!active &&
-    (active.state === 'suspended' || (active.state === 'starting' && pausedSeen === active.name));
+    slow ||
+    (!!active &&
+      (active.state === 'suspended' ||
+        (active.state === 'starting' && pausedSeen === active.name)));
   const noticeError = active && startError?.app === active.app ? startError.error : null;
   // An error the notice or the card already shows is not shown twice, and while the card offers to
   // free a slot the kept-apps refusal is not also told above.
@@ -1033,6 +1075,8 @@ export function AppAssistantWorkspace({
                   pending={startingApp === active.app}
                   pauses={runningOtherApp(apps, active)?.app ?? null}
                   error={noticeError}
+                  slow={slow}
+                  onCheckAgain={checkAgain}
                   onStart={() => startByHand(active)}
                 />
               ) : null

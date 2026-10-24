@@ -12,6 +12,8 @@ export function PausedAppNotice({
   pending,
   pauses,
   error,
+  slow = false,
+  onCheckAgain,
   onStart,
 }: {
   app: string;
@@ -24,6 +26,9 @@ export function PausedAppNotice({
   /** The app that runs now, which starting this one pauses. */
   pauses: string | null;
   error: unknown;
+  /** Still starting after the page stopped asking (APP_START_TIMEOUT_MS). */
+  slow?: boolean;
+  onCheckAgain?: () => void;
   onStart: () => void;
 }) {
   return (
@@ -40,7 +45,11 @@ export function PausedAppNotice({
         <Group justify="space-between" wrap="nowrap" gap="sm">
           <div className="min-w-0">
             <Text size="sm" fw={600}>
-              {starting ? 'Starting…' : `${app} is paused.`}
+              {slow
+                ? `${app} is taking longer than expected to start.`
+                : starting
+                ? 'Starting…'
+                : `${app} is paused.`}
             </Text>
             {!starting && pauses && (
               <Text size="xs" c="dimmed">
@@ -48,6 +57,16 @@ export function PausedAppNotice({
               </Text>
             )}
           </div>
+          {slow && onCheckAgain && (
+            <Button
+              size="compact-sm"
+              variant="light"
+              className="min-h-11 shrink-0"
+              onClick={onCheckAgain}
+            >
+              Check again
+            </Button>
+          )}
           {canStart && (
             <Button
               size="compact-sm"

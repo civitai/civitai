@@ -63,6 +63,8 @@ const m = vi.hoisted(() => ({
   refetchFails: false,
   refetchHangs: false,
   refetches: 0,
+  /** The page's own list asks while its open app starts. */
+  startPolls: 0,
   open: vi.fn(),
   openReject: null as unknown,
   start: vi.fn(),
@@ -307,92 +309,102 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
     return <div data-testid="preview" />;
   },
 }));
-vi.mock('~/components/Apps/AppAssistant/useSandboxes', () => ({
-  useSandboxes: (client: { list: () => Promise<unknown> } | null) => {
-    m.sandboxClient = client;
-    /** The service: finds the app's sandbox, or creates one, which the next list then includes. */
-    const serve = (app: string) => {
-      m.open(app);
-      if (m.openReject) throw m.openReject;
-      m.events.push(`start ${app}`);
-      const found = m.list.find((s) => s.app === app);
-      if (found) return { sandbox: found, created: false };
-      const made = sandbox(`sbx-new-${app}`, { app, state: 'starting' });
-      m.list = [...m.list, made];
-      return { sandbox: made, created: true };
-    };
-    return {
-      list: {
-        // A list that never loaded has no data; one whose later poll failed keeps it.
-        data: client && !(m.listError && m.listNeverLoaded) ? m.list : undefined,
-        // As React Query's: resolves with the result (never throws); a failed one keeps the old data.
-        refetch: async () => {
-          m.refetches++;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          if (m.refetchHangs) await new Promise<never>(() => undefined);
-          if (m.refetchFails) return { isError: true, data: m.list };
-          if (m.service) m.list = m.service;
-          return { isError: false, data: m.list };
+vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
+  const { useReducer } = await import('react');
+  return {
+    useSandboxes: (client: { list: () => Promise<unknown> } | null) => {
+      m.sandboxClient = client;
+      // React Query re-renders its observer when a refetch brings new data.
+      const [, rerender] = useReducer((n: number) => n + 1, 0);
+      /** The service: finds the app's sandbox, or creates one, which the next list then includes. */
+      const serve = (app: string) => {
+        m.open(app);
+        if (m.openReject) throw m.openReject;
+        m.events.push(`start ${app}`);
+        const found = m.list.find((s) => s.app === app);
+        if (found) return { sandbox: found, created: false };
+        const made = sandbox(`sbx-new-${app}`, { app, state: 'starting' });
+        m.list = [...m.list, made];
+        return { sandbox: made, created: true };
+      };
+      return {
+        list: {
+          // A list that never loaded has no data; one whose later poll failed keeps it.
+          data: client && !(m.listError && m.listNeverLoaded) ? m.list : undefined,
+          // As React Query's: resolves with the result (never throws); a failed one keeps the old data.
+          // The page's own asks while its app starts pass `cancelRefetch: false`; they are counted apart,
+          // and re-render with what they brought (the tests' other refetches read the result directly).
+          refetch: async (opts?: { cancelRefetch?: boolean }) => {
+            const startPoll = opts?.cancelRefetch === false;
+            if (startPoll) m.startPolls++;
+            else m.refetches++;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (m.refetchHangs) await new Promise<never>(() => undefined);
+            if (m.refetchFails) return { isError: true, data: m.list };
+            if (m.service) m.list = m.service;
+            if (startPoll) rerender();
+            return { isError: false, data: m.list };
+          },
+          isSuccess: !!client,
+          isLoading: false,
+          error: m.listError,
         },
-        isSuccess: !!client,
-        isLoading: false,
-        error: m.listError,
-      },
-      open: {
-        mutate: (
-          app: string,
-          opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void; onError?: (e: unknown) => void }
-        ) => {
-          const settle = () => {
-            let served;
-            try {
-              served = serve(app);
-            } catch (error) {
-              return opts?.onError?.(error);
-            }
-            opts?.onSuccess?.(served);
-          };
-          m.resume(app);
-          // The service answers later, never inside the call.
-          if (m.deferOpen) m.settleOpen = settle;
-          else setTimeout(settle, 0);
-        },
-        // As `mutate`: the service answers later (or when the test settles it).
-        mutateAsync: (app: string) =>
-          new Promise((resolve, reject) => {
+        open: {
+          mutate: (
+            app: string,
+            opts?: { onSuccess?: (r: { sandbox: Sandbox }) => void; onError?: (e: unknown) => void }
+          ) => {
             const settle = () => {
+              let served;
               try {
-                resolve(serve(app));
+                served = serve(app);
               } catch (error) {
-                reject(error);
+                return opts?.onError?.(error);
               }
+              opts?.onSuccess?.(served);
             };
             m.resume(app);
+            // The service answers later, never inside the call.
             if (m.deferOpen) m.settleOpen = settle;
             else setTimeout(settle, 0);
-          }),
-        isPending: false,
-        error: m.openError,
-      },
-      suspend: { mutate: m.suspend, isPending: false, error: null },
-      remove: {
-        mutate: (name: string, opts?: { onSuccess?: () => void }) => {
-          m.remove(name);
-          m.list = m.list.filter((s) => s.name !== name);
-          opts?.onSuccess?.();
+          },
+          // As `mutate`: the service answers later (or when the test settles it).
+          mutateAsync: (app: string) =>
+            new Promise((resolve, reject) => {
+              const settle = () => {
+                try {
+                  resolve(serve(app));
+                } catch (error) {
+                  reject(error);
+                }
+              };
+              m.resume(app);
+              if (m.deferOpen) m.settleOpen = settle;
+              else setTimeout(settle, 0);
+            }),
+          isPending: false,
+          error: m.openError,
         },
-        mutateAsync: async (name: string) => {
-          m.remove(name);
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          if (m.removeReject) throw m.removeReject;
-          m.list = m.list.filter((s) => s.name !== name);
+        suspend: { mutate: m.suspend, isPending: false, error: null },
+        remove: {
+          mutate: (name: string, opts?: { onSuccess?: () => void }) => {
+            m.remove(name);
+            m.list = m.list.filter((s) => s.name !== name);
+            opts?.onSuccess?.();
+          },
+          mutateAsync: async (name: string) => {
+            m.remove(name);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (m.removeReject) throw m.removeReject;
+            m.list = m.list.filter((s) => s.name !== name);
+          },
+          isPending: false,
+          error: null,
         },
-        isPending: false,
-        error: null,
-      },
-    };
-  },
-}));
+      };
+    },
+  };
+});
 vi.mock('~/components/Apps/AppAssistant/assistantToken', async (importOriginal) => ({
   ...(await importOriginal<typeof TokenMod>()),
   createAssistantTokenProvider: (opts?: { onConsentRequired?: () => void }) => {
@@ -424,6 +436,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const {
   APP_LIST_REFRESH_TIMEOUT_MS,
+  APP_START_POLL_MS,
+  APP_START_TIMEOUT_MS,
   AppAssistantWorkspace,
   HELD_RECORD_MS,
   RESUME_ASK_TIMEOUT_MS,
@@ -521,6 +535,7 @@ beforeEach(() => {
   m.refetchFails = false;
   m.refetchHangs = false;
   m.refetches = 0;
+  m.startPolls = 0;
   m.open.mockReset();
   m.openReject = null;
   m.start.mockReset().mockResolvedValue({
@@ -2284,6 +2299,65 @@ describe('AppAssistantWorkspace paused-app notice', () => {
     await expect.element(notice()).toBeVisible();
     expect(notice().element().closest('[slot]')?.getAttribute('slot')).toBe('composer-top');
     expect(notice().element().closest('[data-testid="chat"]')).not.toBeNull();
+  });
+
+  test('🔴 after Start, the page asks for its apps itself until the app runs, even with the list poll stalled', async () => {
+    m.list = pausedApps();
+    const screen = await mount();
+    await startButton().click();
+    // The service has it starting, and then running; the page's list only changes when it asks.
+    m.list = [{ ...m.list[0], state: 'starting' }, m.list[1]];
+    screen.rerender(<Workspace />);
+    await expect.element(notice().getByText('Starting…', { exact: true })).toBeVisible();
+    m.service = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    await vi.waitFor(
+      () => expect(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running'),
+      {
+        timeout: APP_START_POLL_MS * 3,
+      }
+    );
+    await expect.element(notice()).not.toBeInTheDocument();
+    expect(m.startPolls).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a start that never finishes stops asking after the timeout, says so, and Check again asks afresh', async () => {
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', {
+        state: 'starting',
+        lastActivityAt: ago(2),
+        createdAt: ago(30),
+      }),
+      pausedApps()[1],
+    ];
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Starting…');
+    await vi.advanceTimersByTimeAsync(APP_START_TIMEOUT_MS + APP_START_POLL_MS);
+    await expect
+      .element(
+        notice().getByText('app-aaaa is taking longer than expected to start.', { exact: true })
+      )
+      .toBeVisible();
+    const polls = m.startPolls;
+    expect(polls).toBeGreaterThan(1);
+    // Stopped asking.
+    await vi.advanceTimersByTimeAsync(APP_START_POLL_MS * 3);
+    expect(m.startPolls).toBe(polls);
+    // Check again: asks at once and keeps asking; once it runs, the notice goes.
+    m.service = [{ ...m.list[0], state: 'running' }, m.list[1]];
+    await notice().getByRole('button', { name: 'Check again' }).click();
+    await vi.advanceTimersByTimeAsync(APP_START_POLL_MS * 2);
+    await vi.waitFor(() =>
+      expect(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running')
+    );
+    await expect.element(notice()).not.toBeInTheDocument();
+  });
+
+  test('NEGATIVE CONTROL: a running app is not asked about', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: ago(2), createdAt: ago(30) })];
+    await mount();
+    await settle(APP_START_POLL_MS + 500);
+    expect(m.startPolls).toBe(0);
   });
 
   test('NEGATIVE CONTROL: a running app shows no notice', async () => {
