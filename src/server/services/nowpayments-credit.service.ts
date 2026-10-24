@@ -25,19 +25,16 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // Paid on NowPayments' side but not yet settled to us: nothing to credit until it finishes.
 const WAITING_STATUSES = new Set(['waiting', 'confirming', 'confirmed', 'sending']);
 
-// Where a hand grant for a deposit can land, and the types it is made as. Reward and Compensation
-// are left out: automated, and numerous enough on a creator's account to exhaust the scan.
-const SCANNED_ACCOUNT_TYPES: BuzzAccountType[] = [
-  'yellow',
-  'blue',
-  'green',
-  'cashPending',
-  'cashSettled',
-];
-const SCANNED_TRANSACTION_TYPES = [
-  TransactionType.Tip,
-  TransactionType.Incentive,
-  TransactionType.Refund,
+// Where a hand grant for a deposit can land, and the types it is made as. Goodwill grants are made
+// as Rewards to yellow or blue. Compensation is left out: automated, and numerous enough on a
+// creator's account to exhaust the scan.
+const HAND_GRANT_TYPES = [TransactionType.Tip, TransactionType.Incentive, TransactionType.Refund];
+const SCANS: [BuzzAccountType, TransactionType[]][] = [
+  ['yellow', [...HAND_GRANT_TYPES, TransactionType.Reward]],
+  ['blue', [...HAND_GRANT_TYPES, TransactionType.Reward]],
+  ['green', HAND_GRANT_TYPES],
+  ['cashPending', HAND_GRANT_TYPES],
+  ['cashSettled', HAND_GRANT_TYPES],
 ];
 const SCAN_PAGE_SIZE = 200;
 // A scan that cannot finish refuses: an unread page could hold the grant.
@@ -81,7 +78,8 @@ const containsPayinHashPrefix = (text: string, payinHash: string) => {
   return false;
 };
 
-const DEPOSIT_KEYWORDS = /\b(?:crypto|deposit|nowpayments|payin|usdt)|\b(?:np|btc|eth|tx)\b/i;
+const DEPOSIT_KEYWORDS =
+  /\b(?:crypto|deposit|nowpayments|payin|usdt|payment|disbursement)|\b(?:np|btc|eth|tx)\b/i;
 const SOFT_AMOUNT_TOLERANCE = 0.5;
 
 /**
@@ -102,11 +100,16 @@ export function matchManualCredit(
   if (ctx.payinHash && containsPayinHashPrefix(text, ctx.payinHash))
     return { strength: 'hard', why: 'cites the payin hash' };
 
-  const handGrantType = credit.type === 'Tip' || credit.type === 'Incentive';
-  if (!handGrantType || !ctx.fromStaff) return null;
+  if (!ctx.fromStaff) return null;
   if (credit.description && DEPOSIT_KEYWORDS.test(credit.description))
     return { strength: 'soft', why: 'staff grant mentioning a deposit' };
-  if (Math.abs(credit.amount - ctx.expectedBuzz) <= ctx.expectedBuzz * SOFT_AMOUNT_TOLERANCE)
+  // Rewards and Refunds from the bank are mostly automated (ad impressions, generation refunds), so
+  // their amount says nothing; only Tips and Incentives are matched on it.
+  const amountCounts = credit.type === 'Tip' || credit.type === 'Incentive';
+  if (
+    amountCounts &&
+    Math.abs(credit.amount - ctx.expectedBuzz) <= ctx.expectedBuzz * SOFT_AMOUNT_TOLERANCE
+  )
     return { strength: 'soft', why: 'staff grant near the deposit amount' };
   return null;
 }
@@ -114,8 +117,8 @@ export function matchManualCredit(
 /** Every credit of a scanned type into the user's accounts since `start`, read live from the Buzz service. */
 async function getCreditsSince(userId: number, start: Date) {
   const credits: ManualCredit[] = [];
-  for (const accountType of SCANNED_ACCOUNT_TYPES) {
-    for (const type of SCANNED_TRANSACTION_TYPES) {
+  for (const [accountType, types] of SCANS) {
+    for (const type of types) {
       let cursor: Date | undefined;
       for (let page = 0; ; page++) {
         if (page === SCAN_MAX_PAGES)
@@ -163,7 +166,10 @@ async function findManualCredits(
 
   const matches: ManualCreditMatch[] = [];
   for (const credit of credits) {
-    const match = matchManualCredit(credit, { ...ctx, fromStaff: staff.has(credit.fromAccountId) });
+    const fromStaff = staff.has(credit.fromAccountId);
+    // A creator's Rewards are mostly from other users' actions; only a staff Reward can be a hand grant.
+    if (credit.type === 'Reward' && !fromStaff) continue;
+    const match = matchManualCredit(credit, { ...ctx, fromStaff });
     if (match) matches.push({ ...credit, ...match });
   }
   return matches;

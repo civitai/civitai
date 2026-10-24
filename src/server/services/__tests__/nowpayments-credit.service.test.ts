@@ -144,9 +144,25 @@ function livePayment(overrides: Record<string, unknown> = {}) {
 
 /** A hand grant from support, as Freshdesk tickets have been paid. */
 function supportTip(description: string, amount = 20_000, from = 0) {
+  grant({ type: 'Tip', description, amount, from, key: 'support-ticket-90001' });
+}
+
+function grant({
+  type,
+  description,
+  amount,
+  from = 0,
+  key,
+}: {
+  type: string;
+  description: string;
+  amount: number;
+  from?: number;
+  key?: string;
+}) {
   ledger.push({
-    externalTransactionId: 'support-ticket-90001',
-    type: 'Tip',
+    externalTransactionId: key,
+    type,
     fromAccountId: from,
     toAccountId: USER_ID,
     toAccountType: 'User',
@@ -297,6 +313,43 @@ describe('creditDeposit', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: MOD_ID }]);
 
     expect(await credit()).toMatchObject({ credited: false, decision: 'refused' });
+  });
+
+  it('holds a goodwill Reward from the bank that mentions a crypto deposit', async () => {
+    grant({
+      type: 'Reward',
+      description: 'Goodwill Buzz - Ticket #90001 crypto deposit',
+      amount: 1,
+    });
+
+    const held = await credit();
+    expect(held).toMatchObject({ credited: false, decision: 'refused' });
+    expect(held.matches).toEqual([expect.objectContaining({ type: 'Reward', strength: 'soft' })]);
+  });
+
+  it('ignores an automated Reward from the bank even at the exact deposit amount', async () => {
+    grant({ type: 'Reward', description: 'Ad impression reward', amount: 20_000 });
+
+    expect(await credit()).toMatchObject({ credited: true, matches: [] });
+  });
+
+  it('holds a staff Refund that mentions a deposit', async () => {
+    grant({ type: 'Refund', description: 'Refund for BTC deposit - ticket #90001', amount: 1 });
+
+    expect(await credit()).toMatchObject({ credited: false, decision: 'refused' });
+  });
+
+  it('holds an old mod-cash disbursement for a failed payment', async () => {
+    grant({
+      type: 'Incentive',
+      description: 'Mod cash adjustment (grant): Disbursement for failed 07/19/2026 payment',
+      amount: 1,
+      key: 'mod-cash-7-42-1784000000000',
+    });
+
+    const held = await credit();
+    expect(held).toMatchObject({ credited: false, decision: 'refused' });
+    expect(held.matches).toEqual([expect.objectContaining({ strength: 'soft' })]);
   });
 
   it('refuses when it cannot read the ledger for hand grants', async () => {
