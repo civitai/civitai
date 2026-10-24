@@ -56,5 +56,7 @@ export function eligibleSql(alias = 'i'): string {
 }
 
 export const IMAGE_ROW_COLUMNS = `i.id, i.url, i.type, i."nsfwLevel", i."userId", i."postId", i."sortAt",
-  i.ingestion, i."tosViolation", i."blockedFor", i."needsReview", i.minor, i.poi, i."sizeKB", i.width, i.height,
+  i.ingestion, i."tosViolation", i."blockedFor", i."needsReview", i.minor, i.poi, i."sizeKB",
+  COALESCE(i.width, CASE WHEN jsonb_typeof(i.metadata->'width') = 'number' THEN (i.metadata->>'width')::numeric::int END) AS width,
+  COALESCE(i.height, CASE WHEN jsonb_typeof(i.metadata->'height') = 'number' THEN (i.metadata->>'height')::numeric::int END) AS height,
   CASE WHEN jsonb_typeof(i.metadata->'duration') = 'number' THEN (i.metadata->>'duration')::float END AS duration`;

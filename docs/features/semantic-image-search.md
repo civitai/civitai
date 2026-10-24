@@ -180,7 +180,9 @@ vector-sync consumer, which then subscribes to the topic. When it is flipped on 
   starts.
 - `--max-rate <writes/s>` paces pages so Qdrant writes (points embedded, rewritten or deleted)
   average at most that rate; `--window HH:MM-HH:MM` (UTC, may wrap midnight) starts new pages
-  only inside the window. The disk Qdrant writes to may be shared, so set both for a full run.
+  only inside the window; pages already running finish after it closes. The rate is an
+  average: the first `--pages` pages (and the first after the window opens) start together.
+  The disk Qdrant writes to may be shared, so set both for a full run.
   The throughput log reports `writesPerSec`, `maxRate` and `window`.
 - Writing needs `--confirm`, `VECTOR_SYNC_EMBED_ENABLED=true` and `CDC_IMAGE_ENABLED=true`,
   so that live sync is already removing blocked images. Kafka Connect must also confirm the

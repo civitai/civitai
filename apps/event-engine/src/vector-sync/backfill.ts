@@ -265,11 +265,13 @@ function parseArgs(argv: string[]) {
   const int = (name: string, fallback?: number) => {
     const v = flags[name];
     if (v === undefined) return fallback;
+    if (v === true) throw new Error(`--${name} needs a value`);
     const n = Number(v);
     if (!Number.isInteger(n) || n < 0) throw new Error(`--${name} must be a non-negative integer`);
     return n;
   };
   const positive = (name: string) => {
+    if (flags[name] === true) throw new Error(`--${name} needs a value`);
     const n = Number(flags[name]);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`--${name} must be a positive number`);
     return n;

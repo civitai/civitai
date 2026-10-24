@@ -1169,12 +1169,15 @@ describe('follow-ups 13 and 14', () => {
     expect(() => parseWindow('06:00-06:00')).toThrow(/differ/);
   });
 
-  function clockedRun(pg: FakePg, store: FakeStore, startMs: number) {
+  function clockedRun(pg: FakePg, store: FakeStore, startMs: number, pageMs = 0) {
     let clock = startMs;
     const pageStarts: number[] = [];
     const base = pg.query;
     pg.query = (async (sql: string, params: unknown[]) => {
-      if (sql.includes('i.id >= $1 AND i.id < $2')) pageStarts.push(clock);
+      if (sql.includes('i.id >= $1 AND i.id < $2')) {
+        pageStarts.push(clock);
+        clock += pageMs;
+      }
       return base(sql, params);
     }) as FakePg['query'];
     let cursor: number | null = null;
@@ -1211,17 +1214,17 @@ describe('follow-ups 13 and 14', () => {
     expect(gaps.every((g) => g >= 2000)).toBe(true);
   });
 
-  test('--window starts no page outside it', async () => {
-    const pg = new FakePg().put(...Array.from({ length: 10 }, (_, i) => imageRow(i + 1)));
+  test('--window starts no page outside it, including after it closes mid-run', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
     const store = new FakeStore();
     const start = Date.parse('2026-10-24T21:59:50Z');
-    const run = clockedRun(pg, store, start);
-    await runBackfill(
-      { watermark: 10, floor: 0, span: 5, pages: 1, window: '22:00-06:00' },
-      run.deps
-    );
-    expect(store.points.size).toBe(10);
-    expect(run.pageStarts.every((t) => inWindow(t, parseWindow('22:00-06:00')))).toBe(true);
+    // Each page takes 3 h of fake time, so the run crosses 06:00 and must wait for the next night.
+    const run = clockedRun(pg, store, start, 3 * 3600_000);
+    const window = '22:00-06:00';
+    await runBackfill({ watermark: 30, floor: 0, span: 5, pages: 1, window }, run.deps);
+    expect(store.points.size).toBe(30);
+    expect(run.pageStarts.every((t) => inWindow(t, parseWindow(window)))).toBe(true);
     expect(run.pageStarts[0]).toBeGreaterThanOrEqual(Date.parse('2026-10-24T22:00:00Z'));
+    expect(run.pageStarts.some((t) => t >= Date.parse('2026-10-25T22:00:00Z'))).toBe(true);
   });
 });
