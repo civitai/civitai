@@ -137,20 +137,18 @@ Same retry semantics as `openrouter.getJsonCompletion`: on "no content" or "all 
 
 ## Daily-Challenge Defaults
 
-Entry reviews and winner picks run on `civitai/qwen3.8` through the orchestrator; every other stage runs on OpenRouter (MiMo). Any call site can pass another model through the dispatcher, e.g. from the Playground.
+Every daily-challenge stage (reviews, winner picks, articles, collection details, theme elements, resource concepts) runs on `civitai/qwen3.8` through the orchestrator, with GPT-4o Mini on OpenRouter as the fallback. Any call site can pass another model through the dispatcher, e.g. from the Playground.
 
 `src/server/games/daily-challenge/generative-content.ts`:
 
 ```ts
-const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.MIMO;
-export const DEFAULT_REVIEW_MODEL: AIModel = 'civitai/qwen3.8';
-export const REVIEW_FALLBACK_MODEL: AIModel = AI_MODELS.MIMO;
-const DEFAULT_WINNERS_MODEL: AIModel = 'civitai/qwen3.8';
+const DEFAULT_MODEL: AIModel = 'civitai/qwen3.8';
+const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
+export const DEFAULT_REVIEW_MODEL: AIModel = DEFAULT_MODEL;
+export const REVIEW_FALLBACK_MODEL: AIModel = FALLBACK_MODEL;
 ```
 
-`generateReview` falls back to `DEFAULT_REVIEW_MODEL`, `generateWinners` to `DEFAULT_WINNERS_MODEL`, and every other function to `DEFAULT_CONTENT_MODEL`. The comment above the constants has the rationale.
-
-When `generateWinners` is called without a model and `DEFAULT_WINNERS_MODEL` fails, it retries on `REVIEW_FALLBACK_MODEL` and logs `daily-challenge-winners-fallback` to Axiom. An explicit `model` (the Playground) gets no fallback.
+The comment above the constants has the rationale. Every function called without a model goes through `withFallback`: when `DEFAULT_MODEL` fails, it retries on `FALLBACK_MODEL` and logs `daily-challenge-<stage>-fallback` to Axiom (`collection`, `article`, `theme-elements`, `resource-concept`, `winners`). An explicit `model` (the Playground) gets no fallback.
 
 The review job wraps the default in `reviewWithFallback` (`review-fallback.ts`): when the default model fails, the entry is reviewed again on `REVIEW_FALLBACK_MODEL` and a `daily-challenge-review-fallback` event (with the error) goes to Axiom.
 
