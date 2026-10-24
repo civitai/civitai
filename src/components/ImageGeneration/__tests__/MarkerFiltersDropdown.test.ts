@@ -69,7 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   unmountAll();
-  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('MarkerFiltersDropdown', () => {
@@ -85,35 +85,19 @@ describe('MarkerFiltersDropdown', () => {
     expect(sheetIsOpen()).toBe(false);
   });
 
-  it.each([true, false])('leaves no timer pending once unmounted (mobile: %s)', async (mobile) => {
-    const pending = new Map<number, number>(); // id -> delay
-    const realSetTimeout = window.setTimeout.bind(window);
-    const realClearTimeout = window.clearTimeout.bind(window);
-    vi.spyOn(window, 'setTimeout').mockImplementation(((
-      fn: (...args: unknown[]) => void,
-      ms = 0,
-      ...args: unknown[]
-    ) => {
-      const id: number = realSetTimeout(() => {
-        pending.delete(id);
-        fn(...args);
-      }, ms);
-      pending.set(id, ms);
-      return id;
-    }) as typeof window.setTimeout);
-    vi.spyOn(window, 'clearTimeout').mockImplementation((id) => {
-      pending.delete(id as number);
-      realClearTimeout(id);
+  it.each([true, false])('leaves no timer pending once unmounted (mobile: %s)', (mobile) => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
     });
-    const transitionPending = () => [...pending.values()].some((ms) => ms >= 100);
-
     openFilters(mobile);
-    // The transition schedules its timer two animation frames after the click.
-    for (let i = 0; i < 100 && !transitionPending(); i++)
-      await act(() => new Promise((resolve) => realSetTimeout(resolve, 5)));
-    expect(transitionPending(), 'open transition scheduled no timer to leak').toBe(true);
+    // The transition schedules its timer two animation frames after the click. The second
+    // advance runs the focus trap's 0ms focus timers, queued by the commit at act() exit;
+    // Mantine never clears those, but they only move focus.
+    act(() => vi.advanceTimersByTime(50));
+    act(() => vi.advanceTimersByTime(0));
+    expect(vi.getTimerCount(), 'open transition scheduled no timer to leak').toBeGreaterThan(0);
 
     unmountAll();
-    expect(pending.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
