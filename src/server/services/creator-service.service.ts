@@ -31,6 +31,10 @@ import {
   servableServiceRatings,
   visibleMatureServiceRatings,
 } from '~/shared/constants/creator-service.constants';
+import {
+  SELLER_AFFIRMATION_STATEMENT,
+  SERVICES_TERMS_VERSION,
+} from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
 import { ServiceOfferingStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
@@ -120,6 +124,41 @@ export async function assertCanSellServices(userId: number) {
     );
 }
 
+const hasCurrentAffirmation = (record: Prisma.JsonValue | null | undefined) =>
+  !!record &&
+  typeof record === 'object' &&
+  !Array.isArray(record) &&
+  record.version === SERVICES_TERMS_VERSION;
+
+const sellerAffirmationRecord = (userId: number, offeringId: number) => ({
+  userId,
+  offeringId,
+  affirmedAt: new Date().toISOString(),
+  version: SERVICES_TERMS_VERSION,
+  statement: SELLER_AFFIRMATION_STATEMENT,
+});
+
+/**
+ * Publishing needs the seller's agreement to the current terms, ticked now or already recorded
+ * against this offering. Returns the record to write, or undefined when one is already on file.
+ */
+function affirmationForPublish({
+  sellerId,
+  offeringId,
+  existing,
+  affirmedTermsVersion,
+}: {
+  sellerId: number;
+  offeringId: number;
+  existing: Prisma.JsonValue | null | undefined;
+  affirmedTermsVersion?: string;
+}) {
+  if (affirmedTermsVersion === SERVICES_TERMS_VERSION)
+    return sellerAffirmationRecord(sellerId, offeringId);
+  if (hasCurrentAffirmation(existing)) return undefined;
+  throw throwBadRequestError('Confirm the seller terms to publish this service.');
+}
+
 async function assertUnderActiveOfferingCap(sellerId: number) {
   const active = await dbWrite.serviceOffering.count({
     where: { sellerId, status: ServiceOfferingStatus.Active },
@@ -141,16 +180,20 @@ export async function getMyServiceOfferings({
 }) {
   const shown = servableServiceRatings(servable);
   const where = { sellerId, status: { not: ServiceOfferingStatus.Removed } };
-  const [items, hiddenOffDomain] = await Promise.all([
+  const [rows, hiddenOffDomain] = await Promise.all([
     dbRead.serviceOffering.findMany({
       where: { ...where, maxNsfwLevel: { in: shown } },
-      select: serviceOfferingSelect,
+      select: { ...serviceOfferingSelect, sellerAffirmation: true },
       orderBy: { createdAt: 'desc' },
     }),
     shown.length === SERVICE_OFFERING_RATINGS.length
       ? 0
       : dbRead.serviceOffering.count({ where: { ...where, maxNsfwLevel: { notIn: shown } } }),
   ]);
+  const items = rows.map(({ sellerAffirmation, ...offering }) => ({
+    ...offering,
+    termsAffirmed: hasCurrentAffirmation(sellerAffirmation),
+  }));
   return { items, hiddenOffDomain };
 }
 
@@ -206,39 +249,64 @@ export async function upsertServiceOffering({
   sellerId: number;
   input: UpsertServiceOfferingInput;
 }) {
-  const { id, publish, ...fields } = input;
+  const { id, publish, affirmedTermsVersion, ...fields } = input;
   await assertCanSellServices(sellerId);
   await throwOnBlockedUserContent([fields.title, fields.description], {
     surface: 'creator-service-offering',
   });
 
   if (!id) {
-    if (publish) await assertUnderActiveOfferingCap(sellerId);
-    return dbWrite.serviceOffering.create({
-      data: {
-        ...fields,
-        maxNsfwLevel: fields.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
-        sellerId,
-        status: publish ? ServiceOfferingStatus.Active : ServiceOfferingStatus.Draft,
-      },
-      select: serviceOfferingSelect,
+    if (publish) {
+      // Checked before the cap so a missing tick never reads as a cap error.
+      affirmationForPublish({ sellerId, offeringId: 0, existing: null, affirmedTermsVersion });
+      await assertUnderActiveOfferingCap(sellerId);
+    }
+    // The record carries the offering's id, which exists only once it is created.
+    return dbWrite.$transaction(async (tx) => {
+      const created = await tx.serviceOffering.create({
+        data: {
+          ...fields,
+          maxNsfwLevel: fields.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+          sellerId,
+          status: publish ? ServiceOfferingStatus.Active : ServiceOfferingStatus.Draft,
+        },
+        select: serviceOfferingSelect,
+      });
+      if (publish)
+        await tx.serviceOffering.update({
+          where: { id: created.id },
+          data: { sellerAffirmation: sellerAffirmationRecord(sellerId, created.id) },
+        });
+      return created;
     });
   }
 
   const owned = { id, sellerId, status: { not: ServiceOfferingStatus.Removed } };
   const existing = await dbWrite.serviceOffering.findFirst({
     where: owned,
-    select: { status: true },
+    select: { status: true, sellerAffirmation: true },
   });
   if (!existing) throw throwNotFoundError('Service not found');
 
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
+  const affirmation = activating
+    ? affirmationForPublish({
+        sellerId,
+        offeringId: id,
+        existing: existing.sellerAffirmation,
+        affirmedTermsVersion,
+      })
+    : undefined;
   if (activating) await assertUnderActiveOfferingCap(sellerId);
 
   // Re-scoped so a remove that lands after the read above can't be undone by this write.
   const { count } = await dbWrite.serviceOffering.updateMany({
     where: owned,
-    data: { ...fields, ...(activating ? { status: ServiceOfferingStatus.Active } : {}) },
+    data: {
+      ...fields,
+      ...(activating ? { status: ServiceOfferingStatus.Active } : {}),
+      ...(affirmation ? { sellerAffirmation: affirmation } : {}),
+    },
   });
   if (count === 0) throw throwNotFoundError('Service not found');
   return dbWrite.serviceOffering.findUniqueOrThrow({
@@ -249,7 +317,7 @@ export async function upsertServiceOffering({
 
 export async function setServiceOfferingStatus({
   sellerId,
-  input: { id, status },
+  input: { id, status, affirmedTermsVersion },
 }: {
   sellerId: number;
   input: SetServiceOfferingStatusInput;
@@ -259,14 +327,26 @@ export async function setServiceOfferingStatus({
       ? [ServiceOfferingStatus.Draft, ServiceOfferingStatus.Paused]
       : [ServiceOfferingStatus.Active];
 
+  let affirmation: ReturnType<typeof sellerAffirmationRecord> | undefined;
   if (status === ServiceOfferingStatus.Active) {
     await assertCanSellServices(sellerId);
+    const existing = await dbWrite.serviceOffering.findFirst({
+      where: { id, sellerId, status: { in: from } },
+      select: { sellerAffirmation: true },
+    });
+    if (!existing) throw throwNotFoundError('Service not found');
+    affirmation = affirmationForPublish({
+      sellerId,
+      offeringId: id,
+      existing: existing.sellerAffirmation,
+      affirmedTermsVersion,
+    });
     await assertUnderActiveOfferingCap(sellerId);
   }
 
   const { count } = await dbWrite.serviceOffering.updateMany({
     where: { id, sellerId, status: { in: from } },
-    data: { status },
+    data: { status, ...(affirmation ? { sellerAffirmation: affirmation } : {}) },
   });
   if (count === 0) throw throwNotFoundError('Service not found');
 }

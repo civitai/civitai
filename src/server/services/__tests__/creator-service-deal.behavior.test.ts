@@ -7,6 +7,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -181,6 +182,7 @@ const request = (overrides: Partial<Parameters<typeof deals.requestServiceDeal>[
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please draw my cat',
+    disclosureVersion: SERVICES_TERMS_VERSION,
     buzzType: 'yellow',
     // A buyer on the mature-capable domain who browses at PG only, as most do.
     servableLevels: ALL_LEVELS,
@@ -319,6 +321,18 @@ describe('request', () => {
     ]);
     expect(await events(id)).toEqual(['Requested', 'Held']);
   });
+
+  it.each([
+    ['an empty version', ''],
+    ['a superseded version', 'services-terms-1999-01-01'],
+  ])(
+    'refuses a request sent with %s of the buyer disclosure, before any charge',
+    async (_, disclosureVersion) => {
+      await expect(request({ disclosureVersion })).rejects.toThrow(/Review the request terms/);
+      expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a request at a price other than the one the buyer was shown', async () => {
     await q(`UPDATE "ServiceOffering" SET price = 50000`);
