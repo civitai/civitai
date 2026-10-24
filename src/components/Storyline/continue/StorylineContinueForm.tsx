@@ -60,6 +60,7 @@ export function StorylineContinueForm({
   onSubmit,
   onStartOwn,
   ownerAdd = false,
+  inserting = false,
   submitting,
   outcome,
   error,
@@ -92,6 +93,8 @@ export function StorylineContinueForm({
   onStartOwn?: () => void;
   /** The viewer owns the storyline: the post joins as the next chapter at once, unpriced. */
   ownerAdd?: boolean;
+  /** The owner's post goes between two chapters, not after the last. */
+  inserting?: boolean;
   submitting?: boolean;
   outcome?: StorylineSubmitOutcome | null;
   error?: string | null;
@@ -121,7 +124,10 @@ export function StorylineContinueForm({
     return !tileVerdict.allowed && tileVerdict.reason === 'aboveRating';
   };
 
-  if (outcome) return <StorylineSubmitted outcome={outcome} price={price} onLeave={onLeave} />;
+  if (outcome)
+    return (
+      <StorylineSubmitted outcome={outcome} price={price} inserting={inserting} onLeave={onLeave} />
+    );
 
   if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
     return (
@@ -249,7 +255,9 @@ export function StorylineContinueForm({
 
       {post && verdict.allowed && ownerAdd && (
         <Text size="sm" c="dimmed">
-          It joins your storyline as the next chapter right away. No review, no cost.
+          {inserting
+            ? 'It goes in here right away, and the chapters after it move down one. No review, no cost.'
+            : 'It joins your storyline as the next chapter right away. No review, no cost.'}
         </Text>
       )}
 
@@ -279,7 +287,9 @@ export function StorylineContinueForm({
           </Button>
         )}
         <Button disabled={!post || !verdict.allowed} loading={submitting} onClick={onSubmit}>
-          {ownerAdd
+          {inserting
+            ? 'Insert chapter'
+            : ownerAdd
             ? 'Add chapter'
             : price > 0
             ? `Submit for ${storylinePriceLabel(price)}`
@@ -355,16 +365,22 @@ function StorylinePostTile({
 function StorylineSubmitted({
   outcome,
   price,
+  inserting,
   onLeave,
 }: {
   outcome: StorylineSubmitOutcome;
   price: number;
+  inserting: boolean;
   onLeave?: () => void;
 }) {
   if (outcome === 'added')
     return (
       <Alert color="green" icon={<IconCheck size={18} />}>
-        <Text size="sm">Added to your storyline as the next chapter.</Text>
+        <Text size="sm">
+          {inserting
+            ? 'Inserted into your storyline.'
+            : 'Added to your storyline as the next chapter.'}
+        </Text>
       </Alert>
     );
 

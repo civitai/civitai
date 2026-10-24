@@ -136,6 +136,31 @@ export function useAddOwnerStorylineChapter({ onSuccess }: { onSuccess: () => vo
   };
 }
 
+export function useInsertStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
+  isPending: boolean;
+  error: string | null;
+  mutate: (input: {
+    storylineId: number;
+    parentChapterId: number;
+    childChapterId: number;
+    postId: number;
+  }) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.insertChapter.useMutation();
+  return {
+    isPending: mutation.isPending,
+    error: mutation.error?.message ?? null,
+    mutate: (input) =>
+      mutation.mutate(input, {
+        onSuccess: () => {
+          void utils.storyline.invalidate();
+          onSuccess();
+        },
+      }),
+  };
+}
+
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
