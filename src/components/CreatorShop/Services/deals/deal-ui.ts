@@ -50,21 +50,41 @@ export const requestSentMessage = (held: boolean) =>
     ? 'Your Buzz is held until the deal completes.'
     : "We're confirming your payment; the seller can accept once it's confirmed.";
 
-export type DealPageState = { kind: 'loading' } | { kind: 'notFound' } | { kind: 'deal' };
+export type DealPageState =
+  | { kind: 'loading' }
+  | { kind: 'notFound' }
+  | { kind: 'error' }
+  | { kind: 'deal' };
+
+/**
+ * How the server refuses a deal: as missing, so a non-party learns nothing about it. A session
+ * that ended mid-view is refused before any lookup, and trying again cannot help it.
+ */
+const REFUSED = ['NOT_FOUND', 'FORBIDDEN', 'UNAUTHORIZED'];
+
+/** The deal query's failure as `dealPageState` reads it: the tRPC code the server sent, if any. */
+export const dealQueryError = (error: { data?: { code?: string } | null } | null | undefined) =>
+  error ? { code: error.data?.code } : null;
 
 /**
  * The deal page renders for whoever the server returns the deal to (buyer, seller, moderator),
- * flag on or off; anyone else, or any error, gets NotFound.
+ * flag on or off; anyone else gets NotFound. Any other failure, a server error or a dropped
+ * connection, is an error the viewer can retry: a party must never be told their deal is gone.
  */
 export function dealPageState({
   isLoading,
   hasDeal,
+  error,
 }: {
   isLoading: boolean;
   hasDeal: boolean;
+  /** The query's failure, if any; `code` is the server's tRPC error code when it sent one. */
+  error?: { code?: string } | null;
 }): DealPageState {
   if (isLoading) return { kind: 'loading' };
-  return hasDeal ? { kind: 'deal' } : { kind: 'notFound' };
+  if (hasDeal) return { kind: 'deal' };
+  if (error && !REFUSED.includes(error.code ?? '')) return { kind: 'error' };
+  return { kind: 'notFound' };
 }
 
 export type EscrowState =

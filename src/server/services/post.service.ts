@@ -113,7 +113,7 @@ import { getMetadata } from '~/utils/metadata';
 import { canAddManualResources, getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, constants } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -867,6 +867,8 @@ export const createPost = async ({
     });
     if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
       throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+    // After the visibility check, so a version the caller cannot see stays not-found.
+    if (data.publishedAt && !isModerator) await assertPublishableVersion(data.modelVersionId);
 
     availability = modelVersion.model.availability;
   }
@@ -970,6 +972,25 @@ export const createPost = async ({
   };
 };
 
+/** Whether a post on this version (a SQL expression) sits on one a moderator took down. */
+const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ${modelVersionId}
+    AND (mv.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+      OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
+)`;
+
+const TAKEN_DOWN_PUBLISH_ERROR =
+  "This post can't be published: its model or model version has been taken down.";
+
+/** Refuses a non-moderator publishing straight onto a taken-down version. */
+async function assertPublishableVersion(modelVersionId: number) {
+  const [check] = await dbWrite.$queryRaw<{ downed: boolean }[]>`
+    SELECT ${onDownedVersionSql(Prisma.sql`${modelVersionId}::int`)} AS downed
+  `;
+  if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+}
+
 export const updatePost = async ({
   id,
   user,
@@ -1055,8 +1076,21 @@ export const updatePost = async ({
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        AND (${!!user.isModerator} OR NOT ${onDownedVersionSql(
+        Prisma.sql`"Post"."modelVersionId"`
+      )})
         RETURNING "publishedAt"
       `;
+      // A moderator's take-down unpublishes the version's posts; an owner publishing one afterwards
+      // would put it back up. Checked in the same statement as the write, so it cannot race the take-down.
+      // A post already public writes nothing either, and stays the no-op it always was.
+      const alreadyPublic = !!updated.publishedAt && updated.publishedAt <= new Date();
+      if (!writtenRows.length && !user.isModerator && !alreadyPublic) {
+        const [check] = await tx.$queryRaw<{ downed: boolean }[]>`
+          SELECT ${onDownedVersionSql(Prisma.sql`${updated.modelVersionId}::int`)} AS downed
+        `;
+        if (check?.downed) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+      }
       // Reflect the actually-written timestamp (may be the stashed
       // prevPublishedAt rather than the submitted value). The controller's
       // wasPublished check (post.controller.ts: `!post?.publishedAt &&

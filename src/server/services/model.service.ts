@@ -4484,7 +4484,13 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
       },
       {
         uploadType: ModelUploadType.Trained,
-        status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+        // Scheduled belongs here, not on the Training tab: getTrainingModelsByUserId
+        // whitelists only Draft/Training, so a trained model scheduled to publish would
+        // otherwise appear on no tab. Draft/Training stay excluded here — they surface on
+        // the Training tab, and listing them notIn [Published, Deleted] would double-list.
+        status: {
+          in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+        },
       },
       // A Published model is excluded by the model-status branches above, so a new
       // version scheduled on it (version status Scheduled, publishedAt in the future)
@@ -6003,6 +6009,14 @@ export const privateModelFromTraining = async ({
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
+  // A version a moderator took down stays down: this flow neither republishes it, posts to it, nor
+  // resets it to a Draft its owner could publish when the flow fails.
+  const keepDowned = user.isModerator
+    ? {}
+    : { status: { notIn: constants.modPublishOnlyStatuses } };
+  const isPublishable = (v: { status: ModelStatus }) =>
+    user.isModerator || !constants.modPublishOnlyStatuses.includes(v.status);
+
   try {
     const result = await dbWrite.model.update({
       select: {
@@ -6027,6 +6041,7 @@ export const privateModelFromTraining = async ({
             : undefined,
           select: {
             id: true,
+            status: true,
           },
         },
       },
@@ -6058,7 +6073,7 @@ export const privateModelFromTraining = async ({
 
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
+        where: { modelId: id, ...keepDowned },
         data: {
           // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
@@ -6066,7 +6081,8 @@ export const privateModelFromTraining = async ({
         },
       });
 
-      // Do this after the fact to avoid some triggers.
+      // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
+      // if a moderator later restores one through a path that leaves availability alone.
       await dbWrite.modelVersion.updateMany({
         where: { modelId: id },
         data: {
@@ -6076,7 +6092,7 @@ export const privateModelFromTraining = async ({
 
       // Create posts:
       await Promise.all(
-        result.modelVersions.map(async (modelVersion) => {
+        result.modelVersions.filter(isPublishable).map(async (modelVersion) => {
           await createModelVersionPostFromTraining({
             modelVersionId: modelVersion.id,
             user,
@@ -6101,7 +6117,7 @@ export const privateModelFromTraining = async ({
     });
 
     await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
+      where: { modelId: id, ...keepDowned },
       data: {
         status: ModelStatus.Draft,
         publishedAt: null,

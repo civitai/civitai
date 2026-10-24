@@ -296,6 +296,27 @@ describe('revoke — the confidential-client gate is unchanged', () => {
     expect(res.status).toBe(200);
     expect(stored('conf_access')).toBe(false);
   });
+
+  it.each([
+    ['revokes', CONFIDENTIAL_SECRET, false],
+    ['refuses a wrong secret and keeps', 'wrong-secret', true],
+  ])('%s the token for HTTP Basic client credentials', async (_, secret, kept) => {
+    const basic = Buffer.from(`${CONFIDENTIAL_CLIENT}:${secret}`).toString('base64');
+    const res = await POST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/revoke', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          authorization: `Basic ${basic}`,
+        },
+        body: new URLSearchParams({ token: 'conf_access' }).toString(),
+      }),
+      locals: {},
+    } as never);
+
+    expect(res.status).toBe(200);
+    expect(stored('conf_access')).toBe(kept);
+  });
 });
 
 describe('revoke — the session-cookie path is unchanged', () => {
