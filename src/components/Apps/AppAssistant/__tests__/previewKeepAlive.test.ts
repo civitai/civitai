@@ -1,30 +1,70 @@
 import { describe, expect, test, vi } from 'vitest';
 import {
-  BACKGROUND_BRIDGE_TYPES,
   KEEPALIVE_MIN_INTERVAL_MS,
+  VIEWER_BRIDGE_TYPES,
   createKeepAlive,
   isViewerBridgeMessage,
   pingSandbox,
 } from '~/components/Apps/AppAssistant/previewKeepAlive';
 
 describe('isViewerBridgeMessage', () => {
-  test('a request the app makes for its viewer counts', () => {
-    for (const type of ['SUBMIT_WORKFLOW', 'CREATE_POST_FROM_APP', 'APP_STORAGE_SET', 'NAVIGATE'])
+  test('exactly the requests an app makes because its viewer did something count', () => {
+    expect([...VIEWER_BRIDGE_TYPES].sort()).toEqual([
+      'APP_STORAGE_DELETE',
+      'APP_STORAGE_SET',
+      'CANCEL_APP_WORKFLOW',
+      'CANCEL_WORKFLOW',
+      'CREATE_POST_FROM_APP',
+      'ESTIMATE_WORKFLOW',
+      'ESTIMATE_WORKFLOW_BATCH',
+      'NAVIGATE',
+      'OPEN_BUZZ_PURCHASE',
+      'OPEN_CHECKPOINT_PICKER',
+      'OPEN_IMAGE_PICKER',
+      'OPEN_IMAGE_UPLOAD',
+      'OPEN_MEDIA_UPLOAD',
+      'OPEN_RESOURCE_PICKER',
+      'PREPARE_TRAINING_DATASET',
+      'PUBLISH_GENERATION_OUTPUTS',
+      'REQUEST_CONSENT',
+      'REQUEST_SIGN_IN',
+      'RUN_CONFIRMED_STEP',
+      'RUN_TRAINING',
+      'SAVE_IMAGE',
+      'SET_COLLECTION_FOLLOW',
+      'SET_ENTITY_REACTION',
+      'SET_USER_CHECKPOINT',
+      'SHARED_APPEND',
+      'SHARED_REPORT',
+      'SHARED_UNVOTE',
+      'SHARED_UPDATE',
+      'SHARED_VOTE',
+      'SHARED_WITHDRAW',
+      'SUBMIT_WORKFLOW',
+    ]);
+    for (const type of VIEWER_BRIDGE_TYPES)
       expect(isViewerBridgeMessage({ type, requestId: 'r1' })).toBe(true);
   });
 
-  test('what an app sends by itself does not', () => {
-    expect([...BACKGROUND_BRIDGE_TYPES].sort()).toEqual([
-      'BLOCK_ERROR',
+  test('what an app sends by itself, reads it can make on a timer, and unknown types do not', () => {
+    for (const type of [
       'BLOCK_HELLO',
-      'BLOCK_MESSAGE_REJECTED',
       'BLOCK_READY',
-      'POLL_WORKFLOW',
-      'REQUEST_TOKEN',
+      'BLOCK_ERROR',
+      'BLOCK_MESSAGE_REJECTED',
       'RESIZE_IFRAME',
+      'REQUEST_TOKEN',
       'TRACK_EVENT',
-    ]);
-    for (const type of BACKGROUND_BRIDGE_TYPES)
+      'POLL_WORKFLOW',
+      'QUERY_APP_WORKFLOWS',
+      'GET_BUZZ_BALANCE',
+      'GET_VIEWER',
+      'APP_STORAGE_GET',
+      'APP_STORAGE_LIST',
+      'SHARED_LIST',
+      'GET_IMAGES_BY_IDS',
+      'SOME_FUTURE_TYPE',
+    ])
       expect(isViewerBridgeMessage({ type, requestId: 'r1' })).toBe(false);
   });
 
@@ -92,9 +132,7 @@ describe('createKeepAlive', () => {
     const ping = vi
       .fn()
       .mockRejectedValueOnce(new Error('offline'))
-      .mockImplementationOnce(() => {
-        throw new Error('no token');
-      })
+      .mockRejectedValueOnce(new Error('no token'))
       .mockResolvedValue(true);
     const k = createKeepAlive({ ping, isShown: () => true, now: () => t });
     expect(k.activity()).toBe(true);
@@ -115,7 +153,7 @@ describe('pingSandbox', () => {
     const getToken = vi.fn().mockResolvedValue('tok-1');
     const fetchImpl = vi.fn().mockResolvedValue(ok());
 
-    await expect(pingSandbox(MCP_URL, getToken, fetchImpl)).resolves.toBe(true);
+    await pingSandbox(MCP_URL, getToken, fetchImpl);
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
@@ -141,21 +179,22 @@ describe('pingSandbox', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 401 }))
       .mockResolvedValueOnce(ok());
 
-    await expect(pingSandbox(MCP_URL, getToken, fetchImpl)).resolves.toBe(true);
+    await pingSandbox(MCP_URL, getToken, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(getToken).toHaveBeenLastCalledWith({ refresh: true });
     expect((fetchImpl.mock.calls[1]?.[1] as RequestInit).headers).toMatchObject({
       authorization: 'Bearer fresh',
     });
   });
 
-  test('NEGATIVE CONTROL: a second 401 is not retried again, and a refusal reads false', async () => {
+  test('NEGATIVE CONTROL: a second 401 is not retried again, and any other refusal not at all', async () => {
     const getToken = vi.fn().mockResolvedValue('tok');
     const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }));
-    await expect(pingSandbox(MCP_URL, getToken, fetchImpl)).resolves.toBe(false);
+    await pingSandbox(MCP_URL, getToken, fetchImpl);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
 
     const down = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
-    await expect(pingSandbox(MCP_URL, getToken, down)).resolves.toBe(false);
+    await pingSandbox(MCP_URL, getToken, down);
     expect(down).toHaveBeenCalledTimes(1);
   });
 });

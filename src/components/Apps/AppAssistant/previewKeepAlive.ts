@@ -11,26 +11,51 @@ import { useEffect } from 'react';
 export const KEEPALIVE_MIN_INTERVAL_MS = 60_000;
 
 /**
- * Bridge messages an app sends by itself — its handshake, size, credentials, analytics and the
- * repeating poll of a running workflow — so they say nothing about whether someone is using it.
- * Every other bridge message is a request the app makes for its viewer (generate, publish, pick, …).
+ * Bridge requests an app makes because its viewer did something: generate, estimate (a form being
+ * edited), cancel, publish, save, pick, upload, vote, navigate, write storage. Only these count. Reads
+ * an app can make on a timer (lists, balances, storage reads, polls), its handshake, size, token and
+ * analytics messages, and any type added later do not: an app left open with nobody there must still
+ * pause.
  */
-export const BACKGROUND_BRIDGE_TYPES: ReadonlySet<string> = new Set([
-  'BLOCK_HELLO',
-  'BLOCK_READY',
-  'BLOCK_ERROR',
-  'BLOCK_MESSAGE_REJECTED',
-  'RESIZE_IFRAME',
-  'REQUEST_TOKEN',
-  'TRACK_EVENT',
-  'POLL_WORKFLOW',
+export const VIEWER_BRIDGE_TYPES: ReadonlySet<string> = new Set([
+  'SUBMIT_WORKFLOW',
+  'ESTIMATE_WORKFLOW',
+  'ESTIMATE_WORKFLOW_BATCH',
+  'CANCEL_WORKFLOW',
+  'CANCEL_APP_WORKFLOW',
+  'NAVIGATE',
+  'REQUEST_SIGN_IN',
+  'REQUEST_CONSENT',
+  'OPEN_BUZZ_PURCHASE',
+  'OPEN_CHECKPOINT_PICKER',
+  'OPEN_RESOURCE_PICKER',
+  'OPEN_IMAGE_UPLOAD',
+  'OPEN_IMAGE_PICKER',
+  'OPEN_MEDIA_UPLOAD',
+  'SET_USER_CHECKPOINT',
+  'APP_STORAGE_SET',
+  'APP_STORAGE_DELETE',
+  'SHARED_APPEND',
+  'SHARED_UPDATE',
+  'SHARED_VOTE',
+  'SHARED_UNVOTE',
+  'SHARED_WITHDRAW',
+  'SHARED_REPORT',
+  'SAVE_IMAGE',
+  'SET_COLLECTION_FOLLOW',
+  'SET_ENTITY_REACTION',
+  'PUBLISH_GENERATION_OUTPUTS',
+  'CREATE_POST_FROM_APP',
+  'RUN_TRAINING',
+  'RUN_CONFIRMED_STEP',
+  'PREPARE_TRAINING_DATASET',
 ]);
 
 /** Whether a bridge message from the app is a request made for its viewer. */
 export function isViewerBridgeMessage(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false;
   const type = (data as { type?: unknown }).type;
-  return typeof type === 'string' && type !== '' && !BACKGROUND_BRIDGE_TYPES.has(type);
+  return typeof type === 'string' && VIEWER_BRIDGE_TYPES.has(type);
 }
 
 /** Whether `pane` is on screen: the document is visible and the pane is laid out (not `display: none`). */
@@ -57,15 +82,12 @@ export function createKeepAlive({
   let last: number | null = null;
   return {
     activity() {
-      if (!isShown()) return false;
+      // The interval first: it is the cheap check, and pointermove calls this many times a second.
       const t = now();
       if (last !== null && t - last < minIntervalMs) return false;
+      if (!isShown()) return false;
       last = t;
-      try {
-        ping().catch(() => undefined);
-      } catch {
-        // A ping that throws before it sends is dropped like one that fails.
-      }
+      ping().catch(() => undefined);
       return true;
     },
   };
@@ -73,14 +95,15 @@ export function createKeepAlive({
 
 /**
  * One MCP `ping` to the app's endpoint (`mcpUrl`), with the user's sandbox token; asks for a fresh
- * token once after a 401. Resolves whether the service answered OK.
+ * token once after a 401. Any authorised request to that endpoint counts as activity, whatever the
+ * app answers, so the response is not read.
  */
 export async function pingSandbox(
   mcpUrl: string,
   getToken: (opts?: { refresh?: boolean }) => Promise<string>,
   fetchImpl: typeof fetch = (...args) => fetch(...args),
   refresh = false
-): Promise<boolean> {
+): Promise<void> {
   const token = await getToken(refresh ? { refresh } : undefined);
   const res = await fetchImpl(mcpUrl, {
     method: 'POST',
@@ -91,8 +114,7 @@ export async function pingSandbox(
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: 'keepalive', method: 'ping' }),
   });
-  if (res.status === 401 && !refresh) return pingSandbox(mcpUrl, getToken, fetchImpl, true);
-  return res.ok;
+  if (res.status === 401 && !refresh) await pingSandbox(mcpUrl, getToken, fetchImpl, true);
 }
 
 /** What counts as the user working in the pane itself (outside the app's frame). */

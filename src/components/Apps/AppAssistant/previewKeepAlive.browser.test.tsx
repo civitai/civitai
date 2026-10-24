@@ -69,8 +69,10 @@ describe('usePreviewKeepAlive', () => {
   test('focus moving into the pane pings', async () => {
     const ping = vi.fn().mockResolvedValue(true);
     renderWithProviders(<Pane ping={ping} />);
-    await page.getByRole('button', { name: 'pane button' }).click();
-    await vi.waitFor(() => expect(ping).toHaveBeenCalledTimes(1));
+    await expect.element(page.getByTestId('pane')).toBeInTheDocument();
+    // Focus alone, no pointer: what a click into the app's frame leaves the page to see.
+    pane().querySelector('button')!.focus();
+    expect(ping).toHaveBeenCalledTimes(1);
   });
 
   test('NEGATIVE CONTROL: activity outside the pane does not ping', async () => {
