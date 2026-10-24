@@ -1,6 +1,6 @@
 import clsx from 'clsx';
-import type { CSSProperties, HTMLAttributes, PointerEvent, ReactNode } from 'react';
-import { forwardRef, useCallback, useRef, useState } from 'react';
+import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { NextLinkProps } from '~/components/NextLink/NextLink';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -187,7 +187,11 @@ type BubblePosition = { top: number; left: number; arrowLeft: number; below: boo
  * viewport horizontally.
  *
  * Opens on mouse (and pen) hover only, like Mantine's defaults (`events: { hover: true, focus:
- * false, touch: false }`). `opened` makes it controlled, as on Mantine: hover then does nothing.
+ * false, touch: false }`). Hover is tracked with NATIVE listeners: React's synthetic enter/leave
+ * follow the React tree, so a portaled descendant (the Share popover) would keep the tooltip open
+ * and reopen it, where Mantine's floating-ui follows the DOM. While open, the reference carries
+ * `aria-describedby` and Escape dismisses it (Mantine's `useRole` and `useDismiss`). `opened` makes
+ * it controlled, as on Mantine: hover and Escape then do nothing.
  */
 export function DsTooltip({
   label,
@@ -204,7 +208,9 @@ export function DsTooltip({
   const bubbleRef = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
   const [position, setPosition] = useState<BubblePosition | null>(null);
+  const bubbleId = useId();
   const open = opened ?? hovered;
+  const controlled = opened !== undefined;
 
   const place = useCallback(() => {
     const wrapper = wrapperRef.current;
@@ -239,31 +245,51 @@ export function DsTooltip({
     };
   }, [open, label, place]);
 
-  const hover = (value: boolean) =>
-    opened === undefined
-      ? (e: PointerEvent) => {
-          if (e.pointerType === 'mouse' || e.pointerType === 'pen') setHovered(value);
-        }
-      : undefined;
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper || controlled) return;
+    const handler = (value: boolean) => (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') setHovered(value);
+    };
+    const enter = handler(true);
+    const leave = handler(false);
+    wrapper.addEventListener('pointerenter', enter);
+    wrapper.addEventListener('pointerleave', leave);
+    return () => {
+      wrapper.removeEventListener('pointerenter', enter);
+      wrapper.removeEventListener('pointerleave', leave);
+    };
+  }, [controlled]);
+
+  useEffect(() => {
+    const reference = wrapperRef.current?.firstElementChild;
+    if (!open || !reference) return;
+    const previous = reference.getAttribute('aria-describedby');
+    reference.setAttribute('aria-describedby', bubbleId);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !controlled) setHovered(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (previous === null) reference.removeAttribute('aria-describedby');
+      else reference.setAttribute('aria-describedby', previous);
+    };
+  }, [open, controlled, bubbleId]);
 
   const bubbleStyle: CSSProperties = position
     ? { top: position.top, left: position.left }
     : { top: 0, left: 0, visibility: 'hidden' };
 
   return (
-    <span
-      ref={wrapperRef}
-      data-civitai-ui="tooltip"
-      className={clsx(classes.tooltip, className)}
-      onPointerEnter={hover(true)}
-      onPointerLeave={hover(false)}
-    >
+    <span ref={wrapperRef} data-civitai-ui="tooltip" className={clsx(classes.tooltip, className)}>
       {children}
       {open &&
         typeof document !== 'undefined' &&
         createPortal(
           <span
             ref={bubbleRef}
+            id={bubbleId}
             data-civitai-ui-tooltip-bubble=""
             data-open="true"
             role="tooltip"
