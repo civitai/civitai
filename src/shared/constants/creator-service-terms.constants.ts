@@ -1,3 +1,4 @@
+import { pluralize } from '~/shared/utils/pluralize';
 import {
   SERVICE_DEAL_ACCEPT_WINDOW_MS,
   SERVICE_DEAL_AUTO_COMPLETE_MS,
@@ -22,7 +23,6 @@ export const SELLER_AFFIRMATION_STATEMENT = [
 ].join('\n');
 
 const hours = (ms: number) => ms / 3_600_000;
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
 export const BUYER_DISCLOSURE_INTRO = 'Before you request:';
 
@@ -40,7 +40,7 @@ export function buyerDisclosureItems({
   const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
   return [
     `${price.toLocaleString()} Buzz is held now. It's refunded if the seller declines, doesn't accept within ${accept} hours, or you withdraw before they accept.`,
-    `Includes ${plural(revisionsIncluded, 'revision')}. Delivery within ${plural(
+    `Includes ${pluralize(revisionsIncluded, 'revision')}. Delivery within ${pluralize(
       deliveryDays,
       'day'
     )} of acceptance.`,

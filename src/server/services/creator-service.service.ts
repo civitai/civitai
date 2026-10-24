@@ -153,9 +153,10 @@ function affirmationForPublish({
   existing: Prisma.JsonValue | null | undefined;
   affirmedTermsVersion?: string;
 }) {
+  // A record on file is never replaced, so it keeps the time of the first agreement.
+  if (hasCurrentAffirmation(existing)) return undefined;
   if (affirmedTermsVersion === SERVICES_TERMS_VERSION)
     return sellerAffirmationRecord(sellerId, offeringId);
-  if (hasCurrentAffirmation(existing)) return undefined;
   throw throwBadRequestError('Confirm the seller terms to publish this service.');
 }
 

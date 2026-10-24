@@ -184,8 +184,6 @@ describe('writes', () => {
   });
 });
 
-// Launch blocker (briony, 2026-10-15): offering text goes through the same blocklist guard as
-// bounties, articles, posts and models, and a block refuses the write.
 describe('seller affirmation', () => {
   const NOT_AFFIRMED = /Confirm the seller terms/;
 
@@ -234,6 +232,49 @@ describe('seller affirmation', () => {
     expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
   });
 
+  it('records the agreement against the real id when a saved offering is published with the tick', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Paused,
+      sellerAffirmation: null,
+    } as never);
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 8, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: ServiceOfferingStatus.Active,
+          sellerAffirmation: expect.objectContaining({ userId: SELLER, offeringId: 8 }),
+        }),
+      })
+    );
+  });
+
+  it('publishes a saved offering with the current terms on file without a tick, writing no new record', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Paused,
+      sellerAffirmation: { version: SERVICES_TERMS_VERSION },
+    } as never);
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, id: 8, publish: true } });
+    const [args] = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [
+      { data: object }
+    ];
+    expect(args.data).not.toHaveProperty('sellerAffirmation');
+  });
+
+  it('answers not found, not a crash, when setStatus meets a missing offering', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue(null as never);
+    expect(
+      await rejects(
+        setServiceOfferingStatus({ sellerId: SELLER, input: { id: 3, status: 'Active' } })
+      )
+    ).toMatch(/not found/i);
+  });
+
   it('records who agreed to what, and when, against the new offering', async () => {
     seller();
     dbMock.dbWrite.serviceOffering.create.mockResolvedValue({ id: 42 } as never);
@@ -247,7 +288,7 @@ describe('seller affirmation', () => {
         sellerAffirmation: {
           userId: SELLER,
           offeringId: 42,
-          affirmedAt: expect.any(String),
+          affirmedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
           version: SERVICES_TERMS_VERSION,
           statement: SELLER_AFFIRMATION_STATEMENT,
         },
@@ -261,7 +302,10 @@ describe('seller affirmation', () => {
     dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
       sellerAffirmation: onFile,
     } as never);
-    await setServiceOfferingStatus({ sellerId: SELLER, input: { id: 3, status: 'Active' } });
+    await setServiceOfferingStatus({
+      sellerId: SELLER,
+      input: { id: 3, status: 'Active', affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
     expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: { status: ServiceOfferingStatus.Active } })
     );
@@ -284,6 +328,8 @@ describe('seller affirmation', () => {
   });
 });
 
+// Launch blocker (briony, 2026-10-15): offering text goes through the same blocklist guard as
+// bounties, articles, posts and models, and a block refuses the write.
 describe('text check', () => {
   const blocked = () =>
     vi.mocked(throwOnBlockedUserContent).mockImplementationOnce(async () => {
@@ -507,6 +553,22 @@ describe('storefront ratings', () => {
 });
 
 describe("a seller's own offerings", () => {
+  it('tells which offerings have the current terms on file, and never sends the record itself', async () => {
+    const row = (id: number, sellerAffirmation: unknown) =>
+      ({ id, sellerAffirmation, maxNsfwLevel: NsfwLevel.PG13 } as never);
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      row(1, { userId: SELLER, version: SERVICES_TERMS_VERSION }),
+      row(2, null),
+      row(3, { userId: SELLER, version: 'services-terms-1999-01-01' }),
+    ] as never);
+    const { items } = await getMyServiceOfferings({
+      sellerId: SELLER,
+      servable: allBrowsingLevelsFlag,
+    });
+    expect(items.map((i) => i.termsAffirmed)).toEqual([true, false, false]);
+    for (const item of items) expect(item).not.toHaveProperty('sellerAffirmation');
+  });
+
   const ratingsIn = (call: unknown) =>
     (call as { where: { maxNsfwLevel: { in?: number[]; notIn?: number[] } } }).where.maxNsfwLevel;
 
