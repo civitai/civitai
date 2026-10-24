@@ -6237,6 +6237,7 @@ model Collection {
   moderatorNsfwLevel      Int?
   moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
+  archivedAt   DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]

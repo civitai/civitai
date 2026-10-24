@@ -1,0 +1,15 @@
+-- Adds a nullable "archivedAt" timestamp to "Collection". A creator archives an old
+-- collection so it drops out of the "Save to collection" picker and stops accepting new
+-- entries, while it still loads at its public URL. NULL = active; a timestamp = archived.
+-- Reversible from the UI by clearing it back to NULL.
+--
+-- Additive and nullable, so existing rows default to NULL (active) and nothing is backfilled.
+--
+-- ⚠️ MANUAL-APPLY. The main civitai DB does NOT run `prisma migrate deploy` — this file is
+-- committed for history and applied BY HAND (psql) per environment by a human. Nothing in CI
+-- or the deploy pipeline runs it.
+--
+-- ORDERING: safe to apply before or after the code ships. The new client SELECTs the column,
+-- so apply it no later than the deploy; applying it early is inert because no code reads or
+-- writes the column until the deploy lands. `IF NOT EXISTS` makes a re-run a no-op.
+ALTER TABLE "Collection" ADD COLUMN IF NOT EXISTS "archivedAt" TIMESTAMP(3);
