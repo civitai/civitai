@@ -543,6 +543,9 @@ type UpdateDecision =
   | 'raw-server-keys'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
+  /** Raw SET adding or removing ONE key, interpolated as a `Prisma.raw` literal of a module
+   *  string constant (so the partial index predicate matches); the key is not a provenance key. */
+  | 'raw-server-key-literal'
   /** `data` is `cond ? { … } : { … }`: two object literals, neither naming metadata. */
   | 'literal-branches'
   /** `data: { [flag]: <boolean> }`, `flag` being the schema's closed enum of boolean columns. */
@@ -601,6 +604,16 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   'src/server/services/image-scan-pipeline.ts#resolveScanOutcome': {
     decision: 'raw-mod-rule-metadata',
+    sites: 1,
+  },
+  // The composer's `batchDraft` marker: removed when a draft row is adopted into a post, put back
+  // when the post is discarded.
+  'src/server/services/post-batch.service.ts#adoptBatchMedia': {
+    decision: 'raw-server-key-literal',
+    sites: 1,
+  },
+  'src/server/services/post-batch.service.ts#discardFailedPost': {
+    decision: 'raw-server-key-literal',
     sites: 1,
   },
   // In the population only because their `data` is not a plain literal this file can read.
@@ -663,6 +676,30 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         const fixedKey = /^[A-Z][A-Z0-9_]*$/.test(param) && cast === 'text';
         const scalar = cast !== undefined && ['int', 'integer', 'float8', 'numeric'].includes(cast);
         if (!fixedKey && !scalar) return `interpolates \${${param}} into metadata`;
+      }
+      return null;
+    }
+    case 'raw-server-key-literal': {
+      const expr = rawMetadataAssignment(region);
+      if (expr === null) return 'no longer assigns metadata';
+      if (PROVENANCE_TOKEN.test(expr)) return 'names a provenance key';
+      const helpers = new Set<string>();
+      const skeleton = expr
+        .replace(/\$\{([\w$]+)\(\)\}/g, (_, name: string) => (helpers.add(name), '<key>'))
+        .replace(/\s+/g, ' ');
+      if (skeleton.includes('${')) return 'interpolates something other than a key-literal helper';
+      if (!/^metadata (?:- <key>|\|\| jsonb_build_object\(<key>, true\))$/.test(skeleton))
+        return 'does more than add or remove one key';
+      const moduleText = commentless.get(site.key.split('#')[0]) ?? '';
+      for (const helper of helpers) {
+        const escaped = helper.replace(/[$]/g, '\\$&');
+        const def = new RegExp(
+          String.raw`\bconst ${escaped} = \(\) => Prisma\.raw\(\x60'\$\{([A-Z][A-Z0-9_]*)\}'\x60\)`
+        ).exec(moduleText);
+        if (!def) return `${helper} is not a Prisma.raw literal of a module constant`;
+        const constant = new RegExp(String.raw`\bconst ${def[1]} = '(\w+)'`).exec(moduleText);
+        if (!constant) return `${def[1]} is not a string constant`;
+        if (PROVENANCE_TOKEN.test(constant[1])) return `${def[1]} is a provenance key`;
       }
       return null;
     }

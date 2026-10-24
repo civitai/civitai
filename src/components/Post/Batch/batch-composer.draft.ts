@@ -38,7 +38,9 @@ export async function clearDraft(userId: number): Promise<void> {
 
 function toDraft(state: BatchComposerState): ComposerDraft {
   return {
-    media: state.media.filter((item) => item.status === 'added') as ComposerDraft['media'],
+    media: state.media.filter(
+      (item) => item.status === 'added' && item.imageId !== undefined
+    ) as ComposerDraft['media'],
     imagesPerPost: state.imagesPerPost,
     shared: state.shared,
     presetId: state.presetId,

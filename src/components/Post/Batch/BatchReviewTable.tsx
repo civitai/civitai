@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { formatDate } from '~/utils/date-helpers';
@@ -113,17 +114,26 @@ function ReviewRow({
   const thumbs = (
     <div className="flex items-center gap-0.5">
       {post.media.slice(0, THUMBS_SHOWN).map((item) => (
-        <EdgeMedia
-          key={item.url}
-          src={item.url}
-          type={item.type}
-          name={item.name}
-          width={THUMB_WIDTH}
-          anim={false}
-          loading="lazy"
-          alt=""
-          className="size-8 rounded object-cover"
-        />
+        <div key={item.url} className="relative size-8" data-testid="batch-review-thumb">
+          <EdgeMedia
+            src={item.url}
+            type={item.type}
+            name={item.name}
+            width={THUMB_WIDTH}
+            anim={false}
+            loading="lazy"
+            alt=""
+            className="size-8 rounded object-cover"
+          />
+          {!!item.nsfwLevel && (
+            <BrowsingLevelBadge
+              browsingLevel={item.nsfwLevel}
+              size="xs"
+              className="absolute -bottom-1 -left-1 px-1"
+              data-testid="batch-review-level"
+            />
+          )}
+        </div>
       ))}
       {post.media.length > THUMBS_SHOWN && (
         <Text size="xs" c="dimmed">
