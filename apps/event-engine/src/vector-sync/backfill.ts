@@ -316,6 +316,7 @@ async function main() {
     // Fail on a bad window or rate before any lease or connection is taken.
     if (flags.window !== undefined) parseWindow(String(flags.window));
     if (flags['max-rate'] !== undefined) positive('max-rate');
+    for (const name of ['limit', 'floor', 'span', 'pages']) int(name);
     let gateCheck: (() => Promise<string | null>) | undefined;
     if (!dryRun) {
       if (flags.confirm !== true) throw new Error('Writing needs --confirm (or pass --dry-run)');
