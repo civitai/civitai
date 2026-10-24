@@ -14,7 +14,11 @@ import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
 import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
-import { SHELL_EDGE_HEADERS, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import {
+  SHELL_EDGE_HEADERS,
+  SHELL_RENDERED_REQ_KEY,
+  SHELL_REQ_KEY,
+} from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -515,11 +519,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   }
   const renderRequest = request as typeof request & {
     [SHELL_REQ_KEY]?: string;
+    [SHELL_RENDERED_REQ_KEY]?: string;
     [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
   };
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
   renderRequest[SHELL_REQ_KEY] = shellRender?.route;
+  renderRequest[SHELL_RENDERED_REQ_KEY] = undefined;
   if (!shellRender) {
     const { res } = appContext.ctx;
     for (const name of SHELL_EDGE_HEADERS) {

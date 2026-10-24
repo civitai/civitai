@@ -26,7 +26,7 @@ import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { shellRouteByName } from '~/server/shell/shell-mode';
 import { applyShellPrivateHeaders, syncShellRouteCookie } from '~/server/shell/shell-response';
-import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const getServerProxySSGHelpers = async (
   // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
@@ -118,7 +118,12 @@ export function createServerSideProps<P>({
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
     // or returned — no session, no flags, no prefetch. Ads stay gated until the page data's verdict.
-    if (shell && (context.req as { [SHELL_REQ_KEY]?: string })[SHELL_REQ_KEY] === shell) {
+    const shellReq = context.req as {
+      [SHELL_REQ_KEY]?: string;
+      [SHELL_RENDERED_REQ_KEY]?: string;
+    };
+    if (shell && shellReq[SHELL_REQ_KEY] === shell) {
+      shellReq[SHELL_RENDERED_REQ_KEY] = shell;
       applyShellPrivateHeaders(context.res);
       return { props: { adsGated: true } as unknown as NonNullable<P> };
     }
