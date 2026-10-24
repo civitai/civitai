@@ -27,7 +27,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
  * moved branch choices all live in SQL, which a mocked client cannot see.
  */
 
-const { insertStorylineChapter, getStorylinePath, canonRouteWalk } = await import(
+const { addOwnerChapter, insertStorylineChapter, getStorylinePath, canonRouteWalk } = await import(
   '~/server/services/storyline.service'
 );
 const { bustFetchThroughCache } = await import('~/server/utils/cache-helpers');
@@ -274,6 +274,31 @@ beforeEach(async () => {
         )
       )[0]) as never
   );
+  // A chapter add's reads of its parent and of the parent's canon child.
+  w.storylineChapter.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => {
+    const [row] = await rows<Record<string, unknown>>(
+      `SELECT c.id, c."storylineId", c.depth, c."removedAt", st."userId", st."maxNsfwLevel",
+         st."minorByScan", st."tosViolation"
+       FROM "StorylineChapter" c JOIN "Storyline" st ON st.id = c."storylineId" WHERE c.id = $1`,
+      [where.id]
+    );
+    if (!row) return null;
+    const { userId, maxNsfwLevel, minorByScan, tosViolation, ...chapter } = row;
+    return { ...chapter, storyline: { userId, maxNsfwLevel, minorByScan, tosViolation } };
+  }) as never);
+  w.storylineChapterEdge.findFirst.mockImplementation(
+    (async ({ where }: { where: { parentChapterId: number; canon: true } }) =>
+      (
+        await rows(
+          `SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "parentChapterId" = $1 AND canon`,
+          [where.parentChapterId]
+        )
+      )[0] ?? null) as never
+  );
 
   // The reading path's own reads, as in storyline-rejoin.sql.behavior.test.ts.
   r.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -487,6 +512,8 @@ describe("insertStorylineChapter before a contributor's chapter", () => {
   });
 });
 
+// Serialised by `runTransaction`, standing in for the storyline row lock, which PGlite's one session
+// cannot make anything wait on. What this pins is the loser's answer once it gets the lock.
 describe('two inserts on one edge', () => {
   it('lets one through and refuses the other with a 400, never both', async () => {
     const [first, second] = [await post(), await post()];
@@ -500,6 +527,62 @@ describe('two inserts on one edge', () => {
     });
     expect(await rows(`SELECT id FROM "StorylineChapter" WHERE id > 1000`)).toHaveLength(1);
     expect(await depthDrift()).toEqual([]);
+  });
+});
+
+/**
+ * PGlite has one session, so the shared lock cannot make the add wait here. These play another
+ * writer's statements between the add's first read of its parent and its locks, the order a stale
+ * read needs, and pin that the add goes by what it reads under its locks.
+ */
+describe('a chapter add whose parent changes after its first read', () => {
+  /** Holds `addOwnerChapter` after it has read its parent, while it checks its post. */
+  const holdAddAtItsPost = (addedPost: number) => {
+    w.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn(w)) as never);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let paused!: () => void;
+    const pausedAt = new Promise<void>((resolve) => (paused = resolve));
+    const findPost = w.post.findUnique.getMockImplementation()!;
+    w.post.findUnique.mockImplementation((async (args: { where: { id: number } }) => {
+      if (args.where.id === addedPost) {
+        paused();
+        await released;
+      }
+      return findPost(args as never);
+    }) as never);
+    return { pausedAt, release };
+  };
+
+  it('takes the depth its parent has after an insert moved it down', async () => {
+    const [addedPost, insertedPost] = [await post(), await post()];
+    const { pausedAt, release } = holdAddAtItsPost(addedPost);
+
+    const adding = addOwnerChapter({ parentChapterId: 5, postId: addedPost, userId: OWNER });
+    await pausedAt;
+    await insert(insertedPost);
+    release();
+    const { chapterId } = await adding;
+
+    expect(await depthOf(5)).toBe(5);
+    expect(await depthOf(chapterId)).toBe(6);
+    expect(await depthDrift()).toEqual([]);
+  });
+
+  it('refuses a parent removed since it was first read', async () => {
+    const addedPost = await post();
+    const { pausedAt, release } = holdAddAtItsPost(addedPost);
+
+    const adding = addOwnerChapter({ parentChapterId: 5, postId: addedPost, userId: OWNER });
+    await pausedAt;
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 5`);
+    release();
+
+    await expect(adding).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A removed chapter cannot be continued',
+    });
   });
 });
 

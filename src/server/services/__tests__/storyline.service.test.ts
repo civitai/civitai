@@ -186,9 +186,12 @@ describe('writeChapterEdgeForPlacement', () => {
     },
   };
 
-  const findChapter = (parent: unknown) =>
-    (({ where }: { where: { placementId?: number; postId?: number } }) =>
-      Promise.resolve(where.postId === args.parentPostId ? parent : null)) as never;
+  // By its post, as the approval finds it, and by its id, as the add re-reads it under its locks.
+  const findChapter = (parent: { id: number }) =>
+    (({ where }: { where: { id?: number; placementId?: number; postId?: number } }) =>
+      Promise.resolve(
+        where.postId === args.parentPostId || where.id === parent.id ? parent : null
+      )) as never;
 
   const findByPlacement = (row: unknown) =>
     (({ where }: { where: { placementId?: number } }) =>
@@ -402,9 +405,9 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(tx.storylineChapterEdge.findFirst).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapter.create).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapterEdge.create).toHaveBeenCalledTimes(1);
-    // The parent-author block check and the parent lock (the owner placing on their own
-    // storyline skips the owner check).
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    // The parent-author block check, the storyline's shared lock, and the parent lock, taken
+    // again for the canon slot (the owner placing on their own storyline skips the owner check).
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
     expect(w.post.findUnique).not.toHaveBeenCalled();
     expect(w.storylineChapterEdge.findFirst).not.toHaveBeenCalled();
     expect(w.storylineChapter.create).not.toHaveBeenCalled();

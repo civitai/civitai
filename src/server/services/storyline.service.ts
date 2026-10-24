@@ -307,6 +307,15 @@ async function takesCanonSlot(db: Db, parentChapterId: number) {
 }
 
 /**
+ * Shares the storyline's row lock for the rest of the transaction. `insertStorylineChapter` holds
+ * it exclusively while it moves chapters down, so a chapter added beside it reads its parent's
+ * depth from before the insert or after it, never in between. Taken before any chapter lock, the
+ * order the insert takes them in, so the two cannot deadlock.
+ */
+const lockStorylineForAdd = (db: Db, storylineId: number) =>
+  db.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR SHARE`;
+
+/**
  * Inserts a chapter under a parent, canon when the storyline's owner wrote it and the parent has
  * no canon child yet. Edges point at the parent CHAPTER, never its post, so a later takedown of
  * the parent's post leaves this chapter attached.
@@ -320,19 +329,31 @@ async function insertChildChapter(
     authorId,
     placementId,
   }: {
-    parent: { id: number; storylineId: number; depth: number };
+    parent: { id: number; storylineId: number };
     ownerId: number;
     postId: number;
     authorId: number;
     placementId?: number;
   }
 ) {
+  await lockStorylineForAdd(db, parent.storylineId);
+  await lockParentChapter(db, parent.id);
+  // Read again under the locks: what the caller read may be from before an insert moved the
+  // parent down, a removal, or a takedown.
+  const locked = await db.storylineChapter.findUnique({
+    where: { id: parent.id },
+    select: { depth: true, removedAt: true, storyline: { select: { tosViolation: true } } },
+  });
+  if (!locked) throw throwNotFoundError('Chapter not found');
+  if (locked.storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
+  if (locked.removedAt) throw throwBadRequestError('A removed chapter cannot be continued');
+
   const chapter = await db.storylineChapter.create({
     data: {
       storylineId: parent.storylineId,
       postId,
       userId: authorId,
-      depth: parent.depth + 1,
+      depth: locked.depth + 1,
       placementId,
     },
     select: { id: true },
@@ -1285,7 +1306,7 @@ export async function insertStorylineChapter({
 
   const chapterId = await dbWrite.$transaction(async (tx) => {
     // The whole storyline, as `linkStorylineChapter` does: the depth shift below must not run
-    // beside a link or another insert in the same storyline.
+    // beside a link, another insert, or a chapter add (`lockStorylineForAdd`).
     await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE`;
     await lockParentChapter(tx, parentChapterId);
     const [edge] = await tx.$queryRaw<InsertEdgeRow[]>`
