@@ -5146,9 +5146,19 @@ export type ServiceDealFile = {
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   /**
-   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has.
    */
   malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+   */
+  malwareScanWorkflowId: string | null;
+  /**
+   * When the file was first handed to the scan; the give-up window runs from here.
+   */
+  malwareScanStartedAt: Timestamp | null;
+  malwareScanSubmittedAt: Timestamp | null;
+  malwareScanAttempts: Generated<number>;
   /**
    * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
    */
