@@ -817,6 +817,8 @@ export const serverSchema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     STRIPE_CONNECT_WEBHOOK_SECRET: z.string().optional(),
     STRIPE_DONATE_ID: z.string().optional(),
+    // Billing portal configuration (bpc_...) used for every portal session; unset uses the account default.
+    STRIPE_BILLING_PORTAL_CONFIGURATION_ID: z.string().optional(),
     PADDLE_SECRET_KEY: z.string().optional(),
     PADDLE_WEBHOOK_SECRET: z.string().optional(),
     CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
