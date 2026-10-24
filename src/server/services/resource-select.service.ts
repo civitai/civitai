@@ -274,6 +274,45 @@ async function getOfficialModelIds() {
   }
 }
 
+// Meilisearch only, never `getModelSearchIndexRecords`: the index holds published, searchable models
+// and `buildFilter` adds the rest of the visibility rules, so a pasted id finds nothing a search
+// could not.
+async function lookupResourceSelectModel(
+  input: GetResourceSelectInput,
+  { modelId, modelVersionId }: NonNullable<GetResourceSelectInput['lookup']>,
+  {
+    user,
+    signal,
+    coverageNext,
+    member,
+  }: { user: ServiceUser; signal?: AbortSignal; coverageNext: boolean; member: boolean }
+) {
+  const filter = and(
+    buildFilter({
+      input: {
+        ...input,
+        tab: 'all',
+        tagName: undefined,
+        resources: [],
+        filterTypes: [],
+        filterBaseModels: [],
+        filterLoaded: false,
+        filterTurbo: false,
+        hidePaid: false,
+      },
+      user,
+      tabIds: null,
+      coverageNext,
+      member,
+    }),
+    !!modelId && eq('id', modelId),
+    !!modelVersionId && eq('versions.id', modelVersionId)
+  );
+
+  const results = await searchModels('', { filter: filter ?? undefined, limit: 1 }, signal);
+  return { items: transformModelHits(results.hits), nextCursor: undefined, coverageNext, member };
+}
+
 export async function getResourceSelectModels(
   input: GetResourceSelectInput,
   { user, signal }: { user: ServiceUser; signal?: AbortSignal }
@@ -291,6 +330,9 @@ export async function getResourceSelectModels(
   } = input;
 
   const { next: coverageNext, member } = await coverageAudience(user);
+  if (input.lookup)
+    return lookupResourceSelectModel(input, input.lookup, { user, signal, coverageNext, member });
+
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 

@@ -7,6 +7,7 @@ import {
   type StuckCryptoDepositDigestItem,
 } from '~/server/email/templates/stuckCryptoDepositDigest.email';
 import { logToAxiom } from '~/server/logging/client';
+import { UNVERIFIED_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -41,7 +42,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
     // deposit that hasn't settled by then won't.
     const candidates = await dbRead.cryptoDeposit.findMany({
       where: {
-        status: { not: 'finished' },
+        status: { notIn: ['finished', ...UNVERIFIED_DEPOSIT_STATUSES] },
         stuckNotifiedAt: null,
         createdAt: { gte: dayjs.utc().subtract(14, 'day').toDate() },
       },
@@ -52,8 +53,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
       },
     });
 
-    if (candidates.length === 0)
-      return { candidates: 0, stuck: 0, emailedUser: 0, digestSent: 0 };
+    if (candidates.length === 0) return { candidates: 0, stuck: 0, emailedUser: 0, digestSent: 0 };
 
     let stuck = 0;
     let emailedUser = 0;
@@ -168,7 +168,14 @@ export const notifyStuckCryptoDepositsJob = createJob(
       supportEmailConfigured: !!supportEmail,
     });
 
-    return { candidates: candidates.length, stuck, emailedUser, digestSent, skippedNoEmail, skippedNoConfig };
+    return {
+      candidates: candidates.length,
+      stuck,
+      emailedUser,
+      digestSent,
+      skippedNoEmail,
+      skippedNoConfig,
+    };
   },
   {
     lockExpiration: 10 * 60,

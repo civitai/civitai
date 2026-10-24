@@ -9,14 +9,21 @@ import { countStuckIngestion, countIngestionErrorImages } from './ingestion.serv
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
-import { getReportCounts } from './reports.service';
+import {
+  getReportCounts,
+  getReportLastActioned,
+  getReportOldestOpen,
+  type LastActioned,
+} from './reports.service';
 import { countNewFeedback } from './feedback.service';
 import { countRemovedAppeals } from './removed-appeals.service';
 import { countSiteAppeals } from './site-appeals.service';
 import { siteAppealCountKey } from '$lib/site-appeals';
 import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
+import { countPendingScamRestrictions } from './user-restriction.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
+import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import {
   getFlaggedCount,
@@ -59,6 +66,32 @@ export function getSidebarCounts(): Promise<SidebarCounts> {
   return counts.get({});
 }
 
+/** `countKey` → when, and by whom, a moderator last actioned that queue. Only report queues have one yet. */
+export type SidebarLastActioned = Record<string, LastActioned>;
+
+const lastActioned = createCache({
+  name: 'sidebar-last-actioned:v2',
+  fetch: getReportLastActioned,
+  ttlSeconds: 60,
+});
+
+export function getSidebarLastActioned(): Promise<SidebarLastActioned> {
+  return lastActioned.get({});
+}
+
+/** `countKey` → ISO time its oldest waiting item arrived. Only report queues have one yet. */
+export type QueueOldest = Record<string, string>;
+
+const queueOldest = createCache({
+  name: 'queue-oldest:v1',
+  fetch: getReportOldestOpen,
+  ttlSeconds: 60,
+});
+
+export function getQueueOldest(): Promise<QueueOldest> {
+  return queueOldest.get({});
+}
+
 async function fetchCounts(): Promise<SidebarCounts> {
   const [
     modes,
@@ -79,8 +112,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     flaggedModels,
     heldDetectionModels,
     strikeReview,
+    scamRestrictions,
     csamTextHolds,
     siteAppeals,
+    evidenceHoldsEnding,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -124,10 +159,13 @@ async function fetchCounts(): Promise<SidebarCounts> {
     bounded(getHeldDetectionModelCount),
     // Bounded until `User_strikeReview_idx` exists: without it this scans every muted account.
     bounded(countStrikeReview),
+    bounded(countPendingScamRestrictions),
     bounded(countPendingCsamHolds),
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
     // only these badges.
     bounded(countSiteAppeals),
+    // Bounded: the view aggregates every hold row, so no index serves it.
+    bounded(() => countEvidenceHoldsEnding(dbRead)),
   ]);
   return {
     ...modes,
@@ -150,7 +188,9 @@ async function fetchCounts(): Promise<SidebarCounts> {
         )
       : {}),
     ...(strikeReview != null ? { strikeReview } : {}),
+    ...(scamRestrictions != null ? { scamRestrictions } : {}),
     ...(csamTextHolds != null ? { csamTextHolds } : {}),
+    ...(evidenceHoldsEnding != null ? { evidenceHoldsEnding: evidenceHoldsEnding.owners } : {}),
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };

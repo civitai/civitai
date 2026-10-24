@@ -12,11 +12,13 @@ import {
 } from '~/server/meilisearch/client';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
+import { inArray } from '~/shared/utils/meili-filter';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -139,8 +141,11 @@ export async function resolveModelSearchIds(opts: {
    * accepts arbitrary strings (also keeps them out of the filter expression).
    */
   types?: string[];
+  /** In the Meili query for the same reason as `types`; the DB still applies both. */
+  baseModels?: string[];
+  supportsGeneration?: boolean;
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel, types } = opts;
+  const { query, cursor, limit, browsingLevel, types, baseModels, supportsGeneration } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
   const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
@@ -148,6 +153,13 @@ export async function resolveModelSearchIds(opts: {
   if (ownerUserId !== undefined && !Number.isSafeInteger(ownerUserId)) {
     throw new Error('ownerUserId must be an integer');
   }
+
+  // The index's canGenerate is isGenerationEligible, narrower than the DB's coverage-only filter.
+  const canGenerateField = supportsGeneration
+    ? (await nextCoverageEnabled())
+      ? 'canGenerateNext'
+      : 'canGenerate'
+    : undefined;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
   try {
@@ -161,6 +173,8 @@ export async function resolveModelSearchIds(opts: {
               `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
               ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
               ...(ownerUserId !== undefined ? [`user.id = ${ownerUserId}`] : []),
+              ...(baseModels?.length ? [inArray('versions.baseModel', baseModels)] : []),
+              ...(canGenerateField ? [`${canGenerateField} = true`] : []),
             ],
             attributesToRetrieve: ['id'],
           })

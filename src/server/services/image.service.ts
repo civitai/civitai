@@ -1296,13 +1296,20 @@ export const updateImageReportStatusByReason = ({
   id,
   reason,
   status,
+  actorId,
 }: {
   id: number;
   reason: ReportReason;
   status: ReportStatus;
+  actorId: number;
 }) => {
+  // Stamped only on a real change: `statusSetAt` drives the reporter notifications, so re-stamping a
+  // report already in this status would notify its reporter again.
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    UPDATE "Report" r SET
+      status = ${status}::"ReportStatus",
+      "statusSetAt" = CASE WHEN r.status = ${status}::"ReportStatus" THEN r."statusSetAt" ELSE now() END,
+      "statusSetBy" = CASE WHEN r.status = ${status}::"ReportStatus" THEN r."statusSetBy" ELSE ${actorId} END
     FROM "ImageReport" i
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}

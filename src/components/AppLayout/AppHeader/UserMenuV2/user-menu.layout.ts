@@ -29,15 +29,13 @@ const group = (
 ): UserMenuGroupNode => ({ kind: 'group', id, label, icon, children });
 
 const getHelp = group('help', 'Get help', IconLifebuoy, [
+  item('getting-started'),
   item('support-report-bug'),
   item('support-education'),
   item('support-faq'),
   item('support-discord'),
   item('support-assistant'),
   item('support-portal'),
-  item('getting-started'),
-  item('link-app'),
-  item('civitai-link'),
 ]);
 
 export const USER_MENU_LAYOUT: UserMenuNode[] = [
@@ -61,6 +59,8 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
     item('my-shop'),
     item('apps'),
     item('auctions'),
+    item('civitai-link'),
+    item('link-app'),
   ]),
   group('rewards', 'Rewards and play', IconCrown, [
     item('prizes'),
@@ -76,6 +76,7 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
 export const USER_MENU_SIGNED_OUT_LAYOUT: UserMenuNode[] = [
   item('leaderboard'),
   item('auctions'),
+  item('link-app'),
   getHelp,
   item('sign-in'),
 ];

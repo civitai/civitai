@@ -822,7 +822,10 @@ export async function bulkSetCommentV2TosViolation({
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Actioned}::"ReportStatus"
+      UPDATE "Report" r SET
+        status = ${enums.ReportStatus.Actioned}::"ReportStatus",
+        "statusSetAt" = now(),
+        "statusSetBy" = ${actor.id}
       FROM "CommentV2Report" c
       WHERE c."reportId" = r.id
         AND c."commentV2Id" = ${id}

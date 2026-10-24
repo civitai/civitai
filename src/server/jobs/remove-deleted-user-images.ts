@@ -101,10 +101,7 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
-/**
- * Every hold on the account, plus the placeholder owner. `id` must not be a column of an unaliased
- * "Image" in the statement: a hold reads "Image" unaliased, and would bind to that row instead.
- */
+/** Every hold on the account, plus the placeholder owner. */
 const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
   Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
 

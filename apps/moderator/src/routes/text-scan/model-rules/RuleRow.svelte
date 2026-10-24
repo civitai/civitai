@@ -9,14 +9,21 @@
   import { cn } from '@civitai/ui/utils.js';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { dateTime } from '$lib/format';
-  import { parseAliases } from '$lib/model-rules';
+  import { dateTime, plural } from '$lib/format';
+  import {
+    DEFAULT_MODEL_RULE_HOLD_FILTERS,
+    MODEL_RULE_MATCHES_PATH,
+    modelRuleHoldFilterParams,
+  } from '$lib/model-rule-holds';
+  import { BROAD_ALIAS_WARNING, aliasBreadth, appendAliases, parseAliases } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { EMPTY, type RuleDraftsState, type RuleFields } from '$lib/text-scan-lab/rule-drafts';
   import { notifySaved } from './notify-saved';
+  import SuggestAliases from './SuggestAliases.svelte';
 
   let {
     rule,
+    dismissed,
     draftId,
     drafts,
     canEdit,
@@ -26,6 +33,8 @@
     reloaded,
   }: {
     rule: ModelRuleView | null;
+    /** Holds dismissed as "not this subject" that matched this rule. */
+    dismissed: number;
     draftId: number;
     drafts: RuleDraftsState;
     canEdit: boolean;
@@ -41,6 +50,18 @@
   const stale = $derived(rule ? drafts.isStale(rule) : false);
   const readonly = $derived(!!rule?.legacy);
   const aliasList = $derived(parseAliases(fields.aliases));
+  const broadAliases = $derived(aliasList.filter((alias) => aliasBreadth(alias) !== null));
+  const dismissedHref = $derived(
+    rule
+      ? `${MODEL_RULE_MATCHES_PATH}?${new URLSearchParams(
+          modelRuleHoldFilterParams({
+            ...DEFAULT_MODEL_RULE_HOLD_FILTERS,
+            status: 'dismissed',
+            rule: rule.id,
+          })
+        )}`
+      : null
+  );
   // Saving a flagged rule unchanged is how a person marks it reviewed.
   const canSave = $derived(!!draft || !!rule?.needsAttention);
 
@@ -99,6 +120,15 @@
       {/if}
       {#if rule?.legacy}<Badge variant="outline">Regex</Badge>{/if}
     </button>
+    {#if dismissed && dismissedHref}
+      <a
+        href={dismissedHref}
+        class="mt-1 inline-block"
+        title="Holds a moderator dismissed as “not this subject” that matched this rule. A rule that over-matches usually needs a fuller alias. The link lists every dismissal of this rule."
+      >
+        <Badge variant="outline">{plural(dismissed, 'dismissal')}</Badge>
+      </a>
+    {/if}
   </TableCell>
   <TableCell class="max-w-80 whitespace-normal break-words align-top text-dark-0">
     {aliasList.length ? aliasList.join(', ') : '—'}
@@ -190,6 +220,23 @@
                 class="mt-1"
                 bind:value={() => fields.aliases, (v) => update({ aliases: v })}
               />
+              {#if broadAliases.length}
+                <ul class="mt-1 space-y-0.5 text-xs text-amber-300" aria-label="Broad aliases">
+                  {#each broadAliases as alias (alias)}
+                    <li><span class="break-words font-medium">{alias}</span>: {BROAD_ALIAS_WARNING}</li>
+                  {/each}
+                </ul>
+              {/if}
+              {#if canEdit}
+                <SuggestAliases
+                  id={draftId}
+                  subject={fields.subject}
+                  description={fields.description}
+                  aliases={fields.aliases}
+                  {rule}
+                  onadd={(added) => update({ aliases: appendAliases(fields.aliases, added) })}
+                />
+              {/if}
             </div>
             <div class="sm:col-span-2">
               <Label for="rule-description-{draftId}" class="text-xs text-dark-2">

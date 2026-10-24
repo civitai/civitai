@@ -25,7 +25,6 @@ describe('checkQueryScope — the allowed table list', () => {
       'ChallengeWinner',
       'Changelog',
       'Cosmetic',
-      'CryptoDeposit',
       'CryptoWallet',
       'CustomerSubscription',
       'Image',
@@ -180,6 +179,15 @@ describe('checkQueryScope — relations outside the allowed set', () => {
     expect(result.error).toContain('cannot read "Session"');
     // Not rejected for being malformed — these are well-formed statements.
     expect(result.error).not.toContain('unbalanced parentheses');
+  });
+
+  // Deposit rows can carry an owner nobody has confirmed; support reads them only through
+  // investigate_crypto_payments, which labels what it shows.
+  it('refuses CryptoDeposit', () => {
+    const result = checkQueryScope('SELECT * FROM "CryptoDeposit" WHERE "userId" = 7 LIMIT 5');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "CryptoDeposit"');
   });
 
   it('refuses a disallowed table inside a nested sub-select', () => {

@@ -209,8 +209,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return touched;
   }
 
-  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): neither exists.
-  if (sql.includes('to_regclass')) return [{ present: false }];
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
+  // on prod. The marker holds nobody (below).
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
 
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {
@@ -280,8 +281,10 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
 
-  // remove-blocked-images: owners under a hold marker. This fixture holds no one.
+  // remove-blocked-images: owners under a hold marker or any other account hold. This fixture
+  // holds no one.
   if (sql.includes('FROM "EvidenceHeldUser"')) return [];
+  if (sql.includes('SELECT c."userId" FROM')) return [];
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
 }

@@ -253,6 +253,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `CsamReport.sendClaimId` / `CsamReport.sendClaimedAt`: `20261123120000_csam_report_send_claim`
     //   `Thread.storylineId`: `20261127120000_storyline_thread`
     //   the six fork-provenance columns: `20261126120000_app_fork_provenance`
+    //   `ScanLabelClaim.token` / `ScanLabelVote.claimToken`: `20261128120000_scan_label_claim_token`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -263,6 +264,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'app_block_publish_requests.fork_of_commit_sha',
       'app_listings.forkable',
       'app_listings.fork_of_listing_id',
+      'ScanLabelClaim.token',
+      'ScanLabelVote.claimToken',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

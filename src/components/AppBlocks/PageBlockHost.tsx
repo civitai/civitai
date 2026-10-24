@@ -9,6 +9,12 @@ import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
+  countGuestFrameEvent,
+  isDevTunnelGuestReload,
+  NO_GUEST_FRAME_EVENTS,
+} from './devTunnelGuestReload';
+import type { GuestFrameCounts, GuestFrameEvent } from './devTunnelGuestReload';
+import {
   blockInitFragmentEnabled,
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
@@ -27,6 +33,7 @@ import {
   INITIAL_REVIEW_CONSENT_LATCH,
   MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
+  readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
@@ -281,6 +288,10 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
  * windows instead of from a hard-coded literal in a comment. Importing them from
  * this file would drag the whole component graph into the `unit` project.
+ *
+ * `BLOCK_READY_TIMEOUT_MS` is the window for every surface EXCEPT the dev tunnel,
+ * which waits `DEV_TUNNEL_READY_TIMEOUT_MS` — the host reads the window for its
+ * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
 
@@ -733,6 +744,13 @@ export interface PageBlockHostProps {
    *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
   onRetryToken?: () => void;
   /**
+   * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
+   * live reload). The parent must fetch a freshly signed entry URL and REMOUNT this host
+   * with it — the same path as its manual Reload. Called at most once per mount; every
+   * other surface never calls it. See `isDevTunnelGuestReload` for the signal and why.
+   */
+  onGuestReloaded?: () => void;
+  /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
    * side-effecting / money / private / cross-user handler replies with a
@@ -882,6 +900,7 @@ export function PageBlockHost({
   theme,
   onConsentGranted,
   onRetryToken,
+  onGuestReloaded,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
@@ -1202,6 +1221,9 @@ export function PageBlockHost({
   // `canRemint` is whether a token re-mint is even wired: without it an auth
   // terminal can never be recovered, so we must not burn an attempt on it.
   const canRemint = onRetryToken != null;
+  // The surface's BLOCK_READY wait (window, timeout retry, timeout copy). The ONE
+  // surface check for it lives in `readyWaitPolicyFor`; only the dev tunnel differs.
+  const readyWait = readyWaitPolicyFor(surface);
   const autoRetry = useMemo(
     () =>
       decideAutoRetry({
@@ -1209,8 +1231,15 @@ export function PageBlockHost({
         attempts: autoRetryBudget.attempts,
         reminted: autoRetryBudget.reminted,
         canRemint,
+        autoRetryOnTimeout: readyWait.autoRetryOnTimeout,
       }),
-    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+    [
+      status,
+      autoRetryBudget.attempts,
+      autoRetryBudget.reminted,
+      canRemint,
+      readyWait.autoRetryOnTimeout,
+    ]
   );
   /** True once the host has stopped auto-recovering: this terminal state is final. */
   const autoRetrySettled = autoRetry.kind === 'none';
@@ -1474,7 +1503,10 @@ export function PageBlockHost({
     if (controllerRef.current) return;
     const controller = new IframeInitController({
       sendInit: sendInitOnce,
-      readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+      // 10 s everywhere except the dev tunnel (30 s) — see `readyWaitPolicyFor`.
+      // The controller keeps re-posting BLOCK_INIT to the SAME frame for the
+      // whole window; nothing reloads the frame until it elapses.
+      readyTimeoutMs: readyWait.readyTimeoutMs,
       onReadyTimeout: () => {
         setStatus((current) => (current === 'loading' ? 'timeout' : current));
       },
@@ -1485,7 +1517,7 @@ export function PageBlockHost({
       controller.dispose();
       controllerRef.current = null;
     };
-  }, [token, status, sendInitOnce]);
+  }, [token, status, sendInitOnce, readyWait.readyTimeoutMs]);
 
   // #3/#6: the mint errored (no token will arrive). Surface an `error` state
   // immediately rather than waiting out the no_token timeout — a hard mint
@@ -1654,6 +1686,44 @@ export function PageBlockHost({
     return off;
   }, [token, expiresAt, tokenKind, grantedScopes, send, onMessage, reportNoToken]);
 
+  // DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL and a remount.
+  // The predicate (and the measurements behind it) is `isDevTunnelGuestReload`; this
+  // only feeds it the frame's `load` events and BLOCK_HELLOs, counted since the frame was
+  // (re)mounted — a Retry re-keys the <iframe> via `reloadNonce`, which restarts both
+  // counts. It reports once per mount, so a burst of reloads is one request; a parent
+  // whose fresh mint fails unmounts this host into its own error state, so there is
+  // nothing here to loop. The callback is read through a ref so a parent's inline arrow
+  // cannot change these handlers' identity.
+  const guestFrameRef = useRef<GuestFrameCounts>(NO_GUEST_FRAME_EVENTS);
+  useEffect(() => {
+    // Only on a RE-key (the first mount starts at zero), after the new <iframe> commits —
+    // its document needs a network round trip before it can load or say hello.
+    if (reloadNonce === 0) return;
+    guestFrameRef.current = NO_GUEST_FRAME_EVENTS;
+  }, [reloadNonce]);
+  const guestReloadReportedRef = useRef(false);
+  const onGuestReloadedRef = useRef(onGuestReloaded);
+  onGuestReloadedRef.current = onGuestReloaded;
+  const noteGuestFrame = useCallback(
+    (event: GuestFrameEvent) => {
+      const guest = countGuestFrameEvent(guestFrameRef.current, event);
+      guestFrameRef.current = guest;
+      if (guestReloadReportedRef.current) return;
+      const reload = isDevTunnelGuestReload({
+        surface,
+        event,
+        loads: guest.loads,
+        hellos: guest.hellos,
+        status: statusRef.current,
+      });
+      if (!reload) return;
+      guestReloadReportedRef.current = true;
+      onGuestReloadedRef.current?.();
+    },
+    [surface]
+  );
+  const handleFrameLoad = useCallback(() => noteGuestFrame('load'), [noteGuestFrame]);
+
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
   // waiting out the current retry tick.
@@ -1689,9 +1759,10 @@ export function PageBlockHost({
       const marks = launchMarksRef.current;
       if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
+      noteGuestFrame('hello');
     });
     return off;
-  }, [onMessage]);
+  }, [onMessage, noteGuestFrame]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
@@ -1964,7 +2035,11 @@ export function PageBlockHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // The dev-tunnel preview serves the document store locally, so there a
+        // refused `apps:storage` / `apps:storage:publish` is not shown to the
+        // viewer — decided by the gate from `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`.
+        surface
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
@@ -1998,6 +2073,10 @@ export function PageBlockHost({
       // refusal is the signal; the names are advisory. Delivered solely to the
       // frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      // The block always gets its answer above (an SDK predating local-preview
+      // grants waits on it); the viewer is prompted only when something other than
+      // a locally served document-store scope was refused.
+      if (!ungrantable.promptViewer) return;
       // Copy shared with IframeHost's twin of this path — see the constant for why
       // the wording is surface-neutral (the old "in this preview" clause was false
       // on the live page too, and outright wrong on a model page). Signed out →
@@ -2026,6 +2105,7 @@ export function PageBlockHost({
     reviewMode,
     reviewRunForReal,
     viewerSignedIn,
+    surface,
   ]);
 
   // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected
@@ -5781,6 +5861,7 @@ export function PageBlockHost({
               key={reloadNonce}
               ref={iframeRef}
               src={renderedIframeSrc}
+              onLoad={handleFrameLoad}
               sandbox={effectiveSandbox}
               referrerPolicy="no-referrer"
               // Sanitize the publisher-controlled appName for the iframe title too
@@ -6021,6 +6102,7 @@ export function PageBlockHost({
               // Automatic recovery has settled (exhausted, or never applicable):
               // the button is now the only path forward, so make it unmissable.
               prominentRetry={autoRetrySettled}
+              timeoutCopy={readyWait.timeoutCopy}
             />
           </Box>
         ) : null}
