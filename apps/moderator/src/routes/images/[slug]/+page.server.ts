@@ -2,11 +2,10 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { FLAG_KEPT_THROUGH_BLOCK, IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { imageQueueActions, loadCsamQueueByUser, loadImageQueue } from '$lib/server/image-queue';
-import { recordHeldGridView } from '$lib/server/held-media';
 
 // The review queues. The page and its actions are shared with `/reports/image` (`$lib/server/image-queue.ts`,
 // `$lib/components/image-queue/`), which is where the reported-image queue lives now.
-export const load: PageServerLoad = async ({ params, url, locals }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
   // `reported` moved to `/reports/image` (2026-10-15); `$lib/moved-pages.ts` redirects it before this
   // runs. Refused here all the same, so the route can never serve it again by accident.
   if (params.slug === 'reported') error(404, 'Unknown image view');
@@ -14,10 +13,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     error(404, 'Unknown image view');
   if (params.slug === FLAG_KEPT_THROUGH_BLOCK && url.searchParams.get('by') === 'user')
     return loadCsamQueueByUser(url);
-  const data = await loadImageQueue(params.slug as ImageViewSlug, url);
-  if (params.slug === FLAG_KEPT_THROUGH_BLOCK && locals.user)
-    recordHeldGridView(locals.user.id, data.items.length);
-  return data;
+  return loadImageQueue(params.slug as ImageViewSlug, url);
 };
 
 export const actions = imageQueueActions;

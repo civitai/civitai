@@ -5,6 +5,9 @@ import { flagClearHoldLegs, holdMarkerState } from './csam-flag-clear';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
+/** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
+const PLACEHOLDER_OWNER_ID = -1;
+
 /** The page whose grant opens held media. */
 export const HELD_MEDIA_PAGE = '/images/csam';
 
@@ -16,7 +19,8 @@ export type HeldMedia = { url: string; type: string; mimeType: string | null };
  * exactly as it answers a missing one.
  *
  * The owner legs are `csam-flag-clear`'s, minus two: `ban` is not a CSAM hold, and `evidenceHold`
- * read without its view holds every user, which here would open every image.
+ * read without its view holds every user, which here would open every image. The placeholder owner
+ * of deleted accounts' kept content is never an owner hold: a report naming it would open all of it.
  */
 export async function getHeldMedia(imageId: number): Promise<HeldMedia | null> {
   const marker = await holdMarkerState(dbRead);
@@ -32,10 +36,8 @@ export async function getHeldMedia(imageId: number): Promise<HeldMedia | null> {
     .select(['i.url', 'i.type', 'i.mimeType'])
     .where('i.id', '=', imageId)
     .where(
-      sql<boolean>`(i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} OR ${sql.join(
-        ownerHeld,
-        sql` OR `
-      )})`
+      sql<boolean>`(i."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}
+        OR (i."userId" <> ${PLACEHOLDER_OWNER_ID} AND (${sql.join(ownerHeld, sql` OR `)})))`
     )
     .executeTakeFirst();
   return row ?? null;

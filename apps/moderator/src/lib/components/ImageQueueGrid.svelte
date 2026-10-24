@@ -17,7 +17,7 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
-  import { heldMediaUrl } from '$lib/held-media';
+  import { heldMediaUrl, reportHeldGridView } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -80,6 +80,10 @@
   const fullHref = (item: T) =>
     heldMedia ? heldMediaUrl(item.id, true) : `${civitaiUrl}/images/${item.id}`;
   const fullLabel = $derived(heldMedia ? 'Open full size' : 'Open on Civitai');
+
+  $effect(() => {
+    if (heldMedia && items.length) reportHeldGridView(items.length);
+  });
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
   const itemKeys = $derived(items.map(key));

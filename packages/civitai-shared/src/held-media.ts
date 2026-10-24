@@ -45,13 +45,15 @@ export function forwardableRange(header: string | null | undefined): string | nu
  */
 export function isFullViewOpen(view: string | null | undefined, range: string | null): boolean {
   if (view !== 'full') return false;
-  return range == null || range.startsWith('bytes=0-');
+  // `bytes=0-1` is Safari's probe ahead of its real first request.
+  return range == null || (range.startsWith('bytes=0-') && range !== 'bytes=0-1');
 }
 
-/** The headers every held-media response carries, whatever the status. */
+/** The headers every held-media response carries. `withBody: false` for a response sent empty. */
 export function heldMediaHeaders(
   contentType: string,
-  upstream: { get(name: string): string | null }
+  upstream: { get(name: string): string | null },
+  withBody = true
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': contentType,
@@ -60,9 +62,20 @@ export function heldMediaHeaders(
     'cache-control': 'private, no-store',
     'accept-ranges': 'bytes',
   };
-  for (const name of ['content-length', 'content-range']) {
-    const value = upstream.get(name);
-    if (value) headers[name] = value;
-  }
+  const range = upstream.get('content-range');
+  if (range) headers['content-range'] = range;
+  // fetch decodes a content-encoded body, so the stored length would no longer match it.
+  const length = upstream.get('content-length');
+  if (length && withBody && !upstream.get('content-encoding')) headers['content-length'] = length;
   return headers;
+}
+
+const HELD_GRID_MAX = 1000;
+
+/** The grid's own report of how many held items it showed: one audit row per page, no image ids. */
+export function heldGridCount(body: unknown): number | null {
+  const count = (body as { count?: unknown } | null)?.count;
+  return Number.isInteger(count) && (count as number) > 0 && (count as number) <= HELD_GRID_MAX
+    ? (count as number)
+    : null;
 }

@@ -60,10 +60,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     return null;
   });
   if (!upstream) return void res.status(502).json({ error: 'Could not reach storage' });
+  if (upstream.status === 404 || upstream.status === 416) void upstream.body?.cancel();
   if (upstream.status === 404)
     return void res.status(404).json({ error: 'The file is not in storage' });
   if (upstream.status === 416) {
-    res.writeHead(416, heldMediaHeaders('application/octet-stream', upstream.headers));
+    res.writeHead(416, heldMediaHeaders('application/octet-stream', upstream.headers, false));
     return void res.end();
   }
   if ((upstream.status !== 200 && upstream.status !== 206) || !upstream.body) {

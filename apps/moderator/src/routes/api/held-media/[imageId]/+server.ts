@@ -42,11 +42,12 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
     return null;
   });
   if (!upstream) error(502, 'Could not reach storage.');
+  if (upstream.status === 404 || upstream.status === 416) void upstream.body?.cancel();
   if (upstream.status === 404) error(404, 'The file is not in storage.');
   if (upstream.status === 416)
     return new Response(null, {
       status: 416,
-      headers: heldMediaHeaders('application/octet-stream', upstream.headers),
+      headers: heldMediaHeaders('application/octet-stream', upstream.headers, false),
     });
   if ((upstream.status !== 200 && upstream.status !== 206) || !upstream.body) {
     console.error('[held-media] upstream refused', upstream.status);

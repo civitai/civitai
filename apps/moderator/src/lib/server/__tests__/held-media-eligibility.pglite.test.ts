@@ -63,7 +63,10 @@ beforeAll(async () => {
       (4, 204, NULL, 'key-4', NULL),
       (5, 204, 'minor', 'key-5', NULL),
       (6, 205, NULL, 'key-6', NULL),
-      (7, 206, NULL, 'key-7', NULL);
+      (7, 206, NULL, 'key-7', NULL),
+      (8, -1, NULL, 'key-8', NULL),
+      (9, -1, 'csam', 'key-9', NULL);
+    -- The second report names the placeholder owner of deleted accounts' kept content.
     INSERT INTO "CsamReport" ("userId", "details") VALUES
       (202, '{}'), (-1, '{"secondaryUserId": "203"}');
     INSERT INTO "EvidenceHold" ("userId") VALUES (206);
@@ -92,10 +95,14 @@ describe('held media eligibility', () => {
     expect(await served([4, 5, 6, 999])).toEqual([]);
   });
 
+  it('never treats the placeholder owner as held, though a report names it', async () => {
+    expect(await served([8, 9])).toEqual([9]);
+  });
+
   // Last: it drops the view. Without the view `flagClearHoldLegs` holds EVERY user, which for a bulk
   // clear fails closed and here would open every image.
   it('opens nothing more when the hold-marker view is missing', async () => {
     await db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    expect(await served([1, 2, 3, 4, 5, 6, 7])).toEqual([1, 2, 3]);
+    expect(await served([1, 2, 3, 4, 5, 6, 7, 8, 9])).toEqual([1, 2, 3, 9]);
   });
 });

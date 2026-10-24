@@ -28,17 +28,21 @@ const getGetUrl = vi.hoisted(() =>
 );
 const recordModActivity = vi.hoisted(() => vi.fn(async () => {}));
 const grants = vi.hoisted(() => ({ paths: new Set<string>(['/images/csam']) }));
-const loadImageQueue = vi.hoisted(() =>
-  vi.fn(async () => ({ items: [{ id: 1 }, { id: 2 }, { id: 3 }] }))
-);
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/access', () => ({
-  canAccess: (_user: unknown, path: string) => grants.paths.has(path),
-}));
+vi.mock('$lib/server/access', async () => {
+  const { error } = await import('@sveltejs/kit');
+  const canAccess = (_user: unknown, path: string) => grants.paths.has(path);
+  return {
+    canAccess,
+    requireAccess: (user: unknown, path: string) => {
+      if (!canAccess(user, path)) error(403, 'no');
+    },
+  };
+});
 vi.mock('$lib/server/held-media', async (importOriginal) => ({
   ...(await importOriginal<typeof HeldMediaModule>()),
   getHeldMedia,
@@ -46,14 +50,9 @@ vi.mock('$lib/server/held-media', async (importOriginal) => ({
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
-vi.mock('$lib/server/image-queue', () => ({
-  imageQueueActions: {},
-  loadCsamQueueByUser: vi.fn(),
-  loadImageQueue,
-}));
 
 const { GET } = await import('../../../routes/api/held-media/[imageId]/+server');
-const { load } = await import('../../../routes/images/[slug]/+page.server');
+const { POST } = await import('../../../routes/api/held-media/grid-view/+server');
 
 const fetchMock = vi.fn();
 
@@ -191,6 +190,31 @@ describe('response', () => {
     expect((await call()).status).toBe(to);
   });
 
+  it('answers an unsatisfiable range empty, without the store error body length', async () => {
+    const xml = '<Error><Code>InvalidRange</Code></Error>';
+    const res416 = new Response(xml, {
+      status: 416,
+      headers: { 'content-length': String(xml.length), 'content-range': 'bytes */100' },
+    });
+    fetchMock.mockResolvedValue(res416);
+    const { status, res } = await call('/api/held-media/7', { range: 'bytes=500-' });
+    expect(status).toBe(416);
+    expect(res!.headers.get('content-length')).toBeNull();
+    expect(res!.headers.get('content-range')).toBe('bytes */100');
+    expect(res416.bodyUsed || res416.body?.locked).toBe(true);
+  });
+
+  it('drops the stored length of a content-encoded object, which fetch decodes', async () => {
+    fetchMock.mockResolvedValue(
+      upstream(200, {
+        'content-type': 'image/png',
+        'content-encoding': 'gzip',
+        'content-length': '3',
+      })
+    );
+    expect((await call()).res!.headers.get('content-length')).toBeNull();
+  });
+
   it('maps an unreachable store to 502', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNRESET'));
     expect((await call()).status).toBe(502);
@@ -217,24 +241,39 @@ describe('audit', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  const loadAs = (slug: string) =>
-    load({
-      params: { slug },
-      url: new URL(`http://mod.test/images/${slug}`),
-      locals: { user: { id: 42 } },
-    } as never);
+  it('counts one full view for Safari, whose first request is a two-byte probe', async () => {
+    await call('/api/held-media/7?view=full', { range: 'bytes=0-1' });
+    await call('/api/held-media/7?view=full', { range: 'bytes=0-99' });
+    expect(recordModActivity).toHaveBeenCalledTimes(1);
+  });
 
-  it('records one row per CSAM grid page, with the count and no image ids', async () => {
-    await loadAs('csam');
+  const gridView = async (body: unknown) => {
+    try {
+      const res = await POST({
+        request: new Request('http://mod.test/api/held-media/grid-view', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }),
+        locals: { user: { id: 42, roles: ['moderator:staff'] }, grants: {} },
+      } as never);
+      return res.status;
+    } catch (e) {
+      return (e as { status?: number }).status ?? 500;
+    }
+  };
+
+  it('records one grid row with the count and no image ids', async () => {
+    expect(await gridView({ count: 3, imageIds: [1, 2, 3] })).toBe(204);
     expect(recordModActivity.mock.calls).toEqual([
       [{ userId: 42, entityType: 'heldMediaGrid', entityId: 3, activity: 'heldMedia:grid' }],
     ]);
   });
 
-  it('records nothing for another queue or an empty page', async () => {
-    await loadAs('minor');
-    loadImageQueue.mockResolvedValueOnce({ items: [] });
-    await loadAs('csam');
+  it('refuses a grid row without the grant, or with a count that is not one', async () => {
+    grants.paths = new Set(['/images/minor']);
+    expect(await gridView({ count: 3 })).toBe(403);
+    grants.paths = new Set(['/images/csam']);
+    for (const count of [0, -1, 2.5, '3', 100_000]) expect(await gridView({ count })).toBe(400);
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 });

@@ -34,6 +34,7 @@ vi.mock('~/utils/s3-utils', () => ({
 }));
 
 import handler from '~/pages/api/mod/held-media/[imageId]';
+import gridView from '~/pages/api/mod/held-media/grid-view';
 
 class FakeRes extends Writable {
   statusCode = 200;
@@ -138,6 +139,49 @@ describe('/api/mod/held-media', () => {
   ])('maps a store %i to %i', async (from, to) => {
     fetchMock.mockResolvedValue(new Response(null, { status: from }));
     expect((await call()).statusCode).toBe(to);
+  });
+
+  it('answers an unsatisfiable range empty, without the store error body length', async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response('<Error/>', {
+          status: 416,
+          headers: { 'content-length': '8', 'content-range': 'bytes */5' },
+        })
+    );
+    const res = await call({ imageId: '7' }, 'bytes=9-');
+    expect(res.statusCode).toBe(416);
+    expect(res.headers['content-length']).toBeUndefined();
+    expect(res.headers['content-range']).toBe('bytes */5');
+  });
+
+  it('refuses a video type a browser cannot play', async () => {
+    getHeldMedia.mockResolvedValue({ url: KEY, type: 'video', mimeType: 'video/quicktime' });
+    fetchMock.mockImplementation(
+      async () => new Response('x', { status: 200, headers: { 'content-type': 'video/quicktime' } })
+    );
+    expect((await call()).statusCode).toBe(415);
+  });
+
+  it('records one grid row per page with the count and no image ids', async () => {
+    const post = async (body: unknown) => {
+      const req = Object.assign(new EventEmitter(), {
+        method: 'POST',
+        query: {},
+        headers: {},
+        body,
+      }) as unknown as NextApiRequest;
+      const res = new FakeRes();
+      await gridView(req, res as unknown as NextApiResponse);
+      return res.statusCode;
+    };
+    expect(await post({ count: 12, imageIds: [1, 2] })).toBe(204);
+    expect(await post({ count: 0 })).toBe(400);
+    flags.csamReports = false;
+    expect(await post({ count: 12 })).toBe(403);
+    expect(trackModActivity.mock.calls).toEqual([
+      [42, { entityType: 'heldMediaGrid', entityId: 12, activity: 'heldMedia:grid' }],
+    ]);
   });
 
   it('records a full view once, and no grid image', async () => {

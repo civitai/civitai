@@ -1,5 +1,6 @@
 import { dbRead } from '~/server/db/client';
 import { getAccountLegalHold } from '~/server/services/legal-hold.service';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 
 export type HeldMedia = { url: string; type: string; mimeType: string | null };
 
@@ -18,6 +19,8 @@ export async function getHeldMedia(imageId: number): Promise<HeldMedia | null> {
   if (!image) return null;
   const media = { url: image.url, type: image.type, mimeType: image.mimeType };
   if (image.needsReview === 'csam') return media;
+  // A report naming the placeholder owner would otherwise open every deleted account's kept content.
+  if (image.userId === PLACEHOLDER_OWNER_ID) return null;
 
   const hold = await getAccountLegalHold(image.userId).catch(() => null);
   const held = hold?.legs.some((leg) => leg !== 'hold-marker' || hold.markerView) ?? false;

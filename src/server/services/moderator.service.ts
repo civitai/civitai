@@ -136,6 +136,12 @@ type BountyEntryModActivity = {
   activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
+/** One CSAM report page of held media; `entityId` is how many items it showed. */
+type HeldMediaGridModActivity = {
+  entityType: 'heldMediaGrid';
+  activity: 'heldMedia:grid';
+};
+
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
@@ -157,6 +163,7 @@ type ModActivity = {
   | FeedbackModActivity
   | BountyEntryModActivity
   | SiteAlertModActivity
+  | HeldMediaGridModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

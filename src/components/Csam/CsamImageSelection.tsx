@@ -59,6 +59,17 @@ export function CsamImageSelection({
     for (const image of linkedImages) store.seedSelected(userId, image.id);
   }, [linkedImages, userId]);
 
+  const shown = images?.length ?? 0;
+  useEffect(() => {
+    if (!shown) return;
+    fetch('/api/mod/held-media/grid-view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ count: shown }),
+      keepalive: true,
+    }).catch(() => null);
+  }, [userId, shown]);
+
   const hasSelected = useCsamImageSelectStore(
     useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
   );

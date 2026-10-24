@@ -58,6 +58,14 @@ describe('getHeldMedia', () => {
     expect(await getHeldMedia(1)).toBeNull();
   });
 
+  it('never treats the placeholder owner as held, though its queued image is served', async () => {
+    findUnique.mockResolvedValue({ ...row(null), userId: -1 });
+    getAccountLegalHold.mockResolvedValue({ legs: ['report'], markerView: true });
+    expect(await getHeldMedia(1)).toBeNull();
+    findUnique.mockResolvedValue({ ...row('csam'), userId: -1 });
+    expect(await getHeldMedia(1)).not.toBeNull();
+  });
+
   it('refuses a missing image', async () => {
     findUnique.mockResolvedValue(null);
     expect(await getHeldMedia(1)).toBeNull();
