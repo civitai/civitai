@@ -2,7 +2,6 @@ import { COMMON_IMAGE_WIDTHS, getEdgeUrl, resolveOptimized } from '~/client-util
 import { purgeCache } from '~/server/cloudflare/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
-import { purgeResizeCache } from '~/server/services/image.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 type HiddenMetaImage = { url: string; name?: string | null; type?: MediaType | null };
@@ -31,8 +30,8 @@ export function getHiddenMetaPurgeUrls({ url, name, type }: HiddenMetaImage): st
 }
 
 /**
- * Invalidate every cached copy that may still carry an image's metadata after its owner hid it.
- * Keyed by url, so it also covers other rows that share the url.
+ * Clear an image's cached copies after its owner hides its metadata, so they re-derive under the
+ * new setting. Keyed by url, so it also covers other rows that share the url.
  *
  * The order matters: each layer refills from the one after it, so clearing the CDN before the
  * cache service has dropped its copies would let the CDN refill from those copies. Never throws:
@@ -41,6 +40,8 @@ export function getHiddenMetaPurgeUrls({ url, name, type }: HiddenMetaImage): st
 export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
   await bustImageDeliveryMetadataCache(image.url);
   try {
+    // Lazy: post.service imports this module, and a static edge would join the image.service cycle.
+    const { purgeResizeCache } = await import('~/server/services/image.service');
     // 🔴 Scoped: the image stays live, and only the variants derived before the flip are stale.
     // A full purge would also drop the variants the page is serving right now.
     await purgeResizeCache({
