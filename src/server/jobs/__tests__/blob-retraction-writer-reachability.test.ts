@@ -101,8 +101,9 @@ function fireQueueTrigger(row: ImageRow) {
   store.queue.push({ entityId: row.id, createdAt: tick() });
 }
 
-const { mockDeleteImages } = vi.hoisted(() => ({
+const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(async (ids: number[]) => ids.map((id) => ({ id }))),
+  mockPersistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
 }));
 
 // `isProd` alone is overridden; the rest of the module is spread so nothing else in the graph
@@ -148,6 +149,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   deleteImages: mockDeleteImages,
 }));
+vi.mock('~/server/services/cdn-access.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  persistDeletedTakedowns: mockPersistDeletedTakedowns,
+}));
 
 const { createImage, handleBlockImages } = await import('~/server/services/image.service');
 const { trackModActivity } = await import('~/server/services/moderator.service');
@@ -174,26 +179,36 @@ function retractionFor(id: number) {
   return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
-/** The persist intent for one image, read the same way as `retractionFor`. */
+/** The images persisted after their delete. */
+const persisted = () =>
+  new Set(
+    (mockPersistDeletedTakedowns.mock.calls as unknown as [{ id: number }[]][]).flatMap(([rows]) =>
+      rows.map((r) => r.id)
+    )
+  );
 function persistFor(id: number) {
-  const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
-  if (!call) return undefined;
-  return Boolean((call[2] as { persistTakedown?: boolean } | undefined)?.persistTakedown);
+  if (retractionFor(id) === undefined) return undefined;
+  return persisted().has(id);
 }
 
 /**
- * 🔴 Persist rides with retraction and nothing else: every case below that does not retract is
- * also a case that must not persist. Read per call, so a persist on the non-retracting batch of a
- * mixed run fails here too.
+ * 🔴 Persist follows retraction and nothing else: every case below that does not retract is also a
+ * case that must not persist, and a persist must come after the delete it follows.
  */
 afterEach(() => {
   for (const call of mockDeleteImages.mock.calls) {
-    const opts = call[2] as { retractPublicBlobs?: boolean; persistTakedown?: boolean } | undefined;
-    expect(
-      Boolean(opts?.persistTakedown),
-      `persist differs from retraction for images ${(call[0] as number[]).join(',')}`
-    ).toBe(Boolean(opts?.retractPublicBlobs));
+    const ids = call[0] as number[];
+    const retracts = Boolean(
+      (call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
+    );
+    for (const id of ids)
+      expect(persisted().has(id), `persist differs from retraction for image ${id}`).toBe(retracts);
   }
+  if (mockPersistDeletedTakedowns.mock.calls.length)
+    expect(
+      Math.min(...mockPersistDeletedTakedowns.mock.invocationCallOrder),
+      'persist ran before the storage delete'
+    ).toBeGreaterThan(Math.min(...mockDeleteImages.mock.invocationCallOrder));
 });
 
 function image(id: number, userId: number, over: Partial<ImageRow> = {}): ImageRow {

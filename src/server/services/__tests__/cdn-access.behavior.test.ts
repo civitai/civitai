@@ -88,7 +88,7 @@ const s3Send = vi.spyOn(S3Client.prototype, 'send');
 
 const { syncCdnAccess, reconcileCdnAccess, retryTakedownPersists, sendTakedownPersistOrRetry } =
   await import('~/server/services/cdn-access.service');
-const { getImageEdgePurgeUrls } = await import('~/server/services/image-edge-purge');
+const { persistDeletedTakedowns } = await import('~/server/services/cdn-access.service');
 const { cdnAccessSync } = await import('~/server/jobs/cdn-access-sync');
 const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
   '~/server/services/cdn-access.service'
@@ -189,6 +189,7 @@ beforeEach(async () => {
   scripted = [];
   purged.length = 0;
   purgeFails = 0;
+  combinedOk.clear();
   purgeUrlsOrThrow.mockReset().mockImplementation(async (urls: string[]) => {
     if (purgeFails > 0) {
       purgeFails--;
@@ -300,6 +301,8 @@ const callsFor = (url: string) =>
     .filter((c) => !isPersist(c))
     .map(kind);
 const persistsFor = (url: string) => calls.filter(onUrl(url)).filter(isPersist);
+/** Urls a test sends a retraction-carrying persist for on purpose: a hard-deleted takedown's retry. */
+const combinedOk = new Set<string>();
 const retryRows = async () =>
   (
     await sql`SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageCdnPersistRetry'
@@ -326,8 +329,14 @@ afterEach(() => {
     }
     expect(c.path, 'persist sent with a value other than true').toMatch(/&persist=true(&|$)/);
     expect(c.method).toBe('POST');
-    // A retry for a deleted image carries its own retraction.
-    if (kind(c) === 'retract') continue;
+    // Only a retry for a hard-deleted takedown carries its own retraction.
+    if (kind(c) === 'retract') {
+      expect(
+        combinedOk.has(decodeURIComponent(key)),
+        `persist rode on a retraction: ${c.path}`
+      ).toBe(true);
+      continue;
+    }
     expect(retracted.has(key), `persist sent for ${c.path} without a standing retraction`).toBe(
       true
     );
@@ -1144,10 +1153,17 @@ describe('takedown persist', () => {
     expect(persistsFor(u(1)).map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(1)}&persist=true`,
     ]);
-    expect(purged).toEqual([getImageEdgePurgeUrls({ url: u(1), name: 'cat.png', type: 'image' })]);
-    // Both names it is served under.
-    expect(purged[0].some((x) => x.endsWith('/cat.jpeg'))).toBe(true);
-    expect(purged[0].some((x) => x.endsWith(`/${u(1)}.jpeg`))).toBe(true);
+    expect(purged).toHaveLength(1);
+    // Every name it is served under: its key first, then its id, then its own name.
+    expect(purged[0][0]).toBe(`${u(1)}/original=true/${u(1)}.jpeg`);
+    expect(purged[0]).toEqual(
+      expect.arrayContaining([
+        `${u(1)}/original=true/1.jpeg`,
+        `${u(1)}/anim=false,original=true/cat.jpeg`,
+        `${u(1)}/width=450,optimized=true/cat.jpeg`,
+      ])
+    );
+    expect(purged[0]).toHaveLength(102);
     expect(persistedBeforePurge()).toBe(true);
     expect(await retryRows()).toEqual([]);
   });
@@ -1181,7 +1197,14 @@ describe('takedown persist', () => {
     await syncCdnAccess();
     expect(callsFor(DELETED)).toEqual(['retract']);
     expect(persistsFor(DELETED)).toHaveLength(1);
-    expect(purged).toEqual([getImageEdgePurgeUrls({ url: DELETED })]);
+    expect(purged).toHaveLength(1);
+    expect(purged[0]).toEqual(
+      expect.arrayContaining([
+        `${DELETED}/original=true/${DELETED}.jpeg`,
+        `${DELETED}/original=true/9.jpeg`,
+      ])
+    );
+    expect(purged[0]).toHaveLength(68);
   });
 
   it('a released CSAM hold persists once the takedown upgrades to a retraction', async () => {
@@ -1311,6 +1334,7 @@ describe('takedown persist', () => {
   });
 
   it('a retry for a deleted takedown resends the retraction it carried', async () => {
+    combinedOk.add(GONE);
     await sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
               VALUES (7, 'Image', 'ImageCdnPersistRetry',
                       ${JSON.stringify({ url: GONE, retract: true, purgeEdge: false })}::jsonb)`;
@@ -1357,5 +1381,77 @@ describe('takedown persist', () => {
       // Persists for a url this database never retracted; the file-wide check reads the main one.
       calls.length = 0;
     }
+  });
+});
+
+describe('takedown persist retry scope', () => {
+  it('drops a sync retry for a url restored and then deleted by its owner', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    scripted = [202, 500, 500, 500];
+    await syncCdnAccess();
+    await acceptImage(1);
+    await syncCdnAccess();
+    // The owner deletes it; the url has no image row left, but this was never a hard delete.
+    await sql`DELETE FROM "Image" WHERE id = 1`;
+    expect(await retryRows()).toHaveLength(1);
+
+    const before = calls.length;
+    expect(await retryTakedownPersists()).toMatchObject({ queued: 1, skipped: 1 });
+    expect(calls.slice(before)).toEqual([]);
+    expect(purged).toEqual([]);
+  });
+});
+
+describe('persist after a takedown hard delete', () => {
+  it('sends one persist per deleted url and queues nothing', async () => {
+    expect(
+      await persistDeletedTakedowns([
+        { id: 1, url: u(1) },
+        { id: 2, url: u(2) },
+      ])
+    ).toEqual({ sent: 2, queued: 0, skipped: 0 });
+    expect(calls.map((c) => c.path)).toEqual([
+      `/admin/invalidate?imageKey=${u(1)}&persist=true`,
+      `/admin/invalidate?imageKey=${u(2)}&persist=true`,
+    ]);
+    expect(await retryRows()).toEqual([]);
+    // Not retracted in this run: the retraction went out with the storage delete.
+    calls.length = 0;
+  });
+
+  it('leaves a url another image still uses alone', async () => {
+    await image(5, { url: SHARED });
+    expect(await persistDeletedTakedowns([{ id: 1, url: SHARED }])).toMatchObject({ skipped: 1 });
+    expect(calls).toEqual([]);
+  });
+
+  it('tries once, then queues a retry that resends the retraction', async () => {
+    scripted = [503];
+    expect(await persistDeletedTakedowns([{ id: 1, url: u(1) }])).toMatchObject({
+      sent: 0,
+      queued: 1,
+    });
+    expect(calls).toHaveLength(1);
+    expect(errorLogs('takedown-persist-failed')).toEqual([
+      expect.objectContaining({ imageIds: [1], imageKey: u(1) }),
+    ]);
+    expect(await retryRows()).toEqual([
+      { entityId: 1, data: { url: u(1), retract: true, purgeEdge: false } },
+    ]);
+    calls.length = 0;
+  });
+
+  it('sends nothing past its time budget, and queues the rest', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, url: u(i + 1) }));
+    const started = Date.now();
+    expect(await persistDeletedTakedowns(rows, { budgetMs: 0 })).toEqual({
+      sent: 0,
+      queued: 30,
+      skipped: 0,
+    });
+    expect(calls).toEqual([]);
+    expect(await retryRows()).toHaveLength(30);
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

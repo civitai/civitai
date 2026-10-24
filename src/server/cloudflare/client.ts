@@ -74,11 +74,13 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
 }
 
 /**
- * `purgeCache` for a caller that must know the purge happened: every batch is awaited and the first
- * failure throws. Not paced, so keep it to one image's urls rather than a bulk list.
+ * `purgeCache` for a caller that must know the purge happened. Every batch is attempted, in order,
+ * and any failure throws once all have been tried. Not paced, so keep it to one image's urls rather
+ * than a bulk list. `CF_ZONE_ID` is the civitai.com zone, which also serves the image host's urls.
  */
-export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 10_000 } = {}) {
+export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 5_000 } = {}) {
   if (!env.CF_ZONE_ID || !client) return;
+  const errors: unknown[] = [];
   for (const files of chunk(urls, PURGE_BATCH_SIZE)) {
     // The client takes no abort signal; a hung request must not hold the caller indefinitely.
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -89,8 +91,12 @@ export async function purgeUrlsOrThrow(urls: string[], { timeoutMs = 10_000 } = 
           timer = setTimeout(() => reject(new Error('cloudflare purge timed out')), timeoutMs);
         }),
       ]);
+    } catch (error) {
+      errors.push(error);
     } finally {
       clearTimeout(timer);
     }
   }
+  if (errors.length)
+    throw new AggregateError(errors, `${errors.length} cloudflare purge batch(es) failed`);
 }

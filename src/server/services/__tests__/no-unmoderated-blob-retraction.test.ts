@@ -96,22 +96,19 @@ const LEDGER_MENTIONS = [
 const LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
 
 /**
- * `persistTakedown` keeps the deny until it is lifted. It rides with retraction: the same single
- * setter, through the same plumbing. The takedown CDN sync sends it on its own, as the query
- * parameter, after a retraction; so the parameter is ledgered too.
+ * Persist keeps a takedown's deny until it is lifted. Only the takedown CDN sync builds the
+ * parameter, and the one other way to ask for it is `persistDeletedTakedowns`, which
+ * `remove-blocked-images` calls once, for the takedowns among the images it hard-deletes.
  */
-const PERSIST_OPTION = 'persistTakedown';
-const PERSIST_SET_TRUE = /persistTakedown:\s*true/g;
 const PERSIST_PARAM = '&persist=true';
+const PERSIST_ENTRY = 'persistDeletedTakedowns';
+const PERSIST_CALL = /persistDeletedTakedowns\(/g;
 const PERSIST_LEDGER_MENTIONS = [
   'src/server/jobs/image-ingestion.ts',
-  'src/server/services/image.service.ts',
+  'src/server/services/cdn-access.service.ts',
 ];
 const PERSIST_LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
-const PERSIST_LEDGER_PARAM = [
-  'src/server/services/cdn-access.service.ts',
-  'src/server/services/image.service.ts',
-];
+const PERSIST_LEDGER_PARAM = ['src/server/services/cdn-access.service.ts'];
 
 type Scan = {
   mentions: string[];
@@ -163,9 +160,12 @@ function scan(): Scan {
     scannedByRoot[root] = (scannedByRoot[root] ?? 0) + 1;
     const src = readFileSync(abs, 'utf8');
     if (src.includes(PERSIST_PARAM)) persistParam.push(file);
-    if (src.includes(PERSIST_OPTION)) {
+    if (src.includes(PERSIST_ENTRY)) {
       persistMentions.push(file);
-      const count = src.match(PERSIST_SET_TRUE)?.length ?? 0;
+      // Calls, not mentions; a definition is `function name(`, which this does not count.
+      const count = [...src.matchAll(PERSIST_CALL)].filter(
+        (m) => !src.slice(Math.max(0, m.index - 9), m.index).endsWith('function ')
+      ).length;
       if (count > 0) persistSetters.push(`${file} ×${count}`);
     }
     if (!src.includes(OPTION)) continue;
@@ -270,7 +270,7 @@ describe('no-unmoderated-blob-retraction', () => {
     ).toEqual(LEDGER_MENTIONS);
   });
 
-  it('lets persist be asked for only where retraction is, through the same plumbing', () => {
+  it('lets persist be asked for only by the takedown sync and the takedown hard delete', () => {
     const { persistMentions, persistSetters, persistParam } = scan();
     expect(
       persistSetters,
@@ -278,7 +278,7 @@ describe('no-unmoderated-blob-retraction', () => {
     ).toEqual(PERSIST_LEDGER_SETTERS);
     expect(
       persistMentions,
-      'A new file mentioning persistTakedown is a new way to reach it.'
+      `A new file mentioning ${PERSIST_ENTRY} is a new way to reach it.`
     ).toEqual(PERSIST_LEDGER_MENTIONS);
     expect(
       persistParam,
