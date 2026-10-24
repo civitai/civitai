@@ -7,7 +7,14 @@ import type { RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
 import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
 import type { QdrantClient } from '@qdrant/js-client-rest';
-import { buildEmbedInput, chunkInputs, Embedder, MixedStampError } from '@/vector-sync/embedder';
+import {
+  buildEmbedInput,
+  chunkInputs,
+  Embedder,
+  JobBudget,
+  MixedStampError,
+} from '@/vector-sync/embedder';
+import { QueueGate } from '@/vector-sync/queue-gate';
 import {
   eligibleSql,
   IMAGE_ROW_COLUMNS,
@@ -121,6 +128,33 @@ class FakeStore {
 }
 
 const STAMP: ModelStamp = { model: 'wemm-2b', modelRevision: 'r1', profile: 'p1', dimensions: 256 };
+
+/** A 256-d vector whose first value is `n`. */
+const vec = (n: number) => Array.from({ length: 256 }, (_, i) => (i === 0 ? n : 0));
+
+/** A workflow in the one-input-per-step shape; steps for `failIds` fail. */
+function workflowBody(ids: string[], modelRevision = 'r1', failIds: string[] = []) {
+  return JSON.stringify({
+    id: 'wf',
+    status: failIds.length ? 'failed' : 'succeeded',
+    steps: ids.map((id, index) =>
+      failIds.includes(id)
+        ? { name: `img-${id}`, status: 'failed' }
+        : {
+            name: `img-${id}`,
+            status: 'succeeded',
+            output: { ...STAMP, modelRevision, precision: 'float32', embedding: vec(index) },
+          }
+    ),
+  });
+}
+
+/** The image ids a submitted workflow asked for, from its step names. */
+function stepIds(init?: RequestInit): string[] {
+  return (JSON.parse(String(init?.body)).steps as { name: string }[]).map((s) =>
+    s.name.replace(/^img-/, '')
+  );
+}
 
 class FakeEmbedder {
   calls: string[][] = [];
@@ -329,21 +363,8 @@ describe('embed inputs', () => {
 });
 
 describe('embedder', () => {
-  const ok = (ids: string[]) =>
-    new Response(
-      JSON.stringify({
-        id: 'wf',
-        status: 'succeeded',
-        steps: [
-          {
-            output: { ...STAMP, data: ids.map((id, index) => ({ id, index, embedding: [index] })) },
-          },
-        ],
-      }),
-      { status: 200 }
-    );
-  const idsOf = (init?: RequestInit) =>
-    (JSON.parse(String(init?.body)).steps[0].input.inputs as { id: string }[]).map((i) => i.id);
+  const ok = (ids: string[]) => new Response(workflowBody(ids), { status: 200 });
+  const idsOf = stepIds;
 
   function embedder(fetchImpl: typeof fetch, maxRetries = 3) {
     const sleeps: number[] = [];
@@ -370,7 +391,7 @@ describe('embedder', () => {
     }) as unknown as typeof fetch;
     const { e, sleeps } = embedder(fetchImpl);
     const result = await e.embed([{ id: '1', imageUrl: 'u' }]);
-    expect(result.vectors.get(1)).toEqual([0]);
+    expect(result.vectors.get(1)).toEqual(vec(0));
     expect(sleeps).toHaveLength(2);
     expect(Math.min(...sleeps)).toBeGreaterThanOrEqual(7000);
     expect(new Set(keys).size).toBe(1);
@@ -778,22 +799,8 @@ describe('review round: paid-path failure modes', () => {
     expect(commits).toHaveLength(1);
   });
 
-  const okBody = (ids: string[], modelRevision = 'r1') =>
-    JSON.stringify({
-      id: 'wf',
-      status: 'succeeded',
-      steps: [
-        {
-          output: {
-            ...STAMP,
-            modelRevision,
-            data: ids.map((id, index) => ({ id, index, embedding: [index] })),
-          },
-        },
-      ],
-    });
-  const inputIds = (init?: RequestInit) =>
-    (JSON.parse(String(init?.body)).steps[0].input.inputs as { id: string }[]).map((i) => i.id);
+  const okBody = (ids: string[], modelRevision = 'r1') => workflowBody(ids, modelRevision);
+  const inputIds = stepIds;
   const makeEmbedder = (fetchImpl: typeof fetch) =>
     new Embedder({
       endpoint: 'http://orch',
@@ -938,22 +945,8 @@ describe('embedding gate', () => {
 });
 
 describe('review round 2', () => {
-  const body = (ids: string[], modelRevision: string) =>
-    JSON.stringify({
-      id: 'wf',
-      status: 'succeeded',
-      steps: [
-        {
-          output: {
-            ...STAMP,
-            modelRevision,
-            data: ids.map((id, index) => ({ id, index, embedding: [index] })),
-          },
-        },
-      ],
-    });
-  const idsIn = (init?: RequestInit) =>
-    (JSON.parse(String(init?.body)).steps[0].input.inputs as { id: string }[]).map((i) => i.id);
+  const body = (ids: string[], modelRevision: string) => workflowBody(ids, modelRevision);
+  const idsIn = stepIds;
   const embedderWith = (fetchImpl: typeof fetch, maxInFlight: number) =>
     new Embedder({
       endpoint: 'http://orch',
@@ -981,7 +974,7 @@ describe('review round 2', () => {
       if (seen && seen !== stamp.modelRevision) throw new Error('mismatch');
       stored ??= stamp.modelRevision;
     };
-    const result = await embedderWith(fetchImpl, 4).embed(inputs(3 * 128), { acceptStamp });
+    const result = await embedderWith(fetchImpl, 4 * 128).embed(inputs(3 * 128), { acceptStamp });
     expect(result.error).toBeInstanceOf(MixedStampError);
     expect(result.vectors.size).toBe(128);
   });
@@ -1108,7 +1101,8 @@ describe('review round 2', () => {
       inFlight--;
       return new Response(body(idsIn(init), 'r1'), { status: 200 });
     }) as unknown as typeof fetch;
-    const e = embedderWith(fetchImpl, 4);
+    // The budget counts jobs (steps): room for four 128-step workflows.
+    const e = embedderWith(fetchImpl, 4 * 128);
     await e.embed(inputs(128));
     peak = 0;
     await e.embed(inputs(4 * 128));
@@ -1241,5 +1235,250 @@ describe('follow-ups 13 and 14', () => {
     expect(run.pageStarts.every((t) => inWindow(t, parseWindow(window)))).toBe(true);
     expect(run.pageStarts[0]).toBeGreaterThanOrEqual(Date.parse('2026-10-24T22:00:00Z'));
     expect(run.pageStarts.some((t) => t >= Date.parse('2026-10-25T22:00:00Z'))).toBe(true);
+  });
+});
+
+describe('one input per step (orchestration #460)', () => {
+  const embedderWith = (
+    fetchImpl: typeof fetch,
+    maxInFlight = 512,
+    gate?: { waitOpen(): Promise<void> }
+  ) =>
+    new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight,
+      maxRetries: 0,
+      priority: 'low',
+      fetch: fetchImpl,
+      gate,
+      sleep: async () => undefined,
+    });
+  const inputs = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: String(i + 1), imageUrl: `u${i + 1}` }));
+
+  test('a workflow carries one single-input step per image, named by id, float32', async () => {
+    let sent: { steps: Array<{ name: string; input: Record<string, unknown> }> } | undefined;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response(workflowBody(stepIds(init)), { status: 200 });
+    }) as unknown as typeof fetch;
+    await embedderWith(fetchImpl).embed([
+      { id: '7', imageUrl: 'https://cdn/a.jpeg' },
+      { id: '8', videoUrl: 'https://cdn/b.mp4' },
+    ]);
+    expect(sent!.steps.map((st) => st.name)).toEqual(['img-7', 'img-8']);
+    expect(sent!.steps[0].input).toEqual({
+      model: 'wemm-2b',
+      dimensions: 256,
+      precision: 'float32',
+      imageUrl: 'https://cdn/a.jpeg',
+    });
+    expect(sent!.steps[1].input).toEqual({
+      model: 'wemm-2b',
+      dimensions: 256,
+      precision: 'float32',
+      videoUrl: 'https://cdn/b.mp4',
+    });
+    expect(sent!.steps.some((st) => 'inputs' in st.input)).toBe(false);
+  });
+
+  test('a failed step fails only its own image, without resubmitting the rest', async () => {
+    const fetchImpl = vi.fn(
+      async (_u: string | URL | Request, init?: RequestInit) =>
+        new Response(workflowBody(stepIds(init), 'r1', ['2']), { status: 200 })
+    ) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect([...result.vectors.keys()].sort()).toEqual([1, 3]);
+    expect(result.failed).toEqual([2]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('one step from another model revision rejects the workflow it came in', async () => {
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(workflowBody(stepIds(init)));
+      body.steps[1].output.modelRevision = 'r2';
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect(result.error).toBeInstanceOf(MixedStampError);
+    expect(result.vectors.size).toBe(0);
+  });
+
+  test('a video step reports its profile as the video profile', async () => {
+    const stamps: ModelStamp[] = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) =>
+      new Response(workflowBody(stepIds(init)), { status: 200 })) as unknown as typeof fetch;
+    await embedderWith(fetchImpl).embed([{ id: '1', videoUrl: 'v' }], {
+      acceptStamp: async (st) => void stamps.push(st),
+    });
+    expect(stamps).toEqual([
+      { model: 'wemm-2b', modelRevision: 'r1', dimensions: 256, videoProfile: 'p1' },
+    ]);
+  });
+
+  test('the in-flight cap counts jobs (steps), not workflows', async () => {
+    let jobs = 0;
+    let peak = 0;
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const ids = stepIds(init);
+      jobs += ids.length;
+      peak = Math.max(peak, jobs);
+      await new Promise((r) => setTimeout(r, 5));
+      jobs -= ids.length;
+      return new Response(workflowBody(ids), { status: 200 });
+    }) as unknown as typeof fetch;
+    const e = embedderWith(fetchImpl, 300);
+    await e.embed(inputs(128)); // records the stamp so the next call runs in parallel
+    peak = 0;
+    const result = await e.embed(inputs(6 * 128));
+    expect(result.vectors.size).toBe(6 * 128);
+    expect(peak).toBeLessThanOrEqual(300);
+    expect(peak).toBe(256);
+  });
+
+  test('a workflow larger than the budget still runs, alone', async () => {
+    const budget = new JobBudget(10);
+    const n = await budget.acquire(128);
+    expect(n).toBe(10);
+    let second = false;
+    const waiting = budget.acquire(1).then(() => (second = true));
+    await Promise.resolve();
+    expect(second).toBe(false);
+    budget.release(n);
+    await waiting;
+    expect(second).toBe(true);
+  });
+
+  test('submits wait while the queue gate is closed', async () => {
+    let open = false;
+    const order: string[] = [];
+    const gate = {
+      waitOpen: async () => {
+        while (!open) await new Promise((r) => setTimeout(r, 1));
+        order.push('opened');
+      },
+    };
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      order.push('submit');
+      return new Response(workflowBody(stepIds(init)), { status: 200 });
+    }) as unknown as typeof fetch;
+    const done = embedderWith(fetchImpl, 512, gate).embed(inputs(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(order).toEqual([]);
+    open = true;
+    await done;
+    expect(order).toEqual(['opened', 'submit']);
+  });
+});
+
+describe('queue gate', () => {
+  function gateReading(values: Array<number | 'error' | 'empty'>) {
+    let clock = 0;
+    let i = 0;
+    const headers: Array<Record<string, string>> = [];
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      headers.push((init?.headers ?? {}) as Record<string, string>);
+      const v = values[Math.min(i++, values.length - 1)];
+      if (v === 'error') return new Response('down', { status: 503 });
+      const result = v === 'empty' ? [] : [{ metric: {}, value: [0, String(v)] }];
+      return new Response(
+        JSON.stringify({ status: 'success', data: { resultType: 'vector', result } }),
+        { status: 200 }
+      );
+    }) as unknown as typeof fetch;
+    const gate = new QueueGate({
+      url: 'http://prom',
+      query: 'q',
+      pauseAbove: 2000,
+      resumeBelow: 1500,
+      bearer: 'tok',
+      refreshMs: 1000,
+      fetch: fetchImpl,
+      now: () => clock,
+    });
+    const next = async () => {
+      clock += 1000;
+      return gate.isOpen();
+    };
+    return { next, headers };
+  }
+
+  test('pauses above 2000, stays paused at 1800, resumes at 1400', async () => {
+    const { next, headers } = gateReading([500, 2100, 1800, 1400, 1800]);
+    expect(await next()).toBe(true);
+    expect(await next()).toBe(false);
+    expect(await next()).toBe(false);
+    expect(await next()).toBe(true);
+    // Open again, 1800 is below the pause line: stays open.
+    expect(await next()).toBe(true);
+    expect(headers[0]).toEqual({ Authorization: 'Bearer tok' });
+  });
+
+  test('fails closed: a query error or an empty result holds submits', async () => {
+    const failing = gateReading([500, 'error', 100, 'empty']);
+    expect(await failing.next()).toBe(true);
+    expect(await failing.next()).toBe(false);
+    expect(await failing.next()).toBe(true);
+    expect(await failing.next()).toBe(false);
+  });
+
+  test('one reading is reused within the refresh window', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({ status: 'success', data: { result: [{ value: [0, '10'] }] } }),
+        { status: 200 }
+      );
+    }) as unknown as typeof fetch;
+    const gate = new QueueGate({
+      url: 'http://prom',
+      query: 'q',
+      pauseAbove: 2000,
+      resumeBelow: 1500,
+      fetch: fetchImpl,
+      now: () => 0,
+    });
+    await gate.isOpen();
+    await gate.isOpen();
+    expect(calls).toBe(1);
+  });
+});
+
+describe('model stamp by media type', () => {
+  test('a video-only stamp does not conflict with a recorded image profile; a different image profile does', async () => {
+    let metadata: Record<string, unknown> = {
+      model: 'wemm-2b',
+      dimensions: 256,
+      modelRevision: 'r1',
+      profile: 'p1',
+    };
+    const client = {
+      getCollection: async () => ({ config: { metadata: { ...metadata } } }),
+      updateCollection: async (
+        _n: string,
+        { metadata: m }: { metadata: Record<string, unknown> }
+      ) => void (metadata = { ...metadata, ...m }),
+    };
+    const store = new VectorStore(client as unknown as QdrantClient, 'c');
+    await store.assertModel({
+      model: 'wemm-2b',
+      modelRevision: 'r1',
+      dimensions: 256,
+      videoProfile: 'v1',
+    });
+    expect(metadata).toMatchObject({ profile: 'p1', videoProfile: 'v1' });
+    await expect(
+      store.assertModel({ model: 'wemm-2b', modelRevision: 'r1', dimensions: 256, profile: 'p2' })
+    ).rejects.toThrow(ModelMismatchError);
+    await expect(
+      store.assertModel({
+        model: 'wemm-2b',
+        modelRevision: 'r1',
+        dimensions: 256,
+        videoProfile: 'v2',
+      })
+    ).rejects.toThrow(ModelMismatchError);
   });
 });

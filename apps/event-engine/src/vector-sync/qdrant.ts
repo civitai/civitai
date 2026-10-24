@@ -23,7 +23,8 @@ const PAYLOAD_INDEXES: Array<[keyof ImagePayload, Schemas['PayloadSchemaParams']
 export type ModelStamp = {
   model: string;
   modelRevision: string;
-  profile: string;
+  /** Image preprocessing profile; an embed of video only reports `videoProfile`. */
+  profile?: string;
   videoProfile?: string;
   dimensions: number;
 };
@@ -31,7 +32,11 @@ export type ModelStamp = {
 export class ModelMismatchError extends Error {
   constructor(stored: Partial<ModelStamp>, got: ModelStamp) {
     super(
-      `Embedder returned ${got.model}@${got.modelRevision} (${got.profile}) but the collection holds ${stored.model}@${stored.modelRevision} (${stored.profile}). Create a new collection and swap the alias.`
+      `Embedder returned ${got.model}@${got.modelRevision} (${
+        got.profile ?? got.videoProfile
+      }) but the collection holds ${stored.model}@${stored.modelRevision} (${stored.profile}/${
+        stored.videoProfile
+      }). Create a new collection and swap the alias.`
     );
     this.name = 'ModelMismatchError';
   }
@@ -42,7 +47,7 @@ function stampConflicts(stored: Partial<ModelStamp>, got: ModelStamp) {
     (stored.model && stored.model !== got.model) ||
     (stored.dimensions && stored.dimensions !== got.dimensions) ||
     (stored.modelRevision && stored.modelRevision !== got.modelRevision) ||
-    (stored.profile && stored.profile !== got.profile) ||
+    (stored.profile && got.profile && stored.profile !== got.profile) ||
     (stored.videoProfile && got.videoProfile && stored.videoProfile !== got.videoProfile)
   );
 }
@@ -120,7 +125,7 @@ export class VectorStore {
 
     const missing: Partial<ModelStamp> = {};
     if (!stored.modelRevision) missing.modelRevision = got.modelRevision;
-    if (!stored.profile) missing.profile = got.profile;
+    if (!stored.profile && got.profile) missing.profile = got.profile;
     if (!stored.videoProfile && got.videoProfile) missing.videoProfile = got.videoProfile;
     if (!Object.keys(missing).length) return;
     await this.client.updateCollection(this.collection, { metadata: missing });
