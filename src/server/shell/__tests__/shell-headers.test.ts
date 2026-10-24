@@ -53,6 +53,11 @@ const gssp = createServerSideProps({
   shell: 'images',
   resolver: async () => ({ props: {} }),
 });
+/** The same page without the `shell` option: what a route listed in SHELL_ROUTES by mistake has. */
+const fullOnlyGssp = createServerSideProps({
+  useSession: true,
+  resolver: async () => ({ props: {} }),
+});
 
 function fakeResponse(initial: Record<string, unknown> = {}) {
   const headers = new Map<string, unknown>(
@@ -75,10 +80,12 @@ async function request({
   url = '/images/123',
   headers = {},
   preset = {},
+  page = gssp,
 }: {
   url?: string;
   headers?: Record<string, string>;
   preset?: Record<string, unknown>;
+  page?: typeof gssp;
 }) {
   const req = {
     method: 'GET',
@@ -95,7 +102,7 @@ async function request({
     router: { asPath: url, query },
     ctx: { req, res, pathname: ROUTE, query, asPath: url, AppTree: noop },
   } as unknown as AppContext);
-  const result = await gssp({
+  const result = await page({
     req,
     res,
     query,
@@ -111,7 +118,27 @@ async function request({
     asPath: url,
     defaultGetInitialProps: async () => ({ html: '', head: [], styles: [] }),
   } as unknown as Parameters<typeof AppDocument.getInitialProps>[0]);
-  return { headers: res.getHeaders(), result };
+  return { headers: res.getHeaders(), result, req, res };
+}
+
+/** What Next does after a page throws: reset Cache-Control, then `_app` and `_document` as `/_error`. */
+async function errorRender(req: object, res: ReturnType<typeof fakeResponse>) {
+  res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
+  const noop = () => null;
+  await appGetInitialProps({
+    Component: noop,
+    AppTree: noop,
+    router: { asPath: '/images/123', query: {} },
+    ctx: { req, res, pathname: '/_error', query: {}, asPath: '/images/123', AppTree: noop },
+  } as unknown as AppContext);
+  await AppDocument.getInitialProps({
+    req,
+    res,
+    pathname: '/_error',
+    query: {},
+    asPath: '/images/123',
+    defaultGetInitialProps: async () => ({ html: '', head: [], styles: [] }),
+  } as unknown as Parameters<typeof AppDocument.getInitialProps>[0]);
 }
 
 const EDGE_HEADERS = ['cloudflare-cdn-cache-control', 'cache-tag', 'x-civ-render'];
@@ -201,5 +228,25 @@ describe('a full render keeps the route cookie in step with the viewer’s flag'
     expect(setCookies(headers)).toEqual([
       'civ-shell-images=; Path=/; Max-Age=0; Secure; SameSite=Lax',
     ]);
+  });
+});
+
+describe('the edge headers go only with a shell the page itself rendered', () => {
+  it('a route _app marks whose page has no shell option: a full render, no edge headers, cookies kept', async () => {
+    const { headers, result } = await request({
+      page: fullOnlyGssp,
+      preset: { 'Set-Cookie': ['ref=1; Path=/'] },
+    });
+    expect(result).toMatchObject({ props: { session: SESSION } });
+    expectFullRender(headers);
+    expect(headers['set-cookie']).toEqual(['ref=1; Path=/']);
+  });
+
+  it('a throw after the document added them: the /_error render carries none of them', async () => {
+    const { req, res, headers } = await request({});
+    // Control: this response did carry them.
+    expect(headers['x-civ-render']).toBe('shell');
+    await errorRender(req, res);
+    expectFullRender(res.getHeaders());
   });
 });
