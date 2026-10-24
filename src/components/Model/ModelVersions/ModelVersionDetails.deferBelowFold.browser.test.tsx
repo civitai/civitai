@@ -277,6 +277,16 @@ describe('ModelVersionDetails — modelPageDeferBelowFold hydration', () => {
     // Control: this is the design-system render, not the Mantine one.
     expect(html).toContain('data-civitai-ui="button"');
     expect(html).toContain('data-civitai-ui="tooltip"');
+    // The AIR row: plain codes, no Mantine `Code`.
+    const air = document.createElement('div');
+    air.innerHTML = html;
+    expect([...air.querySelectorAll('code')].map((c) => c.textContent).slice(0, 4)).toEqual([
+      'civitai:',
+      `${F.MODEL_ID}`,
+      '@',
+      `${F.VERSION_IDS[0]}`,
+    ]);
+    expect(html).not.toContain('mantine-Code-root');
 
     const container = await hydrateInto(html, details({ ds: true }));
 

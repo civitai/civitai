@@ -67,7 +67,7 @@ export const DS_VARIANT = {
 export const DS_SIZE = {
   xs: 'sm',
   sm: 'md',
-  'compact-sm': 'md',
+  'compact-sm': 'sm',
   'icon-xs': 'sm',
   'icon-md': 'sm',
   'icon-lg': 'md',

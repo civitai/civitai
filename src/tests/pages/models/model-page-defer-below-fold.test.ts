@@ -434,7 +434,7 @@ describe('model page server render — modelPageDesignSystemMarkup ON', () => {
     expect(root.querySelectorAll('[role="tooltip"]')).toHaveLength(0);
   });
 
-  it('renders the Details rows, trigger words, hash and AIR without Mantine', () => {
+  it('renders the Details rows, trigger words and hash without Mantine', () => {
     const root = parse(renderPage(DS_ON).html);
     const badges = new Map(
       [...root.querySelectorAll('[data-civitai-ui="badge"]')].map(
@@ -451,21 +451,14 @@ describe('model page server render — modelPageDesignSystemMarkup ON', () => {
     expect(badges.get('warm rim light')).toEqual(sm('light'));
     expect(badges.get('AutoV2')).toEqual({ ui: 'badge', size: 'md', variant: 'outline' });
     expect(badges.get('A1B2C3D4E0')).toEqual({ ui: 'badge', size: 'md', variant: 'outline' });
-
-    const codes = [...root.querySelectorAll('code')];
-    expect(codes.map(text).slice(0, 4)).toEqual([
-      'civitai:',
-      `${F.MODEL_ID}`,
-      '@',
-      `${F.VERSION_IDS[0]}`,
-    ]);
-    for (const code of codes) expect(code.className).not.toContain('mantine-');
+    // The AIR row's codes are pinned in `ModelVersionDetails.deferBelowFold.browser.test.tsx`: this
+    // node render of the fixture emits no AIR with either flag value (no `<code>` at all).
   });
 
-  it('emits no Mantine Grid, Title, Code or Divider root and no per-instance grid <style>', () => {
+  it('emits no Mantine Grid, Title or Divider root and no per-instance grid <style>', () => {
     const on = renderPage(DS_ON).html;
     const off = renderPage(DS_OFF).html;
-    for (const name of ['Grid', 'Title', 'Code', 'Divider']) {
+    for (const name of ['Grid', 'Title', 'Divider']) {
       // Control: each is present with the flag off, so a zero below is not a class that never matched.
       expect(mantineRoots(off)[name], name).toBeGreaterThan(0);
       expect(mantineRoots(on)[name] ?? 0, name).toBe(0);
