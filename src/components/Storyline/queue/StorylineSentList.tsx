@@ -1,5 +1,6 @@
 import { Alert, Anchor, Badge, Button, Card, Group, Loader, Stack, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { isStorylineNotAvailable } from '~/components/Storyline/storyline.data';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import type { StorylineContinuationStatus } from '~/shared/utils/storyline-placement';
 import { formatDate } from '~/utils/date-helpers';
@@ -17,7 +18,13 @@ const statusBadge: Record<StorylineContinuationStatus, { label: string; color: s
 export function StorylineSentList() {
   const query = trpc.placement.getMyStorylineContinuations.useInfiniteQuery(
     {},
-    { retry: false, getNextPageParam: (page) => page.nextCursor ?? undefined }
+    {
+      retry: false,
+      // Queries never go stale by default: without this, a continuation sent since the list was
+      // last read, or the owner's answer to one, would be missing.
+      refetchOnMount: 'always',
+      getNextPageParam: (page) => page.nextCursor ?? undefined,
+    }
   );
   const rows = query.data?.pages.flatMap((page) => page.items) ?? [];
 
@@ -26,6 +33,13 @@ export function StorylineSentList() {
       <Group justify="center" py="xl">
         <Loader />
       </Group>
+    );
+
+  if (isStorylineNotAvailable(query.error))
+    return (
+      <Alert color="gray">
+        <Text size="sm">Storyline continuations are not available yet.</Text>
+      </Alert>
     );
 
   if (query.isError)
@@ -48,7 +62,7 @@ export function StorylineSentList() {
         const badge =
           row.status === 'pending' && row.awaitingReadiness
             ? { label: 'Waiting for your post to finish rating', color: 'yellow' }
-            : statusBadge[row.status];
+            : statusBadge[row.status] ?? { label: row.status, color: 'gray' };
         return (
           <Card key={row.id} withBorder data-testid="storyline-sent-row">
             <Stack gap={6}>

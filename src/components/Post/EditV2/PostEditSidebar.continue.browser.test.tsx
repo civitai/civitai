@@ -100,7 +100,7 @@ vi.mock('~/components/ShareButton/ShareButton', () => ({
 
 // eslint-disable-next-line import/first
 import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
-import { STORYLINE_SENT_URL } from '~/components/Storyline/storyline-routes';
+import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 
 const OWNER = 9;
 const post = {
@@ -284,7 +284,7 @@ describe('after publishing a continuation', () => {
       .toHaveTextContent("Chapter 5 is waiting for the storyline owner's approval.");
     await expect
       .element(page.getByRole('link', { name: 'See your sent continuations' }))
-      .toHaveAttribute('href', STORYLINE_SENT_URL);
+      .toHaveAttribute('href', STORYLINE_QUEUE_SENT_URL);
   });
 
   test('chapter written: the owner’s chapter is live', async () => {

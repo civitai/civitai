@@ -10,7 +10,7 @@ import clsx from 'clsx';
 import { useId } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
-import { STORYLINE_SENT_URL } from '~/components/Storyline/storyline-routes';
+import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
   STORYLINE_CONTINUE_POST_LIMIT,
@@ -389,7 +389,7 @@ function StorylineSubmitted({
         If they do not answer in {STORYLINE_CONTINUATION_EXPIRY_DAYS} days it expires
         {price > 0 ? ` and your ${storylinePriceLabel(price)} is refunded` : ''}.
       </Text>
-      <Anchor component={Link} href={STORYLINE_SENT_URL} size="sm" onClick={onLeave}>
+      <Anchor component={Link} href={STORYLINE_QUEUE_SENT_URL} size="sm" onClick={onLeave}>
         See your sent continuations
       </Anchor>
     </Alert>

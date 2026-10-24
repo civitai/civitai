@@ -1,32 +1,65 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
 
-const mocks = vi.hoisted(() => ({ rows: [] as unknown[] }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy({
-    'placement.getMyStorylineContinuations': {
-      useInfiniteQuery: () => ({
-        data: { pages: [{ items: mocks.rows, nextCursor: null }] },
-        isLoading: false,
-        isError: false,
-        hasNextPage: false,
-      }),
-    },
-  }),
-}));
+const mocks = vi.hoisted(() => ({ rows: [] as unknown[], refusal: null as string | null }));
+// A real query over the rows, never stale unless asked, as the app's tRPC client defaults it.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { useInfiniteQuery } = await import('@tanstack/react-query');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy({
+      'placement.getMyStorylineContinuations': {
+        useInfiniteQuery: (_input: unknown, options: object) =>
+          useInfiniteQuery({
+            queryKey: ['mine'],
+            initialPageParam: null,
+            staleTime: Infinity,
+            // The harness client drops unused queries at once; the app keeps them for minutes.
+            gcTime: Infinity,
+            ...options,
+            queryFn: async () => {
+              if (mocks.refusal) throw new Error(mocks.refusal);
+              return { items: [...mocks.rows], nextCursor: null };
+            },
+          }),
+      },
+    }),
+  };
+});
 
+import Router from 'next/router';
+import { useState } from 'react';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { StorylineContinuationQueue } from '~/components/Storyline/queue/StorylineContinuationQueue';
 import { StorylineContinueForm } from '~/components/Storyline/continue/StorylineContinueForm';
 import { StorylineSentList } from '~/components/Storyline/queue/StorylineSentList';
-import { STORYLINE_SENT_URL } from '~/components/Storyline/storyline-routes';
+import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 
 /**
  * A tester continued a storyline, saw it go nowhere, and thought it had failed: it was waiting for
  * the owner. Submitting has to say so, and say where to find it again.
  */
+const sentRow = (id: number, status: string, extra: object = {}) => ({
+  id,
+  status,
+  amount: 0,
+  awaitingReadiness: false,
+  createdAt: new Date('2026-10-24'),
+  expiresAt: null,
+  postId: 900 + id,
+  parentPostId: 557,
+  ...extra,
+});
+
 describe('a continuation waiting for the owner', () => {
+  afterEach(() => {
+    mocks.rows = [];
+    mocks.refusal = null;
+    Object.assign(Router, { query: {} });
+  });
+
   test('the continue dialog says it waits for approval and links to the sent list', async () => {
     const onLeave = vi.fn();
     renderWithProviders(
@@ -49,7 +82,7 @@ describe('a continuation waiting for the owner', () => {
     await expect.element(alert).toHaveTextContent('Submitted, waiting for approval');
     await expect.element(alert).toHaveTextContent("waiting for the storyline owner's approval");
     const link = page.getByRole('link', { name: 'See your sent continuations' });
-    await expect.element(link).toHaveAttribute('href', STORYLINE_SENT_URL);
+    await expect.element(link).toHaveAttribute('href', STORYLINE_QUEUE_SENT_URL);
     document.addEventListener('click', (e) => e.preventDefault(), { once: true, capture: true });
     await link.click();
     expect(onLeave).toHaveBeenCalledTimes(1);
@@ -88,5 +121,45 @@ describe('a continuation waiting for the owner', () => {
     await expect
       .element(rows.nth(0).getByRole('link', { name: 'this chapter' }))
       .toHaveAttribute('href', '/posts/557');
+  });
+
+  test('the sent link lands on the Sent tab', async () => {
+    mocks.rows = [sentRow(1, 'pending')];
+    Object.assign(Router, {
+      query: Object.fromEntries(new URL(STORYLINE_QUEUE_SENT_URL, 'https://x').searchParams),
+    });
+    renderWithProviders(<StorylineContinuationQueue />);
+    await expect
+      .element(page.getByTestId('storyline-sent-row'))
+      .toHaveTextContent("Waiting for the owner's approval");
+  });
+
+  test('coming back to the list shows a continuation sent since it was last read', async () => {
+    mocks.rows = [sentRow(1, 'approved')];
+    function Revisit() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button onClick={() => setOpen((o) => !o)}>toggle</button>
+          {open && <StorylineSentList />}
+        </>
+      );
+    }
+    renderWithProviders(<Revisit />);
+    await expect.element(page.getByTestId('storyline-sent-row')).toHaveTextContent('Accepted');
+    mocks.rows = [sentRow(2, 'pending'), sentRow(1, 'approved')];
+    await page.getByRole('button', { name: 'toggle' }).click();
+    await page.getByRole('button', { name: 'toggle' }).click();
+    await expect
+      .element(page.getByTestId('storyline-sent-row').nth(0))
+      .toHaveTextContent("Waiting for the owner's approval");
+  });
+
+  test('with storylines off on the server, Sent says so instead of asking for a refresh', async () => {
+    mocks.refusal = STORYLINE_REFUSALS.notAvailable;
+    renderWithProviders(<StorylineSentList />);
+    await expect
+      .element(page.getByText('Storyline continuations are not available yet.'))
+      .toBeInTheDocument();
   });
 });
