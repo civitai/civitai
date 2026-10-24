@@ -123,4 +123,15 @@ describe('🔴 modality: the base-model record decides which ecosystems an image
   it('the v1 gate spec hash covers the media type and the modality predicate', () => {
     expect(v1GateFingerprint()).toMatchObject({ mediaType: 'image', modalityEligible: [0, 2, 4] });
   });
+
+  it("the v1 gate spec hash covers the add-on list's filter, for a caller's and a tag-chosen ecosystem", () => {
+    const filters = v1GateFingerprint().addonListFilters;
+    expect(filters).toHaveLength(2);
+    for (const filter of filters) {
+      expect(typeof filter).not.toBe('string');
+      const byType = new Map(typeof filter === 'string' ? [] : filter);
+      expect([...(byType.get('LORA') ?? [])].sort()).toEqual(['Krea 2', 'Krea 2 Turbo']);
+      expect(byType.get('TextualInversion')).toEqual(['Krea 2 Turbo']);
+    }
+  });
 });
