@@ -104,13 +104,10 @@ const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
  * after BASE_TESTS was last re-pinned for the same reason. Do not move this back to tests.
  *
  * BASE_FILES is the whole unit suite's file count: 927 + 927 + 926 + 926 = 3,706, the four
- * shards' "across N files" figures on `main`, 2026-10-24 (run 40113886304). A stale-low
- * figure trips the ceiling only once the suite grows 80% past it, and it did: the previous
- * figure, 2,057 (2026-09-25, run 36084791308), gave a ceiling of 926 files. Main's last
- * green run (40108146824) had two shards exactly at 926; four test files later shards 1 and
- * 2 ran 927 and failed with every test passing, red on `main` itself. That run is the one
- * measured here: the counts are printed before the ceiling is applied, so a tripped ceiling
- * does not corrupt the number it reports.
+ * shards' "across N files" figures on `main` at 24ee0e73a8, 2026-10-24 (run 40113886304).
+ * The previous pin (2,057, 2026-09-25) went stale in a month: the suite grew 80% and the
+ * ceiling turned shards 1 and 2 red on `main` with every test passing. A stale-low figure
+ * trips the ceiling only once the suite grows 80% past it.
  */
 const BASE_FILES = 3706;
 const BASE_FILES_MEASURED = '2026-10-24';
