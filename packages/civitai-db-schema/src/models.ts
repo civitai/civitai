@@ -4772,6 +4772,19 @@ export interface ScanLabelFlag {
   createdAt: Date;
 }
 
+export interface ImageAudioScan {
+  imageId: number;
+  workflowId: string;
+  status: string;
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: JsonValue | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
