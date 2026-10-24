@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import {
   canonicalOwnerWhereBranches,
   resolveListingAccess,
@@ -25,15 +27,29 @@ import {
  *     `offsite-moderation.service.ts`. A row carries `version`, `manifest`, `bundleKey`,
  *     `bundleSha256` and the `deployState` lifecycle. This is the authority for "what code
  *     did I ship, and did it build".
- *   - **`app_listing_publish_requests` — the STORE-LISTING stream.** It has exactly THREE
- *     `create` sites in the whole tree: `offsite-listing.service.ts` `submitExternalApp`
- *     (`kind: 'offsite'`), `offsite-moderation.service.ts` reset-to-pending
- *     (`kind: 'offsite'`), and `offsite-listing.service.ts` `submitListingRevision`
- *     (`kind: shadow.kind` — the ONLY writer that can emit `onsite`). So every on-site row
- *     in this table is a shadow-revision request: a change to the STORE LISTING (name,
- *     tagline, media, category) on an already-approved app. `listMySubmissions` says so in
- *     as many words: *"an onsite listing is auto-created and has NO own publish request …
- *     all onsite requests are shadow revisions, per the invariant."*
+ *   - **`app_listing_publish_requests` — the STORE-LISTING stream.** A row records a change
+ *     to the STORE LISTING (name, tagline, media, category), never a code submission.
+ *
+ *     🔴 THE WRITER SET IS NOT ENUMERATED HERE, DELIBERATELY. It is pinned as
+ *     `LISTING_REQUEST_PRODUCERS` in
+ *     `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`,
+ *     which fails when the set GROWS **or** SHRINKS and records each producer's kind and
+ *     shadow-ness beside it. Read that; do not restate it.
+ *
+ *     🔴 AND DO NOT REASON "on-site row ⇒ shadow revision" — that is FALSE, and this
+ *     paragraph asserted it until 2026-09-12. Two producers emit `kind: 'onsite'`, not one:
+ *     `submitListingRevision` (always SHADOW) and `routeRepublishToReviewInTx` (owner
+ *     republish, **NON**-shadow, targeting the live listing). **Discriminate on
+ *     `revisionOfId`, never on `kind`.** The same correction was already written at
+ *     `REVIEWABLE_LISTING_KINDS` in `offsite-listing.service.ts` and at
+ *     `OffsiteReviewQueue.tsx`'s `kind === 'onsite'` branch — while TWO copies went on
+ *     asserting the opposite: this docstring and the one on this service's own test
+ *     suite. Both are corrected together, because fixing only the one a card names is
+ *     how the other becomes the next card.
+ *
+ *     ⚠ The prose that used to sit here named a COUNT and a closed set of three writers.
+ *     Both went stale the day a fourth landed (#4440) and nothing could notice, which is
+ *     exactly why the claim now lives only where a test asserts it.
  *
  * **So the authoritative table depends on the question.** For an on-site app's VERSION
  * history it is `app_block_publish_requests`; for its LISTING-revision history it is
@@ -64,6 +80,22 @@ export type ListingHistoryEntry = {
   /** `building | deploying | live | failed`, on `version` entries only. */
   deployState: string | null;
   deployUpdatedAt: Date | null;
+  /**
+   * The build/deploy failure detail, ONLY on an approved `version` entry whose deploy
+   * failed — see {@link authorFailureDetail}. `null` everywhere else.
+   *
+   * 🔴 TENANT-INFLUENCED BYTES (a sanitized build-log excerpt). This read authorizes
+   * owner ∪ accepted seat, so an app's collaborators see it too — deliberately: they
+   * work on the same code. The moderator lists (`listVersionHistory`,
+   * `listApprovedRequests`) do not select it.
+   */
+  deployDetail: string | null;
+  /**
+   * The failed step and failure class of the version's latest build attempt, under the same
+   * approved + failed rule as `deployDetail`; `null` elsewhere, and when the attempt history
+   * is unavailable. Structured values the server derived, not build output.
+   */
+  buildSignals: BuildAttemptSignals | null;
   /**
    * May THIS caller withdraw this request?
    *
@@ -172,6 +204,34 @@ export function canWithdrawRequest(
 }
 
 /**
+ * The `deploy_detail` an author may see for one CODE request, or `null`.
+ *
+ * 🔴 PROJECTED ONLY FOR `approved` + `failed`, because the column means different things
+ * on different rows and only that one is the author's failure detail:
+ *
+ *   - a PENDING row in the moderator review sandbox stores a JSON blob there (the review
+ *     preview's state, including its preview host) — moderator data, not the author's;
+ *   - a `building` row after a moderator re-trigger stores who re-fired it and when;
+ *   - a `failed` approved row stores the build/deploy failure, which is the thing the
+ *     History tab exists to explain.
+ *
+ * Reading the column for every row and filtering in the UI would ship the first two to
+ * every collaborator's browser for no consumer.
+ */
+export function authorFailureDetail(row: {
+  status: string;
+  deployState: string | null;
+  deployDetail: string | null;
+}): string | null {
+  return isAuthorFailure(row) ? row.deployDetail : null;
+}
+
+/** An approved version whose build or deploy failed: the one row the failure fields describe. */
+function isAuthorFailure(row: { status: string; deployState: string | null }): boolean {
+  return row.status === 'approved' && row.deployState === 'failed';
+}
+
+/**
  * Every publish event for ONE listing the caller may act on, newest first.
  *
  * 🔴 AUTHORIZED THROUGH {@link resolveListingAccess}, the SAME resolver `/apps/mine`'s row
@@ -234,11 +294,22 @@ export async function listListingHistory(opts: {
             rejectionReason: true,
             approvalNotes: true,
             deployState: true,
+            deployDetail: true,
             deployUpdatedAt: true,
           },
         })
       : Promise.resolve([]),
   ]);
+
+  // Best-effort and AFTER the main reads: an empty map (no attempts yet, or the attempts
+  // table not applied) leaves every entry on the text fallback.
+  const failedVersions = blockRequests
+    .filter((r: { status: string; deployState: string | null }) => isAuthorFailure(r))
+    .map((r: { id: string; deployUpdatedAt: Date | null }) => ({
+      id: r.id,
+      deployUpdatedAt: r.deployUpdatedAt,
+    }));
+  const signalsById = await latestBuildAttemptSignals(failedVersions);
 
   const entries: ListingHistoryEntry[] = [
     ...listingRequests.map(
@@ -262,6 +333,8 @@ export async function listListingHistory(opts: {
         approvalNotes: r.approvalNotes,
         changelog: r.changelog,
         deployState: null,
+        deployDetail: null,
+        buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })
@@ -277,6 +350,7 @@ export async function listListingHistory(opts: {
         rejectionReason: string | null;
         approvalNotes: string | null;
         deployState: string | null;
+        deployDetail: string | null;
         deployUpdatedAt: Date | null;
       }) => ({
         id: r.id,
@@ -289,6 +363,8 @@ export async function listListingHistory(opts: {
         approvalNotes: r.approvalNotes,
         changelog: null,
         deployState: r.deployState,
+        deployDetail: authorFailureDetail(r),
+        buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })

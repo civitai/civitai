@@ -8,13 +8,22 @@ import type {
   PlacementSpaceSetting,
   PlacementSpaceSettings,
   PlacementSurface,
+  PlacementTargetType,
 } from '~/shared/utils/placement';
+import type { StickerMediaType } from '~/shared/utils/sticker-placement';
+import { stickerMediaTypeOf, stickerMediaTypes } from '~/shared/utils/sticker-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
+  HOST_DECLINE_FEE_SETTING,
+  hostDeclineFeePercentRefusal,
+  isDeclineFeeHostAdjustable,
+  resolveHostDeclineFeePercent,
   effectivePlacementPrice,
   FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
+  placementSurfaceLabel,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -33,19 +42,99 @@ async function resolveImageTarget(imageId: number) {
     // shown to the placer, so the alternative — a second query keyed on the id
     // this one just returned — would be a round trip for a string this row can
     // reach in the same hop.
-    select: { id: true, userId: true, postId: true, user: { select: { username: true } } },
+    select: {
+      id: true,
+      userId: true,
+      postId: true,
+      type: true,
+      user: { select: { username: true } },
+    },
   });
   if (!image) throw throwBadRequestError('placement: that image no longer exists');
 
   return {
     ownerId: image.userId,
     postId: image.postId,
+    mediaType: stickerMediaTypeOf(image.type),
     ownerUsername: image.user?.username ?? null,
   };
 }
 
+/** A model's space is configured on its owner's account only; there is no model or post level. */
+async function resolveModelTarget(modelId: number) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { userId: true, user: { select: { username: true } } },
+  });
+  if (!model) throw throwBadRequestError('placement: that model no longer exists');
+
+  return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
+}
+
+/**
+ * A post target is a storyline chapter: a continuation sits on the chapter post it continues.
+ *
+ * 🔴 **The owner is the storyline's creator, not the chapter post's author.**
+ * Chapters can be written by collaborators, and a continuation of one still
+ * goes to the storyline creator's queue and is priced by their space and
+ * their cap. Taking the post's author would hand a collaborator someone else's
+ * review queue and earnings.
+ *
+ * Its space cascades storyline -> the creator's account -> surface default,
+ * with no post or image level.
+ */
+async function resolveChapterTarget(postId: number) {
+  const chapter = await dbWrite.storylineChapter.findUnique({
+    where: { postId },
+    select: {
+      removedAt: true,
+      storyline: {
+        select: {
+          id: true,
+          userId: true,
+          status: true,
+          tosViolation: true,
+          user: { select: { username: true } },
+        },
+      },
+    },
+  });
+  // A taken-down storyline or a removed chapter is not a target at all:
+  // refusing here, where the space is resolved, keeps every read of it (the
+  // contributor's price, the submit) from showing it as open.
+  if (!chapter || !isAnswerableParentChapter(chapter))
+    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
+  return {
+    ownerId: chapter.storyline.userId,
+    postId: null,
+    storylineId: chapter.storyline.id,
+    complete: chapter.storyline.status === 'Complete',
+    ownerUsername: chapter.storyline.user?.username ?? null,
+  };
+}
+
+const resolveTarget = (
+  targetType: PlacementTargetType,
+  targetId: number
+): Promise<{
+  ownerId: number;
+  postId: number | null;
+  storylineId?: number;
+  complete?: boolean;
+  /** Only an image target has one; the account's media-type setting reads it. */
+  mediaType?: StickerMediaType;
+  ownerUsername: string | null;
+}> => {
+  if (targetType === 'model') return resolveModelTarget(targetId);
+  if (targetType === 'post') return resolveChapterTarget(targetId);
+  return resolveImageTarget(targetId);
+};
+
 export type ResolvedPlacementSpace = {
   ownerId: number;
+  /** The storyline a chapter target belongs to; absent for every other target. */
+  storylineId?: number;
   /**
    * Who the placer is paying, by name.
    *
@@ -77,6 +166,13 @@ export type ResolvedPlacementSpace = {
    * multiplying a percentage would be wrong on cheap placements.
    */
   declineFee: number;
+  /**
+   * The rate that sizes the decline-fee hold when a placement is bought here.
+   * The hold is the snapshot: a decline pays what was held, never this.
+   */
+  declineFeeRate: number;
+  /** The host's own setting in whole percent; `null` where the platform fixes the fee. */
+  hostDeclineFeePercent: number | null;
   /**
    * The count the cascade resolved, before the cap — the same relationship
    * `setPrice` has to `price`, so a caller can say "you have set 9, we are
@@ -127,7 +223,7 @@ export const reservedFreeSlots = (
     surface,
     targetType,
     targetId,
-  }: { surface: PlacementSurface; targetType: PlacementSpaceEntity; targetId: number }
+  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
 ) =>
   client.placement.count({
     where: {
@@ -152,19 +248,23 @@ export async function resolvePlacementSpaceFor({
   targetId,
 }: {
   surface: PlacementSurface;
-  targetType: PlacementSpaceEntity;
+  targetType: PlacementTargetType;
   targetId: number;
 }): Promise<ResolvedPlacementSpace> {
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, ownerUsername } = await resolveImageTarget(targetId);
+  const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await resolveTarget(
+    targetType,
+    targetId
+  );
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface,
       OR: [
-        { entityType: 'image', entityId: targetId },
+        ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
+        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
         ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
         { entityType: 'user', entityId: ownerId },
       ],
@@ -184,15 +284,32 @@ export async function resolvePlacementSpaceFor({
       : undefined;
   };
 
+  // An account that has switched stickers off for this kind of media is closed at
+  // the account level only, so it is the lowest rung of the cascade: a post or an
+  // image the owner switched on by hand still accepts them. Sticker-only — the
+  // setting lives in the sticker row, and no other surface reads it.
+  const account = at('user');
+  const mediaClosed =
+    surface === 'sticker' &&
+    mediaType !== undefined &&
+    !stickerMediaTypes(account?.settings).includes(mediaType);
+
   const resolved = resolvePlacementSpace(surface, {
+    storyline: at('storyline'),
     image: at('image'),
     post: at('post'),
-    user: at('user'),
+    user: mediaClosed && account ? { ...account, mode: 'off' } : account,
   });
 
-  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
+  // One read: the price range needs the same row.
   const config = await getPlacementConfig();
+  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface, config);
   const shares = config.approvalShares(surface);
+  const hostDeclineFeePercent = isDeclineFeeHostAdjustable(surface)
+    ? resolveHostDeclineFeePercent(surface, resolved.settings)
+    : null;
+  const declineFeeRate =
+    hostDeclineFeePercent == null ? config.declineFeeRate(surface) : hostDeclineFeePercent / 100;
 
   // `resolvePlacementSpace` is the one place the surface default is applied, so
   // this reads it rather than defaulting again — the same shape as `setPrice`
@@ -213,8 +330,12 @@ export async function resolvePlacementSpaceFor({
 
   return {
     ownerId,
+    ...(storylineId ? { storylineId } : {}),
     ownerUsername,
-    mode: resolved.mode,
+    // A completed storyline takes no continuations, whatever its space says.
+    // Read from the storyline itself rather than trusting Complete to have
+    // written the space too, so the two cannot disagree.
+    mode: complete ? 'off' : resolved.mode,
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
@@ -229,10 +350,9 @@ export async function resolvePlacementSpaceFor({
      * placements the floor exists for. The placer is told an amount because an
      * amount is what leaves their wallet.
      */
-    declineFee: declineFeeAmount(
-      effectivePlacementPrice(resolved.price, cap) ?? 0,
-      config.declineFeeRate(surface)
-    ),
+    declineFee: declineFeeAmount(effectivePlacementPrice(resolved.price, cap) ?? 0, declineFeeRate),
+    declineFeeRate,
+    hostDeclineFeePercent,
     setFreeSlots,
     freeSlots,
     freeSlotCap,
@@ -262,6 +382,19 @@ async function assertOwnsSpaceEntity({
     return;
   }
 
+  // Its own branch, never the post lookup below: a storyline id and a post id
+  // are different tables, and the same number would name someone else's post.
+  if (entityType === 'storyline') {
+    const storyline = await dbWrite.storyline.findUnique({
+      where: { id: entityId },
+      select: { userId: true },
+    });
+    if (!storyline) throw throwBadRequestError('placement: that storyline no longer exists');
+    if (storyline.userId !== userId)
+      throw throwAuthorizationError('placement: that is not your storyline');
+    return;
+  }
+
   const owner =
     entityType === 'image'
       ? (await dbWrite.image.findUnique({ where: { id: entityId }, select: { userId: true } }))
@@ -280,6 +413,7 @@ export async function setPlacementSpace({
   mode,
   price,
   freeSlots,
+  declineFeePercent,
   settings,
   userId,
 }: {
@@ -288,6 +422,12 @@ export async function setPlacementSpace({
   entityId: number;
   mode: PlacementSpaceMode;
   price?: number | null;
+  /**
+   * What the host keeps on a decline, in whole percent, on a surface that lets
+   * them choose. `undefined` keeps, `null` returns to the surface default.
+   * Refused outright on a surface whose fee is fixed.
+   */
+  declineFeePercent?: number | null;
   /**
    * `undefined` leaves this level's count alone, `null` clears it so the level
    * inherits again, and a number sets it — the same three-way distinction
@@ -302,7 +442,20 @@ export async function setPlacementSpace({
   settings?: PlacementSpaceSettings;
   userId: number;
 }) {
+  // A storyline is configured on the storyline or the creator's account, and a
+  // storyline row means nothing on any other surface: refused both ways rather
+  // than written somewhere no resolver reads it.
+  if ((entityType === 'storyline') !== (surface === 'storyline') && entityType !== 'user')
+    throw throwBadRequestError(
+      `placement: ${placementSurfaceLabel(surface)} are not configured on a ${entityType}`
+    );
+
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
+
+  if (declineFeePercent !== undefined) {
+    const refusal = hostDeclineFeePercentRefusal(surface, declineFeePercent);
+    if (refusal) throw throwBadRequestError(`placement: ${refusal}`);
+  }
 
   // An open space with no price is representable in the schema and meaningless
   // in the product: the placement mutation cannot decide what to charge, so it
@@ -312,7 +465,7 @@ export async function setPlacementSpace({
   const [existing, inherited] = await Promise.all([
     dbWrite.placementSpace.findUnique({
       where: { surface_entityType_entityId: { surface, entityType, entityId } },
-      select: { price: true },
+      select: { price: true, settings: true },
     }),
     inheritedPrice({ surface, entityType, entityId, userId }),
   ]);
@@ -348,6 +501,21 @@ export async function setPlacementSpace({
   if (price != null && price < floor && price !== existing?.price)
     throw throwBadRequestError(`placement: the lowest you can charge is ${floor} Buzz`);
 
+  // The decline fee rides in `settings` but is not the settings caller's to
+  // drop: a wholesale settings replace carries the stored value over unless this
+  // call set it. A fixed surface never stores one, whatever the row says.
+  const storedSettings = (existing?.settings ?? {}) as PlacementSpaceSettings;
+  const nextSettings = (() => {
+    if (settings === undefined && declineFeePercent === undefined) return undefined;
+    const { [HOST_DECLINE_FEE_SETTING]: storedFee, ...base } = settings ?? storedSettings;
+    if (!isDeclineFeeHostAdjustable(surface)) return base;
+    const fee =
+      declineFeePercent === undefined
+        ? storedSettings[HOST_DECLINE_FEE_SETTING]
+        : declineFeePercent;
+    return fee == null ? base : { ...base, [HOST_DECLINE_FEE_SETTING]: fee };
+  })();
+
   await dbWrite.placementSpace.upsert({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
     create: {
@@ -357,7 +525,7 @@ export async function setPlacementSpace({
       mode,
       price: price ?? null,
       freeSlots: freeSlots ?? null,
-      settings: (settings ?? {}) as Prisma.InputJsonValue,
+      settings: (nextSettings ?? {}) as Prisma.InputJsonValue,
     },
     update: {
       mode,
@@ -365,7 +533,7 @@ export async function setPlacementSpace({
       ...(freeSlots === undefined ? {} : { freeSlots }),
       // Replaced wholesale, not merged: the caller sends the settings it owns,
       // and a merge here would make a removed key impossible to express.
-      ...(settings === undefined ? {} : { settings: settings as Prisma.InputJsonValue }),
+      ...(nextSettings === undefined ? {} : { settings: nextSettings as Prisma.InputJsonValue }),
     },
   });
 }
@@ -389,6 +557,16 @@ async function inheritedPrice({
   userId: number;
 }) {
   if (entityType === 'user') return null;
+
+  // A storyline inherits from its creator's account only. Read as a post here,
+  // its id would pull some unrelated post's price into the guard.
+  if (entityType === 'storyline') {
+    const row = await dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType: 'user', entityId: userId } },
+      select: { price: true },
+    });
+    return row?.price ?? null;
+  }
 
   const postId =
     entityType === 'image'

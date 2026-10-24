@@ -84,15 +84,23 @@ export type UserStats = {
 };
 
 export type ProfileMedia = {
+  /** The Image row, where the caller needs to tell two profile images apart. */
+  id?: number;
   /** Cloudflare key (Image.url), not the numeric id — what EdgeMedia takes as `src`. */
   url: string;
   type: string | null;
   nsfwLevel: number | null;
+  /** The image scan's minor tags, for a moderator checking an avatar or cover. */
+  minor?: boolean;
+  acceptableMinor?: boolean;
 };
 
 export type UserProfileText = {
   bio: string | null;
   message: string | null;
+  /** The variants shown on the SFW site; null where the account set none. */
+  sfwBio: string | null;
+  sfwMessage: string | null;
   location: string | null;
   /** Retool's "Look at Cover Image". Both are kept: an account can pass on the SFW one and fail on
    *  the real one, and a moderator asked about a cover has to see the one that was reported. */
@@ -111,6 +119,7 @@ export type UserScores = {
   articles: number | null;
   reportsAgainst: number | null;
   reportsActioned: number | null;
+  staffAwarded: number | null;
 };
 
 export type UserLookupResult = {
@@ -180,7 +189,7 @@ export async function resolveUsername(userId: number): Promise<{ username: strin
  * Retool-era `UserStrikes`. Nothing writes both, so counting only the legacy one showed 0 for every
  * strike the live system has issued — on a header chip that exists to say how much rope is left.
  */
-async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
+export async function getActiveStrikes(userId: number): Promise<{ count: number; points: number }> {
   const row = await dbRead
     .selectFrom('UserStrike')
     .select((eb) => [
@@ -277,57 +286,76 @@ export async function getLiveStrikes(
   return rows.map(toLiveStrike);
 }
 
-export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
-  const [
-    identity,
-    profile,
-    scores,
-    counts,
-    stats,
-    reportsFiled,
-    reportedContent,
-    subscription,
-    curator,
-    ranks,
-    strikeCountAllTime,
-    modContact,
-    strikes,
-  ] = await Promise.all([
-    getIdentity(userId),
-    getProfile(userId),
-    getScores(userId),
-    getCounts(userId),
-    getStats(userId),
-    getReportsFiled(userId),
-    getReportedContent(userId),
-    getSubscription(userId),
-    getCuratorStatus(userId),
-    getLeaderboardRanks(userId),
-    // A different database, so it rides the same Promise.all rather than a second round trip. Failure
-    // degrades to "no strikes shown": the moderator database being down must not blank a lookup.
-    strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
-    // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole lookup, which
-    // is what moving it out of /api/user-signals would otherwise have cost.
-    getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
-    getActiveStrikes(userId),
-  ]);
+/** Everything User Lookup's header shows. Every page about one account renders the same card — as a
+ *  header or in the popover on a user link — so an alert cannot show in one place and not another. */
+export type UserCard = Pick<
+  UserLookupResult,
+  'identity' | 'subscription' | 'curator' | 'strikeCountAllTime' | 'strikes' | 'modContact'
+>;
+
+export async function getUserCard(userId: number): Promise<UserCard | null> {
+  const [identity, subscription, curator, strikeCountAllTime, modContact, strikes] =
+    await Promise.all([
+      getIdentity(userId),
+      getSubscription(userId),
+      getCuratorStatus(userId),
+      // A different database, so it rides the same Promise.all rather than a second round trip.
+      // Failure degrades to "no strikes shown": the moderator database being down must not blank a card.
+      strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
+      // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole card.
+      getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
+      getActiveStrikes(userId),
+    ]);
   return identity
     ? {
         identity,
-        profile,
-        scores,
-        counts,
-        stats,
-        reportsFiled,
-        reportedContent,
         subscription,
         curator,
-        ranks,
         strikeCountAllTime: strikeCountAllTime.get(userId) ?? 0,
         strikes,
         modContact,
       }
     : null;
+}
+
+export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
+  const [card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks] =
+    await Promise.all([
+      getUserCard(userId),
+      getProfile(userId),
+      getScores(userId),
+      getCounts(userId),
+      getStats(userId),
+      getReportsFiled(userId),
+      getReportedContent(userId),
+      getLeaderboardRanks(userId),
+    ]);
+  return card
+    ? { ...card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks }
+    : null;
+}
+
+export type ReportedAccountDetails = {
+  card: UserCard;
+  profile: UserProfileText | null;
+  counts: UserCounts;
+};
+
+/**
+ * Who a reported account IS, for the report queues — the slice of `getUserLookup` a report is judged
+ * on. Most user reports are Spam, and spam lives in the profile text and in what the account posts,
+ * not in its images; a queue that showed only the image grid hid the evidence for the commonest case.
+ * Not the whole lookup: scores, stats and leaderboard ranks answer nothing about a report.
+ */
+export async function getReportedAccountDetails(
+  userId: number
+): Promise<ReportedAccountDetails | null> {
+  const [card, profile, counts] = await Promise.all([
+    getUserCard(userId),
+    getProfile(userId),
+    getCounts(userId),
+  ]);
+  return card ? { card, profile, counts } : null;
 }
 
 // CURATOR STATUS (Retool's CuratorStatus / CuratorStatus2). Curators hold elevated permissions on the
@@ -381,7 +409,45 @@ export async function getLeaderboardRanks(userId: number): Promise<LeaderboardRa
   );
 }
 
-async function getIdentity(userId: number): Promise<UserIdentity | null> {
+/**
+ * One field of the ONE restriction row this panel speaks for.
+ *
+ * 🔴 `ORDER BY (ur.status = 'Pending') DESC` first, `ur.id DESC` second — a PENDING case outranks a
+ * merely newer one. The old ordering was newest-of-any-type, which was sound only while a user could
+ * hold at most one open row. Restrictions now dedupe PER TYPE, so two open cases can coexist: a
+ * Pending generation case sitting behind a later Upheld bot-account row rendered as *no open
+ * restriction at all*, leaving the account muted, the ruling form unrendered, and nobody able to see
+ * the open case. Preferring Pending is what makes that impossible in either direction.
+ *
+ * The panel shows ONE row on purpose — it is a header chip plus a single ruling form, and the audit
+ * queue is where a list of cases belongs. So the one it shows is the one that can still be acted on;
+ * among several Pending rows it shows the newest, and a resolved row is only ever shown when there is
+ * no open one.
+ *
+ * Written once and called three times rather than spelled out per column: the three subqueries must
+ * name the SAME row, and three copies of an ordering rule is three places for it to stop agreeing.
+ * `ur.id DESC` makes the order total, so all three resolve to that same row deterministically.
+ * `expr` is a literal from this module, never caller input.
+ *
+ * 🔴 `DESC NULLS LAST`, not bare `DESC`. Postgres sorts NULLs FIRST under `DESC`, so `(ur.status =
+ * 'Pending')` evaluating to NULL would outrank an actual Pending row and put the panel back in the
+ * state this ordering exists to prevent — a real open case hidden behind another row. `ur.status` is
+ * a NOT NULL enum today, which makes bare `DESC` correct by a precondition nothing here states or
+ * checks; spelling the null placement makes the ordering independent of the column's nullability
+ * instead of quietly depending on it.
+ */
+function restrictionField<T>(expr: string) {
+  return sql<T>`(
+    SELECT ${sql.raw(expr)} FROM "UserRestriction" ur
+    WHERE ur."userId" = u.id
+    ORDER BY (ur.status = 'Pending') DESC NULLS LAST, ur.id DESC
+    LIMIT 1
+  )`;
+}
+
+// Exported for the SQL-shape test — `getUserLookup` fans out over two databases, so reaching this
+// query through it would be a test about the mocks rather than about the ordering above.
+export async function getIdentity(userId: number): Promise<UserIdentity | null> {
   const row = await dbRead
     .selectFrom('User as u')
     .select([
@@ -418,18 +484,9 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       sql<number>`(SELECT COUNT(*)::int FROM "CsamReport" cr WHERE cr."userId" = u.id)`.as(
         'csamReportCount'
       ),
-      sql<string | null>`(
-        SELECT ur.status::text FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionStatus'),
-      sql<string | null>`(
-        SELECT ur.type FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionType'),
-      sql<number | null>`(
-        SELECT ur.id FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionId'),
+      restrictionField<string | null>('ur.status::text').as('restrictionStatus'),
+      restrictionField<string | null>('ur.type').as('restrictionType'),
+      restrictionField<number | null>('ur.id').as('restrictionId'),
       // The ticket asked for open reports against the account "very clearly at the top". A report
       // nobody has ruled on changes what every other panel means, and it was reachable only by
       // navigating to the Reports section and reading a list.
@@ -474,35 +531,93 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
 // in-tool action there; linking out to the profile instead means the moderator has to load the very
 // page they may be about to act on, in a normal browsing session.
 async function getProfile(userId: number): Promise<UserProfileText | null> {
-  const row = await dbRead
+  return (await getProfiles([userId])).get(userId) ?? null;
+}
+
+/** `getProfile` for many accounts in one read (the CSAM holds queue shows a page of them). */
+export async function getProfiles(userIds: number[]): Promise<Map<number, UserProfileText>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
     .selectFrom('UserProfile as up')
     .leftJoin('Image as ci', 'ci.id', 'up.coverImageId')
     .leftJoin('Image as si', 'si.id', 'up.sfwCoverImageId')
     .select([
+      'up.userId',
       'up.bio',
       'up.message',
+      'up.sfwBio',
+      'up.sfwMessage',
       'up.location',
+      'ci.id as coverId',
       'ci.url as coverUrl',
       sql<string | null>`ci.type::text`.as('coverType'),
       'ci.nsfwLevel as coverNsfwLevel',
+      'ci.minor as coverMinor',
+      'ci.acceptableMinor as coverAcceptableMinor',
+      'si.id as sfwCoverId',
       'si.url as sfwCoverUrl',
       sql<string | null>`si.type::text`.as('sfwCoverType'),
       'si.nsfwLevel as sfwCoverNsfwLevel',
+      'si.minor as sfwCoverMinor',
+      'si.acceptableMinor as sfwCoverAcceptableMinor',
     ])
-    .where('up.userId', '=', userId)
-    .executeTakeFirst();
-  if (!row) return null;
-  return {
-    bio: row.bio,
-    message: row.message,
-    location: row.location,
-    coverImage: row.coverUrl
-      ? { url: row.coverUrl, type: row.coverType, nsfwLevel: row.coverNsfwLevel }
-      : null,
-    sfwCoverImage: row.sfwCoverUrl
-      ? { url: row.sfwCoverUrl, type: row.sfwCoverType, nsfwLevel: row.sfwCoverNsfwLevel }
-      : null,
-  };
+    .where('up.userId', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map((row) => [
+      row.userId,
+      {
+        bio: row.bio,
+        message: row.message,
+        sfwBio: row.sfwBio,
+        sfwMessage: row.sfwMessage,
+        location: row.location,
+        coverImage: row.coverUrl
+          ? {
+              id: row.coverId ?? undefined,
+              url: row.coverUrl,
+              type: row.coverType,
+              nsfwLevel: row.coverNsfwLevel,
+              minor: row.coverMinor ?? false,
+              acceptableMinor: row.coverAcceptableMinor ?? false,
+            }
+          : null,
+        sfwCoverImage: row.sfwCoverUrl
+          ? {
+              id: row.sfwCoverId ?? undefined,
+              url: row.sfwCoverUrl,
+              type: row.sfwCoverType,
+              nsfwLevel: row.sfwCoverNsfwLevel,
+              minor: row.sfwCoverMinor ?? false,
+              acceptableMinor: row.sfwCoverAcceptableMinor ?? false,
+            }
+          : null,
+      },
+    ])
+  );
+}
+
+/** The avatars of many accounts in one read. `User.image` is the legacy URL; the modern avatar is the
+ *  Image row behind `profilePictureId` (see `getIdentity`). */
+export async function getProfilePictures(userIds: number[]): Promise<Map<number, ProfileMedia>> {
+  if (!userIds.length) return new Map();
+  const rows = await dbRead
+    .selectFrom('User as u')
+    .innerJoin('Image as i', 'i.id', 'u.profilePictureId')
+    .select([
+      'u.id as userId',
+      'i.id',
+      'i.url',
+      sql<string>`i.type::text`.as('type'),
+      'i.nsfwLevel',
+      'i.minor',
+      'i.acceptableMinor',
+    ])
+    .where('u.id', 'in', userIds)
+    .execute();
+  return new Map(
+    rows.map(({ userId, ...media }) => [userId, media] satisfies [number, ProfileMedia])
+  );
 }
 
 async function getScores(userId: number): Promise<UserScores | null> {
@@ -523,6 +638,7 @@ async function getScores(userId: number): Promise<UserScores | null> {
     articles: at('articles'),
     reportsAgainst: at('reportsAgainst'),
     reportsActioned: at('reportsActioned'),
+    staffAwarded: at('staffAwarded'),
   };
 }
 
@@ -590,7 +706,7 @@ async function getCommentFlags(userId: number) {
   ].filter((f) => f.count > 0);
 }
 
-async function getCounts(userId: number): Promise<UserCounts> {
+export async function getCounts(userId: number): Promise<UserCounts> {
   const [counts, modelFlags, commentFlags] = await Promise.all([
     Promise.all(
       COUNT_SOURCES.map(async ([label, table, profilePath, appSection]) => {
@@ -740,46 +856,72 @@ export type UserSubscription = {
   currency: string | null;
 };
 
-// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design, and
-// referrals deliberately add a `referral` row that can outlast a paid one. Ordering by period end alone
-// would report the referral grant as the user's plan, so filter to the paid subscription the main app
-// treats as canonical and surface `buzzType` regardless.
-const PAID_BUZZ_TYPE = 'yellow';
+// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design. A paid
+// colour row and the two membership variants (`buzzPurchase`, `referral`) can coexist and disagree, so
+// the panel has to pick one to speak for. Source of truth for these two strings:
+// src/shared/utils/buzz-membership.ts (BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) and referral.service.ts.
+const BUZZ_PURCHASE_TYPE = 'buzzPurchase';
+const REFERRAL_TYPE = 'referral';
 
-export async function getSubscription(userId: number): Promise<UserSubscription | null> {
-  const select = [
-    'p.name as productName',
-    'p.provider',
-    'cs.status',
-    'cs.buzzType',
-    'cs.cancelAtPeriodEnd',
-    'cs.canceledAt',
-    'cs.currentPeriodEnd',
-    // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
-    // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
-    'pr.interval',
-    'pr.unitAmount',
-    'pr.currency',
-  ] as const;
+// A `buzzType` that names a subscription KIND rather than a Buzz colour is a perks-only variant; every
+// other value is a paid/canonical membership row.
+const isCanonicalRow = (buzzType: string | null) =>
+  buzzType !== BUZZ_PURCHASE_TYPE && buzzType !== REFERRAL_TYPE;
 
-  const paid = await dbRead
+// Live = the statuses the main app counts as a real membership (subscriptions.service.ts uses
+// `['active','trialing']` and excludes past_due/unpaid as failed) AND the period has not ended — status
+// alone is not liveness, since a lapsed row keeps `status = 'active'` until something reconciles it. A
+// past_due/unpaid paid row must NOT outrank an active variant, or it re-hides a working membership.
+const LIVE_STATUSES = new Set(['active', 'trialing']);
+const isLiveRow = (row: UserSubscription, now: Date) =>
+  LIVE_STATUSES.has(row.status) && row.currentPeriodEnd != null && row.currentPeriodEnd > now;
+
+// Which of several coexisting rows the panel shows. NOT a product ruling on "is this user a member" —
+// that shared cross-surface precedence is ticket item 1, still awaiting a decision. This only orders the
+// display so an active membership is never hidden behind a lapsed one: a live paid row wins (keeping a
+// longer-dated referral grant from outranking it), then any live variant (the buzz-bought case the
+// panel used to drop), then a lapsed paid row, then whatever is most recent.
+function displayPriority(row: UserSubscription, now: Date) {
+  const live = isLiveRow(row, now);
+  const canonical = isCanonicalRow(row.buzzType);
+  if (live && canonical) return 3;
+  if (live) return 2;
+  if (canonical) return 1;
+  return 0;
+}
+
+export async function getSubscription(
+  userId: number,
+  now = new Date()
+): Promise<UserSubscription | null> {
+  const rows = (await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
     .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
+    .select([
+      'p.name as productName',
+      'p.provider',
+      'cs.status',
+      'cs.buzzType',
+      'cs.cancelAtPeriodEnd',
+      'cs.canceledAt',
+      'cs.currentPeriodEnd',
+      // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
+      // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
+      'pr.interval',
+      'pr.unitAmount',
+      'pr.currency',
+    ])
     .where('cs.userId', '=', userId)
-    .where('cs.buzzType', '=', PAID_BUZZ_TYPE)
-    .executeTakeFirst();
-  if (paid) return paid as UserSubscription;
+    .execute()) as UserSubscription[];
 
-  // No paid row — show whatever they do have rather than nothing, with buzzType visible.
-  const other = await dbRead
-    .selectFrom('CustomerSubscription as cs')
-    .leftJoin('Product as p', 'p.id', 'cs.productId')
-    .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
-    .where('cs.userId', '=', userId)
-    .orderBy('cs.currentPeriodEnd', 'desc')
-    .executeTakeFirst();
-  return (other as UserSubscription | undefined) ?? null;
+  if (rows.length === 0) return null;
+
+  return rows.reduce((best, row) => {
+    const byPriority = displayPriority(row, now) - displayPriority(best, now);
+    if (byPriority !== 0) return byPriority > 0 ? row : best;
+    return (row.currentPeriodEnd?.getTime() ?? 0) > (best.currentPeriodEnd?.getTime() ?? 0)
+      ? row
+      : best;
+  });
 }

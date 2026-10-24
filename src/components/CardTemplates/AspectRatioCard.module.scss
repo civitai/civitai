@@ -24,6 +24,8 @@
 
 .header {
   top: 0;
+  // Steps the corner chips clear of an event decoration sitting on the corner.
+  padding-left: max(theme('padding.2'), var(--event-decoration-clear-left, 0px));
 }
 
 .footer {

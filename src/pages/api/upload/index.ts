@@ -2,8 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
-import { extname } from 'node:path';
-import { filenamize, generateToken } from '~/utils/string-helpers';
 import {
   getMultipartPutUrl,
   getUploadS3Client,
@@ -11,6 +9,7 @@ import {
   getUploadChunkSize,
 } from '~/utils/s3-utils';
 import type { UploadBackend } from '~/utils/s3-utils';
+import { buildUploadKey } from '~/utils/upload-key';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -26,14 +25,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const { filename: fullFilename } = req.body;
-  const ext = extname(fullFilename);
-  const filename = filenamize(fullFilename.replace(ext, ''));
   let { type } = req.body;
   if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
-
-  if (env.UPLOAD_PROHIBITED_EXTENSIONS?.includes(ext)) {
-    return res.status(400).json({ error: 'File type not allowed' });
-  }
 
   // Determine upload backend: B2 for model/training uploads when the B2
   // endpoint is configured (no Flipt flag — see below).
@@ -54,7 +47,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     backend = 'b2';
   }
 
-  const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
+  const key = buildUploadKey(type ?? UploadType.Default, userId, fullFilename);
   const s3 = backend === 'b2' ? getUploadS3Client('b2') : null;
   const bucket = backend === 'b2' ? getUploadBucket('b2') : null;
 

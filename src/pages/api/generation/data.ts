@@ -2,7 +2,8 @@ import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export default PublicEndpoint(
   async function handler(req, res) {
@@ -34,10 +35,14 @@ export default PublicEndpoint(
       const queryInput = getGenerationDataSchema.safeParse(req.query);
       if (!queryInput.success) return res.status(400).json({ message: queryInput.error.message });
 
+      const features = getFeatureFlagsLazy({ user: session?.user, req });
       const queryResult = await getGenerationData({
         query: queryInput.data,
         user: session?.user,
-        sfwOnly: getRequestDomainColor(req) === 'green',
+        browsingLevel: getRequestBrowsingLevel({ features, user: session?.user }),
+        // No request headers: the verified-crawler header is only stripped on proxied paths, and
+        // this route's signed-out answers are edge-cached for everyone.
+        mediaViewer: { user: session?.user, features, req: { headers: {} } as typeof req },
       });
       return res.status(200).json(queryResult);
     } catch (e) {

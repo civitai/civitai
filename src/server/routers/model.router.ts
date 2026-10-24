@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getActiveSalesSchema } from '~/server/schema/model-sale.schema';
 import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
@@ -34,6 +35,7 @@ import {
   restoreModelHandler,
   setModelCollectionShowcaseHandler,
   setModelMinorHandler,
+  setModelSfwOnlyHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -41,13 +43,15 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyUserPreferences, cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import {
   changeModelModifierSchema,
+  checkSfwFaceSchema,
+  draftSfwFaceSchema,
   copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
@@ -73,13 +77,22 @@ import {
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
   setModelMinorSchema,
+  setModelSfwOnlySchema,
   setModelOfficialSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
   toggleModelLockSchema,
   unpublishModelSchema,
   updateGallerySettingsSchema,
+  upsertCreatorGalleryHiddenUserSchema,
+  removeCreatorGalleryHiddenUserSchema,
 } from '~/server/schema/model.schema';
+import {
+  addCreatorGalleryHiddenUser,
+  getCreatorGalleryHiddenUsers,
+  removeCreatorGalleryHiddenUser,
+  updateCreatorGalleryHiddenUserNote,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
@@ -99,6 +112,8 @@ import {
 } from '~/server/services/model.service';
 import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
+import { getCoverCandidates } from '~/server/services/model-cover.service';
+import { checkSfwFace, draftSfwFace } from '~/server/services/model-sfw-face.service';
 import {
   guardedProcedure,
   middleware,
@@ -107,8 +122,26 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+/** 404s a lookup of a model the viewer may not see. `pick` reads the model id from the input. */
+const modelVisibleToViewer = (pick: (input: any) => number | undefined) =>
+  middleware(async ({ ctx, next, input }) => {
+    const id = pick(input ?? {});
+    if (id && !ctx.user?.isModerator) {
+      const model = await dbRead.model.findUnique({
+        where: { id },
+        select: { poi: true, userId: true },
+      });
+      if (model && !canViewPoiModel(model.poi, model.userId, ctx.user)) throw throwNotFoundError();
+    }
+    return next();
+  });
+const modelByIdVisible = modelVisibleToViewer((input) => input.id);
+const associationSourceVisible = modelVisibleToViewer((input) => input.fromId);
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -190,14 +223,34 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   });
 });
 
+// Add and remove share one quota: each busts the gallery cache of every model the creator owns.
+const creatorGalleryHiddenUsersRateLimit = rateLimit(
+  { limit: 100, period: CacheTTL.hour },
+  undefined,
+  { sharedKey: 'creator-gallery-hidden-users' }
+);
+
+const modelFileUrlsForOwner = ownerOnlyFileUrls<Awaited<ReturnType<typeof getModelHandler>>>({
+  ownerId: ({ data }) => data.user.id,
+  strip: (data) => ({
+    ...data,
+    modelVersions: data.modelVersions.map((version) => ({
+      ...version,
+      files: withoutFileUrls(version.files) as typeof version.files,
+    })),
+  }),
+});
+
 export const modelRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelByIdSchema)
+    .use(modelFileUrlsForOwner)
     .query(getModelHandler),
   getOwner: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelOwnerHandler),
   getAll: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -222,6 +275,7 @@ export const modelRouter = router({
   getVersions: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsSchema)
+    .use(modelByIdVisible)
     .query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -258,17 +312,35 @@ export const modelRouter = router({
   getActiveSales: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     // Bounded on its own schema: this is a public procedure reaching raw SQL, and the shared
-    // getByIdsSchema has no cap.
-    .input(z.object({ ids: z.number().array().max(500) }))
+    // getByIdsSchema has no cap. The cap and the client-side chunk size are one constant, so a
+    // surface that grows past it splits into more calls instead of 400ing on every one of them.
+    .input(getActiveSalesSchema)
     .query(({ input }) => getActiveSalesForModels(input.ids)),
   getResourceSelect: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getResourceSelectSchema)
-    .query(({ ctx, input }) => getResourceSelectModels(input, { user: ctx.user })),
+    .query(({ ctx, input }) =>
+      getResourceSelectModels(input, { user: ctx.user, signal: ctx.signal })
+    ),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)
     .mutation(upsertModelHandler),
+  checkSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(checkSfwFaceSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
+  getCoverCandidates: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getCoverCandidates({ modelId: input.id })),
+  draftSfwFace: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(draftSfwFaceSchema)
+    .use(rateLimit({ limit: 20, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) => draftSfwFace({ ...input, userId: ctx.user.id })),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsDelete })
     .input(deleteModelSchema)
@@ -302,6 +374,7 @@ export const modelRouter = router({
   getModelDetailsForReview: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(getModelDetailsForReviewHandler),
   restore: moderatorProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure
@@ -326,6 +399,7 @@ export const modelRouter = router({
   getSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
+    .use(modelByIdVisible)
     .query(({ input, ctx }) => getSimpleModelWithVersions({ id: input.id, ctx })),
   requestReview: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
@@ -345,7 +419,7 @@ export const modelRouter = router({
   getWithCategoriesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelsWithCategoriesSchema)
-    .query(({ input }) => getAllModelsWithCategories(input)),
+    .query(({ input, ctx }) => getAllModelsWithCategories({ ...input, viewer: ctx.user })),
   setCategory: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setModelsCategorySchema)
@@ -357,17 +431,19 @@ export const modelRouter = router({
   getAssociatedResourcesCardData: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(getAssociatedResourcesCardDataHandler),
   getAssociatedResourcesSimple: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getAssociatedResourcesSchema)
+    .use(associationSourceVisible)
     .query(({ input }) => getAssociatedResourcesSimple(input)),
   setAssociatedResources: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(setAssociatedResourcesSchema)
     .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanModel(input)),
-  getModelsByHash: publicProcedure
+  getModelsByHash: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(modelByHashesInput)
     .mutation(getModelByHashesHandler),
@@ -388,6 +464,38 @@ export const modelRouter = router({
     .input(updateGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(updateGallerySettingsHandler),
+  // Always the caller's own list: a moderator editing someone else's model never reaches it.
+  getCreatorGalleryHiddenUsers: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .query(({ ctx }) => getCreatorGalleryHiddenUsers(ctx.user.id)),
+  addCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .use(creatorGalleryHiddenUsersRateLimit)
+    .mutation(({ ctx, input }) =>
+      addCreatorGalleryHiddenUser({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
+    ),
+  updateCreatorGalleryHiddenUserNote: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .mutation(({ ctx, input }) =>
+      updateCreatorGalleryHiddenUserNote({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
+    ),
+  removeCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(removeCreatorGalleryHiddenUserSchema)
+    .use(creatorGalleryHiddenUsersRateLimit)
+    .mutation(({ ctx, input }) =>
+      removeCreatorGalleryHiddenUser({ creatorId: ctx.user.id, userId: input.userId })
+    ),
   toggleCheckpointCoverage: moderatorProcedure
     .input(toggleCheckpointCoverageSchema)
     .mutation(toggleCheckpointCoverageHandler),
@@ -409,7 +517,9 @@ export const modelRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
-    .mutation(({ input }) => migrateResourceToCollection(input)),
+    .mutation(({ input, ctx }) =>
+      migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })
+    ),
   privateModelFromTraining: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(privateModelFromTrainingSchema)
@@ -430,4 +540,5 @@ export const modelRouter = router({
       setModelOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
   setMinor: moderatorProcedure.input(setModelMinorSchema).mutation(setModelMinorHandler),
+  setSfwOnly: moderatorProcedure.input(setModelSfwOnlySchema).mutation(setModelSfwOnlyHandler),
 });

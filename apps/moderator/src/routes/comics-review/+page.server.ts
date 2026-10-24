@@ -5,6 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
+import { heldRemovalMessage } from '$lib/server/removal-hold';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 import type { RequestEvent } from './$types';
 
@@ -53,7 +54,7 @@ async function moderatePanel(
     userId: number;
     ip?: string;
     userAgent?: string;
-  }) => Promise<void>,
+  }) => Promise<unknown>,
   event: RequestEvent
 ) {
   const form = await event.request.formData();
@@ -77,5 +78,12 @@ async function moderatePanel(
 
 export const actions: Actions = {
   approve: (event) => moderatePanel(acceptImage, event),
-  block: (event) => moderatePanel(blockImage, event),
+  block: (event) =>
+    moderatePanel(async (args) => {
+      const { held } = await blockImage({
+        ...args,
+        skipAppealCheck: !!event.locals.grants['image.removal.confirm'],
+      });
+      if (held) throw new Error(heldRemovalMessage([held]));
+    }, event),
 };

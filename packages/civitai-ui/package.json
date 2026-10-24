@@ -10,6 +10,14 @@
     "./hooks/*": "./src/lib/hooks/*",
     "./components/*": "./src/lib/components/*"
   },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "svelte": "^5.0.0",
+    "vitest": "^4.1.11"
+  },
   "dependencies": {
     "@internationalized/date": "^3.12.2",
     "@lucide/svelte": "^1.22.0",

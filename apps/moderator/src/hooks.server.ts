@@ -1,7 +1,8 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
+import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
@@ -29,17 +30,21 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
 
 /**
- * Records WHICH inbound service credential authenticated a request — the runtime signal that makes
- * dropping WEBHOOK_TOKEN from `acceptedTokens` a checkable claim rather than an inferred one (see the
- * header of $lib/server/webhook-endpoint).
+ * Records WHICH inbound service credential authenticated a request — the runtime signal that made
+ * dropping WEBHOOK_TOKEN from `acceptedTokens` a checkable claim rather than an inferred one, and that
+ * will grade the next such removal the same way (see the header of $lib/server/webhook-endpoint).
  *
- * 🔴 EMITTED FOR EVERY CLASS, NOT JUST THE LEGACY ONE. Logging only WEBHOOK_TOKEN looks like the
- * obvious saving — it is the thing we are waiting to stop seeing — and it destroys the evidence. A
- * zero from a legacy-only emitter is indistinguishable from an emitter that was never deployed, never
- * ingested, or quietly broken, so it can never license the removal. With both classes emitted, a
- * non-zero MOD_INBOUND_TOKEN count is the IN-BAND POSITIVE CONTROL standing beside the WEBHOOK_TOKEN
- * zero in the same window and proving the instrument was live when it read zero. The pair is the
- * evidence. Do not narrow this to the legacy class.
+ * 🔴 EMITTED FOR EVERY ACCEPTED CLASS, NOT JUST A RETIRING ONE. Narrowing this to whichever class is
+ * on its way out looks like the obvious saving — it is the thing we are waiting to stop seeing — and
+ * it destroys the evidence. A zero from a single-class emitter is indistinguishable from an emitter
+ * that was never deployed, never ingested, or quietly broken, so it can never license a removal. With
+ * every class emitted, a non-zero count for a live class is the IN-BAND POSITIVE CONTROL standing
+ * beside the retiring class's zero in the same window, proving the instrument was live when it read
+ * zero. The pair is the evidence. Do not narrow this to one class.
+ *
+ * 🔴 A REFUSED CREDENTIAL EMITS NOTHING, and that is deliberate rather than an omission. Recording
+ * refusals would mean a retired class's count could never fall to zero, so the signal that authorises
+ * the next removal would be permanently stuck at "still in use". Pinned in __tests__/hooks.server.
  *
  * 🔴 NOTHING DERIVED FROM THE TOKEN'S BYTES GOES IN THE RECORD — no value, prefix, suffix, length or
  * hash. Any of those is a credential oracle on a log stream that is far more widely readable than the
@@ -70,6 +75,17 @@ function logCredentialAttribution(
     /* see above: a logging fault must not surface as a failed moderation call */
   }
 }
+
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
+export const init: ServerInit = async () => {
+  try {
+    const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
+    await releaseLeasesAtBoot();
+  } catch (error) {
+    void logAxiomError(error, { event: 'text-scan test run lease release failed' });
+  }
+};
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
@@ -112,6 +128,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   // After applyGrants, never before: the resolver reads the store it just populated.
   event.locals.grants = resolvePermissions(result.user);
 
+  const moved = movedViewTarget(event.url);
+  if (moved) return new Response(null, { status: 307, headers: { location: moved } });
+
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
   // senior, /images/minor → staff. canAccess's prefix match resolves `__data.json` data requests and
@@ -127,7 +146,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
     // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
     // grant for it, and there was nothing on screen that could have told them otherwise.
-    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
+    // The query string rides along so the dashboard can link back to exactly what was asked for.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
     return new Response(null, { status: 303, headers: { location: denied } });
   }
 

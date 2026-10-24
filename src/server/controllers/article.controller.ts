@@ -10,6 +10,7 @@ import { unpublishArticleById, upsertArticle } from '~/server/services/article.s
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -30,6 +31,16 @@ export const upsertArticleHandler = async ({
     );
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
+    // 🔴 `isOfficial` is a provenance claim, so a non-moderator's value is DROPPED rather
+    // than refused: the edit form seeds itself from the article, so an owner editing a marked
+    // article sends the flag back and would be locked out with a bare UNAUTHORIZED.
+    // `upsertArticle` leaves the column alone when the field is undefined.
+    const { isOfficial, ...articleInput } = input;
+    const official = ctx.user.isModerator ? isOfficial : undefined;
+
+    if (input.scheduledAt && !ctx.features.articleScheduling)
+      throw throwBadRequestError('Scheduling articles is not available');
+
     const scanContent = ctx.features.articleImageScanning ?? false;
 
     // Capture the prior published state so we can tell a publish transition apart
@@ -45,7 +56,8 @@ export const upsertArticleHandler = async ({
       : false;
 
     const result = await upsertArticle({
-      ...input,
+      ...articleInput,
+      isOfficial: official,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       scanContent,

@@ -31,7 +31,7 @@ import {
 import { checkbox } from '$lib/server/form-fields';
 import {
   resolveCreatorScore,
-  resolveModelsScore,
+  resolveTotalScore,
   TEST_CREATOR_SCORE_COOKIE,
   TEST_MODELS_SCORE_COOKIE,
 } from '$lib/server/creator-score';
@@ -40,15 +40,18 @@ import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
-  assertPricingAllowed,
+  assertGatePricingAllowed,
   countPricingSlotsThisMonth,
+  getFeeAllowanceBoost,
+  listPricingSlots,
   recordPricingSlots,
   unpricedVersionIds,
+  versionPriceState,
 } from '$lib/server/monetization/pricing-slot';
 import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
-  monthlyPricingAllowance,
+  pricingAllowanceLimits,
   pricingEligibility,
 } from '$lib/monetization/paid-access';
 
@@ -69,28 +72,34 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore] = await Promise.all([
-    getModelsView(locals.user, url, cookies),
-    resolveModelsScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_MODELS_SCORE_COOKIE)
-    ),
-    countPricingSlotsThisMonth(locals.user.id),
-    countActiveEarlyAccessVersions(locals.user.id),
-    resolveCreatorScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_CREATOR_SCORE_COOKIE)
-    ),
-  ]);
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots, feeBoost] =
+    await Promise.all([
+      getModelsView(locals.user, url, cookies),
+      resolveTotalScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_MODELS_SCORE_COOKIE)
+      ),
+      countPricingSlotsThisMonth(locals.user.id),
+      countActiveEarlyAccessVersions(locals.user.id),
+      resolveCreatorScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_CREATOR_SCORE_COOKIE)
+      ),
+      listPricingSlots(locals.user.id),
+      getFeeAllowanceBoost(locals.user.id),
+    ]);
 
   // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
   // limit overrides are the same whatever is being searched for.
   const [sales, saleLimits] = view.salesEnabled
     ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
     : [[], {}];
-  const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
+  const { baseLimit, feeLimit } = pricingAllowanceLimits({
+    tier: cappedTier(membership),
+    boost: feeBoost,
+  });
   return {
     ...view,
     creatorScore,
@@ -105,7 +114,10 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       tier: displayTier(membership),
       capTier: cappedTier(membership),
       pricingUsed,
-      pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
+      pricingSlots,
+      pricingLimit: baseLimit,
+      feePricingLimit: feeLimit,
+      feeBoost,
       // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
       // creator at a given score sees. What it never moves is the write, which re-reads the real one.
       pricingFloor: pricingEligibility(modelsScore),
@@ -205,7 +217,10 @@ export const actions: Actions = {
     if (!permanent && !locals.user.isModerator) {
       // A timed window is bounded by creator score, not membership — and it has no price ceiling at all,
       // so the permanent price/count caps below don't apply to it.
-      const score = await resolveModelsScore(
+      // Load-bearing: the enclosing `!locals.user.isModerator` is what makes passing the simulator
+      // cookie into an enforced decision safe here — it is always discarded at this call. Dropping
+      // that half of the condition would make the simulator move a money gate.
+      const score = await resolveTotalScore(
         locals.user.id,
         !!locals.user.isModerator,
         cookies.get(TEST_MODELS_SCORE_COOKIE)
@@ -247,15 +262,14 @@ export const actions: Actions = {
       }
     }
 
-    // Paid-access prices are uncapped. What is limited is how many versions gain a price this month —
-    // and only versions that are not already priced count, so re-pricing a selection is always free.
-    // Moderators are NOT exempt — see assertPricingAllowed. The fee paths in this app do not exempt
-    // them either, and one write path answering this differently is how a spoke becomes a way around it.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, versionIds.data)
-      : [];
+    // Moderators are NOT exempt. The fee paths in this app do not exempt them either, and one write
+    // path answering this differently is how a spoke becomes a way around it.
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, versionIds.data)
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
 
@@ -460,14 +474,13 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
 
-    // Only a version with no price yet spends allowance — re-saving one that already has a price stays
-    // allowed even at the limit, so an edit can never strand a creator.
-    // Moderators are NOT exempt — see assertPricingAllowed.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, [versionId.data])
-      : [];
+    // Moderators are NOT exempt.
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, [versionId.data])
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }
 

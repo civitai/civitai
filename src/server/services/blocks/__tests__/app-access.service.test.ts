@@ -277,6 +277,85 @@ describe('resolveAppAccess — the permission matrix', () => {
     mockDb.appBlock.findUnique.mockResolvedValue({ id: APP, app: null, appListing: null });
     expect(await resolveAppAccess(APP, OWNER)).toBeNull();
   });
+
+  describe('🔴 the `db` pool override reaches BOTH reads — the block row AND the seat', () => {
+    /**
+     * THE MIRROR of `resolveListingAccess`'s override block below, and it exists for
+     * the same reason plus one more.
+     *
+     * Same reason: an EDITOR never takes the owner short-circuit, so the seat lookup
+     * is the ONE read they always reach. Threading the override to the block lookup
+     * but dropping it before the seat lookup would leave the editor path reading a
+     * lagging replica while the block path read the primary — the worst of both, and
+     * it presents as a spurious "you are not a collaborator".
+     *
+     * The additional reason here is FRESHNESS OF STATUS rather than of seats. This
+     * resolver is block-keyed, so a caller gating on a block's CURRENT state — a
+     * moderator resolving a just-suspended app — must not read a replica that still
+     * shows the pre-flip row. That is exactly why the block-token mint reads
+     * `dbWrite` throughout.
+     *
+     * 🔴 `dbRead` IS WIRED TO KNOW NOTHING. That is what makes a dropped override
+     * observable as a DENIAL rather than as an equivalent answer from a second
+     * identical fixture — the trap where a probe fires the same way in both arms and
+     * therefore attributes nothing.
+     */
+    const LAGGING = () => {
+      mockDb.appBlock.findUnique.mockResolvedValue(null);
+      mockDb.appCollaborator.findFirst.mockResolvedValue(null);
+    };
+
+    beforeEach(() => {
+      LAGGING();
+      mockWriteDb.appBlock.findUnique.mockResolvedValue({
+        id: APP,
+        app: { userId: OWNER },
+        appListing: { id: LISTING },
+      });
+      mockWriteDb.appCollaborator.findFirst.mockImplementation(async (args: unknown) => {
+        const w = (args as { where: { userId: number; status?: string } }).where;
+        return w.userId === EDITOR && w.status === 'accepted' ? { userId: EDITOR } : null;
+      });
+    });
+
+    it('[REG] the editor resolves to `editor` when the PRIMARY is passed', async () => {
+      const access = await resolveAppAccess(APP, EDITOR, mockWriteDb as never);
+      expect(access).not.toBeNull();
+      expect(access!.role).toBe('editor');
+      // Both reads went to the primary…
+      expect(mockWriteDb.appBlock.findUnique).toHaveBeenCalledOnce();
+      expect(mockWriteDb.appCollaborator.findFirst).toHaveBeenCalledOnce();
+      // …and NEITHER touched the replica. This is the assertion that dies when the
+      // override is threaded to the block load but dropped before the seat lookup —
+      // the exact shape of the bug, and the one a single-query fixture cannot see.
+      expect(mockDb.appBlock.findUnique).not.toHaveBeenCalled();
+      expect(mockDb.appCollaborator.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('[INV] 🔴 NEGATIVE CONTROL: the SAME call off the lagging replica resolves null', async () => {
+      // Without this, the test above is a fact about a mock that answers either way.
+      expect(await resolveAppAccess(APP, EDITOR)).toBeNull();
+    });
+
+    it('[REG] the OWNER also resolves off the override (the block read alone is enough there)', async () => {
+      // The owner short-circuits before the seat lookup, so this isolates the FIRST
+      // of the two threaded reads. Without it, a mutant that threaded only the seat
+      // lookup would be killed solely by the editor case above and the diagnosis
+      // would be ambiguous between the two reads.
+      const access = await resolveAppAccess(APP, OWNER, mockWriteDb as never);
+      expect(access!.role).toBe('owner');
+      expect(mockWriteDb.appBlock.findUnique).toHaveBeenCalledOnce();
+      expect(mockWriteDb.appCollaborator.findFirst).not.toHaveBeenCalled();
+      expect(mockDb.appBlock.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('[INV] POSITIVE CONTROL: the two pools are distinct objects with independent spies', () => {
+      // A shared fake would make every assertion above vacuous.
+      expect(mockWriteDb).not.toBe(mockDb);
+      expect(mockWriteDb.appBlock.findUnique).not.toBe(mockDb.appBlock.findUnique);
+      expect(mockWriteDb.appCollaborator.findFirst).not.toBe(mockDb.appCollaborator.findFirst);
+    });
+  });
 });
 
 describe('resolveListingAccess — role × KIND', () => {

@@ -23,6 +23,7 @@ const ALWAYS_INCLUDE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'man', 'woma
 export const imageTagIds = createCache<ImageTagIds>({
   redisKey: 'image:tagIds',
   idKey: 'imageId',
+  fieldTypes: { imageId: 'number', tags: 'json' },
   async fetch(ctx: CacheContext, ids: number[]): Promise<ImageTagIds[]> {
     // Fetch tags on image
     const imageTags = await ctx.pg.query<{
@@ -110,6 +111,8 @@ export type TagData = {
 export const tagData = createCache<TagData>({
   redisKey: 'tag:data',
   idKey: 'id',
+  // A tag NAME is a string even when it is all digits ('1', '2girls' etc.).
+  fieldTypes: { id: 'number', name: 'string', type: 'number', nsfwLevel: 'number' },
   async fetch(ctx: CacheContext, ids: number[]): Promise<TagData[]> {
     return await ctx.pg.query<TagData>(
       `SELECT
@@ -143,6 +146,13 @@ export type CosmeticData = {
 export const cosmeticData = createCache<CosmeticData>({
   redisKey: 'cosmetic:data',
   idKey: 'id',
+  fieldTypes: {
+    id: 'number',
+    name: 'string',
+    type: 'string',
+    data: 'json',
+    source: 'string',
+  },
   async fetch(ctx: CacheContext, ids: number[]): Promise<CosmeticData[]> {
     return await ctx.pg.query<CosmeticData>(
       `SELECT
@@ -177,6 +187,7 @@ export type UserCosmeticData = {
 export const userCosmetics = createCache<UserCosmeticData>({
   redisKey: 'user:cosmetics',
   idKey: 'userId',
+  fieldTypes: { userId: 'number', cosmetics: 'json' },
   async fetch(ctx: CacheContext, ids: number[]): Promise<UserCosmeticData[]> {
     const cosmetics = await ctx.pg.query<{
       userId: number;
@@ -233,6 +244,17 @@ export type ProfilePictureData = {
 export const profilePictures = createCache<ProfilePictureData>({
   redisKey: 'user:profilePicture',
   idKey: 'userId',
+  fieldTypes: {
+    userId: 'number',
+    id: 'number',
+    url: 'string',
+    nsfwLevel: 'number',
+    hash: 'string',
+    type: 'string',
+    width: 'number',
+    height: 'number',
+    metadata: 'json?',
+  },
   async fetch(ctx: CacheContext, ids: number[]): Promise<ProfilePictureData[]> {
     return await ctx.pg.query<ProfilePictureData>(
       `SELECT

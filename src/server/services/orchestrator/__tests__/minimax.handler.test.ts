@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createMiniMaxInput } from '../ecosystems/minimax.handler';
+import { createMiniMaxInput } from '../form-graph/minimax.handler';
 import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
   minimaxVersionIds,
-} from '~/shared/data-graph/generation/minimax-graph';
+} from '~/shared/form-graph/generation/video/minimax.graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 const ctx = {
@@ -184,5 +184,273 @@ describe('createMiniMaxInput — hosted API variant', () => {
     });
     expect(result.width).toBeUndefined();
     expect(result.height).toBeUndefined();
+  });
+});
+
+const CONTROL_VIDEO_URL = 'https://x/source.mp4';
+
+const comfyControlTxt2Vid = (controlVideo?: Record<string, unknown>) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.comfy },
+  minimaxVariant: 'comfy',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  aspectRatio: entry(MINIMAX_DEFAULT_ASPECT_RATIO),
+  controlVideo,
+});
+
+const control = (overrides: Record<string, unknown> = {}) => ({
+  preprocessor: 'depthAnythingV2',
+  mode: 'auto',
+  video: { url: CONTROL_VIDEO_URL },
+  strength: 1,
+  startPercent: 0,
+  endPercent: 1,
+  ...overrides,
+});
+
+/** All steps, so the preprocess step prepended in auto mode is visible. */
+async function steps(data: Record<string, unknown>, ctxOverrides: Record<string, unknown> = {}) {
+  return createMiniMaxInput({ ...data } as any, { ...ctx, ...ctxOverrides } as any);
+}
+
+describe('createMiniMaxInput — comfy control video', () => {
+  it('prepends a preprocessVideo step and refs its output in auto mode', async () => {
+    const result = await steps(comfyControlTxt2Vid(control()));
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      $type: 'preprocessVideo',
+      input: { kind: 'depth-anything-v2', video: CONTROL_VIDEO_URL },
+    });
+    expect(result[1].$type).toBe('videoGen');
+    expect((result[1].input as any).operation).toBe('controlVideo');
+    // The gen step must consume the preprocessed map, not the raw upload.
+    expect((result[1].input as any).video).toEqual({
+      $ref: '$0',
+      path: 'output.blob.url',
+    });
+  });
+
+  it('maps each supported preprocessor to its preprocessVideo kind', async () => {
+    const expected = {
+      canny: 'canny',
+      depthAnythingV2: 'depth-anything-v2',
+      hed: 'hed',
+      mlsd: 'mlsd',
+      dwpose: 'dwpose',
+    };
+
+    for (const [preprocessor, kind] of Object.entries(expected)) {
+      const result = await steps(comfyControlTxt2Vid(control({ preprocessor })));
+      expect((result[0].input as any).kind).toBe(kind);
+    }
+  });
+
+  it('builds the ref against baseStepIndex, not a per-variant index', async () => {
+    const result = await steps(comfyControlTxt2Vid(control()), { baseStepIndex: 3 });
+
+    expect((result[1].input as any).video).toEqual({ $ref: '$3', path: 'output.blob.url' });
+  });
+
+  it('passes the raw url through with no preprocess step when already preprocessed', async () => {
+    const result = await steps(comfyControlTxt2Vid(control({ mode: 'preprocessed' })));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].$type).toBe('videoGen');
+    expect(result[0].input as any).toMatchObject({
+      operation: 'controlVideo',
+      video: CONTROL_VIDEO_URL,
+    });
+  });
+
+  it('forwards the control strength and active range', async () => {
+    const result = await steps(
+      comfyControlTxt2Vid(control({ strength: 0.6, startPercent: 0.1, endPercent: 0.8 }))
+    );
+
+    expect(result[1].input as any).toMatchObject({
+      strength: 0.6,
+      startPercent: 0.1,
+      endPercent: 0.8,
+    });
+  });
+
+  it('falls back to imageToVideo when the entry has no video attached', async () => {
+    const result = await steps(comfyControlTxt2Vid(control({ video: undefined })));
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('imageToVideo');
+  });
+
+  it('falls back to imageToVideo when no control video is staged at all', async () => {
+    const result = await steps(comfyControlTxt2Vid(undefined));
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('imageToVideo');
+  });
+
+  it('never emits controlVideo on the hosted API variant', async () => {
+    const result = await steps({
+      ...comfyControlTxt2Vid(control()),
+      model: { id: minimaxVersionIds['v1.0'] },
+      minimaxVariant: 'api',
+      aspectRatio: { value: MINIMAX_DEFAULT_ASPECT_RATIO },
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).engine).toBe('minimax-h3');
+    expect((result[0].input as any).operation).toBeUndefined();
+  });
+
+  it('keeps referenceToVideo when ref2vid also carries a staged control video', async () => {
+    const result = await steps({
+      ...comfyControlTxt2Vid(control()),
+      workflow: 'img2vid:ref2vid',
+      images: [{ url: 'https://x/ref.png' }],
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('referenceToVideo');
+  });
+});
+
+describe('createMiniMaxInput — control video cannot displace user images', () => {
+  // The graph gates the node to txt2vid, but a stale value reaching the handler
+  // would fail as silently-dropped frames rather than as an error, so the
+  // handler re-checks. A revert reads as `expected 'controlVideo' to be
+  // 'imageToVideo'` with the first frame missing from the input.
+  it.each(['img2vid', 'img2vid:first-last'])(
+    'keeps imageToVideo and the first frame on %s',
+    async (workflow) => {
+      const result = await steps({
+        ...comfyControlTxt2Vid(control()),
+        workflow,
+        images: [{ url: 'https://x/first.png', width: 1280, height: 720 }],
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].input as any).toMatchObject({
+        operation: 'imageToVideo',
+        firstFrame: 'https://x/first.png',
+      });
+    }
+  );
+});
+
+const falMax = (overrides: Record<string, unknown> = {}) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.max },
+  minimaxVariant: 'max',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  resolution: '768P',
+  seed: 42,
+  turbo: false,
+  aspectRatio: { value: '9:16' },
+  ...overrides,
+});
+
+describe('createMiniMaxInput — H3 Max (FAL)', () => {
+  it('sends textToVideo with the picked ratio and resolution', async () => {
+    expect(await input(falMax())).toMatchObject({
+      engine: 'minimax-h3-max',
+      operation: 'textToVideo',
+      model: 'max',
+      aspectRatio: '9:16',
+      resolution: '768P',
+      duration: 6,
+      seed: 42,
+    });
+  });
+
+  it('maps the turbo toggle to the Max Turbo model', async () => {
+    expect(await input(falMax({ turbo: true }))).toMatchObject({ model: 'turbo' });
+  });
+
+  it('sends first and last frames on imageToVideo, without a ratio', async () => {
+    const result = await input(
+      falMax({
+        workflow: 'img2vid:first-last',
+        aspectRatio: undefined,
+        images: [{ url: 'https://x/first.png' }, { url: 'https://x/last.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'imageToVideo',
+      firstFrameImage: 'https://x/first.png',
+      lastFrameImage: 'https://x/last.png',
+    });
+    expect(result.aspectRatio).toBeUndefined();
+  });
+
+  it('sends every image as a reference on ref2vid', async () => {
+    const result = await input(
+      falMax({
+        workflow: 'img2vid:ref2vid',
+        images: [{ url: 'https://x/a.png' }, { url: 'https://x/b.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'referenceToVideo',
+      referenceImages: ['https://x/a.png', 'https://x/b.png'],
+    });
+    expect(result.firstFrameImage).toBeUndefined();
+  });
+
+  it('rejects ref2vid without a reference image', async () => {
+    await expect(input(falMax({ workflow: 'img2vid:ref2vid', images: [] }))).rejects.toThrow(
+      'reference image'
+    );
+  });
+});
+
+const heygen = (overrides: Record<string, unknown> = {}) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.heygen },
+  minimaxVariant: 'heygen',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  resolution: '768p',
+  seed: 7,
+  aspectRatio: { value: '1:1' },
+  ...overrides,
+});
+
+describe('createMiniMaxInput — HeyGen', () => {
+  it('sends textToVideo with the picked ratio', async () => {
+    expect(await input(heygen())).toMatchObject({
+      engine: 'heygen',
+      operation: 'textToVideo',
+      aspectRatio: '1:1',
+      resolution: '768p',
+      duration: 6,
+      seed: 7,
+    });
+  });
+
+  it('fills the required ratio on imageToVideo and sends only the first frame', async () => {
+    const result = await input(
+      heygen({
+        workflow: 'img2vid',
+        aspectRatio: undefined,
+        images: [{ url: 'https://x/first.png' }, { url: 'https://x/stale-last.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'imageToVideo',
+      firstFrameImage: 'https://x/first.png',
+      aspectRatio: MINIMAX_DEFAULT_ASPECT_RATIO,
+    });
+    expect(result.lastFrameImage).toBeUndefined();
+  });
+
+  it('sends references on ref2vid', async () => {
+    expect(
+      await input(heygen({ workflow: 'img2vid:ref2vid', images: [{ url: 'https://x/a.png' }] }))
+    ).toMatchObject({ operation: 'referenceToVideo', referenceImages: ['https://x/a.png'] });
   });
 });

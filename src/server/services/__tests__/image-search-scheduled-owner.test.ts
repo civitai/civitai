@@ -81,7 +81,7 @@ const publicationClauseFor = async (
   input: Record<string, unknown>
 ) => {
   await expect(fn(input as unknown as SearchArg)).rejects.toThrow('stop here');
-  // Not just "called": the BitDex path runs a parallel own-content pass, and if that
+  // Not just "called": an own-content pass runs in parallel, and if that
   // shape ever reaches a Meili builder `calls[0]` becomes whichever fired first.
   expect(fetchDocumentsAbortableMock).toHaveBeenCalledTimes(1);
   const [, request] = fetchDocumentsAbortableMock.mock.calls[0];

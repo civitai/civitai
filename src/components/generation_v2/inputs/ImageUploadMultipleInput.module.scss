@@ -6,7 +6,10 @@
   display: grid;
   gap: var(--mantine-spacing-xs);
   grid-template-columns: repeat(2, minmax(0, 200px));
-  justify-content: center;
+  // Left-align with the field label. Centering pushed a lone image (every
+  // image-to-3D input is max:1) off to the right of the form; multi-image
+  // inputs simply pack from the left.
+  justify-content: start;
 
   @container (min-width: 530px) {
     grid-template-columns: repeat(3, minmax(0, 200px));

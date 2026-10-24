@@ -39,8 +39,8 @@
  * a sign-in / sign-out / account switch. Observed in production: a browser
  * profile used first by a moderator session and later signed in as a
  * lower-privileged cohort account rendered a "Recently opened" rail of six apps
- * that account cannot see — the entries carry `name`/`iconUrl`/`slug`
- * themselves, so the rail renders them without fetching anything, and every
+ * that account cannot see — the entries carried `name`/`iconUrl`/`slug`
+ * themselves (they no longer persist an icon — see `RecentApp`), so the rail renders them without fetching anything, and every
  * detail page behind them 404s for that viewer. Not a disclosure (the names were
  * already in that browser), but stale and dead-ended.
  *
@@ -139,8 +139,21 @@ export type RecentAppKind = 'onsite' | 'offsite';
  *  - `hasPage` — on-site only: the app declares a full-page surface, so
  *    `/apps/run/<blockId>` is a real route (behind `appBlocksPages`).
  *  - `externalUrl` — off-site only: the https destination actually visited.
- *  - `name` / `iconUrl` — display enrichments so a consumer can render the entry
- *    WITHOUT re-fetching the listing.
+ *  - `name` — a display enrichment so a consumer can render the entry WITHOUT
+ *    re-fetching the listing.
+ *  - `iconUrl` — 🔴 NEVER PERSISTED AND NEVER READ BACK (see `coerce`). It exists
+ *    on the type only for an IN-MEMORY entry that the `/apps` rail has just
+ *    reconciled against a live, server-gated card (`reconcileRecentApps`).
+ *
+ * 🔴 WHY A STORED ICON IS DROPPED. A listing icon is gated per image, per viewer
+ * and per host on the server, at render time (`listing-media-audience.ts`), so an
+ * icon that was fine when an entry was written can be hidden now — re-rated,
+ * flagged, or above a browsing level the viewer has since lowered — and entries
+ * written before that gate existed hold raw, ungated urls, so a stored url would
+ * be shown with no gate in front of it. Each consumer takes its icon from a live,
+ * server-gated read instead — the `/apps` rail from its card, the app-chrome
+ * "Recently run" menu from `appListings.getAppDetail` per slug
+ * (`ChromeRecentAppIcon`) — and draws a placeholder while it has none.
  */
 export type RecentApp = {
   id: string;
@@ -209,7 +222,8 @@ function coerce(raw: unknown): RecentApp[] {
     if (typeof src.hasPage === 'boolean') entry.hasPage = src.hasPage;
     if (typeof src.externalUrl === 'string') entry.externalUrl = src.externalUrl;
     if (typeof src.name === 'string') entry.name = src.name;
-    if (typeof src.iconUrl === 'string') entry.iconUrl = src.iconUrl;
+    // `iconUrl` is deliberately NOT carried, in either direction — see `RecentApp`. This
+    // also neutralises every icon url already sitting in a viewer's localStorage.
     out.push(entry);
   }
   return out;

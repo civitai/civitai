@@ -7,6 +7,7 @@ import {
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getViewerMonetization } from '~/server/services/paid-access.service';
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
 // The subset of a generation resource that paid-access gating reads/mutates. Kept structural so the
 // caller passes its full (much larger) resource type unchanged.
@@ -14,7 +15,6 @@ export type PaidAccessGatingResource = {
   id: number;
   /** Decides whether the gate prices on the image or video ceiling. */
   baseModel?: string | null;
-  covered?: boolean | null;
   hasAccess: boolean;
   canGenerate: boolean;
   paidAccess: { endsAt: Date | null; terms: ModelVersionTerms } | null;
@@ -54,34 +54,37 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
   // Sale-aware, and viewer-aware with it: an owner is shown their stored price, a buyer the
   // discounted one.
   const monetization = await getViewerMonetization({ versions: [...byId.values()], viewer: user });
-  const isOwnerOrMod = (ownerId: number) =>
-    (!!user.id && ownerId === user.id) || !!user.isModerator;
-
-  const gated = new Map<number, { resource: T; ownerId: number; terms: ModelVersionTerms }>();
+  // One entry per OBJECT, not per id: two objects can share an id (a version that is its own
+  // substitute candidate, two epochs of one version), and every one of them is handed back.
+  const gated: { resource: T; ownerId: number; terms: ModelVersionTerms }[] = [];
   for (const r of resources) {
     const row = monetization[r.id]?.paidAccess;
     if (row && isPaidAccessActive(row)) {
-      gated.set(r.id, { resource: r, ownerId: row.ownerId, terms: row.terms as ModelVersionTerms });
+      gated.push({ resource: r, ownerId: row.ownerId, terms: row.terms as ModelVersionTerms });
       r.paidAccess = { endsAt: row.endsAt, terms: row.terms as ModelVersionTerms };
     } else {
       r.paidAccess = null;
     }
   }
 
-  // One purchase lookup, only for gated resources a non-owner must pay for (covered + non-free).
+  // One purchase lookup, only for gated resources a non-owner must pay for. Not narrowed by
+  // coverage: the raw column reads false on versions the viewer's audience is covered for.
   const purchased = await getPurchasedGenerationIds(
-    [...gated.values()]
-      .filter(
-        ({ resource, ownerId, terms }) =>
-          resource.covered && !isOwnerOrMod(ownerId) && !isFreeGeneration(terms)
-      )
-      .map(({ resource }) => resource.id),
+    [
+      ...new Set(
+        gated
+          .filter(
+            ({ ownerId, terms }) => !isViewerOrModerator(user, ownerId) && !isFreeGeneration(terms)
+          )
+          .map(({ resource }) => resource.id)
+      ),
+    ],
     user
   );
 
-  for (const { resource, ownerId, terms } of gated.values()) {
+  for (const { resource, ownerId, terms } of gated) {
     resource.hasAccess = grantsGeneration(terms, {
-      isOwnerOrMod: isOwnerOrMod(ownerId),
+      isOwnerOrMod: isViewerOrModerator(user, ownerId),
       hasBought: purchased.has(resource.id),
     });
     resource.canGenerate = resource.hasAccess && resource.canGenerate;

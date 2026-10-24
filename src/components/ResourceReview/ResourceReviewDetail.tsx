@@ -73,18 +73,22 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
   const isThumbsUp = data.recommended === true;
   const isThumbsDown = data.recommended === false;
+  const authorUsername = data.user.deletedAt ? null : data.user.username;
+  const authorName = authorUsername ?? 'Civitai user';
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'Review',
     name: `Review for ${data.model.name} - ${data.modelVersion.name}`,
     reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
-    author: !data.user.deletedAt
+    author: authorUsername
       ? {
           '@type': 'Person',
-          name: data.user.username,
-          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${data.user.username}`,
+          name: authorUsername,
+          url: env.NEXT_PUBLIC_BASE_URL
+            ? `${env.NEXT_PUBLIC_BASE_URL}/user/${authorUsername}`
+            : undefined,
         }
-      : undefined,
+      : { '@type': 'Person', name: authorName },
     datePublished: data.createdAt,
     reviewRating: {
       '@type': 'Rating',
@@ -104,8 +108,8 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   return (
     <>
       <Meta
-        title={`${data.model.name} - ${data.modelVersion.name} - Reviewed by ${data.user.username}`}
-        description={`${data.user.username} ${
+        title={`${data.model.name} - ${data.modelVersion.name} - Reviewed by ${authorName}`}
+        description={`${authorName} ${
           data.recommended ? 'recommends' : "doesn't recommend"
         } this resource. ${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''

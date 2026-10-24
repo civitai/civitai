@@ -26,6 +26,10 @@ import type { PostContestCollectionItem } from '~/types/router';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import {
+  ImageMediaHat,
+  imageMediaHatClearLeft,
+} from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -114,7 +118,12 @@ export function PostImages({
                               : undefined,
                         }}
                       >
-                        <Group gap={4} className="absolute left-2 top-2 z-10">
+                        <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+                        <Group
+                          gap={4}
+                          className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+                          style={imageMediaHatClearLeft(image.eventDecoration)}
+                        >
                           <ImageGuard2.BlurToggle />
                           {features.stickerPlacement && (
                             <StickerPlacementCardBadge imageId={image.id} />
@@ -156,6 +165,9 @@ export function PostImages({
                             images,
                             collectionId: imageCollectionItem?.collection?.id,
                           }}
+                          // A link drags by default, so a press-and-move on the video controls
+                          // becomes a link drag that eats the click. Media opts into its own drag.
+                          draggable={!showsControlStrip}
                           onClick={() => {
                             if (videoRef.current) videoRef.current.stop();
                           }}
@@ -179,9 +191,15 @@ export function PostImages({
                               type={image.type}
                               imageId={image.id}
                               width={width < maxWidth ? width : maxWidth}
+                              hiDpi={features.hiDpiPreviews}
+                              sourceWidth={image.width}
                               original={image.type === 'video'}
                               anim={safe}
                               html5Controls={showsControlStrip}
+                              // Fullscreen belongs to the image detail view, which this media
+                              // links to. Chromium-only; other browsers still show the button,
+                              // which EdgeVideo's fullscreen guards keep usable.
+                              videoProps={{ controlsList: 'nofullscreen' }}
                               videoRef={videoRef}
                               vimeoVideoId={vimeoVideoId}
                             />
@@ -196,6 +214,7 @@ export function PostImages({
                           entityId={image.id}
                           entityType="image"
                           reactions={image.reactions}
+                          metricsUnknown={image.stats?.statsUnknown}
                           metrics={{
                             likeCount: image.stats?.likeCountAllTime,
                             dislikeCount: image.stats?.dislikeCountAllTime,

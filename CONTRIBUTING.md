@@ -30,8 +30,10 @@ consequences:
   though they pass in isolation. So a red unit job is a signal to look, not proof
   you broke something, and a green overall check doesn't mean the tests passed.
   Read the job output.
-- **Component tests don't run in CI at all.** The 106 `*.browser.test.tsx` files
-  need real Chromium and only execute when someone runs them locally.
+- **Component tests run in GitHub Actions as `Component tests`.** The
+  `*.browser.test.tsx` files need real Chromium, which that job installs. A failing
+  test turns the check red; like every check here it does not block a merge, so
+  read it.
 
 A green check on a fork PR therefore means much less than it looks like. Verify
 locally.
@@ -70,7 +72,7 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
-All of these need the repo's own toolchain — node `24.19.0` (the version in
+All of these need the repo's own toolchain — node `24.22.1` (the version in
 `.nvmrc`) and pnpm 10.x. **Nothing stops you running them on the wrong node**:
 `engines.node` is advisory, so `pnpm install` prints `WARN Unsupported engine`
 and continues. That is why this is worth stating rather than leaving to the
@@ -80,12 +82,12 @@ failure: outside the dev shell there are no `PRISMA_*_ENGINE_*` paths, so Prisma
 goes looking for a `linux-nixos` engine that has never been published.
 
 `nvm use` picks the right node up from `.nvmrc`; with Nix, prefix any of these
-with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`).
+with `nix develop -c` (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), or use direnv (`cp .envrc.example .envrc && direnv allow`).
 
 ```bash
 pnpm typecheck                 # full repo
 pnpm test:unit:run             # ~8,900 unit tests, node env
-pnpm test:component            # ~1,300 component tests in real Chromium, slower
+pnpm test:component            # ~2,250 component tests in real Chromium, slower
 pnpm exec prettier --check <files you added>
 pnpm exec eslint <files you added>
 ```
@@ -110,6 +112,63 @@ that's what happened.
 The reliable method for any of these commands is to run it on unmodified `main`
 first, save the output, then compare. A failure that also happens on `main` isn't
 yours.
+
+### `pnpm test:component` fails on ZERO COLLECTED, not only on red tests
+
+The browser suite has a failure mode that runs **no tests at all** and, until you
+read the numbers, looks exactly like an ordinary failure. `pnpm test:component`
+runs through `scripts/test-component-run.mjs`, which asks vitest for a JSON report
+and hands it to `scripts/ci/assert-component-suite-ran.mjs`. That gate prints a
+ledger and applies three checks:
+
+```
+test:component ledger: 2254 executed, 0 skipped, across 201 files; 0 failed suites,
+0 failed tests (baseline 2254 tests / 201 files measured 2026-08-31; 201 on disk;
+floor 1240)
+```
+
+1. **Nothing collected fails** — always, on every invocation.
+2. **A `*.browser.test.tsx` on disk that is absent from the report fails, and is
+   named.** A file that stops being collected reports as *absence*, so no failure
+   count and no per-test list can show it.
+3. **A floor on executed tests**, as a backstop for a partial collapse that still
+   leaves every file present.
+
+The gate can only ever *add* a failure — vitest's own exit code is passed straight
+through otherwise.
+
+Three things to know before you run it with arguments:
+
+- **Any argument at all skips checks 2 and 3. Check 1 always applies.** Passing
+  *anything* — a filename, `--shard`, even `--max-workers 4` — means what the run
+  should have collected is not knowable from the arguments, so the floor and the file
+  ledger are not asserted. Run with **no arguments** to get all three; that is what CI
+  does. To size a run without giving up the checks, use the environment instead:
+  `VITEST_MAX_WORKERS=4 pnpm test:component`.
+  (This is deliberately not a parser. Deciding which vitest flags consume the next
+  token was tried twice and lost twice — measured against vitest's real option table,
+  a hand-maintained flag list was wrong on 73 options and the shape heuristic that
+  replaced it was wrong on 74. The rule above cannot be wrong about any of them.)
+- **`--outputFile` is refused** (exit 2), in every spelling that would collide with
+  the report the gate reads. Run `pnpm exec vitest run --project component` directly
+  if you want your own report.
+
+Why it exists: a `vi.mock` factory that throws is resolved inside a Playwright
+route handler that does not catch, so the rejection escapes as an
+`Unhandled Rejection` in the orchestrator and kills the whole run — no
+`Test Files` line, no per-file results, exit 1. The `preview / component-tests`
+tier reads only the exit code, so that abort and a genuine list of red assertions
+rendered identically. One such file zeroed all 201 suites on `main` at
+`d353f785c3`. A browser crash under host load produces the same shape, wearing the
+same misleading headline. The gate's message enumerates the causes it cannot tell
+apart; read the error printed above it.
+
+The commonest cause is a **wholesale** factory that stops naming an export
+something in the file's module graph imports. `local-rules/no-wholesale-module-mock`
+guards that for a listed set of modules, and
+`src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts` guards
+the feature-flags module — but only under `src/components/AppBlocks`, so neither
+covers you by default.
 
 ## Where tests go
 

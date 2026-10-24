@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 
-type PanelView = 'generate' | 'queue' | 'feed';
+export type GenerationPanelView = 'generate' | 'queue' | 'feed';
+export type GenerationResultsView = Exclude<GenerationPanelView, 'generate'>;
 
 type State = {
   opened: boolean;
-  view: PanelView;
+  view: GenerationPanelView;
   /** View to restore after an enhancement workflow completes */
-  previousView?: PanelView;
+  previousView?: GenerationPanelView;
 };
 
 export const useGenerationPanelStore = create<State>((set) => ({

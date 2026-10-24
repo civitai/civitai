@@ -7,7 +7,16 @@ export type PostSortClauses = {
   isDateSort: boolean;
   ascending: boolean;
   filter?: Prisma.Sql;
+  /**
+   * Emit `prop < cursor` instead of the `(prop, p.id) <= (…)` row comparison. A row comparison
+   * spanning two tables cannot be pushed into an Index Cond on either, so every page after the
+   * first re-scans the whole collection; a single-column predicate lands on the `ci` scan.
+   * Only legal when the prop is already unique per row.
+   */
+  singleColumnCursor?: boolean;
 };
+
+export const DRAFT_QUEUE_SORT_KEY = `(CASE WHEN p."publishedAt" IS NULL THEN 1e15 + extract(epoch from p."createdAt") * 1000 ELSE -extract(epoch from p."publishedAt") * 1000 END)::float8`;
 
 /**
  * ORDER BY / keyset-sort-key selection for `getPostsInfinite`.
@@ -19,10 +28,45 @@ export type PostSortClauses = {
 export const getPostSortClauses = ({
   sort,
   draftOnly,
+  collectionJoined,
 }: {
   sort: PostSort;
   draftOnly?: boolean;
+  /** Whether the caller joined "CollectionItem" as `ci`, which `RecentlyAdded` orders on. */
+  collectionJoined?: boolean;
 }): PostSortClauses => {
+  // The drafts view is a publish queue, so no sort applies to it, Recently Added included:
+  // unscheduled drafts first, newest first, then scheduled posts soonest first. That is two
+  // directions and the keyset cursor takes one, so the key is epoch milliseconds, NEGATED for
+  // scheduled posts and lifted by 1e15 for drafts. Not a mirrored timestamp: nothing bounds
+  // publishedAt on write, and a mirrored date leaves timestamp range for a far-future one.
+  if (draftOnly) {
+    return {
+      orderBy: `${DRAFT_QUEUE_SORT_KEY} DESC, p.id DESC`,
+      primarySortProp: DRAFT_QUEUE_SORT_KEY,
+      isDateSort: false,
+      ascending: false,
+    };
+  }
+
+  if (sort === PostSort.RecentlyAdded) {
+    // Unreachable from getPostsInfinite, which 400s the sort without a collectionId before it
+    // gets here. Throwing rather than falling through to publishedAt because that fallback is
+    // exactly what a dropped `collectionJoined` would produce: a silently wrong order.
+    if (!collectionJoined)
+      throw new Error('PostSort.RecentlyAdded requires the caller to join "CollectionItem" as ci');
+
+    // The join is through a unique ("collectionId", "postId") index, so ci."id" is already
+    // total over the feed and needs no p.id tiebreaker in the ORDER BY or the cursor.
+    return {
+      orderBy: 'ci."id" DESC',
+      primarySortProp: 'ci."id"',
+      isDateSort: false,
+      ascending: false,
+      singleColumnCursor: true,
+    };
+  }
+
   switch (sort) {
     case PostSort.MostComments:
       return {
@@ -54,17 +98,7 @@ export const getPostSortClauses = ({
 
   const ascending = sort === PostSort.Oldest;
   const direction = ascending ? 'ASC' : 'DESC';
-
-  // draftOnly mixes drafts (publishedAt IS NULL) with scheduled (publishedAt > NOW()).
-  // Descending, the +100 years offset keeps drafts ahead of any scheduled post while
-  // preserving createdAt order among themselves. Ascending it would do the opposite and
-  // bury drafts behind every scheduled post, so Oldest drops the offset and orders both
-  // partitions on one true timeline — reaching old drafts is the point of the sort.
-  const primarySortProp = draftOnly
-    ? ascending
-      ? `COALESCE(p."publishedAt", p."createdAt")`
-      : `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
-    : 'p."publishedAt"';
+  const primarySortProp = 'p."publishedAt"';
 
   return {
     orderBy: `${primarySortProp} ${direction}, p.id ${direction}`,
@@ -85,11 +119,13 @@ export const buildPostCursorClause = ({
   primarySortProp,
   isDateSort,
   ascending,
+  singleColumnCursor,
 }: {
   cursor?: string | number;
   primarySortProp: string;
   isDateSort: boolean;
   ascending: boolean;
+  singleColumnCursor?: boolean;
 }): Prisma.Sql | undefined => {
   if (!cursor) return undefined;
 
@@ -107,6 +143,13 @@ export const buildPostCursorClause = ({
 
   const sortProp = Prisma.raw(primarySortProp);
 
+  // Non-strict, to match the row-comparison branch: the caller sets nextCursor from the popped
+  // lookahead row, so that row must be re-served as the first row of the next page.
+  if (singleColumnCursor)
+    return ascending
+      ? Prisma.sql`${sortProp} >= ${primaryValue}`
+      : Prisma.sql`${sortProp} <= ${primaryValue}`;
+
   if (cursorId !== null) {
     // Row-comparison form lets postgres push the predicate into Index Cond on a
     // (primarySortProp, id) index. Equivalent to
@@ -121,9 +164,12 @@ export const buildPostCursorClause = ({
     : Prisma.sql`${sortProp} < ${primaryValue}`;
 };
 
-export const encodePostCursor = (row: { id: number; cursorId: Date | number | null }) => {
+export const encodePostCursor = (
+  row: { id: number; cursorId: Date | number | null },
+  singleColumnCursor?: boolean
+) => {
   if (row.cursorId === null || row.cursorId === undefined) return undefined;
   const cursorValue =
     row.cursorId instanceof Date ? row.cursorId.toISOString() : String(row.cursorId);
-  return `${cursorValue}|${row.id}`;
+  return singleColumnCursor ? cursorValue : `${cursorValue}|${row.id}`;
 };

@@ -1,0 +1,145 @@
+import { z } from 'zod';
+import { boolOf, cachedFactory } from 'form-graph';
+import type { FieldDef } from 'form-graph';
+
+/**
+ * Domain-agnostic form-graph definition builders, shared by every graph under
+ * `src/shared/form-graph/` (generation today, training next). Anything tied
+ * to a specific domain — seeds, resources, checkpoints, prompts — lives in
+ * that graph's own `defs.ts`.
+ *
+ * Every def with a lenient `input` also declares `correct`, because `input` runs
+ * at the BOUNDARY only: `store.set` writes trusted intent (skipping it outright)
+ * and an untrusted parse is cached per stored entry, not per codec — so neither
+ * re-runs when a branch switch narrows the constraint under a value already in
+ * state. Without a per-pass correction the strict `output` refuses it, and the
+ * caller that sees the refusal is `validate()` at submit.
+ */
+
+/** Snap to the nearest step, clamped — mirrors the UI slider's behaviour. */
+export function snapToStep(val: number, step: number, min: number, max: number): number {
+  const precision = Math.max(0, -Math.floor(Math.log10(step)));
+  const snapped = Math.round(val / step) * step;
+  const rounded = Number(snapped.toFixed(precision));
+  return Math.min(Math.max(rounded, min), max);
+}
+
+export interface NumberMeta {
+  min: number;
+  max: number;
+  step: number;
+  presets?: { label: string; value: number }[];
+  /** An advisory band inside the range, painted on the slider. */
+  recommended?: { min: number; max: number };
+}
+
+/**
+ * A numeric slider: lenient input snaps into range, output enforces it.
+ * Near-twin of the lib's `slider` minus its `coerce`; kept separate so the
+ * snap semantics stay pinned.
+ */
+export const sliderDef = cachedFactory(function sliderDef(opts: {
+  min: number;
+  max: number;
+  step?: number;
+  default?: number;
+  presets?: { label: string; value: number }[];
+}) {
+  const { min, max, step = 1 } = opts;
+  return {
+    input: z.coerce
+      .number()
+      .optional()
+      .transform((val) => (val === undefined ? undefined : snapToStep(val, step, min, max))),
+    output: z.number().min(min).max(max),
+    default: opts.default ?? min,
+    correct: (value) => {
+      const snapped = snapToStep(value, step, min, max);
+      return snapped === value ? undefined : { value: snapped, reason: 'out_of_range' };
+    },
+    meta: { min, max, step, presets: opts.presets },
+  } satisfies FieldDef<number, NumberMeta>;
+});
+
+export interface EnumMeta<T extends string | number> {
+  options: readonly { label: string; value: T }[];
+}
+
+const enumCache = new Map<string, unknown>();
+
+function buildEnumDef<const T extends string | number>(opts: {
+  options: readonly { label: string; value: T }[];
+  default?: T;
+}) {
+  const values = opts.options.map((o) => o.value);
+  const isNumeric = typeof values[0] === 'number';
+  const base = (isNumeric ? z.coerce.number() : z.coerce.string()) as z.ZodType<unknown>;
+  const schema = base.refine((v) => values.includes(v as T)) as unknown as z.ZodType<T>;
+  const resolvedDefault = opts.default ?? (values[0] as T);
+  return {
+    input: schema.optional(),
+    output: schema,
+    default: resolvedDefault,
+    correct: (value) =>
+      values.includes(value) ? undefined : { value: resolvedDefault, reason: 'option_unavailable' },
+    meta: { options: opts.options },
+  } satisfies FieldDef<T, EnumMeta<T>>;
+}
+
+/**
+ * A closed option set: coerces, then REFUSES values outside the options at the
+ * boundary — the defs refuse rather than clamp. Still not
+ * the lib's `enumOf`, which corrects to the first UNGATED option and normalises
+ * trusted writes destructively; `correct` here falls back to the declared
+ * default and leaves the original in intent. Don't consolidate the two without
+ * accepting the wire change.
+ */
+export function enumDef<const T extends string | number>(opts: {
+  options: readonly { label: string; value: T }[];
+  default?: T;
+}): ReturnType<typeof buildEnumDef<T>> {
+  const cacheKey = JSON.stringify(opts);
+  let hit = enumCache.get(cacheKey) as ReturnType<typeof buildEnumDef<T>> | undefined;
+  if (hit === undefined) {
+    hit = buildEnumDef(opts);
+    enumCache.set(cacheKey, hit);
+  }
+  return hit;
+}
+
+export interface SelectMeta {
+  options: { label: string; value: string }[];
+  presets?: { label: string; value: string }[];
+}
+
+/** A string select: unlike enumDef, an out-of-set value FALLS BACK to the default. */
+export const selectDef = cachedFactory(function selectDef(opts: {
+  options: readonly string[];
+  default?: string;
+  presets?: { label: string; value: string }[];
+}) {
+  const { options } = opts;
+  const resolvedDefault =
+    opts.default && options.includes(opts.default) ? opts.default : options[0]!;
+  return {
+    input: z
+      .string()
+      .optional()
+      .transform((val) => {
+        if (!val) return undefined;
+        if (options.includes(val)) return val;
+        return resolvedDefault;
+      }),
+    output: z.enum(options as [string, ...string[]]),
+    default: resolvedDefault,
+    correct: (value) =>
+      options.includes(value)
+        ? undefined
+        : { value: resolvedDefault, reason: 'option_unavailable' },
+    meta: { options: options.map((s) => ({ label: s, value: s })), presets: opts.presets },
+  } satisfies FieldDef<string, SelectMeta>;
+});
+
+// The lib's boolOf IS this def (schemas cached internally); only the
+// positional-argument signature is ours, kept for the 36 call sites.
+export const boolDef = (dflt: boolean) => boolOf({ default: dflt });

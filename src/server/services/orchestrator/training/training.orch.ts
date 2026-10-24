@@ -1,3 +1,6 @@
+import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
+import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
+import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
@@ -9,7 +12,13 @@ import type {
   AiToolkitTrainingInput,
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
-} from '@civitai/client';
+  AnimaAiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
+import {
+  isSafeTensorFormat,
+  NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
+} from '@civitai/shared/training-custom-model';
+import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -27,7 +36,9 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -41,6 +52,7 @@ import {
   isInvalidAiToolkit,
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
+  isKohyaEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -55,7 +67,7 @@ async function isSafeTensor(modelVersionId: number) {
     LIMIT 1
   `;
 
-  return data?.fmt === 'SafeTensor';
+  return isSafeTensorFormat(data?.fmt);
 }
 
 const checkCustomModel = async (
@@ -77,7 +89,7 @@ const checkCustomModel = async (
     if (!isST)
       return {
         ok: false,
-        message: 'Custom model does not have a SafeTensor file. Please choose another model.',
+        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
       };
   }
 
@@ -132,7 +144,7 @@ const createTrainingStep_Run = (
     };
   } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
     // All rapid/fast training engines use the same input structure
-    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    // Type assertion needed because flux2 engine types aren't in @civitai/orchestration-client yet
     const input = {
       ...inputBase,
       engine,
@@ -156,38 +168,63 @@ const createTrainingStep_Run = (
   }
 };
 
-// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
-const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+/**
+ * The dataset an ai-toolkit step trains on: a zip (the training form's upload) or a
+ * list of individually uploaded orchestrator blobs with per-item captions (the
+ * Training Studio's shape, and the App Blocks `kind:'training'` shape).
+ */
+export type AiToolkitTrainingData =
+  | ZipTrainingData
+  | { type: 'blobs'; items: Array<{ air: string; caption: string }> };
+
+export type AiToolkitTrainingStepInput = {
+  model: string;
+  priority: ImageTrainingStepSchema['priority'];
+  triggerWord: string;
+  trainingData: AiToolkitTrainingData;
+  samplePrompts: string[];
+  samplesOverrides?: ImageTrainingStepSchema['samplesOverrides'];
+  params: AiToolkitTrainingParams;
+  /** Step metadata. Omitted from the step entirely when absent. */
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Build the ai-toolkit `training` step. PURE: no I/O, no clock, no randomness, so
+ * a whatif quote and the real submit built from the same input describe the same
+ * work. Shared by the training form (zip dataset, via `createTrainingStep_AiToolkit`)
+ * and the App Blocks `kind:'training'` bridge (blob dataset).
+ *
+ * Stamps no `timeout` and no `name`; callers add them.
+ */
+export const buildAiToolkitTrainingStep = (
+  input: AiToolkitTrainingStepInput
+): TrainingStepTemplate => {
   const {
     model,
     priority,
-    loraName,
     triggerWord,
     trainingData,
-    trainingDataImagesCount,
     samplePrompts,
     samplesOverrides,
-    negativePrompt,
-    modelFileId,
-    params,
+    params: aiToolkitParams,
+    metadata,
   } = input;
 
-  // Params are already in AI Toolkit format from the database
-  const aiToolkitParams = params as AiToolkitTrainingParams;
-
-  let trainingInput: AiToolkitTrainingInput = {
+  let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
-    trainingData: {
-      type: 'zip',
-      sourceUrl: trainingData,
-      count: trainingDataImagesCount,
-    } as ZipTrainingData,
+    trainingData,
     samples: {
-      prompts: samplePrompts,
-      cfgScale: aiToolkitParams.sampleCfgScale ?? undefined,
+      prompts:
+        aiToolkitParams.ecosystem === 'yue2'
+          ? samplePrompts.map(formatYue2SamplePrompt)
+          : samplePrompts,
+      ...(aiToolkitParams.ecosystem !== 'yue2' && {
+        cfgScale: aiToolkitParams.sampleCfgScale ?? undefined,
+      }),
       strength: aiToolkitParams.sampleStrength ?? undefined,
     },
     // Steps-based pricing: `steps` is the primary length knob and drives pricing;
@@ -226,11 +263,17 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
+  } else if (aiToolkitParams.ecosystem === 'anima') {
+    // The civitai Anima AIR is the sample-image diffusion model, not the trainer base; sending it
+    // here bills its per-image license fee once per epoch checkpoint.
+    if (model !== trainingModelInfo.anima.air) {
+      trainingInput = {
+        ...trainingInput,
+        model,
+      } as AnimaAiToolkitTrainingInput;
+    }
   }
 
-  // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
-  // types only declare `samplesOverrides` on the AceStep15* variants, so we
-  // attach via a cast rather than widening every other ecosystem branch.
   if (
     samplesOverrides &&
     samplesOverrides.length > 0 &&
@@ -243,13 +286,51 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     ).samplesOverrides = samplesOverrides as Array<Record<string, unknown>>;
   }
 
+  if (aiToolkitParams.ecosystem === 'yue2' && samplesOverrides?.length) {
+    const overrides: YuE2SampleOverride[] = samplesOverrides.map((override) =>
+      yue2SampleOverrideSchema.parse(override)
+    );
+    trainingInput = { ...trainingInput, ecosystem: 'yue2', samplesOverrides: overrides };
+  }
+
   return {
     $type: 'training',
-    metadata: { modelFileId },
+    ...(metadata ? { metadata } : {}),
     priority,
     retries: constants.maxTrainingRetries,
     input: trainingInput,
   };
+};
+
+// The training form's ai-toolkit step: a zip dataset plus the version's ModelFile id.
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    triggerWord,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    samplesOverrides,
+    modelFileId,
+    params,
+  } = input;
+
+  return buildAiToolkitTrainingStep({
+    model,
+    priority,
+    triggerWord,
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samplePrompts,
+    samplesOverrides,
+    // Params are already in AI Toolkit format from the database
+    params: params as AiToolkitTrainingParams,
+    metadata: { modelFileId },
+  });
 };
 
 // Dispatcher to route to the correct training step creator
@@ -265,11 +346,18 @@ const createTrainingStep = (
   }
 };
 
+const ORCHESTRATOR_REJECTED_CODES = new Set<TRPCError['code']>([
+  'BAD_REQUEST',
+  'UNAUTHORIZED',
+  'TOO_MANY_REQUESTS',
+]);
+
 export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
   features,
+  domain,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -321,6 +409,16 @@ export const createTrainingWorkflow = async ({
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
   const fileMetadata = modelVersion.fileMetadata ?? {};
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
+
+  // Content prepared under red's permissive policy (captions/images live in the training zip and
+  // aren't re-checked here) must be paid for and run on red, not laundered onto green by switching
+  // domains at the final step. Legacy datasets predate the stamp and fall through to post-run
+  // moderation. See createFileHandler for where uploadDomain is set.
+  if (domain === 'green' && fileMetadata.uploadDomain === 'red') {
+    throw throwBadRequestError(
+      'This training dataset was prepared on civitai.red and must be submitted there. Switch back to civitai.red to start this training.'
+    );
+  }
   // const trainingResults = (fileMetadata.trainingResults ?? {}) as TrainingResultsV2;
 
   if (isInvalidRapid(baseModelType, trainingParams.engine))
@@ -331,6 +429,13 @@ export const createTrainingWorkflow = async ({
 
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
+  // API caller can still carry it, and no worker would claim the step.
+  if (trainingParams.engine === 'kohya' && !isKohyaEnabled(features))
+    throw throwBadRequestError(
+      'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
+    );
 
   // Audio base types are marked `isAiToolkitMandatory`, so the check above
   // short-circuits to true regardless of feature flags. Enforce the rollout
@@ -356,6 +461,11 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'trainer', modelVersionId },
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.
@@ -404,26 +514,67 @@ export const createTrainingWorkflow = async ({
   // `queryWorkflows` offers. Nothing reads them yet.
   const trainingType = modelVersion.trainingDetails.type;
 
-  const workflow = await submitWorkflow({
-    token,
-    body: {
-      tags: [
-        TRAINING_WORKFLOW_TAG,
-        `modelVersion:${modelVersionId}`,
-        `baseModel:${baseModel}`,
-        ...(trainingType ? [`trainingType:${trainingType}`] : []),
-      ],
-      steps: [stepRun],
-      callbacks: [
-        {
-          url: `${env.WEBHOOK_URL}/resource-training-v2/${modelVersion.modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
-          type: ['workflow:*'],
-        },
-      ],
-      // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
+  // Every submitWorkflow call is its own charged workflow, and the version keeps only the last
+  // workflowId, so a repeat submit strands a paid run. Claim the version atomically first.
+  // NULL is claimable because the extra runs of a multi-run submit are created without a status.
+  const { count: claimed } = await dbWrite.modelVersion.updateMany({
+    where: {
+      id: modelVersionId,
+      OR: [{ trainingStatus: null }, { trainingStatus: TrainingStatus.Pending }],
     },
+    data: { trainingStatus: TrainingStatus.Submitted },
   });
+  if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
+
+  let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    workflow = await submitWorkflow({
+      token,
+      body: {
+        tags: [
+          TRAINING_WORKFLOW_TAG,
+          `modelVersion:${modelVersionId}`,
+          `baseModel:${baseModel}`,
+          ...(trainingType ? [`trainingType:${trainingType}`] : []),
+        ],
+        steps: [stepRun],
+        callbacks: [
+          {
+            url: `${env.WEBHOOK_URL}/resource-training-v2/${modelVersion.modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
+            type: ['workflow:*'],
+          },
+        ],
+        // @ts-ignore - BuzzSpendType is properly supported.
+        currencies,
+      },
+    });
+  } catch (e) {
+    // Only a 4xx proves no workflow was created. After a timeout or 5xx one may have been, and
+    // releasing would let a retry charge a second run: a stuck version is the cheaper failure.
+    if (e instanceof TRPCError && ORCHESTRATOR_REJECTED_CODES.has(e.code)) {
+      await dbWrite.modelVersion.updateMany({
+        where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+        data: { trainingStatus: TrainingStatus.Pending },
+      });
+    }
+    throw e;
+  }
+
+  await assertWorkflowOwner(workflow, userId, token);
 
   // Update file and version status immediately after workflow creation
   const now = new Date().toISOString();
@@ -504,6 +655,7 @@ export const createTrainingWhatIfWorkflow = async ({
     loraName: '',
     triggerWord: '',
     samplePrompts: whatIfSamplePrompts,
+    samplesOverrides: 'samplesOverrides' in input ? input.samplesOverrides : undefined,
     modelFileId: -1,
     negativePrompt: '',
   };
@@ -566,7 +718,7 @@ export const createTrainingWhatIfWorkflow = async ({
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
-  const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
+  const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
   return { cost, licenseFee, precedingJobs, eta };

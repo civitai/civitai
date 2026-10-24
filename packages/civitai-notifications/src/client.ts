@@ -196,7 +196,11 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
       const res = (await post('/notifications/count', input, config)) as Array<
         Omit<NotificationCategoryCount, 'count'> & { count: number | string }
       >;
-      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
+      return res.map((c) => ({
+        category: c.category,
+        count: Number(c.count),
+        ...(c.floor ? { floor: true } : {}),
+      }));
     },
 
     markNotificationsRead: async (input: MarkReadInput): Promise<void> => {

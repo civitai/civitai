@@ -248,6 +248,46 @@ describe('persistBlockUploadImage (measures the uploaded bytes)', () => {
   });
 });
 
+describe('persistBlockUploadImage provenance stamp (OPEN_IMAGE_UPLOAD bytes)', () => {
+  // `createImage` is mocked here, so these pin only the ARGUMENTS. That the stamp survives the
+  // real `createImage` (which drops any provenance key found in `metadata`) is proven in
+  // `block-image-upload.provenance-stamp.test.ts`.
+  const createArg = () =>
+    mockCreateImage.mock.calls[0][0] as {
+      metadata: Record<string, unknown>;
+      blockProvenance?: { key: string; appId: string } | null;
+    };
+
+  it('an app bytes upload passes the UPLOADED key as blockProvenance, never the published one', async () => {
+    storeObject(await flatPng(800, 450));
+    const { persistBlockUploadImage } = await import('../block-image-upload.service');
+
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      uploadedByAppId: 'appblk-alpha',
+    });
+
+    const arg = createArg();
+    // The published key would open the CROSS-USER gated read to this upload.
+    expect(arg.blockProvenance).toEqual({ key: 'blockUploadedAppId', appId: 'appblk-alpha' });
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
+    expect(arg.metadata.size).toEqual(expect.any(Number));
+  });
+
+  it('a viewer-picked upload carries no provenance stamp at all', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persist({ url: KEY });
+
+    const arg = createArg();
+    expect(arg.blockProvenance ?? null).toBeNull();
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
+  });
+});
+
 describe('persistBlockUploadImageSchema', () => {
   it('accepts an upload that omits the measured fields', () => {
     expect(persistBlockUploadImageSchema.parse({ url: KEY })).toEqual({ url: KEY });

@@ -1,3 +1,4 @@
+import { extname } from 'node:path';
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
   AudioCaptioningStepTemplate,
@@ -5,14 +6,14 @@ import type {
   WdTaggingStepTemplate,
   Workflow,
   WorkflowStepTemplate,
-} from '@civitai/client';
-import type { WorkflowStatus } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -26,7 +27,6 @@ import type {
   AutoTagInput,
   GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
-  MoveAssetInput,
   SubmitAutoLabelWorkflowInput,
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
@@ -35,6 +35,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
   deriveTrainingWorkflowState,
+  offsetEpochNumbers,
   TrainingRecordNotFoundError,
 } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -45,6 +46,7 @@ import {
   throwServiceUnavailableError,
   withRetries,
 } from '~/server/utils/errorHandling';
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   deleteObject,
@@ -55,6 +57,7 @@ import {
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
+import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -70,41 +73,28 @@ export type TrainingRequest = {
   modelVersionMetadata?: MixedObject | null;
 };
 
-async function getSubmittedAt(modelVersionId: number, userId: number) {
-  const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
-    SELECT mf.metadata, mv."updatedAt"
-    FROM "ModelVersion" mv
-           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-           JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId}
-      AND m."userId" = ${userId}
-  `;
-
-  if (!modelFile) throw throwBadRequestError('Invalid model version');
-  if (modelFile.metadata?.trainingResults?.submittedAt) {
-    return new Date(modelFile.metadata.trainingResults.submittedAt);
-  } else if (modelFile.metadata?.trainingResults?.history) {
-    for (const { status, time } of modelFile.metadata.trainingResults.history) {
-      if (status === TrainingStatus.Submitted) {
-        return new Date(time);
-      }
-    }
-  }
-
-  return modelFile.updatedAt;
-}
-
-const assetUrlRegex =
-  /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
-
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
-type MoveAssetRow = {
-  metadata: FileMetadata | null;
-  updatedAt: Date;
-};
+/**
+ * Where a training checkpoint is copied to. A unique asset key per copy: the same asset name can
+ * come back (a later pick, another run), and a copy must never land on an existing object.
+ */
+export function uniqueAssetKey(modelVersionId: number, assetName: string) {
+  const ext = extname(assetName);
+  const base = assetName.slice(0, assetName.length - ext.length);
+  return `modelVersion/${modelVersionId}/${base}.${generateToken(8)}${ext}`;
+}
 
-async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVersionId: number }) {
+export async function moveAssetFromBlob({
+  url,
+  modelVersionId,
+}: {
+  url: string;
+  modelVersionId: number;
+}) {
+  // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
+  // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
+  if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
   console.log('[moveAssetFromBlob] Starting', { url, modelVersionId });
 
   const urlMatch = url.match(blobUrlRegex);
@@ -117,7 +107,7 @@ async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVe
     url: destinationUri,
     bucket,
     key,
-  } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
   console.log('[moveAssetFromBlob] Got put URL', { bucket, key });
 
   // Download the blob
@@ -170,81 +160,46 @@ async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVe
   };
 }
 
-async function moveAssetFromJob({
-  url,
+/**
+ * Has the orchestrator copy a job asset into storage under `modelVersionId`. It copies any job's
+ * asset with the system token, so the caller must already have tied `jobId`/`assetName` to a
+ * checkpoint of the version's own approved run.
+ */
+export async function moveAssetFromJob({
+  jobId,
+  assetName,
   modelVersionId,
-  userId,
+  submittedAt,
 }: {
-  url: string;
+  jobId: string;
+  assetName: string;
   modelVersionId: number;
-  userId: number;
+  submittedAt?: Date;
 }) {
-  const urlMatch = url.match(assetUrlRegex);
-  if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
-  const { jobId, assetName } = urlMatch.groups;
+  const { url: destinationUri } = await getPutUrl(uniqueAssetKey(modelVersionId, assetName));
 
-  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
-
-  const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
-    jobId,
-    assetName,
-    destinationUri,
-  };
-
-  const submittedAt = await getSubmittedAt(modelVersionId, userId);
   const response = await getOrchestratorCaller(submittedAt).copyAsset({
-    payload: reqBody,
+    payload: { jobId, assetName, destinationUri },
     queryParams: { wait: true },
   });
-  if (response.status === 429) {
-    throw throwRateLimitError();
-  }
-
-  if (!response.ok) {
+  if (response.status === 429) throw throwRateLimitError();
+  if (!response.ok)
     throw throwBadRequestError(
       "We couldn't reach the training service to transfer your file. Please wait a moment and try again."
     );
-  }
 
-  const thisJob = response.data?.jobs?.[0];
-
-  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
+  const job = response.data?.jobs?.[0];
+  if (!job || job.lastEvent?.type !== 'Succeeded')
     throw throwBadRequestError(
       "Your training file couldn't be transferred to your model. Please try again or select another file."
     );
-  }
-
-  const result = thisJob.result;
-  if (!result || !result.found) {
+  if (!job.result?.found)
     throw throwBadRequestError(
       "We couldn't find the training file you selected. It may have expired — please try again or select another file."
     );
-  }
 
-  const newUrl = destinationUri.split('?')[0];
-
-  return {
-    newUrl,
-    fileSize: result.fileSize,
-  };
+  return { newUrl: destinationUri.split('?')[0], fileSize: job.result.fileSize };
 }
-
-export const moveAsset = async ({
-  url,
-  modelVersionId,
-  userId,
-}: MoveAssetInput & { userId: number }) => {
-  // Check if it's a blob URL (new format)
-  if (blobUrlRegex.test(url)) {
-    // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
-    // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
-    if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
-    return moveAssetFromBlob({ url, modelVersionId });
-  }
-
-  // Otherwise, use the job asset flow (legacy format)
-  return moveAssetFromJob({ url, modelVersionId, userId });
-};
 
 export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   const response = await getOrchestratorCaller(submittedAt).clearAssets({
@@ -543,12 +498,7 @@ export async function updateTrainingWorkflowRecords(
   // than an error, so those bindings would silently move to other weights. Not enforced, though:
   // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
   // offset on their own run.
-  const epochOffset = trainingResults.epochOffset ?? 0;
-
-  const epochData: TrainingResultsV2['epochs'] = derivedEpochs.map((e) => ({
-    ...e,
-    epochNumber: e.epochNumber >= 0 ? e.epochNumber + epochOffset : -1,
-  }));
+  const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
 
@@ -658,20 +608,42 @@ type AutoLabelStepMetadata = {
 // we don't gate on a host allowlist — but we DO want to refuse hostnames that
 // resolve to private/loopback/link-local space, since the orchestrator runs
 // inside our network and would happily fetch internal services if asked.
-const PRIVATE_HOST_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./, // link-local (incl. cloud metadata 169.254.169.254)
-  /^0\./,
-  /^::1$/,
-  /^fe80:/i,
-  /^fc/i, // unique local IPv6 (fc00::/7)
-  /^fd/i,
-];
-
+//
+// 🔴 This used to carry its OWN `PRIVATE_HOST_PATTERNS` array, which had DRIFTED from the
+// canonical list in `~/server/utils/ssrf-hostname` and was weaker than it. MEASURED against
+// the old array — NINE shapes it ADMITTED that reach private/internal space and
+// `isPublicHttpsUrl` refuses:
+//   `https://[::ffff:127.0.0.1]/x`         IPv4-mapped IPv6 loopback
+//   `https://[0:0:0:0:0:ffff:7f00:1]/x`    the same, spelled out uncompressed
+//   `https://[::ffff:169.254.169.254]/x`   mapped cloud metadata
+//   `https://[64:ff9b::a9fe:a9fe]/x`       NAT64 well-known prefix embedding 169.254.169.254
+//   `https://[2002:7f00:1::]/x`            6to4 embedding 127.0.0.1
+//   `https://[::]/x`                       unspecified address
+//   `https://foo.internal/x`               internal TLD
+//   `https://foo.local/x`                  mDNS TLD
+//   `https://metadata.google.internal/x`   cloud metadata (subsumed by `.internal`)
+// ⚠ AN EARLIER VERSION OF THIS COMMENT SAID "exactly FOUR", and the test pinned
+// `toHaveLength(4)`. That was an incomplete enumeration presented as exhaustive: the first
+// probe only tested the shapes its author thought of, so the five IPv6-embedding spellings
+// were never fed to it. A count is a claim — if you extend this list, feed the candidate set
+// to the differential rather than reasoning about it.
+// ⚠ Precision about WHY the IPv6 ones are refused, because it is not the obvious reason:
+// `[64:ff9b::…]`, `[2002:…]` and `[::]` fail `isPublicHttpsUrl`'s "hostname must be a public
+// dotted name" test, NOT its NAT64/6to4 logic — that logic lives in `isPrivateIp`, the
+// FETCH-TIME guard, which this lexical path never calls.
+// ⚠ And the three shapes it is TEMPTING to list here — integer (`https://2130706433/x`),
+// hex (`https://0x7f000001/x`) and octal (`https://0177.0.0.1/x`) IPv4 literals — were
+// ALREADY refused, so do not "re-close" them or cite them as a reason for this change:
+// WHATWG `new URL()` normalizes all three to hostname `127.0.0.1` BEFORE any denylist runs,
+// so `/^127\./` matched them. A `%`-zone id (`https://[fe80::1%eth0]/x`) never parses at all.
+// This is a reconciliation onto the existing source of truth, not a new guard — see
+// `training-assert-safe-media-urls.test.ts`, which pins each of the NINE and was watched red
+// against the old array — all nine rows plus the count row, re-measured after the correction
+// rather than inherited from the first, wrong, four-row run.
+//
+// ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
+// IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
+// canonical helper makes the same call for App Blocks manifests, so the two now agree.
 function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
@@ -680,11 +652,16 @@ function assertSafeMediaUrls(urls: string[]) {
     } catch {
       throw throwBadRequestError(`Invalid mediaUrl: ${raw.slice(0, 64)}`);
     }
+    // 🔴 Userinfo is checked HERE, not inside `isPublicHttpsUrl`, and that is not an
+    // oversight to "fix" by deleting this line: the canonical helper deliberately judges
+    // host SHAPE only, and `safe-fetch.ts` likewise rejects userinfo as its own separate
+    // control (control 1). `user:pass@` before a host is the openly-spelled version of the
+    // WHATWG-vs-RFC3986 authority differential that `image-scan-url.ts` refuses.
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
       throw throwBadRequestError('mediaUrl must be a plain HTTPS URL');
     }
-    const host = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
-    if (PRIVATE_HOST_PATTERNS.some((re) => re.test(host))) {
+    const lexical = isPublicHttpsUrl(raw);
+    if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
   }
@@ -778,6 +755,9 @@ export async function submitAutoLabelWorkflow({
             mediaUrl: img.mediaUrl,
             temperature: params.temperature,
             maxNewTokens: params.maxNewTokens,
+            // Training wants the caption itself, not the moderation-oriented transcript.
+            includeCaption: true,
+            prepareForModeration: false,
           },
           metadata: stepMetadata,
         };

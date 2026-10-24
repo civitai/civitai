@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
 // Unit tests for upsertModel's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. model.service.ts has a very large import
@@ -53,6 +54,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockThrowOnBlockedLinkDomain,
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),
@@ -94,6 +96,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 
 import {
   MINOR_LOCKED_PROPERTIES,
@@ -103,6 +110,7 @@ import {
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -141,7 +149,7 @@ const storedModel = {
 };
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
 }
 
 const baseInput = {
@@ -177,6 +185,7 @@ function createData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockEvaluateContent.mockReturnValue(cleanEvaluation);
   mockStored();
   mockDbRead.model.count.mockResolvedValue(0);
@@ -290,13 +299,13 @@ describe('upsertModel — non-moderator lock enforcement', () => {
 
     const data = createData();
     expect(data).not.toHaveProperty('lockedProperties');
-    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUnique).not.toHaveBeenCalled();
   });
 
   it('selects lockedProperties on the stored-row lookup — the field the whole fix depends on', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
 
-    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
   });
@@ -313,7 +322,7 @@ describe('upsertModel — ownership guard', () => {
   });
 
   it('returns null and writes nothing when the model does not exist', async () => {
-    mockDbRead.model.findUnique.mockResolvedValue(null);
+    mockDbWrite.model.findUnique.mockResolvedValue(null);
 
     const result = await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false });
 
@@ -394,6 +403,32 @@ describe('upsertModel — profanity lock', () => {
   });
 });
 
+describe('upsertModel — profanity auto-NSFW yields to an active text scan', () => {
+  it('does not run once Model text scan is active for this model', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    mockStored({ lockedProperties: [] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    const data = updateData();
+    expect(data.nsfw).toBeUndefined();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.meta ?? {}).not.toHaveProperty('profanityMatches');
+    expect(getTextScanMode).toHaveBeenCalledWith('Model', MODEL_ID);
+  });
+
+  it.each(['off', 'shadow'] as const)('still runs in %s', async (mode) => {
+    vi.mocked(getTextScanMode).mockResolvedValue(mode);
+    mockStored({ lockedProperties: [] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBe(true);
+  });
+});
+
 describe('privateModelFromTraining — lock enforcement', () => {
   const owner = { id: OWNER_ID, isModerator: false };
   const moderator = { id: MODERATOR_ID, isModerator: true };
@@ -427,7 +462,7 @@ describe('privateModelFromTraining — lock enforcement', () => {
   it('reads the stored locks from the DB row', async () => {
     await privateFromTraining({ user: owner, lockedProperties: [] });
 
-    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
   });
@@ -499,5 +534,73 @@ describe('upsertModel — moderator', () => {
     const data = updateData();
     expect(data.minor).toBe(false);
     expect(data.lockedProperties).toEqual([]);
+  });
+});
+
+// Publishing runs through model.publish; a create that kept the client's status would skip every
+// check that endpoint enforces.
+describe('upsertModel — status on create', () => {
+  it.each(Object.values(ModelStatus).filter((status) => status !== ModelStatus.Draft))(
+    'stores Draft when a non-moderator creates with %s',
+    async (status) => {
+      await upsert({ userId: OWNER_ID, status });
+
+      expect(createData().status).toBe(ModelStatus.Draft);
+    }
+  );
+
+  it('stores Draft for a templated create too', async () => {
+    await upsert({ id: MODEL_ID, templateId: MODEL_ID, userId: OWNER_ID, status: 'Published' });
+
+    expect(createData().status).toBe(ModelStatus.Draft);
+  });
+
+  it('keeps a moderator-supplied status', async () => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status: ModelStatus.Published });
+
+    expect(createData().status).toBe(ModelStatus.Published);
+  });
+});
+
+// privateModelFromTraining replaces meta wholesale, so it must carry the stored server-owned keys over
+// and ignore any the client sends — the publish paths read them.
+describe('privateModelFromTraining — server-owned meta keys', () => {
+  it.each([false, true])(
+    'keeps the stored training keys when client meta (isModerator=%s) omits or rewrites them',
+    async (isModerator) => {
+      mockStored({
+        meta: { trainingStudioWorkflowId: 'wf-real', trainingStudioModerationApproved: true },
+      });
+
+      await privateFromTraining({
+        user: { id: isModerator ? MODERATOR_ID : OWNER_ID, isModerator },
+        meta: {
+          trainingStudioWorkflowId: 'wf-other',
+          commentsLocked: true,
+        } as unknown as ModelUpsertInput['meta'],
+      });
+
+      expect(updateData().meta).toEqual({
+        commentsLocked: true,
+        trainingStudioWorkflowId: 'wf-real',
+        trainingStudioModerationApproved: true,
+        cannotPromote: true,
+      });
+    }
+  );
+
+  it('does not let client meta add training keys a model never had', async () => {
+    mockStored({ meta: null });
+
+    await privateFromTraining({
+      user: { id: OWNER_ID, isModerator: false },
+      meta: {
+        trainingStudioWorkflowId: 'wf-client',
+        trainingStudioModerationApproved: true,
+        commentsLocked: true,
+      } as unknown as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ commentsLocked: true, cannotPromote: true });
   });
 });

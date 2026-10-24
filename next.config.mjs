@@ -11,6 +11,26 @@ const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
 
+/**
+ * Opt-OUT of `next build`'s own TypeScript pass. OFF unless the environment sets EXACTLY `'1'`:
+ * unset, empty, `'0'`, `'true'` or a typo all leave full checking on, so a build that does not
+ * know about this variable is a checked build. The Dockerfile forwards it as a build-arg that
+ * defaults empty.
+ *
+ * Only the PR-preview image build sets it. That pipeline already runs the full `tsc` in its own
+ * typecheck task, and PR CI runs it again, so the build's pass was a third serial copy of the same
+ * check on the critical path to a usable preview. Release and production builds never set it.
+ *
+ * `ignoreBuildErrors` SKIPS the pass entirely rather than running it and discarding errors (read
+ * from `startTypeChecking` in `next/dist/build/type-check.js`). That includes the type-check of the
+ * generated `.next/types/validator.ts`, which rejects a module under `src/pages` with no default
+ * export. That class is still caught before merge: `scripts/typecheck.mjs` runs `next typegen`
+ * before `tsc`, so the CI typecheck reads the same validator.
+ *
+ * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
+ */
+const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
+
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
 });
@@ -130,6 +150,7 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    typescript: { ignoreBuildErrors: skipBuildTypecheck },
     // Source maps for prod CPU-profile de-minification.
     //
     // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
@@ -185,11 +206,18 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [
+      // pnpm link: to the local checkout during the data-graph port — Turbopack
+      // won't resolve the out-of-root symlink without transpiling it
+      'form-graph',
       'superjson',
+      // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
+      // left external; bundling it lets Turbopack resolve the directory.
+      '@civitai/orchestration-client',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
@@ -199,6 +227,8 @@ export default defineNextConfig(
       '@civitai/auth',
       '@civitai/notifications',
       '@civitai/moderation',
+      '@civitai/mod-utils',
+      '@civitai/app-assistant',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
@@ -310,6 +340,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
+      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
+      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
       //
@@ -321,7 +354,7 @@ export default defineNextConfig(
       // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
       // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
-        '@civitai/client',
+        '@civitai/orchestration-client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',
@@ -384,19 +417,65 @@ export default defineNextConfig(
       // here would be pruned to nothing at build time anyway since
       // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
+        // ── The `/apps/build` consolidation ────────────────────────────────────────
+        // `/apps/get-started` (a static marketing page whose every CTA pointed
+        // off-platform) and `/apps/mine` (the real author table) merged into ONE
+        // state-aware `/apps/build`: pitch → first-app → workbench. Both page components
+        // are DELETED, not emptied — a stub whose only job is to redirect is dead code
+        // that reads as a live route, and `appsPageWidths`' fs-walk would then demand a
+        // width classification for a route that never renders.
+        //
+        // 🔴 ALL THREE ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
+        // to **308**, which preserves the request METHOD — correct in general, but these
+        // are GET-only pages whose inbound links are bookmarks, notification URLs and
+        // search results, and 301 is the status those consumers cache and rewrite on. The
+        // two options are mutually exclusive in Next's schema, so this is `statusCode`
+        // alone.
+        //
+        // 🔴 NO CHAIN. `/apps/my-submissions` used to land on `/apps/mine`; it now lands
+        // on `/apps/build` DIRECTLY. Repointing only the two new rules and leaving that
+        // one would have made it a two-hop 301→301 — which costs a round trip, and which
+        // some link-equity and bookmark-rewriting consumers stop following.
         {
-          // `/apps/my-submissions` merged into `/apps/mine` — one author table over every
-          // app you own or hold a seat on, with each app's submission history nested in
-          // its row. The page component is DELETED, not emptied: a stub whose only job is
-          // to redirect is dead code that reads as a live route.
-          //
-          // 🔴 `statusCode: 301`, not `permanent: true`. Next maps `permanent` to **308**,
-          // which preserves the request METHOD — correct in general, but this is a GET-only
-          // author page whose inbound links are bookmarks, notification URLs and search
-          // results, and 301 is the status those consumers cache and rewrite on. The two
-          // options are mutually exclusive in Next's schema, so this is `statusCode` alone.
           source: '/apps/my-submissions',
-          destination: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/get-started',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        // ── `/apps/installed` → `/apps/activity` ───────────────────────────────────
+        // The page was renamed when it stopped being an installs surface: it now opens
+        // on the activity feed, and its gate widened from `appBlocks` (the model-slot
+        // flag) to `appBlocks || appBlocksPages`, so a viewer whose only app usage is a
+        // full-page app reaches it. The page component is MOVED (`installed.tsx` →
+        // `activity.tsx`), not stubbed — same reason as the three rules above.
+        //
+        // 🔴 `statusCode: 301`, matching its neighbours and for the same reason: Next
+        // maps `permanent: true` to 308, and these are GET-only pages whose inbound
+        // links are bookmarks and search results. The two keys are mutually exclusive
+        // in Next's schema.
+        //
+        // Next preserves the query string across a redirect, so an inbound
+        // `/apps/installed?tab=permissions` keeps its `?tab=` — which only became a
+        // meaningful statement when the tabs went URL-backed in the same change.
+        {
+          source: '/apps/installed',
+          destination: '/apps/activity',
+          statusCode: 301,
+        },
+        // `/events` page removed; the sitemap and external links still point at it. Official
+        // articles are now the Civitai Official chip on `/articles`.
+        {
+          source: '/events',
+          destination: '/articles',
           statusCode: 301,
         },
         {

@@ -3,6 +3,7 @@ import { Group, Text, Tooltip } from '@mantine/core';
 import React from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { NamePlateText } from '~/components/User/NamePlateText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -39,22 +40,21 @@ export function Username({
   const badge = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'Badge' : undefined
   )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
-  const additionalTextProps = nameplate?.data;
   badgeSize ??= mapSizeToImageWidth[size];
 
   return (
     <Group gap={8} wrap="nowrap" align="center">
-      <Text
+      <NamePlateText
         size={size}
         fw={500}
         lineClamp={1}
         td="none"
         className="align-middle drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)] dark:drop-shadow-[1px_1px_1px_rgba(0,0,0,0.2)]"
         inherit={inherit}
-        {...additionalTextProps}
+        nameplate={nameplate?.data}
       >
         {username}
-      </Text>
+      </NamePlateText>
       <BadgeDisplay badge={badge as BadgeCosmetic} badgeSize={badgeSize} />
     </Group>
   );
@@ -96,11 +96,11 @@ export const BadgeDisplay = ({
             filter,
           }}
         >
-          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
+          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} optimized />
         </div>
       ) : (
         <div style={{ display: 'flex', zIndex, filter }}>
-          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
+          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} optimized />
         </div>
       )}
     </Tooltip>

@@ -1,18 +1,22 @@
 import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
-import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
 import { getStorage } from './storage';
 import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
+import { bustProfilePictures, profilePictureUserIds } from './profile-picture-cache';
+import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { syncSearchIndexBulk } from './search-index';
 
 export async function deleteImagesByIds(ids: number[]): Promise<void> {
   const affectedPostIds = new Set<number>();
-  // Only ids whose row was actually deleted — the loop `continue`s past a missing one, and de-indexing
-  // an image that still exists would hide it from search while it is live on the site.
   const deleted: number[] = [];
+  // No row came back: already gone, or kept by a hold marker, whose delete trigger blocks the image
+  // instead. Neither is live, so both leave search with the deleted ones.
+  const notReturned: number[] = [];
+  const parentIds: (number | null)[] = [];
+  const avatarUserIds = await profilePictureUserIds(ids).catch(() => []);
   for (const id of ids) {
     try {
       await dbWrite.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
@@ -20,16 +24,28 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       const image = await dbWrite
         .deleteFrom('Image')
         .where('id', '=', id)
-        .returning(['url', 'postId'])
+        .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
         .executeTakeFirst();
-      if (!image) continue;
+      if (!image) {
+        notReturned.push(id);
+        continue;
+      }
       // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
       // check lands in the catch with the row already gone, and the id would never be de-indexed —
       // leaving a deleted image in Meilisearch.
       deleted.push(id);
+      parentIds.push(image.parentId);
       if (image.postId != null) affectedPostIds.add(image.postId);
 
       if (image.url) {
+        // The main app's cdn-access-sync job stops the image serving; this app cannot reach the
+        // image server's admin API. Queued whether or not the url is shared: a takedown wins.
+        await queueCdnAccessForDelete({
+          id,
+          url: image.url,
+          userId: image.userId,
+          csamReview: image.needsReview === 'csam',
+        });
         // Another Image may share this url; deleting the S3 object while one does would break that image.
         const shared = await dbWrite
           .selectFrom('Image')
@@ -42,7 +58,6 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
           await getStorage()
             .deleteObject({ backend: 'b2Image', key: image.url })
             .catch((err) => console.error('[image-deletion] S3 delete failed', id, err));
-          await purgeResizeCache(image.url);
         }
       }
 
@@ -59,7 +74,14 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
     }
   }
 
-  void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
+  void syncSearchIndexBulk({
+    entityType: 'image',
+    entityIds: [...deleted, ...notReturned],
+    action: 'delete',
+  });
+  await bustKeptImages(notReturned, affectedPostIds);
+  await invalidateThumbnails(deleted, parentIds);
+  await bustProfilePictures({ userIds: avatarUserIds });
 
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];
@@ -74,11 +96,48 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   }
 }
 
-async function purgeResizeCache(url: string): Promise<void> {
-  const base = env.IMAGE_CACHER_URL;
-  if (!base) return;
-  await fetch(`${base}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(2000),
-  }).catch(() => undefined);
+// A kept image is now blocked and out of its post (`EvidenceHoldImage` names the post), so its
+// caches and that post's are as stale as a deleted image's.
+async function bustKeptImages(ids: number[], affectedPostIds: Set<number>): Promise<void> {
+  if (!ids.length) return;
+  try {
+    const kept = await dbWrite
+      .selectFrom('EvidenceHoldImage')
+      .select(['imageId', 'postId'])
+      .where('imageId', 'in', ids)
+      .execute();
+    for (const { imageId, postId } of kept) {
+      if (postId != null) affectedPostIds.add(postId);
+      await getSysRedis()
+        .packed.set(
+          `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${imageId}` as RedisKeyTemplateSys,
+          'false',
+          { EX: 60 * 5 }
+        )
+        .catch(() => undefined);
+      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_META, imageId);
+      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, imageId);
+    }
+  } catch (err) {
+    console.error('[image-deletion] kept image bust failed', ids, err);
+  }
+}
+
+async function queueCdnAccessForDelete({
+  id,
+  url,
+  userId,
+  csamReview,
+}: {
+  id: number;
+  url: string;
+  userId: number;
+  csamReview: boolean;
+}): Promise<void> {
+  const payload = JSON.stringify({ url, userId, csamReview, moderatorDelete: true });
+  await sql`
+    SELECT queue_cdn_access_sync(${id}::int, 'Image', ${payload}::jsonb)
+  `
+    .execute(dbWrite)
+    .catch((err) => console.error('[image-deletion] CDN takedown not queued', id, err));
 }

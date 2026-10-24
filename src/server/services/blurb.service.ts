@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import {
   throwBadRequestError,
@@ -36,9 +36,9 @@ export async function createBlurb({
   name: string;
   content: string;
 }) {
-  // A snippet body is spliced into entities whose own domain check already ran, so it has to be
+  // A snippet body is spliced into entities whose own check already ran, so it has to be
   // caught on this write too.
-  await throwOnBlockedLinkDomain(content);
+  await throwOnBlockedUserContent([name, content], { surface: 'blurb' });
 
   const existing = await dbWrite.blurb.count({ where: { userId, deletedAt: null } });
   if (existing >= MAX_BLURBS_PER_USER)
@@ -64,7 +64,7 @@ export async function updateBlurbContent({
   id: number;
   content: string;
 }) {
-  await throwOnBlockedLinkDomain(content);
+  await throwOnBlockedUserContent(content, { surface: 'blurb' });
 
   const blurb = await dbWrite.blurb.findFirst({ where: { id, userId, deletedAt: null } });
   if (!blurb) throw throwNotFoundError('Snippet not found.');

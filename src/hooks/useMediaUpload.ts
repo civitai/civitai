@@ -12,6 +12,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { isReadFailure, pickOriginal } from '~/utils/unreadable-pick';
 
 // Max number of images uploading concurrently to S3. Tune here if we hit
 // throttling from the bucket or want to let more through.
@@ -40,6 +41,11 @@ export type MediaUploadOnCompleteProps = {
 export type UseMediaUploadProps<TContext> = {
   count: number;
   onComplete: (props: MediaUploadOnCompleteProps, context?: TContext) => void;
+  /**
+   * Called when a file could not be read while it was prepared. Returning true means the caller
+   * shows it (as an unreadable pick), so no error notification is shown.
+   */
+  onUnreadable?: (file: File) => boolean;
 };
 
 // #endregion
@@ -47,6 +53,7 @@ export type UseMediaUploadProps<TContext> = {
 export function useMediaUpload<TContext extends Record<string, unknown>>({
   count,
   onComplete,
+  onUnreadable,
 }: UseMediaUploadProps<TContext>) {
   const currentUser = useCurrentUser();
   // #region [state]
@@ -62,11 +69,14 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   });
   const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
+  // How many more files can be added: a pick past this is cut short.
+  const remaining = Math.max(0, uploadSettings.maxItems - count);
   const canAdd =
-    uploadSettings.maxItems - count > 0 &&
-    !files.some((x) => x.status === 'uploading' || x.status === 'pending');
+    remaining > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onUnreadableRef = useRef(onUnreadable);
+  onUnreadableRef.current = onUnreadable;
 
   // Concurrency pool shared across all processFiles() calls on this hook instance.
   type UploadJob = {
@@ -77,18 +87,27 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   };
   const activeWorkersRef = useRef(0);
   const jobQueueRef = useRef<UploadJob[]>([]);
+  // `count` only includes a file once its upload completes, so a pick made while another is still
+  // preparing or uploading would reuse its index.
+  const lastIndexRef = useRef(0);
 
   async function runWorker() {
     try {
       while (jobQueueRef.current.length > 0) {
         const job = jobQueueRef.current.shift()!;
-        if (job.aborted) continue;
+        if (job.aborted) {
+          URL.revokeObjectURL(job.processing.objectUrl);
+          continue;
+        }
         const onComplete = onCompleteRef.current;
         const { file, ...data } = job.processing;
         try {
           const { key, url } = await upload(file, UploadType.Image);
           if (!url) throw new Error('Failed to upload image');
           onComplete({ status: 'added', ...data, url: key, index: job.index }, job.context);
+          // An added file is shown from its uploaded url, so its local preview is no longer needed,
+          // and releasing it lets the browser free an in-memory copy taken at the pick.
+          URL.revokeObjectURL(data.objectUrl);
         } catch (e) {
           console.error(e);
           onComplete(
@@ -108,18 +127,21 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     // Dedupe against anything currently queued or already uploading.
     // Guards against accidental double-enqueue (rapid re-drops, effect re-fires,
     // consumer bugs) that would otherwise result in the same File being uploaded
-    // twice and creating duplicate image records on the server.
+    // twice and creating duplicate image records on the server. Keyed on the picked
+    // File: each drop of it is handed on as a new in-memory copy taken at the pick.
     const inFlight = new Set<File>();
-    for (const queued of jobQueueRef.current) inFlight.add(queued.processing.file);
+    for (const queued of jobQueueRef.current) inFlight.add(pickOriginal(queued.processing.file));
     if (fileUploadContext) {
       const [existing] = fileUploadContext;
       for (const tracked of existing) {
         if (tracked.status === 'pending' || tracked.status === 'uploading') {
-          inFlight.add(tracked.file);
+          inFlight.add(pickOriginal(tracked.file));
         }
       }
     }
-    const uniqueJobs = jobs.filter((j) => !inFlight.has(j.processing.file));
+    const uniqueJobs = jobs.filter((j) => !inFlight.has(pickOriginal(j.processing.file)));
+    for (const job of jobs)
+      if (!uniqueJobs.includes(job)) URL.revokeObjectURL(job.processing.objectUrl);
     if (!uniqueJobs.length) return;
 
     // Pre-register pending entries so the UI reflects queued items.
@@ -169,7 +191,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   ) {
     setLoading(true);
     try {
-      const start = count + 1;
+      const start = Math.max(count, lastIndexRef.current) + 1;
       const { maxSize } = uploadSettings;
       // check for files that exceed the max size
       if (maxSize) {
@@ -185,7 +207,8 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = data.slice(0, uploadSettings.maxItems - count);
+      const sliced = data.slice(0, remaining);
+      if (sliced.length) lastIndexRef.current = start + sliced.length - 1;
 
       // process media metadata
       const mapped = (
@@ -196,6 +219,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               data = await preprocessFile(file, { allowAnimatedWebP: currentUser?.isModerator });
             } catch (e: any) {
               data = null;
+              if (isReadFailure(e) && onUnreadableRef.current?.(file)) return null;
               showErrorNotification({
                 title: `Error: ${file.name}`,
                 error: e instanceof Error ? e : { message: e },
@@ -203,12 +227,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               });
             }
             if (!data) return null;
+            // A generated video's file carries the worker's ComfyUI graph, whose Model path and
+            // engine would override the generator's meta and fail the on-site check.
+            const isOnSiteVideo = data.type === 'video' && !!fileMeta?.civitaiResources;
+            const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
             // Merge civitaiResources arrays by modelVersionId instead of overwriting
             const mergedCivitaiResources = (() => {
               const fileResources = fileMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
-              const exifResources = data.meta?.civitaiResources as
+              const exifResources = embeddedMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
               if (!fileResources?.length) return exifResources;
@@ -226,12 +254,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               generationWorkflowId,
               meta: {
                 ...fileMeta,
-                ...data.meta,
+                ...embeddedMeta,
                 ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
               },
               file,
             };
-            const { meta } = data;
+            const meta = embeddedMeta;
 
             if (meta) {
               const audit = await auditMetaData(meta, false);
@@ -306,5 +334,15 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   }, [files]); // eslint-disable-line
   // #endregion
 
-  return { canAdd, upload: processFiles, error, files, progress, reset, removeFile, loading };
+  return {
+    canAdd,
+    remaining,
+    upload: processFiles,
+    error,
+    files,
+    progress,
+    reset,
+    removeFile,
+    loading,
+  };
 }

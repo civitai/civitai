@@ -97,7 +97,10 @@ describe('auditPromptServer — benign-phrase stripping', () => {
     expect(auditedPrompt).not.toContain('teen titans');
     expect(auditedNegative).not.toContain('mature content');
     // External moderation sees the same cleaned text as the regex audit.
-    expect(mockModeratePrompt).toHaveBeenCalledWith(auditedPrompt);
+    // Second argument = the observability-only `moderationSource` label, `undefined` because
+    // these options declare none. Asserted at full arity so this keeps pinning exactly what
+    // `moderatePrompt` is handed, not merely its first argument.
+    expect(mockModeratePrompt).toHaveBeenCalledWith(auditedPrompt, undefined);
   });
 
   it('a prompt that only trips on a benign phrase is no longer blocked', async () => {

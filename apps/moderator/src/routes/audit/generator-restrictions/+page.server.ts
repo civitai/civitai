@@ -1,162 +1,41 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { parseForm, parseQuery } from '$lib/server/query';
-import { dbWrite } from '$lib/server/db';
-import { requiresGrant } from '$lib/server/access';
-import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
-import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
-import {
-  getGenerationRestrictions,
-  saveSuspiciousMatches,
-  type RestrictionRow,
-} from '$lib/server/user-restriction.service';
+import { GENERATOR_RESTRICTION_TYPES, RESTRICTION_TYPE } from '$lib/restriction-types';
+import { restrictionActions, restrictionTriageLoad } from '$lib/server/restriction-queue';
+import { getGenerationRestrictions, recheckTriggers } from '$lib/server/user-restriction.service';
 
-const PAGE_SIZE = 20;
-
-// Defaults to Pending, as the main app's page did. Without it the queue opens with already-ruled rows
-// interleaved at the top, and `advance()` has nothing to advance past.
-const querySchema = z.object({
-  status: z.enum(['Pending', 'Upheld', 'Overturned', 'any']).catch('Pending'),
-  q: z.string().trim().max(100).catch(''),
-  page: z.coerce.number().int().min(1).max(500).catch(1),
-  selected: z.coerce.number().int().positive().optional().catch(undefined),
-});
-
-export const load: PageServerLoad = async ({ url }) => {
-  const { status, q, page, selected } = parseQuery(url, querySchema);
-
-  // A bare number is a user id, not a username: usernames are free text and an account named "12345"
-  // would otherwise be the only way to reach user 12345.
-  const asId = Number(q);
-  const isUserId = q !== '' && Number.isInteger(asId) && asId > 0;
-
-  const { items, totalCount } = await getGenerationRestrictions({
-    page,
-    limit: PAGE_SIZE,
-    status: status === 'any' ? undefined : status,
-    username: !isUserId && q ? q : undefined,
-    userId: isUserId ? asId : undefined,
+// `?type=scam` is redirected to the Users page in hooks.server.ts, ahead of this page's grant.
+export const load: PageServerLoad = ({ url }) =>
+  restrictionTriageLoad(url, {
+    types: GENERATOR_RESTRICTION_TYPES,
+    fallback: RESTRICTION_TYPE,
   });
 
-  const current: RestrictionRow | null = items.find((i) => i.id === selected) ?? null;
-
-  return {
-    items,
-    current,
-    totalCount,
-    page,
-    pageCount: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
-    status,
-    q,
-    wide: true,
-  };
-};
-
-async function restrictionById(id: number): Promise<RestrictionRow | null> {
-  const { items } = await getGenerationRestrictions({ page: 1, limit: 1, restrictionId: id });
-  return items[0] ?? null;
-}
-
 export const actions: Actions = {
-  resolve: async ({ request, locals }) => {
-    const input = parseForm(
-      z.object({
-        userRestrictionId: z.coerce.number().int().positive(),
-        status: z.enum(['Upheld', 'Overturned']),
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return fail(400, { error: input });
+  ...restrictionActions(GENERATOR_RESTRICTION_TYPES),
 
-    // Owner read from the restriction, never the form: this id is what the ModActivity row names, so a
-    // posted one lets the audit trail record an account that was never acted on.
-    const row = await restrictionById(input.userRestrictionId);
-    if (!row) return fail(404, { error: 'Restriction not found.' });
-
-    const result = await resolveRestriction({
-      userRestrictionId: input.userRestrictionId,
-      status: input.status,
-      userId: row.userId,
-      moderatorId: locals.user.id,
-    });
-    return result.ok ? { success: true } : fail(400, { error: result.error });
-  },
-
-  // Banning also rules on the restriction, matching the main app: a banned account left with a Pending
-  // row keeps its cancelled subscription and is never told the outcome.
-  ban: requiresGrant('audit.ban.execute', async ({ request, locals }) => {
-    const input = parseForm(
-      banFieldsSchema.extend({ userRestrictionId: z.coerce.number().int().positive() }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return fail(400, { error: input });
-    const unexplained = rejectUnexplainedOther(input);
-    if (unexplained) return fail(400, { error: unexplained });
-
-    // The account banned is the restriction's owner, not whoever the form named.
-    const row = await restrictionById(input.userRestrictionId);
-    if (!row) return fail(404, { error: 'Restriction not found.' });
-
-    const banned = await setBanned({
-      userId: row.userId,
-      ban: true,
-      reasonCode: input.reasonCode,
-      detailsInternal: input.detailsInternal || undefined,
-      detailsExternal: input.detailsExternal || undefined,
-      ...banRemovalArgs(input, true),
-      moderatorId: locals.user.id,
-    });
-    if (!banned.ok) return fail(400, { error: banned.error });
-
-    // `/api/mod/ban-user` answers 200 BEFORE it does the work and logs its failures rather than
-    // returning them, so a 200 means "accepted", not "banned". Upholding on the strength of that closes
-    // the queue row for a ban that may never have landed — re-read until it shows, and say so if not.
-    if (!(await banConfirmed(row.userId)))
-      return fail(502, {
-        error:
-          'The ban was accepted but has not taken effect yet. The restriction was NOT resolved — reload and check the account before ruling.',
-      });
-
-    const resolved = await resolveRestriction({
-      userRestrictionId: input.userRestrictionId,
-      status: 'Upheld',
-      userId: row.userId,
-      moderatorId: locals.user.id,
-    });
-    return resolved.ok
-      ? { success: true }
-      : fail(400, { error: `Banned, but the restriction was not resolved: ${resolved.error}` });
-  }),
-
-  // Triggers are re-read here rather than taken from the form: the browser only sends which cards were
-  // ticked, and trusting it for the prompt text would let a stale page write a record of a prompt the
-  // restriction never held.
-  flagSuspicious: async ({ request, locals }) => {
-    const form = await request.formData();
-    const id = z.coerce.number().int().positive().safeParse(form.get('userRestrictionId'));
+  // Fetched when a restriction is opened rather than in `load`: selection is client state, so `load`
+  // does not run again, and re-checking all 50 rows of a page up front would be the page's heaviest read.
+  recheck: async ({ request }) => {
+    const id = z.coerce
+      .number()
+      .int()
+      .positive()
+      .safeParse((await request.formData()).get('userRestrictionId'));
     if (!id.success) return fail(400, { error: 'Missing restriction id.' });
 
-    const keys = new Set(form.getAll('key').map(String));
-    if (!keys.size) return fail(400, { error: 'Nothing selected.' });
+    // `any`, as the other by-id actions do: the id is a primary key and the type is checked below.
+    const { items } = await getGenerationRestrictions({
+      page: 1,
+      limit: 1,
+      type: 'any',
+      restrictionId: id.data,
+    });
+    const row = items[0];
+    if (!row || !(GENERATOR_RESTRICTION_TYPES as readonly string[]).includes(row.type))
+      return fail(404, { error: 'Restriction not found.' });
 
-    const row = await restrictionById(id.data);
-    if (!row) return fail(404, { error: 'Restriction not found.' });
-
-    const matches = row.triggers
-      .filter((t) => keys.has(t.key))
-      .map((t) => ({
-        odometer: row.id,
-        userId: row.userId,
-        prompt: t.prompt ?? '',
-        negativePrompt: t.negativePrompt,
-        check: t.category ?? 'unknown',
-        matchedText: t.matchedWord ?? '',
-        regex: t.matchedRegex,
-      }));
-    if (!matches.length) return fail(400, { error: 'None of the selected triggers still exist.' });
-
-    const saved = await saveSuspiciousMatches(matches, locals.user.id);
-    return { success: true, savedCount: saved };
+    return { recheck: recheckTriggers(row.triggers) };
   },
 };

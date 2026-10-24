@@ -86,12 +86,14 @@ const allowedLevels = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R; // = 7
 
 ## What the mask alone doesn't tell you
 
-`Flags.intersects(contentLevel, browsingLevel)` is necessary but not sufficient. The real feed path in `image.service.ts` layers three more rules on top, and code that reimplements only the mask will not match it:
+`Flags.intersects(contentLevel, browsingLevel)` is necessary but not sufficient. The real feed path in `image.service.ts` layers four more rules on top, and code that reimplements only the mask will not match it:
 
 - **`Blocked` is stripped before the comparison.** Browsing levels go through `onlySelectableLevels()` (`browsingLevel.constants.ts`) first, so a user's stored level never admits `Blocked` content.
 - **Unrated content (`nsfwLevel = 0`) matches nothing** — `0 & anything === 0` — so it needs its own branch. The public feed excludes it explicitly; owners see their own, and moderators get it added only when their level already intersects NSFW.
+- **The image must also be reviewed** — see [image-rating.md](./image-rating.md) (`imageReviewedSql`).
 - **A per-domain ceiling clamps the result.** `domainBrowsingCeiling` limits blue/green domains to SFW regardless of user preference; red is unclamped.
 
 ## See Also
 
 - [Bitwise Flag Utilities](./bitwise-flags.md) - General flag manipulation utilities
+- [Image Rating and Visibility](./image-rating.md) - How an image is rated, routed to review, and made visible

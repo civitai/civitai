@@ -1,12 +1,13 @@
 import type { Prisma } from '@prisma/client';
-import type { WorkflowEvent } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -15,7 +16,14 @@ import {
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
+import { checkPoiHashOnScan } from '~/server/services/poi-hash.service';
+import { checkDuplicateHashOnScan } from '~/server/services/duplicate-model-hash.service';
 import { createNotification } from '~/server/services/notification.service';
+import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
+import {
+  bustOrchestratorModelCache,
+  bustOrchestratorScannedFileCache,
+} from '~/server/services/orchestrator/models';
 import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
@@ -126,6 +134,19 @@ export function examinePickleImports({
 // Keeping all DB writes here guarantees zero behavioral drift between paths.
 // -----------------------------------------------------------------------------
 
+// Postgres rejects U+0000 in both text and jsonb (22P05), and safetensors headers can carry it,
+// so one NUL in a trainer's metadata would fail the whole update and leave the file Pending.
+function stripNul<T>(value: T): T {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '') as T;
+  if (Array.isArray(value)) return value.map(stripNul) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k.replace(/\u0000/g, ''), stripNul(v)])
+    ) as T;
+  }
+  return value;
+}
+
 export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   const { fileId } = outcome;
 
@@ -135,7 +156,17 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       id: true,
       type: true,
       modelVersionId: true,
-      modelVersion: { select: { modelId: true, model: { select: { userId: true } } } },
+      // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
+      // for the file — so a hash-only rescan has to re-derive it from what is already stored.
+      headerData: true,
+      sizeKB: true,
+      modelVersion: {
+        select: {
+          modelId: true,
+          baseModel: true,
+          model: { select: { userId: true, status: true, meta: true, type: true } },
+        },
+      },
     },
   });
   if (!file) {
@@ -162,11 +193,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       where: { id: fileId },
       data: { scanRequestedAt: new Date() },
     });
+    await bustAfterFailedScan(outcome.modelVersionId ?? file.modelVersionId, file);
     return;
   }
 
-  // Capture pre-existing AutoV2 BEFORE any hash deletion. Used for hash-fix
-  // notification (D3). SHA256 capture goes here too if we ever re-enable D2.
+  // Capture pre-existing hashes BEFORE any hash deletion: AutoV2 for the hash-fix
+  // notification (D3), SHA256 so the duplicate-hash check skips unchanged rescans.
   const existingHashes = outcome.hashes
     ? await dbWrite.modelFileHash.findMany({
         where: { fileId, type: { in: [ModelHashType.SHA256, ModelHashType.AutoV2] } },
@@ -184,20 +216,22 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   if (outcome.virusScan) {
     data.virusScanResult = outcome.virusScan.result;
-    data.virusScanMessage = outcome.virusScan.message;
+    data.virusScanMessage = stripNul(outcome.virusScan.message);
   }
 
   if (outcome.pickleScan) {
     data.pickleScanResult = outcome.pickleScan.result;
-    data.pickleScanMessage = outcome.pickleScan.message;
+    data.pickleScanMessage = stripNul(outcome.pickleScan.message);
   }
 
-  if (outcome.headerData !== undefined) {
-    data.headerData = outcome.headerData as Prisma.InputJsonValue;
+  // Stripped once: SSHS_12 below is derived from this header and lands in a text column too.
+  const headerData = stripNul(outcome.headerData);
+  if (headerData !== undefined) {
+    data.headerData = headerData as Prisma.InputJsonValue;
   }
 
   if (outcome.rawScanResult !== undefined) {
-    data.rawScanResult = outcome.rawScanResult as Prisma.InputJsonValue;
+    data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
   }
 
   await dbWrite.modelFile.update({ where: { id: fileId }, data });
@@ -205,7 +239,11 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
     const hashRows = (
-      Object.entries(normalizeScanHashes(outcome.hashes)) as Array<[ModelHashType, string]>
+      Object.entries(
+        // outcome.headerData is absent on a hash-only rescan, and this rebuild deletes every row
+        // for the file — so the stored column is what keeps SSHS_12 from being dropped.
+        normalizeScanHashes(outcome.hashes, headerData ?? file.headerData)
+      ) as Array<[ModelHashType, string]>
     )
       .filter(([, hash]) => Boolean(hash))
       .map(([type, hash]) => ({ fileId, type, hash }));
@@ -258,6 +296,45 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         userId: scannedUserId,
         sha256: scannedSha256,
       });
+    }
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      (await isFlipt(FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG))
+    ) {
+      await checkPoiHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
+
+    const scannedModel = file.modelVersion?.model;
+    if (scannedSha256 && scannedModelId && scannedModel) {
+      await checkDuplicateHashOnScan({
+        fileId,
+        fileType: file.type,
+        sizeKB: file.sizeKB,
+        sha256: scannedSha256,
+        previousSha256: existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash,
+        modelId: scannedModelId,
+        ownerId: scannedModel.userId,
+        modelStatus: scannedModel.status,
+        modelMeta: scannedModel.meta as ModelMeta | null,
+      }).catch((e) =>
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'duplicate-model-hash',
+            message: (e as Error).message,
+            fileId,
+          },
+          'webhooks'
+        ).catch(() => null)
+      );
     }
   }
 
@@ -334,6 +411,69 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     ]);
     // D5: refresh (proactive re-warm) matches legacy behavior.
     await dataForModelsCache.refresh(modelId);
+  }
+
+  // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
+  // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
+  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
+  // already written, and a throw would make the orchestrator redeliver the whole workflow.
+  if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
+    await Promise.all([
+      resourceDataCache.bust([modelVersionId]),
+      bustOrchestratorModelCache(modelVersionId),
+    ]).catch((e) =>
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'model-file-scan',
+          message: `coverage bust failed: ${String(e)}`,
+          modelVersionId,
+        },
+        'webhooks'
+      ).catch(() => undefined)
+    );
+}
+
+const FAILURE_BUST_TTL_SECONDS = 60 * 60;
+
+type FailedScanFile = {
+  id: number;
+  modelVersionId: number;
+  modelVersion: { modelId: number; baseModel: string; model: { type: ModelType } };
+};
+
+// The orchestrator caches answers for hours per exact AIR, so one cached during an outage fails
+// every retry until busted. The scan's file-pinned AIR is a separate entry from the version's.
+// Logged, not thrown, so the retry bump already written stands.
+async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
+  try {
+    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    const [bustVersion, bustFile] = await Promise.all([
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+    ]);
+    await Promise.all([
+      bustVersion && bustOrchestratorModelCache(modelVersionId),
+      bustFile &&
+        bustOrchestratorScannedFileCache({
+          fileId: file.id,
+          modelVersionId: file.modelVersionId,
+          modelId: file.modelVersion.modelId,
+          modelType: file.modelVersion.model.type,
+          baseModel: file.modelVersion.baseModel,
+        }),
+    ]);
+  } catch (e) {
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'model-file-scan',
+        message: `failed-scan bust failed: ${String(e)}`,
+        modelVersionId,
+        fileId: file.id,
+      },
+      'webhooks'
+    ).catch(() => undefined);
   }
 }
 
@@ -423,6 +563,26 @@ type ModelScanStep =
 
 const AUTOV3_LENGTH = 12;
 const SHA256_12_LENGTH = 12;
+const SSHS_12_LENGTH = 12;
+
+/**
+ * `left(sshs_model_hash, 12)` from a safetensors header, or undefined when the file has no such key.
+ *
+ * Stored verbatim, prefix included. A1111/Forge read `sshs_model_hash` out of the header in
+ * preference to hashing the file and truncate it to 12 characters for the infotext, so when the
+ * trainer wrote a `0x` prefix only 10 hex digits survive — and the value under that prefix is
+ * computed at training time over a re-serialisation, so it is not derivable from the shipped file's
+ * bytes and does not equal AutoV3. Measured on prod: of 3,109 prefixed files, stripping `0x` and
+ * comparing against AutoV3 matched 1. See docs/image-resource-hash-matching.md.
+ */
+export function deriveSshsHash(headerData: unknown): string | undefined {
+  if (!headerData || typeof headerData !== 'object' || Array.isArray(headerData)) return undefined;
+  const raw = (headerData as Record<string, unknown>).sshs_model_hash;
+  if (typeof raw !== 'string') return undefined;
+
+  const short = raw.trim().toLowerCase().slice(0, SSHS_12_LENGTH);
+  return short.length === SSHS_12_LENGTH ? short : undefined;
+}
 
 const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   sha256: ModelHashType.SHA256,
@@ -437,7 +597,7 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  *
  * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
  *
- *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *   AutoV3     arrives full-length (per @civitai/orchestration-client: "SHA256 of the file with safetensors
  *              header metadata stripped"). We store 12 chars, the width A1111 writes.
  *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
  *              which no other stored hash matches, so resource detection fails without it.
@@ -468,7 +628,8 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  * authority for those, and re-deriving them here would put two systems in charge of one value.
  */
 export function normalizeScanHashes(
-  hashes: Partial<Record<ModelHashType, string>>
+  hashes: Partial<Record<ModelHashType, string>>,
+  headerData?: unknown
 ): Partial<Record<ModelHashType, string>> {
   const out: Partial<Record<ModelHashType, string>> = { ...hashes };
 
@@ -478,6 +639,11 @@ export function normalizeScanHashes(
   // from it would give every such file the same 12-char hash and make them match each other.
   const sha256 = out.SHA256;
   if (sha256 && !/^0+$/.test(sha256)) out.SHA256_12 = sha256.slice(0, SHA256_12_LENGTH);
+
+  // Only added when no other row already carries the value — sshs_model_hash equals AutoV3 for
+  // ~98% of files, and a duplicate row matches nothing the sibling would not have matched.
+  const sshs = deriveSshsHash(headerData);
+  if (sshs && !Object.values(out).some((hash) => hash?.toLowerCase() === sshs)) out.SSHS_12 = sshs;
 
   return out;
 }
@@ -545,8 +711,32 @@ export async function processModelFileScanResult(req: NextApiRequest) {
       ).catch();
       return;
     }
+
+    // A throw becomes a 500 and the orchestrator redelivers, but the key taken above would
+    // suppress that redelivery as a duplicate and the result would be lost for good.
+    try {
+      await handleScanWorkflow(event);
+    } catch (error) {
+      await sysRedis.del(dedupeKey).catch((e) =>
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'model-file-scan-result',
+            message: `Failed to release dedupe key: ${String(e)}`,
+            workflowId: event.workflowId,
+          },
+          'webhooks'
+        ).catch(() => undefined)
+      );
+      throw error;
+    }
+    return;
   }
 
+  await handleScanWorkflow(event);
+}
+
+async function handleScanWorkflow(event: WorkflowEvent) {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId: event.workflowId },
@@ -701,7 +891,7 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
         modelType: file.modelVersion.model.type as ModelType,
         baseModel: file.modelVersion.baseModel,
         url: file.url,
-        priority: 'low',
+        priority: 'normal',
       });
       sent.push(file.id);
     } catch (err) {

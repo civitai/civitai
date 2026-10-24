@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { mockChQuery } = vi.hoisted(() => ({ mockChQuery: vi.fn(async () => [] as unknown[]) }));
 vi.mock('~/server/clickhouse/client', () => ({
@@ -12,12 +13,14 @@ import { MONETIZATION_MIN_CREATOR_SCORE } from '@civitai/buzz';
 import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
-  creatorScoreFromMeta,
+  listPricingSlots,
   recordPricingSlot,
   releasePricingSlot,
 } from '~/server/services/pricing-slot.service';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 const mockCount = dbMock.dbRead.pricingSlot.count;
+const mockPrimaryCount = dbMock.dbWrite.pricingSlot.count;
 const mockCreateMany = dbMock.dbWrite.pricingSlot.createMany;
 const mockFindUnique = dbMock.dbRead.user.findUnique;
 const mockDeleteMany = dbMock.dbWrite.pricingSlot.deleteMany;
@@ -124,7 +127,7 @@ describe('releasePricingSlot', () => {
     expect(mockMetric).not.toHaveBeenCalled();
   });
 
-  // The lookup sits on a creator's save and the client's own timeout is 30s, so a stalled ClickHouse
+  // The lookup sits on a creator's save and the client's own timeout is 300s, so a stalled ClickHouse
   // must not hold the save open. Uses fake timers: a real 3s wait would make this the slowest test here.
   it('gives up on a hung ClickHouse and falls back', async () => {
     vi.useFakeTimers();
@@ -283,21 +286,6 @@ describe('releasePricingSlot', () => {
   });
 });
 
-describe('creatorScoreFromMeta', () => {
-  it('reads the models score', () => {
-    expect(creatorScoreFromMeta({ scores: { models: 12345 } })).toBe(12345);
-  });
-
-  it('treats missing, null, or non-numeric meta as a score of 0', () => {
-    expect(creatorScoreFromMeta(undefined)).toBe(0);
-    expect(creatorScoreFromMeta(null)).toBe(0);
-    expect(creatorScoreFromMeta({})).toBe(0);
-    expect(creatorScoreFromMeta({ scores: {} })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: 'lots' } })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: Infinity } })).toBe(0);
-  });
-});
-
 describe('countPricingSlotsThisMonth', () => {
   // afterEach, not a trailing call: a failed assertion would otherwise leak frozen time into every
   // later test in the file and turn one legible failure into a cascade.
@@ -337,7 +325,7 @@ describe('recordPricingSlot', () => {
 });
 
 describe('assertPricingAllowed', () => {
-  const eligible = { scores: { models: MONETIZATION_MIN_CREATOR_SCORE } };
+  const eligible = { scores: { total: MONETIZATION_MIN_CREATOR_SCORE } };
 
   it('spends a slot for a newly priced version', async () => {
     await expect(
@@ -345,6 +333,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -357,8 +347,10 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: true,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     expect(mockCount).not.toHaveBeenCalled();
@@ -370,8 +362,10 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: false,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -384,8 +378,10 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: true,
         willBePriced: false,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
     // Neither rule is consulted: a creator below the floor may always stop charging.
@@ -405,8 +401,10 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: async () => 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
   });
@@ -419,8 +417,10 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: async () => null,
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).rejects.toThrow(/3 of 3/);
   });
@@ -434,8 +434,10 @@ describe('assertPricingAllowed', () => {
       userId: 1,
       wasPriced: true,
       willBePriced: true,
+      addsGate: false,
+      hadGate: false,
       tier,
-      userMeta: { scores: { models: 50000 } },
+      userMeta: { scores: { total: 50000 } },
     });
 
     expect(tier).not.toHaveBeenCalled();
@@ -447,8 +449,11 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'gold',
-        userMeta: { scores: { models: MONETIZATION_MIN_CREATOR_SCORE - 1 } },
+        // Both keys, unequal — see the note on the same fixture in paid-access.service.test.ts.
+        userMeta: { scores: { total: MONETIZATION_MIN_CREATOR_SCORE - 1, models: 50_000 } },
       })
     ).rejects.toThrow(/creator score/);
 
@@ -457,6 +462,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'gold',
         userMeta: eligible,
       })
@@ -470,6 +477,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -481,6 +490,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -494,6 +505,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: null,
         userMeta: eligible,
       })
@@ -501,11 +514,266 @@ describe('assertPricingAllowed', () => {
   });
 
   it('falls back to reading the score when the caller has no user meta', async () => {
-    mockFindUnique.mockResolvedValue({ meta: { scores: { models: 50000 } } } as never);
+    mockFindUnique.mockResolvedValue({ meta: { scores: { total: 50000 } } } as never);
 
     await expect(
-      assertPricingAllowed({ userId: 1, wasPriced: false, willBePriced: true, tier: 'free' })
+      assertPricingAllowed({
+        userId: 1,
+        wasPriced: false,
+        willBePriced: true,
+        addsGate: false,
+        hadGate: false,
+        tier: 'free',
+      })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     expect(mockFindUnique).toHaveBeenCalledWith({ where: { id: 1 }, select: { meta: true } });
+  });
+
+  describe('licensing-fee boost', () => {
+    const boosted = (overrides: { addsGate?: boolean } = {}) =>
+      assertPricingAllowed({
+        userId: 7,
+        wasPriced: false,
+        willBePriced: true,
+        addsGate: overrides.addsGate ?? false,
+        hadGate: false,
+        tier: 'free',
+        userMeta: eligible,
+      });
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+      redisMock.sysRedis.hGet.mockResolvedValue('100' as never);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    });
+
+    it('lets a granted creator past the tier allowance with a licensing fee', async () => {
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      expect(redisMock.sysRedis.hGet).toHaveBeenCalledWith(
+        REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST,
+        '7'
+      );
+    });
+
+    it('stops at the tier allowance plus the boost', async () => {
+      mockCount.mockResolvedValue(102 as never);
+      await expect(boosted()).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      mockCount.mockResolvedValue(103 as never);
+      await expect(boosted()).rejects.toThrow(/103 of 103/);
+    });
+
+    it('does not widen a paid-access gate', async () => {
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted({ addsGate: true })).rejects.toThrow(/licensing fees only/);
+    });
+
+    it('gives a creator with no grant only the tier allowance', async () => {
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+
+    it('ends on its own at the start of November, whatever the grant list holds', async () => {
+      vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+
+    it('bounds the grant-list read so a hung Redis cannot hold the save open', async () => {
+      redisMock.sysRedis.hGet.mockReturnValue(new Promise(() => undefined) as never);
+      redisMock.withSysReadDeadline.mockImplementationOnce(async () => {
+        throw new Error('sysRedis read timed out');
+      });
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    }, 2000);
+
+    it('tells a boosted creator the refusal already includes their extra slots', async () => {
+      mockCount.mockResolvedValue(103 as never);
+      await expect(boosted()).rejects.toThrow(/includes your 100 extra licensing-fee slots/);
+    });
+
+    describe('adding permanent paid access to a version that already carries a fee', () => {
+      const entity = { entityType: 'ModelVersion' as const, entityId: VERSION };
+      const convert = () =>
+        assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          entity,
+          tier: 'free',
+          userMeta: eligible,
+        });
+
+      beforeEach(() => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-10-02T00:00:00Z') } as never);
+        // A lagging replica that has not seen this month's slots yet: the count must come from the primary.
+        mockCount.mockResolvedValue(0 as never);
+      });
+
+      it('is refused once boost-funded fee slots are in use', async () => {
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('stays free while every slot this month fits the tier allowance', async () => {
+        mockPrimaryCount.mockResolvedValue(3 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a creator with no grant', async () => {
+        redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockPrimaryCount).not.toHaveBeenCalled();
+      });
+
+      it('is free as before once the window closes', async () => {
+        vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is refused when the grant list cannot be read and the month is over the tier', async () => {
+        redisMock.sysRedis.hGet.mockRejectedValue(new Error('down') as never);
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('does not apply to a version that already had its gate', async () => {
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: true,
+            hadGate: true,
+            entity,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('does not apply to editing the fee on a version that keeps no gate', async () => {
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: false,
+            hadGate: false,
+            entity,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a version whose fee was set in an earlier month', async () => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-09-30T23:59:59Z') } as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockSlot).toHaveBeenCalledWith({
+          where: { entityType_entityId: entity },
+          select: { createdAt: true },
+        });
+      });
+
+      it('counts a slot spent at the very start of the month as this month', async () => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-10-01T00:00:00Z') } as never);
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it.each([
+        ['silver', 'resolves'],
+        ['free', 'rejects'],
+      ])('applies the rule to a tier passed as a thunk (%s)', async (tier, outcome) => {
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        const result = assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          entity,
+          tier: async () => tier,
+          userMeta: eligible,
+        });
+        if (outcome === 'resolves')
+          await expect(result).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        else await expect(result).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('is free as before for a version that never spent a slot', async () => {
+        mockSlot.mockResolvedValue(null as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+    });
+
+    it('falls back to the tier allowance when the grant list cannot be read', async () => {
+      redisMock.sysRedis.hGet.mockRejectedValue(new Error('down') as never);
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+  });
+});
+
+describe('listPricingSlots', () => {
+  const mockSlots = dbMock.dbRead.pricingSlot.findMany;
+  const mockVersions = dbMock.dbRead.modelVersion.findMany;
+  const mockGates = dbMock.dbRead.paidAccess.findMany;
+
+  const THIS_MONTH = new Date();
+  const LAST_MONTH = new Date(
+    Date.UTC(THIS_MONTH.getUTCFullYear(), THIS_MONTH.getUTCMonth() - 1, 15)
+  );
+
+  beforeEach(() => {
+    mockSlots.mockResolvedValue([
+      { entityType: 'ModelVersion', entityId: 1, createdAt: THIS_MONTH },
+      { entityType: 'ModelVersion', entityId: 2, createdAt: LAST_MONTH },
+    ] as never);
+    mockVersions.mockResolvedValue([
+      { id: 1, name: 'v1', licensingFee: 40, model: { id: 100, name: 'Model A' } },
+      { id: 2, name: 'v2', licensingFee: null, model: { id: 200, name: 'Model B' } },
+    ] as never);
+    mockGates.mockResolvedValue([] as never);
+  });
+
+  it('splits on the calendar month the allowance is counted over', async () => {
+    const slots = await listPricingSlots(OWNER);
+    expect(slots.map((s) => s.countsThisMonth)).toEqual([true, false]);
+    expect(slots[0]).toMatchObject({ modelName: 'Model A', versionName: 'v1', licensingFee: 40 });
+  });
+
+  it('reads a price off a permanent gate only, never a timed window', async () => {
+    mockGates.mockResolvedValue([
+      { entityId: 1, timeframeDays: null, terms: { download: { price: 5000 } } },
+      { entityId: 2, timeframeDays: 15, terms: { download: { price: 9000 } } },
+    ] as never);
+
+    const [current, older] = await listPricingSlots(OWNER);
+    expect(current.accessPrice).toBe(5000);
+    expect(older.accessPrice).toBeNull();
+  });
+
+  it('names a deleted version rather than dropping the slot that is still counted', async () => {
+    mockVersions.mockResolvedValue([] as never);
+
+    const slots = await listPricingSlots(OWNER);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ modelId: null, modelName: null, licensingFee: null });
   });
 });

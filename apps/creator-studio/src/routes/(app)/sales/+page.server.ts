@@ -14,7 +14,7 @@ import {
   shortenSale,
   summarizeSaleSelection,
 } from '$lib/server/monetization/sales';
-import { resolveCreatorScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
+import { resolveTotalScore, TEST_CREATOR_SCORE_COOKIE } from '$lib/server/creator-score';
 import { minCreatorScoreForSale } from '@civitai/buzz';
 import { salePreviewPayload } from '$lib/monetization/sales';
 import type { SessionUser } from '@civitai/auth';
@@ -87,7 +87,7 @@ export const load: PageServerLoad = async ({ locals, parent, cookies }) => {
         getCreatorSales(locals.user.id),
         getManageableSales(locals.user.id),
         getSaleLimitOverrides(),
-        resolveCreatorScore(
+        resolveTotalScore(
           locals.user.id,
           !!locals.user.isModerator,
           cookies.get(TEST_CREATOR_SCORE_COOKIE)
@@ -141,7 +141,7 @@ export const actions: Actions = {
     if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
 
     // The score floor is a server rule, not a form hint — the form only renders the progress bar.
-    const creatorScore = await resolveCreatorScore(
+    const creatorScore = await resolveTotalScore(
       locals.user.id,
       !!locals.user.isModerator,
       cookies.get(TEST_CREATOR_SCORE_COOKIE)

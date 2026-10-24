@@ -1,0 +1,124 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+
+const mocks = vi.hoisted(() => ({
+  currentUser: null as null | { id: number; isModerator: boolean },
+  openReportModal: vi.fn(),
+  toggleLock: vi.fn(),
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
+vi.mock('~/components/Dialog/triggers/report', () => ({
+  openReportModal: mocks.openReportModal,
+}));
+vi.mock('~/components/CommentsV2/ToggleLockComments', () => ({
+  ToggleLockComments: ({
+    children,
+  }: {
+    children: (a: {
+      toggle: () => void;
+      locked: boolean;
+      isLoading: boolean;
+    }) => React.ReactElement;
+  }) => children({ toggle: mocks.toggleLock, locked: false, isLoading: false }),
+}));
+
+const { CrucibleContextMenu } = await import('~/components/Crucible/CrucibleContextMenu');
+
+const CREATOR = 4;
+const menuButton = () => document.querySelector<HTMLButtonElement>('[aria-label="More options"]');
+
+beforeEach(() => {
+  mocks.openReportModal.mockReset();
+  mocks.toggleLock.mockReset();
+  // LoginRedirect reads this, not useCurrentUser; without it the report click is swallowed.
+  (window as unknown as { isAuthed: boolean }).isAuthed = true;
+});
+
+describe('CrucibleContextMenu', () => {
+  test("hides itself from the crucible's creator", async () => {
+    mocks.currentUser = { id: CREATOR, isModerator: false };
+    renderWithProviders(<CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(menuButton()).toBeNull();
+  });
+
+  test.each([
+    ['anyone else', { id: 9, isModerator: false }],
+    ['a moderator, even on their own crucible', { id: CREATOR, isModerator: true }],
+  ])('lets %s report it as a crucible', async (_, user) => {
+    mocks.currentUser = user;
+    renderWithProviders(<CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} />);
+
+    await vi.waitFor(() => expect(menuButton()).toBeTruthy());
+    menuButton()!.click();
+    await vi.waitFor(() =>
+      expect(
+        [...document.querySelectorAll('[role="menuitem"]')].find((item) =>
+          item.textContent?.includes('Report crucible')
+        )
+      ).toBeTruthy()
+    );
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((item) => item.textContent?.includes('Report crucible'))!
+      .click();
+
+    expect(mocks.openReportModal).toHaveBeenCalledWith({ entityType: 'crucible', entityId: 17 });
+  });
+});
+
+describe('CrucibleContextMenu comment lock', () => {
+  const items = () =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((i) => i.textContent);
+
+  const open = async () => {
+    await vi.waitFor(() => expect(menuButton()).toBeTruthy());
+    menuButton()!.click();
+    await vi.waitFor(() => expect(items().length).toBeGreaterThan(0));
+  };
+
+  test('gives the creator no menu at all, lock or not', async () => {
+    mocks.currentUser = { id: CREATOR, isModerator: false };
+    renderWithProviders(
+      <>
+        <CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} withCommentsLock />
+        <span data-testid="rendered" />
+      </>
+    );
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="rendered"]')).toBeTruthy());
+
+    expect(menuButton()).toBeNull();
+  });
+
+  test('offers a moderator both', async () => {
+    mocks.currentUser = { id: 1, isModerator: true };
+    renderWithProviders(
+      <CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} withCommentsLock />
+    );
+    await open();
+
+    expect(items()).toEqual(['Report crucible', 'Lock Comments']);
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')][1].click();
+    expect(mocks.toggleLock).toHaveBeenCalled();
+  });
+
+  test('keeps the lock from an ordinary viewer', async () => {
+    mocks.currentUser = { id: 9, isModerator: false };
+    renderWithProviders(
+      <CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} withCommentsLock />
+    );
+    await open();
+
+    expect(items()).toEqual(['Report crucible']);
+  });
+
+  test('stays off cards, which do not opt in', async () => {
+    mocks.currentUser = { id: 1, isModerator: true };
+    renderWithProviders(<CrucibleContextMenu crucible={{ id: 17, userId: CREATOR }} />);
+    await open();
+
+    expect(items()).toEqual(['Report crucible']);
+  });
+});

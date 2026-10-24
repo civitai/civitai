@@ -23,7 +23,7 @@ const EARNINGS_ARTICLE =
  * Dismissal goes to user settings rather than `localStorage`, which is what
  * `DismissibleAlert` would have given us: this explains a feature, not a
  * one-off event, and someone who has read it should not meet it again on their
- * phone. Same pattern as {@link ../Alerts/NavTidyNotice}, down to the
+ * phone. Same pattern as {@link ../Alerts/NavCustomizeNotice}, down to the
  * optimistic update and the resolved-settings guard.
  *
  * 🔴 The first site to consume a notice `audience`. The registry marks this

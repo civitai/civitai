@@ -82,3 +82,317 @@ export function mediaFromBlobs(
   }
   return media;
 }
+
+/**
+ * True when `value` has the orchestrator `Blob` SHAPE.
+ *
+ * A SHAPE test, not a key-name list and not a "does this string look like a
+ * url?" sniff. The first draft of this module enumerated four key names
+ * (`blob`/`blobs`/`image`/`images`); measured against the live spec on
+ * 2026-09-17 those covered 4 of the 18 property names that carry a blob across
+ * the step types this bridge admits, so `video`, `audioBlob`, `svg`, `frames`,
+ * `tempBlobs`, `draftCache`, `additionalVideos` and seven on `polyGen` alone
+ * would each have ridden out as a raw url inside the forwarded output.
+ *
+ * 🔴 KEYED ON `available` PLUS AN IDENTITY FIELD, NOT ON `available` PLUS `url`.
+ * `Blob.available` and `Blob.id` are REQUIRED upstream; `url` is
+ * `url?: null | string` — which is the whole premise the array rule below rests
+ * on. Requiring `url` meant a BLOCKED blob, whose `url` key is simply absent,
+ * failed the test and was forwarded whole: no url escaped (there is none), but
+ * its `blockedReason` and raw orchestrator `nsfwLevel` did, and the module's own
+ * "a blob that the filter DROPPED cannot ride out through `rest`" claim was
+ * false. Measured.
+ *
+ * It still cannot strip prose: a string is not an object with an `available`
+ * field.
+ */
+function isOrchestratorBlobLike(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return 'available' in v && ('url' in v || 'id' in v);
+}
+
+/**
+ * How deep the walk below descends before it stops looking.
+ *
+ * 🔴 NOT 1, AND THE REASON IS A MEASUREMENT. A depth-1 walk was shipped and then
+ * measured against the live spec: of the 50 step types, three carry blobs deeper
+ * than the top level, and two of them are ALLOWED on this arm.
+ * `polyGen.basicAnimations` is a plain object holding SIX `Model3DBlob`s
+ * (walking/running × three model formats) and `training.epochs[]` carries
+ * `model` plus a `samples[]` of images/videos/audio. Every one of those urls was
+ * forwarded raw — reachable by the app, invisible to both the publish path and
+ * the per-viewer gated read.
+ *
+ * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
+ * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
+ * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
+ * a future output reopens exactly this leak with no detector. Say the CATALOG
+ * DEPTH when you re-measure; do not say "with room". (Re-derivable from the
+ * orchestrator spec; the overflow threshold below is not.)
+ *
+ * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
+ * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
+ * `input`, so it is acyclic and no declared output type echoes the request back.
+ * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
+ * nested levels parse fine) while this walk is recursive and overflows the stack
+ * a few thousand levels in. 🔴 THE ORDER IS THE FACT, NOT THE FIGURE — that
+ * threshold moves with stack size, frame shape and caller depth, and repeated
+ * measurements of it have disagreed by more than 2×. Do not write an overflow
+ * depth here again. Nothing upstream bounds the depth; this cap does.
+ *
+ * 🔴 SO DO NOT "CLOSE THE RESIDUE" BY DELETING THE CAP. This runs inside
+ * `snapshotFromWorkflow` on `submitPassThroughStepWorkflow`'s post-submit path,
+ * where a throw is caught by a handler that refunds every cap leg it reserved and
+ * rethrows — on a generation the orchestrator has already created and will bill,
+ * so the caps understate real spend permanently. Closing the residue means an
+ * ITERATIVE walk.
+ */
+const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
+
+/**
+ * Strip every blob-shaped value out of an orchestrator step output, returning
+ * the media found and the remainder — the pass-through arm's one output rule.
+ *
+ * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". A blob-shaped
+ * value is removed whether or not `mediaFromBlobs` kept it, so a blob the
+ * availability filter DROPPED — unavailable, blocked, empty or absent url —
+ * cannot ride out through the remainder instead. Filtering and stripping on the
+ * same predicate is how a dead or blocked url reaches a block through the back
+ * door. 🔴 THE PREDICATE ALONE DECIDES THE STRIP — what `mediaFromBlobs` returns
+ * is spread and never inspected. Do NOT gate the `continue`/`return {}` on a
+ * `.length`: that is the same door, reopened.
+ *
+ * ⚠️ An earlier revision of this paragraph explained the rule through the
+ * truthiness of a `liftOrchestratorBlobs` return value. That helper was deleted
+ * in the same commit that left the sentence behind, so it sent a maintainer
+ * looking for a mechanism that is not there.
+ *
+ * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
+ * whole output, so the whole-value case is checked before descending.
+ *
+ * 🔴 THE RESIDUE IS A SHAPE RESIDUE AS WELL AS A DEPTH ONE, AND THE SECOND HALF
+ * IS EASY TO MISS BECAUSE THE MEASUREMENT ABOVE ENUMERATED BLOB-*TYPED* FIELDS,
+ * NOT URL-*CARRYING* ONES. `blobArchive`, whose entire output is
+ * `{ url, entryCount, format, expiresAt }`, carries its url as a PLAIN STRING, is
+ * invisible to a shape test, and reaches the app through `stepOutputs` unseen by
+ * the publish path or the per-viewer gated read. Sniffing every string for
+ * something url-shaped is NOT the fix — it would strip prose that merely contains
+ * a link. Handling a named field by position is; `splitPassThroughStep` does
+ * that for the training `$type`s (incl. the plain-string
+ * `imageResourceTraining.epochs[].blobUrl` and `sampleImages`). `blobArchive`
+ * remains open, as does `imageResourceTraining.sampleInputImages` (images the
+ * run selected from the app's own training input).
+ *
+ * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
+ * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
+ * a non-JSON value below the root (a `Date`, a `Map`, a class instance) would
+ * come out as `{}`, and a `__proto__` key vanishes at every level. Inert today —
+ * the orchestrator client `JSON.parse`s the response, so every value here is
+ * plain JSON — and the thing to re-check if a response transformer is ever added.
+ */
+export function splitPassThroughStepOutput(output: unknown): {
+  media: StepOutputMedia[];
+  rest: unknown;
+  model3d: Model3dOutputLabel[];
+} {
+  const media: StepOutputMedia[] = [];
+  const model3d: Model3dOutputLabel[] = [];
+  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
+  return { media, rest, model3d };
+}
+
+/**
+ * What a 3D model in a pass-through output IS, beside its url in `media`.
+ *
+ * `mediaFromBlobs` flattens every blob to a bare url, so a `polyGen` job's GLB, FBX,
+ * rigged and animated variants arrive as an undifferentiated list. This keeps the two
+ * facts the flattening drops, ADDITIVELY — `media` and its order are untouched:
+ *   - `format` — the orchestrator `Model3dBlob.format` (`'glb'`, `'fbx'`, …), read off
+ *     the blob itself. The blob is recognised by its own discriminator,
+ *     `type: 'model3d'` (`@civitai/orchestration-client` `Model3dBlob`), never by sniffing a url or
+ *     guessing from a key name.
+ *   - `variant` — the output key path the blob sat at, dot-joined (`'model'`,
+ *     `'riggedFbxModel'`, `'basicAnimations.walkingModel'`; an array index is a
+ *     segment). `''` when the whole output is the blob.
+ *
+ * Only blobs that `mediaFromBlobs` KEPT are labelled, so every label's `url` is one of
+ * the urls in `media` — a dropped (unavailable / blocked) blob gains no label.
+ */
+export type Model3dOutputLabel = { url: string; format: string; variant: string };
+
+/** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
+const MODEL3D_BLOB_TYPE = 'model3d';
+
+type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+
+/** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
+function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
+  const lifted = mediaFromBlobs(value);
+  sink.media.push(...lifted);
+  const blob = value as OrchestratorBlobLike & { type?: unknown; format?: unknown };
+  if (
+    lifted.length === 1 &&
+    blob.type === MODEL3D_BLOB_TYPE &&
+    typeof blob.format === 'string' &&
+    blob.format.length > 0
+  ) {
+    sink.model3d.push({ url: lifted[0].url, format: blob.format, variant: path.join('.') });
+  }
+}
+
+/** The orchestrator training `$type`s, which put a trained CHECKPOINT on every epoch. */
+export const TRAINING_STEP_TYPES = ['training', 'imageResourceTraining'] as const;
+export type TrainingStepType = (typeof TRAINING_STEP_TYPES)[number];
+
+export function isTrainingStepType(stepType: unknown): stepType is TrainingStepType {
+  return (TRAINING_STEP_TYPES as readonly unknown[]).includes(stepType);
+}
+
+/** An epoch whose checkpoint is ready — what the training publish wizard can be handed. */
+export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
+
+/**
+ * A pass-through STEP's output split three ways: media, the forwarded remainder,
+ * and — for a training `$type` — which epochs carry a ready checkpoint.
+ *
+ * 🔴 THE CHECKPOINT IS DROPPED, NOT LIFTED. `training.epochs[].model` is a real
+ * orchestrator `Blob`, so the shape walk alone would put the safetensors url in
+ * `imageUrls` beside the sample images, indistinguishable from them; and
+ * `imageResourceTraining.epochs[].blobUrl` is a plain string the shape walk
+ * cannot see, so it would ride `stepOutputs`. Both are removed here BY POSITION,
+ * keyed on the two `$type`s, before the walk runs — never by sniffing a url for
+ * a file extension.
+ *
+ * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES. `training` samples are `Blob`s and
+ * the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
+ * strings the main app renders as image urls, so they are lifted here by
+ * position — otherwise they would ride `stepOutputs`, around the gated read.
+ *
+ * 🔴 `trainedEpochs` IS EMPTY UNLESS THE RUN'S `moderationStatus` IS `approved`.
+ * It is what a block offers to the publish wizard; a run still evaluating, under
+ * review or rejected has nothing to offer.
+ *
+ * Both workflow extractors call this rather than `splitPassThroughStepOutput`
+ * directly, so neither can forget the training rule.
+ */
+export function splitPassThroughStep(
+  stepType: string,
+  output: unknown
+): {
+  media: StepOutputMedia[];
+  rest: unknown;
+  trainedEpochs: TrainedEpoch[];
+  model3d: Model3dOutputLabel[];
+} {
+  if (!isTrainingStepType(stepType)) {
+    return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
+  }
+  const trainedEpochs: TrainedEpoch[] = [];
+  const sampleUrls: string[] = [];
+  const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
+  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
+  for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
+  const approved =
+    output !== null &&
+    typeof output === 'object' &&
+    (output as Record<string, unknown>).moderationStatus === 'approved';
+  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
+}
+
+/**
+ * Per `$type`, the epoch keys removed before the walk: the checkpoint
+ * (`TrainingOutputEpochResult.model`, `EpochResult.blobUrl` + `blobName`) and,
+ * for the legacy type, the plain-string samples lifted to media instead.
+ */
+const STRIPPED_EPOCH_KEYS: Record<TrainingStepType, readonly string[]> = {
+  training: ['model'],
+  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages'],
+};
+
+function hasReadyCheckpoint(stepType: TrainingStepType, epoch: Record<string, unknown>): boolean {
+  if (stepType === 'imageResourceTraining') {
+    return typeof epoch.blobUrl === 'string' && epoch.blobUrl.length > 0;
+  }
+  return mediaFromBlobs(epoch.model as OrchestratorBlobLike | null | undefined).length > 0;
+}
+
+function stripTrainingEpochs(
+  stepType: TrainingStepType,
+  output: unknown,
+  trainedEpochs: TrainedEpoch[],
+  sampleUrls: string[]
+): unknown {
+  if (output === null || typeof output !== 'object' || Array.isArray(output)) return output;
+  const epochs = (output as Record<string, unknown>).epochs;
+  if (!Array.isArray(epochs)) return output;
+  const strippedKeys = STRIPPED_EPOCH_KEYS[stepType];
+  const stripped = epochs.map((epoch) => {
+    if (epoch === null || typeof epoch !== 'object' || Array.isArray(epoch)) return epoch;
+    const e = epoch as Record<string, unknown>;
+    if (Number.isInteger(e.epochNumber) && hasReadyCheckpoint(stepType, e)) {
+      trainedEpochs.push({ $type: stepType, epochNumber: e.epochNumber as number });
+    }
+    if (stepType === 'imageResourceTraining' && Array.isArray(e.sampleImages)) {
+      for (const sample of e.sampleImages) {
+        if (typeof sample === 'string' && sample.length > 0) sampleUrls.push(sample);
+      }
+    }
+    const kept: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(e)) {
+      if (!strippedKeys.includes(key)) kept[key] = value;
+    }
+    return kept;
+  });
+  return { ...(output as Record<string, unknown>), epochs: stripped };
+}
+
+function walkPassThroughOutput(
+  value: unknown,
+  sink: PassThroughOutputSink,
+  depth: number,
+  path: string[]
+): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (isOrchestratorBlobLike(value)) {
+    liftBlob(value as OrchestratorBlobLike, sink, path);
+    return {};
+  }
+  // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
+  // for the measured margin this leaves.
+  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
+  if (Array.isArray(value)) {
+    // 🔴 PER ELEMENT, NOT ALL-OR-NOTHING. An earlier rule qualified the whole
+    // array on `some(isBlobLike)` and replaced it wholesale, which lost a blob
+    // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
+    // first and discarded the second from BOTH sides — never published, never
+    // forwarded. Lifting per element and walking the rest keeps both.
+    // The key path is extended only for a value that is lifted or descended into, so
+    // a large array of primitives allocates no path per element.
+    const out: unknown[] = [];
+    value.forEach((entry, index) => {
+      if (isOrchestratorBlobLike(entry)) {
+        liftBlob(entry as OrchestratorBlobLike, sink, [...path, String(index)]);
+        return;
+      }
+      out.push(
+        entry !== null && typeof entry === 'object'
+          ? walkPassThroughOutput(entry, sink, depth + 1, [...path, String(index)])
+          : entry
+      );
+    });
+    return out;
+  }
+  const rest: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (isOrchestratorBlobLike(entry)) {
+      liftBlob(entry as OrchestratorBlobLike, sink, [...path, key]);
+      continue;
+    }
+    rest[key] =
+      entry !== null && typeof entry === 'object'
+        ? walkPassThroughOutput(entry, sink, depth + 1, [...path, key])
+        : entry;
+  }
+  return rest;
+}

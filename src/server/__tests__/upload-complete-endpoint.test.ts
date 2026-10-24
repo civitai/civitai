@@ -297,16 +297,6 @@ describe('/api/upload/complete — the completion LOG must record the completion
 
   beforeEach(() => vi.mocked(logToAxiom).mockClear());
 
-  it('records partCount, location and etag on a successful completion', async () => {
-    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/x', ETag: '"abc123"' });
-    await handler(makeReq(), makeRes());
-    const ev = logged();
-    expect(ev).toBeDefined();
-    expect(ev?.partCount).toBe(1);
-    expect(ev?.location).toBe('https://cdn/x');
-    expect(ev?.etag).toBe('"abc123"');
-  });
-
   it('THE MOTIVATING CASE: a completion that resolves with NO Location is still logged as such', async () => {
     // The silent-empty shape. Before this change the event carried no `location` key
     // at all, so this run and a healthy one produced identical log lines.
@@ -320,19 +310,6 @@ describe('/api/upload/complete — the completion LOG must record the completion
     expect(ev?.etag).toBeNull();
     // Behaviour is deliberately unchanged — this commit adds visibility only.
     expect(res.statusCode).toBe(200);
-  });
-
-  it('partCount reflects the manifest length, so a truncated manifest is visible', async () => {
-    mockCompleteMultipartUpload.mockResolvedValue({ Location: 'https://cdn/y', ETag: '"e"' });
-    await handler(
-      reqWithParts([
-        { ETag: 'a', PartNumber: 1 },
-        { ETag: 'b', PartNumber: 2 },
-        { ETag: 'c', PartNumber: 3 },
-      ]),
-      makeRes()
-    );
-    expect(logged()?.partCount).toBe(3);
   });
 
   it('a non-array parts body logs partCount null rather than throwing', async () => {

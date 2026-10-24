@@ -2,6 +2,12 @@ import type React from 'react';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
+/** Opens the hub login popup, returning to `returnUrl` or, by default, the current page. */
+export function openLoginHere(reason?: LoginRedirectReason, returnUrl?: string) {
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  openLoginPopup(returnUrl ?? here, reason);
+}
+
 // Gate an action behind login. When signed out, open the hub login (auth.civitai.com) in a popup window — the
 // hub owns the login UI + sets the session cookie; we just reload once it's done. (Replaces the old in-page
 // LoginModal.) `message` is accepted for call-site compatibility but no longer drives an in-app modal; `reason`
@@ -22,8 +28,7 @@ export function requireLogin({
     uiEvent.preventDefault();
     uiEvent.stopPropagation();
     uiEvent.nativeEvent.stopImmediatePropagation();
-    const here = window.location.pathname + window.location.search + window.location.hash;
-    openLoginPopup(returnUrl ?? here, reason);
+    openLoginHere(reason, returnUrl);
   } else {
     cb();
   }

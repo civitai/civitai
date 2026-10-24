@@ -20,9 +20,9 @@
  * `src/components/AppLayout/rootCustomProperties.browser.test.tsx` is the guard
  * that proves they resolve. Measured there, with and without the injection:
  * `--header-height` `""` → `60px`, and `calc(100dvh - var(--header-height))`
- * `0px` → `viewport − 60`. ⚠️ That guard lives in `preview / component-tests`,
- * which is REPORT-ONLY and does not block a merge — so it tells you, it does not
- * stop you. The CSS↔TS value binding it leans on is in the gating tier
+ * `0px` → `viewport − 60`. ⚠️ That guard runs in CI as `Component tests`, which,
+ * like every check here, does not block a merge — so it tells you, it does not
+ * stop you. The CSS↔TS value binding it leans on is pinned in the node `unit` tier
  * (`pageRunScrollContract.test.ts`).
  *
  * So `var(--header-height)` is now safe in a component that a browser test
@@ -33,6 +33,29 @@
  * benefit. Do it as its own change if you want it, not incidentally.
  */
 export const HEADER_HEIGHT_PX = 60;
+
+/**
+ * The `<meta name="viewport">` content string, rendered by `MetaPWA` — the ONLY
+ * viewport meta in the app.
+ *
+ * 🔴 `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to a
+ * NON-ZERO value on a notched device. Without it the UA reports `0px` for every
+ * inset, so every `env(safe-area-inset-*)` in the codebase silently no-ops —
+ * which is exactly the state this repo was in until this token was added, with
+ * one call site (`ReviewActionBar`) written against insets that could never
+ * arrive.
+ *
+ * The flip side, and the reason this is a whole-string constant rather than a
+ * token someone appends to: with `cover` the layout viewport extends UNDER the
+ * status bar / notch / home indicator. `html`/`body`/`#__next` are a
+ * `block-size: 100%; overflow: hidden` app shell (`src/styles/globals.css`), so
+ * that shell now spans the full physical screen and anything pinned to a
+ * viewport edge sits under system UI unless it pays the inset back with
+ * `var(--safe-area-inset-*)`. Removing the token would re-zero every inset and
+ * make that padding inert without any test that only greps for the padding
+ * noticing; `viewport-fit-cover.test.ts` pins this string as a whole.
+ */
+export const VIEWPORT_META_CONTENT = 'initial-scale=1, width=device-width, viewport-fit=cover';
 
 export const imageGenerationDrawerZIndex = 301;
 
@@ -62,3 +85,17 @@ export const tourClickThroughZIndex = tourOverlayZIndex + tourTooltipZIndexOffse
  * on mount order. This clears a few levels of dialog stacking outright.
  */
 export const remixMenuZIndex = 310;
+
+/**
+ * The bottom sheet `MobileMenuDrawer` opens into on touch. It has to clear
+ * everything a sheet can be opened from inside: the generation panel, which goes
+ * fullscreen at `z-[210]` on a phone (`GenerationSidebar`), that panel's own menus
+ * at `imageGenerationDrawerZIndex + 2`, and routed dialogs, which stack at
+ * `300 + index` (`DialogProvider`).
+ *
+ * 🔴 It only works through Mantine's `zIndex` PROP. A `classNames.root` rule is
+ * inert — the Drawer root is `position: static` and carries nothing but custom
+ * properties, while the stacking lives on `inner` and `overlay` via
+ * `var(--mb-z-index)`. A sheet styled that way reads as lifted and is not.
+ */
+export const mobileMenuSheetZIndex = 400;

@@ -82,18 +82,29 @@ unrelated slices, review them one at a time; findings from a mixed diff are hard
 uncommitted changes: the review exists to run *before* the commit.
 
 Also locate the **intent doc** now, so the intent reviewer isn't the one to discover it's missing:
+`<INTENT_DIR>/<feature>.md`, where `INTENT_DIR` comes from your own instructions or the primary
+checkout's `CLAUDE.local.md` (see `civitai-intent-review`). If none is set, pass the intent reviewer the
+PR body and linked ticket instead.
 
-```
-C:\Dev\Repos\work\model-share\_local\docs\plans\<feature>.md
-```
+## 2. Fan out — the lanes this diff needs, at once, in one message
 
-Absolute path, from any worktree. 🔴 Never resolve `_local/` relatively — it exists only in the primary
-worktree, and a relative write silently creates a second private copy that nobody else reads.
+**Size the review to the diff before spawning anything.** Five lanes over a one-line change spend a
+large share of a usage window and find nothing a careful read wouldn't.
 
-## 2. Fan out — all five at once, in one message
+- **Tiny diff — no agents.** About 30 changed lines or fewer, touching no server code, auth, money, PII
+  or NSFW/browsing-level gating: read the diff yourself, or run `/code-review low`. Say that is what you
+  did.
+- **Otherwise, launch each lane whose findings the diff can contain** (the skip rule below), and launch
+  all five for a feature-sized segment.
+- **Once per segment, not once per fix iteration.** After fixes, re-run only the lanes whose findings
+  you fixed.
 
-🔴 **Launch every lane in a single message with multiple tool uses.** They are independent and share no
-state.
+**Each lane's model is set in its definition** — `opus` for correctness, where a missed auth or money
+defect costs the most, and `sonnet` for the four that match the diff against known patterns. Don't pass a
+`model` override when spawning; it would replace that choice.
+
+🔴 **Launch every lane you run in a single message with multiple tool uses.** They are independent and
+share no state.
 
 A numbered list of steps reads as an instruction to run them one after another, so this is stated
 rather than left to inference: **do not spawn them sequentially.** A five-lane review that takes five
@@ -125,7 +136,34 @@ decision, not an omission; do not helpfully collapse them.
 
 Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
 reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
-which you skipped and why.
+which you skipped and why. Typical shapes:
+
+| Lane | The diff can contain its findings when it… |
+| --- | --- |
+| correctness | touches server code, tRPC procedures, auth, money, PII or NSFW gating |
+| perf | touches queries (Prisma, `$queryRaw`), feed paths, caches, or adds client dependencies / page imports |
+| test | changes logic — whether or not any test changed |
+| reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
+| intent | is a feature with an intent doc or a stated request to measure against |
+
+### When a review-record store is configured, each lane also returns a structured result
+
+If your own instructions (or the primary checkout's `CLAUDE.local.md`) name a **review-record store**
+for PR reviews, the lanes' work is recorded there so a later reviewer of the same PR can see it and not
+redo it (step 3a). A recorded lane is identified by **its definition file in `.claude/agents/`, as it is
+on the default branch**: its version is taken from that file's raw bytes, and its model is that file's
+`model:` value exactly as written (`opus`, `sonnet`), not a resolved model id. The store's instructions
+say how the version is computed.
+
+So when a store is configured, run step 0's `git checkout origin/main -- .claude` even for a `main`-based
+head, and note the `origin/main` commit you took it from: the lanes then run under the default-branch
+definitions, and a PR that edits a lane cannot review itself under its own edit. Spawn the lanes as usual,
+with the usual inputs, and ask each to end its report with the structured result the store's
+instructions define. A lane run under any other copy of its definition, or with a model override,
+cannot claim that version or model, and a result recorded under a version or model it did not run is
+worse than no record.
+
+No store configured: nothing here changes, and step 3a does not apply.
 
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
@@ -190,7 +228,32 @@ Across all three sections:
 
 🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
 commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
-permanent. They live in the conversation until they are fixed.
+permanent. They live in the conversation, and in the review-record store if one is configured (step 3a),
+until they are fixed.
+
+## 3a. Record the review (only when a review-record store is configured)
+
+The store's own instructions say where and how to write; this step says **when** and **what**.
+
+1. **When you spawn the lanes**, record a run for each lane at the head SHA under review, marked running,
+   with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
+   run is what tells a later reviewer the PR is being reviewed locally.
+2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
+   version, model, finish time and findings count, and record its findings in the structured form the
+   lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
+   complete with no findings.
+
+The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it
+is exact: same head SHA, same prompt version and model, every finding as the lane wrote it. Record a
+lane's findings as it wrote them, including ones you drop at step 3; consolidation is a separate
+judgement. A push after the review is a new head, and nothing recorded at the old head covers it: each
+fix-loop or re-targeted re-run is a new run at the new head, recorded as in 1 and 2.
+
+The correctness lane is also re-run independently by a hosted reviewer, whatever you record. Record it
+anyway: the overlap between the two is what the record measures.
+
+Step 3's rule covers the record too: never copy an open safety finding from it into a PR body, commit
+message or file in this repo.
 
 ## 4. The fix loop
 
@@ -214,7 +277,7 @@ function that no longer exists in the form it is imagining — new refusals mean
 this test still meaningful" cannot be answered from the assertion alone.
 
 **A declined finding is a legitimate outcome, but it must come back with a reason.** The reviewer then
-either accepts the reason or escalates to Justin. 🔴 **Silent non-fixes are the failure mode here** — a
+either accepts the reason or escalates to the user. 🔴 **Silent non-fixes are the failure mode here** — a
 finding that quietly doesn't appear in the next round has not been resolved, it has been lost. Track
 the list across rounds and account for every item.
 

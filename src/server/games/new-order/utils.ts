@@ -54,12 +54,7 @@ function createCounter<TId extends number | string = number | string>({
         try {
           await zAddWithTTL(sysRedis, key, value, id.toString(), ttl * 1000);
         } catch (error) {
-          logSysRedisFailOpen(
-            'write-degraded',
-            'new-order.createCounter.zAdd',
-            error,
-            { key, id }
-          );
+          logSysRedisFailOpen('write-degraded', 'new-order.createCounter.zAdd', error, { key, id });
         }
       } else {
         await sysRedis.zAdd(key, { score: value, value: id.toString() });
@@ -70,12 +65,7 @@ function createCounter<TId extends number | string = number | string>({
         try {
           await hSetWithTTL(sysRedis, key, id.toString(), value, ttl * 1000);
         } catch (error) {
-          logSysRedisFailOpen(
-            'write-degraded',
-            'new-order.createCounter.hSet',
-            error,
-            { key, id }
-          );
+          logSysRedisFailOpen('write-degraded', 'new-order.createCounter.hSet', error, { key, id });
         }
       } else {
         await sysRedis.hSet(key, id.toString(), value);
@@ -826,11 +816,20 @@ export type VotingRateLimitConfig = {
   /** Have the daily abuse-detection job auto-smite suspects matching strict signals. Off by default. */
   autoSmiteAbusers?: boolean;
   /**
-   * Tunable thresholds for the daily abuse-detection job. Live values come
-   * from Redis so they're not leaked via the public source tree — defaults
-   * here are a non-load-bearing fallback for first-boot before ops seeds the
-   * config. Calibrate against real queue composition and revisit as the
-   * NSFW sampling rate / pool mix shifts.
+   * Tunable thresholds for the daily abuse-detection job. Live values come from
+   * Redis so ops can retune them without a deploy — defaults here are a
+   * non-load-bearing fallback for first-boot before ops seeds the config.
+   *
+   * ⚠️ This said the Redis indirection keeps the values "not leaked via the
+   * public source tree". It does not, and treating it as a confidentiality
+   * control is the mistake to avoid: this repo is public, the fallbacks below
+   * are literals in it, a checked-in test of the smite path carries live values,
+   * and the abuse board publishes the observed numbers these are compared
+   * against, which bound them from above over a few runs. Redis buys
+   * retune-without-deploy, nothing more.
+   *
+   * Calibrate against real queue composition and revisit as the NSFW sampling
+   * rate / pool mix shifts.
    */
   abuseDetection?: {
     /** HAVING totalRatings >= X — minimum daily vote count to be considered. */

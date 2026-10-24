@@ -1,6 +1,7 @@
 import type * as z from 'zod';
 import { chatCompletionStep } from './chat-completion.step';
 import { convertImageStep } from './convert-image.step';
+import { assertStepTypeAllowed } from './orchestrator-denylist';
 import type { StepOutputMedia } from './output';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -399,7 +400,7 @@ export type OrchestratorStepTemplate = {
 //
 // The concrete case, because it is coming: the orchestrator's `chatCompletion`
 // input takes `model: string` — a plain provider id ("gpt-4o"), NOT an AIR
-// (`ChatCompletionInput` in the generated `@civitai/client` types). Such an
+// (`ChatCompletionInput` in the generated `@civitai/orchestration-client` types). Such an
 // entry would declare `'none'` TRUTHFULLY and pass clause 7, while forwarding
 // an arbitrary model name from an untrusted iframe. There is also no
 // orchestrator-side model validation to catch it — a fabricated name quotes
@@ -478,7 +479,7 @@ const AIR_SCAN_MAX_DEPTH = 128;
  * ORCHESTRATOR'S OWN SCHEMA. `ImageJobParams.additionalNetworks` is typed
  * `{ [key: string]: ImageJobNetworkParams }` and its doc comment reads "Use the
  * AIR of the network as the key"; `WorkflowCost.fees` is likewise keyed by
- * resource AIR (both in the generated `@civitai/client` types). A scan over
+ * resource AIR (both in the generated `@civitai/orchestration-client` types). A scan over
  * `Object.values` alone therefore misses the single most likely real-world
  * placement of an AIR in a submitted step, and returns a confident
  * `noResourceReference` for `{ additionalNetworks: { 'urn:air:…': {…} } }` — a
@@ -536,8 +537,13 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 // The extraction primitives live in the leaf module `./output` (see its header
 // for why). Re-exported here so `~/server/services/blocks/steps` stays the one
 // import site for consumers that aren't registry entries.
-export type { StepOutputMedia } from './output';
-export { mediaFromBlobs } from './output';
+export type { StepOutputMedia, TrainedEpoch, TrainingStepType } from './output';
+export {
+  isTrainingStepType,
+  mediaFromBlobs,
+  splitPassThroughStep,
+  splitPassThroughStepOutput,
+} from './output';
 
 /**
  * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with
@@ -633,7 +639,7 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  * shape of problem because `'promptAudit'` is implemented and so that entry
  * would at least be registrable once someone notices.
  *
- * Enumerated from the generated `@civitai/client` `$type` literals, not from
+ * Enumerated from the generated `@civitai/orchestration-client` `$type` literals, not from
  * `src/**` usage — the same correction the registry's Tranche 1 note records:
  * grepping usage enumerates what is CALLED, not what EXISTS.
  */
@@ -778,7 +784,8 @@ interface BlockStepBase<P> {
    * `canonicalOutputFor` makes the output shape explicit rather than inferred.
    *
    * 🔴 AND IT CANNOT BE SATISFIED BY RETURNING NOTHING. `auditPromptServer`
-   * RETURNS EARLY on an empty prompt, so `() => ({ prompt: '' })` would be a
+   * audits no prompt text when the prompt is empty (it returns early unless a
+   * negative prompt is present), so `() => ({ prompt: '' })` would be a
    * declared posture that audits nothing and reports success — the same defect
    * class as an `extractOutput` satisfiable by `() => []`, which is why that
    * field got a probe. This one gets the same treatment: the load-time invariant
@@ -833,10 +840,9 @@ interface BlockStepBase<P> {
    * canonical params of each variant (clause 5, and the price-equals-estimate
    * clause) and nothing re-checks at request time.
    *
-   * What estimate and submit DO share is the BOUND: `estimateStepBuzz` and
-   * `planStepSpend` both resolve through `resolveStepVariant` before dispatching
-   * to a billing-mode handler, so an out-of-set resolution fails identically on
-   * both. Before that they did not, and an entry whose variant is its model
+   * What estimate and submit DO share is the BOUND: both resolve through
+   * `resolveStepVariant` and then `planStepSpend`, so an out-of-set resolution
+   * fails identically on both. Before that they did not, and an entry whose variant is its model
    * would have answered an out-of-set model with HTTP 200 and
    * `cost: { total: undefined }` on estimate while the submit threw.
    *
@@ -1106,8 +1112,8 @@ export type AnyBlockStep = BlockStep<any>;
 // Spend planning — the money-path dispatch.
 //
 // 🔴 estimate / submit / settle dispatch on `billingMode`, NEVER on `kind` and
-// never on the step id. The router calls `planStepSpend` / `estimateStepBuzz`
-// and reads the returned plan; it contains no per-step and no per-mode branch.
+// never on the step id. The router calls `planStepSpend` and reads the returned
+// plan; it contains no per-step and no per-mode branch.
 // Adding a capability is register-an-entry; adding a MODE is add-a-handler
 // here — neither is router surgery. That is the whole point of the RFC.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1246,18 +1252,10 @@ export type BoundedStepVariant = string & { readonly __boundedStepVariant: 'boun
  * `Error` also keeps this module import-light, which `workflow.schema` depends
  * on.
  *
- * 🔴 THE MESSAGE IS ECHOED TO THE UNTRUSTED IFRAME. `trpc.ts`'s `errorFormatter`
- * is pass-through (`({ shape }) => shape`), and `getTRPCErrorFromUnknown`
- * preserves an unrecognized throw's `message`, so everything below reaches the
- * block's own JS — INCLUDING `step.variants.join(', ')`, i.e. the entry's ENTIRE
- * declared allowlist. For `convert-image` that is the single word `default` and
- * discloses nothing. For the model-allowlisted entry this is groundwork for, it
- * would be the full model list, which may name a model that is not public yet.
- * 🔴 So an entry whose `variants` are not all public information must choose
- * this message deliberately — either by keeping unreleased ids out of
- * `variants`, or by making the resolution unreachable (a `z.enum` paramSchema
- * over the same set turns an out-of-set value into a BAD_REQUEST at parse,
- * before this guard is ever reached).
+ * The message never reaches the block: both tRPC's `errorFormatter` and REST's
+ * `handleEndpointError` replace a 5xx message with a generic one. 🔴 Turning this
+ * into a 4xx would change that — it would echo `step.variants`, the entry's whole
+ * allowlist (possibly naming unreleased models), to the untrusted iframe.
  */
 export function resolveStepVariant(step: AnyBlockStep, params: unknown): BoundedStepVariant {
   // Deliberately typed `unknown`: `resolveVariant`'s declared `string` return is
@@ -1314,10 +1312,7 @@ function unimplementedMode(mode: StepBillingMode): BillingModeHandler {
 const billingModeHandlers: Record<StepBillingMode, BillingModeHandler> = {
   prepaidFixed: {
     // The display estimate is computed from the PARAMS — the variant is not an
-    // input to it, and this handler deliberately does not destructure one. What
-    // the bound buys this path is that `estimateStepBuzz` already threw on an
-    // out-of-set resolution before reaching here, so estimate can no longer
-    // answer 200 where submit throws.
+    // input to it, and this handler deliberately does not destructure one.
     estimateBuzz: ({ step, params }) => step.estimateBuzz(params),
     planSpend: ({ step, variant }) => {
       const entry = step as PrepaidFixedStep<unknown>;
@@ -1351,9 +1346,7 @@ export function isBillingModeImplemented(mode: StepBillingMode): boolean {
  * The display estimate for a step, dispatched on its declared billing mode.
  *
  * Resolves the variant through `resolveStepVariant` before dispatching — see
- * `planStepSpend` below for why the resolution lives in the dispatcher, and note
- * that this is what makes an out-of-set resolution fail IDENTICALLY on estimate
- * and on submit.
+ * `planStepSpend` below for why the resolution lives in the dispatcher.
  */
 export function estimateStepBuzz(
   step: AnyBlockStep,
@@ -1433,7 +1426,7 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 //
 // 🔴 The RFC named Tranche 1 as "background removal, upscale, convert". Only
 // CONVERT made it. Enumerating the orchestrator's real `$type` values from the
-// generated `@civitai/client` types found that the other two DO exist —
+// generated `@civitai/orchestration-client` types found that the other two DO exist —
 // `imageBackgroundRemoval` and `imageUpscaler` — but neither is `prepaidFixed`:
 //   - `imageBackgroundRemoval`: the client's own doc string says it "builds a
 //     ComfyUI graph under the hood and runs it as a comfy job", i.e. GPU work
@@ -1450,8 +1443,15 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // (standalone `$type` with a consumer-recipe endpoint, deterministic CPU
 // hashing, bounded hash-string output, no resources) but has no demonstrated
 // developer demand, and every registered id is a permanent public wire
-// commitment. Adding it later is one file plus one line here — which is the
-// entire point of the registry.
+// commitment. ~~Adding it later is one file plus one line here~~ —
+// 🔴 NO LONGER TRUE, and the correction is the point: `mediaHash` is now on the
+// platform-internal DENYLIST (`./orchestrator-denylist.ts`, "hashing / model
+// ingestion"), so clause (0a) throws at registry LOAD for it. Writing the step
+// file and adding the line here would be a BOOT failure, not a test failure.
+// The two judgements genuinely conflict — this paragraph adjudicated it
+// app-safe, the denylist adjudicated it platform machinery — and the denylist
+// is the newer decision. To register it, that decision has to be reopened
+// first; do not discover this by breaking the boot.
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 FROZEN, FOR THE SAME REASON `STEP_TYPE_ACCEPTABLE_POSTURES` IS — and BE
 // PRECISE ABOUT WHAT THAT BUYS, because it is less than the freeze above buys.
@@ -1546,6 +1546,36 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
   if (step.id !== id) {
     throw new Error(`${where}: registry key must equal step.id (got '${step.id}')`);
   }
+
+  // (0a) POLICY GATE, DELIBERATELY FIRST AFTER THE IDENTITY CHECK: the
+  // orchestrator `$type` must not be PLATFORM-INTERNAL. Scanners, moderation
+  // classifiers, hashing/ingestion and the catalog's own internals are the
+  // platform's machinery, not app capability — `orchestrator-denylist.ts` says
+  // why each entry is in that set and which three are a reversible judgement
+  // call.
+  //
+  // 🔴 PLACED HERE BECAUSE IT WAS UNREACHABLE LOWER DOWN, and that is worth
+  // recording rather than quietly fixing. It first sat after clause (9), where
+  // it never executed: `STEP_TYPE_ACCEPTABLE_POSTURES` (clause (1b), :1667) rejects a
+  // posture/`$type` mismatch earlier, so an entry mutated to declare
+  // `xGuardModeration` died with "the declared posture does not cover the
+  // moderation surface this step actually produces" and the denylist never ran.
+  // The tell was only visible because the test asserts
+  // `PlatformInternalStepTypeError` SPECIFICALLY — a generic `.toThrow()` would
+  // have been green over dead code.
+  //
+  // First also gives the right ERROR: an author registering a scanner should be
+  // told it is platform-internal, not that their posture is wrong.
+  //
+  // 🔴 SCOPE — THIS IS THE ONLY PLACE THE DENYLIST BITES TODAY. No current wire
+  // arm lets a block name an arbitrary `$type`: `kind:'step'` is enum-bound to
+  // `REGISTERED_STEP_IDS`, and `textToImage`/`customComfy` build their own. So
+  // the live property is narrower than "a block cannot submit a scanner" — it is
+  // "a scanner cannot be REGISTERED as a block step", which is the seam a future
+  // widening would otherwise walk straight through. When the wide `kind:'steps'`
+  // arm lands it MUST call `assertStepTypeAllowed` on the submitted `$type`
+  // before any spend reservation; this clause does not cover that path.
+  assertStepTypeAllowed(step.orchestratorType, where);
 
   // (1) The declared moderation posture must have an implemented handler. A
   // text-producing step cannot be registered until someone answers the policy
@@ -1720,8 +1750,8 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
     }
 
     // (5a) THE NON-VACUITY PROBE for `auditableText`, the moderation analogue of
-    // clause 8's extraction probe. `auditPromptServer` RETURNS EARLY on an empty
-    // prompt, so an entry that declares `'promptAudit'` and returns `''` would
+    // clause 8's extraction probe. `auditPromptServer` audits no prompt text on an
+    // empty prompt, so an entry that declares `'promptAudit'` and returns `''` would
     // pass clause 1a, run the audit, and audit nothing — reporting success. The
     // declaration alone is therefore not enough; it has to produce real text for
     // params the entry itself calls canonical.
@@ -1732,7 +1762,7 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
       if (typeof text?.prompt !== 'string' || text.prompt.trim().length === 0) {
         throw new Error(
           `${vWhere}: auditableText() returned no prompt text for canonicalParamsFor() — ` +
-            'auditPromptServer returns early on an empty prompt, so this posture would ' +
+            'auditPromptServer audits no prompt text on an empty prompt, so this posture would ' +
             'audit NOTHING while reporting success'
         );
       }

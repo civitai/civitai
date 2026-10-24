@@ -1,6 +1,7 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { bustKeyBestEffort } from './cache';
 import { dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
@@ -39,7 +40,7 @@ async function setCache(data: BlocklistDTO) {
  * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
  * does: a DELETE does not commute with the POPULATE in `getBlocklistDTO`, which is plain
  * cache-aside. A reader that missed and read the row before the commit can `set` its pre-write
- * snapshot AFTER the bust, pinning it for the whole month TTL.
+ * snapshot AFTER the bust, pinning it until the key expires.
  *
  * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
  * and the page reloads through `load` on every submit, so a reader is typically mid-fill when the
@@ -47,27 +48,16 @@ async function setCache(data: BlocklistDTO) {
  * own bust cannot put a reader into this write's window, because a miss it caused reads a row that
  * is already updated. `CACHE_TTL` is the TTL-short-enough option: it bounds that window rather than closing it.
  *
- * Returns false rather than throwing. The row is already committed by the time this runs, and a
- * throw here reports failure for a write that succeeded — on the remove path the operator's retry
- * then finds the entry gone, gets "Nothing was removed", reloads, and sees the chip still there
- * because the stale cache is what serves the page. Same rule as `a04fa6a608` on the session cache.
+ * Returns false rather than throwing (see `bustKeyBestEffort`): on the remove path a throw makes the
+ * operator's retry find the entry gone, get "Nothing was removed", and still see the chip because the
+ * stale cache serves the page.
  */
-async function bustCache(type: string): Promise<boolean> {
-  try {
-    await getRedis().del(blocklistKey(type));
-    return true;
-  } catch (error) {
-    void logToAxiom({
-      name: 'blocklist-cache-bust-failed',
-      type: 'error',
-      message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
-      details: {
-        blocklistType: type,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    return false;
-  }
+function bustCache(type: string): Promise<boolean> {
+  return bustKeyBestEffort(blocklistKey(type), {
+    logName: 'blocklist-cache-bust-failed',
+    message: 'Blocklist row was written but its cache key was not cleared; readers stay stale',
+    details: { blocklistType: type },
+  });
 }
 
 /**
@@ -137,7 +127,7 @@ export class BlocklistRowMismatchError extends Error {
   }
 }
 
-/** What a write did, and whether readers will see it before the month TTL expires. */
+/** What a write did, and whether readers will see it before the cache TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
 /** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
@@ -218,7 +208,7 @@ export async function upsertBlocklist({
 
 /**
  * Returns how many entries were actually dropped, which is NOT the number submitted: a stale `id`
- * (the DTO is Redis-cached for a month), an `id` belonging to another type, an entry already gone,
+ * (the DTO is Redis-cached for `CACHE_TTL`), an `id` belonging to another type, an entry already gone,
  * or one stored in a case the lowercased needle cannot match all end in zero. The page reports this
  * number, so "Removed 1 item." above a chip that is still there is a state the UI can no longer
  * reach.

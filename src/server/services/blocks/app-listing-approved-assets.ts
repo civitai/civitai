@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { readListingRedSlots } from '~/server/services/blocks/listing-media-split.service';
 
 /**
  * App Store Listings — "are this listing's assets the ones a moderator approved?"
@@ -6,8 +7,8 @@ import type { Prisma } from '@prisma/client';
  * 🔴 THE PROBLEM THIS EXISTS TO SOLVE. An owner may `unpublishOwnListing` their own
  * approved listing (approved → removed) and then republish it. A `removed` listing is
  * DIRECTLY asset-editable — `assertOwnerAssetEditable` refuses only an `approved`,
- * non-shadow row — so between those two actions the owner can swap the icon, the cover
- * and every screenshot. `republishOwnListing`'s existing go-live gates do not see it:
+ * non-shadow row — so between those two actions the owner can swap the icon, the cover,
+ * every screenshot and the civitai.red icon / cover overrides. `republishOwnListing`'s existing go-live gates do not see it:
  * `assertListingAssetsScanCleanInTx` reads scan STATUS, `assertOffsiteListingActionableInTx`
  * reads the destination href, and the #4418 rating floor reads MATURITY. None of them is
  * a content review, so brand-new store-card imagery could reach the public store with no
@@ -73,8 +74,14 @@ import type { Prisma } from '@prisma/client';
  * {@link parseApprovedAssetSnapshot} rejecting every version it does not understand — an
  * unrecognised version must degrade to "unknown" (→ re-review), never to a partial or
  * coerced comparison against a shape it was not written in.
+ *
+ * v2 added the civitai.red icon / cover overrides (`redIconId`, `redCoverId`). A v1 snapshot is
+ * still read, as a v2 with both `null` — the one version this build reads that it does not
+ * write, and a TRUE reading rather than a coercion: v1 was written only by builds that had no
+ * overrides (nothing could set one), so every listing a v1 snapshot describes had none. An owner
+ * who adds one while unpublished therefore still routes the republish to review.
  */
-export const APPROVED_ASSET_SNAPSHOT_VERSION = 1;
+export const APPROVED_ASSET_SNAPSHOT_VERSION = 2;
 
 /** One reviewable screenshot: the image it shows and the caption printed under it. */
 export type ApprovedAssetSnapshotScreenshot = {
@@ -83,8 +90,8 @@ export type ApprovedAssetSnapshotScreenshot = {
 };
 
 /**
- * The reviewable asset surface of a listing: its icon, its cover, and its screenshots
- * IN DISPLAY ORDER.
+ * The reviewable asset surface of a listing: its icon, its cover, its screenshots IN DISPLAY
+ * ORDER, and its civitai.red icon / cover overrides.
  *
  * 🔴 THE SCREENSHOT ARRAY IS POSITIONAL ON PURPOSE — the row's `order` COLUMN is not
  * recorded. Renumbering the same sequence 0,1,2 → 10,20,30 changes no pixel a viewer
@@ -101,6 +108,9 @@ export type ApprovedAssetSnapshot = {
   iconId: number | null;
   coverId: number | null;
   screenshots: ApprovedAssetSnapshotScreenshot[];
+  /** `null` when unset — and while the environment cannot read the overrides at all. */
+  redIconId: number | null;
+  redCoverId: number | null;
 };
 
 /** A screenshot row as read from the database, before normalisation. */
@@ -152,7 +162,10 @@ export function normalizeListingScreenshots(
 }
 
 /** The narrowest client shape the snapshot reader needs — a `tx`, `dbWrite` or `dbRead`. */
-export type ListingScreenshotReader = Pick<Prisma.TransactionClient, 'appListingScreenshot'>;
+export type ListingScreenshotReader = Pick<
+  Prisma.TransactionClient,
+  'appListingScreenshot' | '$queryRaw'
+>;
 
 /**
  * Build the CURRENT asset snapshot for a listing.
@@ -174,11 +187,17 @@ export async function buildApprovedAssetSnapshot(
     select: { imageId: true, order: true, caption: true },
     orderBy: [{ order: 'asc' }, { id: 'asc' }],
   });
+  // Read through the same client, so the record site and the compare site see the overrides
+  // the same way. One that cannot read them records `null`s; if a later read can, a filled
+  // override then differs and the republish goes to review (fail closed).
+  const red = await readListingRedSlots(db, appListingId);
   return {
     v: APPROVED_ASSET_SNAPSHOT_VERSION,
     iconId: listing.iconId ?? null,
     coverId: listing.coverId ?? null,
     screenshots: normalizeListingScreenshots(rows),
+    redIconId: red.redIconId,
+    redCoverId: red.redCoverId,
   };
 }
 
@@ -199,7 +218,15 @@ function isNullableImageId(value: unknown): value is number | null {
 export function parseApprovedAssetSnapshot(value: unknown): ApprovedAssetSnapshot | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
-  if (raw.v !== APPROVED_ASSET_SNAPSHOT_VERSION) return null;
+  // v1 had no overrides: read as both `null` (see APPROVED_ASSET_SNAPSHOT_VERSION). v2 must
+  // carry both keys — an absent one is malformed, never a coerced `null`.
+  let redIconId: number | null = null;
+  let redCoverId: number | null = null;
+  if (raw.v === APPROVED_ASSET_SNAPSHOT_VERSION) {
+    if (!isNullableImageId(raw.redIconId) || !isNullableImageId(raw.redCoverId)) return null;
+    redIconId = raw.redIconId;
+    redCoverId = raw.redCoverId;
+  } else if (raw.v !== 1) return null;
   if (!isNullableImageId(raw.iconId) || !isNullableImageId(raw.coverId)) return null;
   if (!Array.isArray(raw.screenshots)) return null;
 
@@ -216,6 +243,8 @@ export function parseApprovedAssetSnapshot(value: unknown): ApprovedAssetSnapsho
     iconId: raw.iconId,
     coverId: raw.coverId,
     screenshots,
+    redIconId,
+    redCoverId,
   };
 }
 
@@ -264,6 +293,8 @@ export function approvedAssetSnapshotsEqual(
 ): boolean {
   if (a.iconId !== b.iconId) return false;
   if (a.coverId !== b.coverId) return false;
+  if (a.redIconId !== b.redIconId) return false;
+  if (a.redCoverId !== b.redCoverId) return false;
   if (a.screenshots.length !== b.screenshots.length) return false;
   for (let i = 0; i < a.screenshots.length; i++) {
     if (a.screenshots[i].imageId !== b.screenshots[i].imageId) return false;

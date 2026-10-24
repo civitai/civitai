@@ -7,6 +7,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectType } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -17,6 +18,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { AspectRatioCard } from './AspectRatioCard';
 import cardStyles from './AspectRatioCard.module.scss';
 import styles from './AspectRatioImageCard.module.scss';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type ContentTypeProps =
   | {
@@ -51,6 +54,10 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   aspectRatio?: 'portrait' | 'landscape' | 'square' | number;
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
+  /** Worn beside the frame; see TwCosmeticWrapper. */
+  eventDecoration?: EventDecorationData | null;
+  /** The content wearing the event decoration, so a click on it can open its stats. */
+  eventDecorationOn?: EventDecorationEntity;
   className?: string;
   image?: ImageProps;
   header?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
@@ -93,6 +100,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
   aspectRatio = 'portrait',
   onClick,
   cosmetic,
+  eventDecoration,
+  eventDecorationOn,
   className,
   contentType,
   contentId,
@@ -110,6 +119,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   alt,
   impression,
 }: AspectRatioImageCardProps<T>) {
+  const features = useFeatureFlags();
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   // Rebuilt every render, deliberately not memoized: useTrackImpression keys its
@@ -130,6 +140,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
     <AspectRatioCard
       aspectRatio={aspectRatio}
       cosmetic={cosmetic}
+      eventDecoration={eventDecoration}
+      eventDecorationOn={eventDecorationOn}
       className={className}
       impressions={impressions}
       render={({ inView }) => {
@@ -208,6 +220,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         })}
                         wrapperProps={{ className: 'flex-1 h-full' }}
                         width={IMAGE_CARD_WIDTH}
+                        hiDpi={features.hiDpiPreviews}
+                        sourceWidth={image.width}
                         contain
                       />
                     )
@@ -230,6 +244,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           ? IMAGE_CARD_WIDTH * originalAspectRatio
                           : IMAGE_CARD_WIDTH
                       }
+                      hiDpi={features.hiDpiPreviews}
+                      sourceWidth={image.width}
                       skip={
                         image.type === 'video'
                           ? getSkipValue({

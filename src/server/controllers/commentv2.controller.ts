@@ -9,8 +9,13 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { getContentOwnerIdForComment } from '~/server/services/block-check.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import { assertCrucibleVisible } from '~/server/services/crucible.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -18,17 +23,30 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
+import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
 import type { GetByIdInput } from './../schema/base.schema';
-import type { CommentConnectorInput, UpsertCommentV2Input } from './../schema/commentv2.schema';
+import type {
+  CommentConnectorInput,
+  SectionMuteInput,
+  ToggleThreadMuteInput,
+  UpsertCommentV2Input,
+} from './../schema/commentv2.schema';
 import {
   deleteComment,
   getComment,
+  getSectionMuted,
+  getThreadMuted,
+  toggleSectionMute,
+  toggleThreadMute,
   getCommentCount,
   getCommentsThreadDetails2,
   getCommentsInfinite,
+  getCommentThreadBounty,
+  getCommentThreadCrucibleId,
+  getCommentStorylineId,
+  getCommentThreadStorylineId,
   isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
@@ -36,10 +54,64 @@ import {
   upsertComment,
 } from './../services/commentsv2.service';
 
+/** Creators who blocked the viewer and creators the viewer blocked. */
+async function getBlockedCreatorIds(userId: number) {
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return [...new Set([...blockedBy, ...blocked].map((x) => x.id))];
+}
+
+type CommentReadContext = Pick<Context, 'user' | 'features' | 'req'>;
+
+/** The storyline page's own gate, so a thread is never readable where its storyline is not. */
+async function assertStorylineThreadVisible(storylineId: number, ctx: CommentReadContext) {
+  if (!getFeatureFlags(ctx).storylines) throw throwNotFoundError('Storyline not found');
+  return assertStorylineVisible(storylineId, ctx.user, storylineReaderLevel(ctx, undefined));
+}
+
+/**
+ * Returns the storyline when the thread is one. A reply is addressed as entity `comment`, so its
+ * storyline is found through the parent comment's thread.
+ */
+export async function assertCommentEntityVisible(
+  input: { entityType: string; entityId: number },
+  ctx: CommentReadContext
+) {
+  const { user } = ctx;
+  if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
+  if (input.entityType === 'comment') {
+    const storylineId = await getCommentStorylineId(input.entityId);
+    if (storylineId) return assertStorylineThreadVisible(storylineId, ctx);
+  }
+  if (input.entityType === 'bounty') await assertBountyVisible({ bountyId: input.entityId }, user);
+  else if (input.entityType === 'bountyEntry')
+    await assertBountyVisible({ entryId: input.entityId }, user);
+  else if (input.entityType === 'crucible')
+    await assertCrucibleVisible(input.entityId, {
+      viewerId: user?.id,
+      isModerator: !!user?.isModerator,
+      isGreen: !!ctx.features?.isGreen,
+      blockedCreatorIds: user && !user.isModerator ? await getBlockedCreatorIds(user.id) : [],
+    });
+}
+
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
     const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    if (!ctx.user?.isModerator) {
+      const bounty = await getCommentThreadBounty(comment.threadId);
+      if (bounty) await assertBountyVisible(bounty, ctx.user);
+      const crucibleId = await getCommentThreadCrucibleId(comment.threadId);
+      if (crucibleId)
+        await assertCommentEntityVisible({ entityType: 'crucible', entityId: crucibleId }, ctx);
+      const storylineId = await getCommentThreadStorylineId(comment.threadId);
+      if (storylineId)
+        await assertCommentEntityVisible({ entityType: 'storyline', entityId: storylineId }, ctx);
+    }
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({
@@ -63,6 +135,13 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
+    const target = await assertCommentEntityVisible(input, ctx);
+    // An edit is also gated by the stored comment's own thread: `entityType` is client-supplied.
+    const storyline = input.id
+      ? await assertCommentEntityVisible({ entityType: 'comment', entityId: input.id }, ctx)
+      : target;
+    if (storyline && storyline.tosViolation && !ctx.user.isModerator)
+      throw throwAuthorizationError('This storyline has been taken down.');
     const type =
       input.entityType === 'image'
         ? 'Image'
@@ -155,6 +234,7 @@ export const getCommentCountV2Handler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx);
     return await getCommentCount({ ...input, isModerator: ctx.user?.isModerator ?? false });
   } catch (error) {
     throw throwDbError(error);
@@ -162,40 +242,75 @@ export const getCommentCountV2Handler = async ({
 };
 
 export const getCommentsThreadDetailsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CommentConnectorInput;
+  ctx: Context;
+}) => {
+  try {
+    await assertCommentEntityVisible(input, ctx);
+    return await getCommentsThreadDetails2(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleSectionMuteHandler = async ({
   ctx,
   input,
 }: {
-  ctx: Context;
-  input: CommentConnectorInput;
+  ctx: ProtectedContext;
+  input: SectionMuteInput;
 }) => {
   try {
-    // Fetch thread metadata including hiddenCount (needs excludedUserIds for accurate count)
-    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
-      (x) => x.id
-    );
-    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    // On the owner's own content, don't hide a blocker's engagement from them (they must still
-    // be able to see + report it) — drop blockedByUsers only in that case; keep the anti-
-    // harassment exclusion for every non-owner viewer.
-    const isContentOwner = await isViewerContentOwner({
-      entityType: input.entityType,
-      entityId: input.entityId,
-      userId: ctx.user?.id,
-      blockedByUsers,
-    });
-    // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
-    // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
-    // load-bearing safety priority — see boundExcludedUserIds.
-    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
-      isContentOwner,
-    });
+    if (input.entityType === 'storyline') await assertCommentEntityVisible(input, ctx);
+    return await toggleSectionMute({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
 
-    return await getCommentsThreadDetails2({
-      ...input,
-      excludedUserIds,
-      isModerator: ctx.user?.isModerator ?? false,
-    });
+export const getSectionMutedHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: SectionMuteInput;
+}) => {
+  try {
+    if (input.entityType === 'storyline') await assertCommentEntityVisible(input, ctx);
+    return await getSectionMuted({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleThreadMuteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: ToggleThreadMuteInput;
+}) => {
+  try {
+    return await toggleThreadMute({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getThreadMutedHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: ToggleThreadMuteInput;
+}) => {
+  try {
+    return await getThreadMuted({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -215,37 +330,6 @@ export const toggleLockThreadDetailsHandler = async ({
   }
 };
 
-async function getCommentV2WithEntityOwner({
-  id,
-  entityType,
-}: {
-  id: number;
-  entityType: ToggleHideCommentInput['entityType'];
-}) {
-  const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
-  // Comic chapter threads use comicProject relation instead of a direct entity relation
-  const threadSelect =
-    entityType === 'comicChapter'
-      ? { comicChapter: { select: { project: { select: { userId: true } } } } }
-      : { [entityType]: { select: { [ownerField]: true } } };
-  const comment = await dbRead.commentV2.findFirst({
-    where: { id },
-    select: {
-      hidden: true,
-      pinnedAt: true,
-      userId: true,
-      thread: { select: threadSelect },
-    },
-  });
-  if (!comment) throw throwNotFoundError(`No comment with id ${id}`);
-  const threadData = comment.thread as any;
-  const entityOwner =
-    entityType === 'comicChapter'
-      ? threadData.comicChapter?.project?.userId
-      : threadData[entityType]?.[ownerField];
-  return { comment, entityOwner };
-}
-
 export const toggleHideCommentHandler = async ({
   input,
   ctx,
@@ -254,16 +338,13 @@ export const toggleHideCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { id: userId, isModerator } = ctx.user;
-  const { id, entityType } = input;
+  const { id } = input;
 
   try {
-    const { comment, entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
-    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
+    const { hidden, ownerId } = await getContentOwnerIdForComment(id);
+    if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
-    const updatedComment = await toggleHideComment({
-      id,
-      currentToggle: comment.hidden ?? false,
-    });
+    const updatedComment = await toggleHideComment({ id, currentToggle: hidden });
 
     return updatedComment;
   } catch (error) {
@@ -280,11 +361,11 @@ export const togglePinnedCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { id: userId, isModerator } = ctx.user;
-  const { id, entityType } = input;
+  const { id } = input;
 
   try {
-    const { entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
-    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
+    const { ownerId } = await getContentOwnerIdForComment(id);
+    if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
     return await togglePinComment({ id });
   } catch (error) {
@@ -301,6 +382,7 @@ export const getCommentsInfiniteHandler = async ({
   input: GetCommentsInfiniteInput;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx);
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id

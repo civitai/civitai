@@ -2,18 +2,20 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import {
+  describeActiveLimitsByTier,
   getChallengeActiveLimit,
   CHALLENGE_MIN_CREATOR_SCORE,
   CHALLENGE_CREATE_DAILY_LIMIT,
 } from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 function forbidden(message: string) {
   return new TRPCError({ code: 'FORBIDDEN', message });
 }
 
-type UserChallengeStanding = {
+export type UserChallengeStanding = {
   scoreTotal: number;
   bannedAt: Date | null;
   muted: boolean;
@@ -39,7 +41,6 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   });
   if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
 
-  const meta = (user.meta ?? {}) as { scores?: { total?: number } };
   // POINTS, not the strike count — severity is what the ladder measures everywhere else. Gating on the
   // count locked an account out for a strike's full lifetime over one 1-point strike that mutes nobody.
   const { _sum } = await dbRead.userStrike.aggregate({
@@ -48,7 +49,7 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   });
 
   return {
-    scoreTotal: meta.scores?.total ?? 0,
+    scoreTotal: creatorScoreFromMeta(user.meta),
     bannedAt: user.bannedAt,
     muted: user.muted,
     deletedAt: user.deletedAt,
@@ -115,7 +116,7 @@ export async function assertUnderDailyCreateLimit(
 
   if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
     throw forbidden(
-      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges per day. Please try again later.`
+      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges in any 24 hours. Please try again later.`
     );
   return { limit: CHALLENGE_CREATE_DAILY_LIMIT, recentCount };
 }
@@ -132,7 +133,9 @@ export async function assertUnderActiveChallengeLimit(
   const limit = getChallengeActiveLimit(subscription?.tier);
   if (activeCount >= limit)
     throw forbidden(
-      `You've reached your limit of ${limit} active challenge(s) for your membership tier.`
+      `You've reached your limit of ${limit} challenge${
+        limit === 1 ? '' : 's'
+      } running at once for your membership tier (${describeActiveLimitsByTier()}).`
     );
   return { limit, activeCount };
 }
@@ -158,7 +161,22 @@ export async function getUserChallengeCreateEligibility(
     getHighestTierSubscription(userId),
   ]);
 
-  const activeLimit = getChallengeActiveLimit(subscription?.tier);
+  return buildCreateEligibility({ standing, recentCount, activeCount, tier: subscription?.tier });
+}
+
+/** Crucibles reuse this, so the CHALLENGE_* limits it applies gate crucible creation too. */
+export function buildCreateEligibility({
+  standing,
+  recentCount,
+  activeCount,
+  tier,
+}: {
+  standing: UserChallengeStanding;
+  recentCount: number;
+  activeCount: number;
+  tier?: string | null;
+}): ChallengeCreateEligibility {
+  const activeLimit = getChallengeActiveLimit(tier);
   const banned = !!(standing.bannedAt || standing.deletedAt);
 
   const requirements: ChallengeCreateRequirement[] = [

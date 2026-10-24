@@ -325,11 +325,11 @@ describe('createCachedArray L1 — shared-instance isolation', () => {
 
 describe('createCachedArray L1 — mirrors the Redis-write skip (dontCache/debounce)', () => {
   it('does NOT L1-cache a freshly-busted (debounce) id so the debounce/replica-lag guard survives', async () => {
-    // Redis returns a debounce marker with a RECENT cachedAt → the id is treated as
-    // `dontCache` (within debounceTime): served from origin (dbRead) but deliberately
-    // NOT written back to Redis. The L1 must skip it too, else it would pin the
-    // possibly replica-lagged read for localTtl.
-    mGetMock.mockResolvedValue([{ id: 1, debounce: true, cachedAt: new Date() }]);
+    // Redis returns a debounce marker exactly as bust() writes it (no cachedAt; its EX is the
+    // window) → the id is `dontCache`: served from origin (dbRead) but deliberately NOT written
+    // back to Redis. The L1 must skip it too, else it would pin the possibly replica-lagged read
+    // for localTtl.
+    mGetMock.mockResolvedValue([{ id: 1, debounce: true }]);
     const lookupFn = makeLookup();
     const cache = createCachedArray<Row>({
       key: 'test:l1debounce' as never,

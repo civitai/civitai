@@ -12,6 +12,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { Model3DSort } from '~/server/schema/model3d.schema';
@@ -132,6 +133,7 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
+          <ActiveTagFilter tagIds={tagIds} />
           {isLoading || loadingPreferences ? (
             <Center p="xl">
               <Loader size="xl" />

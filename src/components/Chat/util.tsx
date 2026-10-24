@@ -22,7 +22,7 @@ export const getLinkHref = (href: string | undefined) => {
   return newHref;
 };
 
-const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
+export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
   attributes,
   content,
 }) => {
@@ -60,7 +60,7 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
 // `findLinks` with these options server-side and unfurls whatever they return, so a
 // domain absent here is never turned into a link and never fetched. Asked and answered
 // 2026-08-26: there is no arbitrary-URL fetch behind DM link previews.
-const validateLink = {
+export const validateLink = {
   url: (value: string) =>
     constants.chat.civRegex.test(value) ||
     constants.chat.airRegex.test(value) ||

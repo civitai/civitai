@@ -35,7 +35,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
   modelVersionPublicDonationGoalsCache: {},
-  modelVersionResourceCache: {},
 }));
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
@@ -44,7 +43,10 @@ vi.mock('~/server/search-index', () => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/buzz.service', () => ({}));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/donation-goal.service', () => ({ checkDonationGoalComplete: vi.fn() }));

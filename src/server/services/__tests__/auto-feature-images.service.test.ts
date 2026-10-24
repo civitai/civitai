@@ -42,6 +42,8 @@ const select = (
     rotationOffset?: number;
   } = {}
 ) =>
+  // Unwrapped here so every assertion below still reads as a plain list of picks; the selection
+  // now also reports what the caps refused, which the run summary logs.
   selectAutoFeaturePicks({
     candidates,
     config: cfg,
@@ -49,7 +51,7 @@ const select = (
     creatorCounts: opts.creatorCounts ?? new Map(),
     collectionCounts: opts.collectionCounts ?? new Map(),
     rotationOffset: opts.rotationOffset ?? 0,
-  });
+  }).picks;
 
 describe('selectAutoFeaturePicks', () => {
   it('spreads picks across collections instead of letting the busiest one dominate', () => {

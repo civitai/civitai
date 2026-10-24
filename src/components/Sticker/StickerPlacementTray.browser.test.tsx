@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
@@ -120,7 +121,7 @@ const renderTray = async () => {
   // that is exactly the flag this provider flips.
   renderWithProviders(
     <IsClientProvider>
-      <StickerPlacementTray imageId={IMAGE_ID} />
+      <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
     </IsClientProvider>
   );
   await expect.element(page.getByText(/Drag a sticker onto the image/)).toBeInTheDocument();

@@ -1,17 +1,20 @@
 import { TRPCError } from '@trpc/server';
+import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import * as z from 'zod';
 import {
+  boostWorkflow,
   buildGenerationContext,
   bustQueriedWorkflowsCache,
   formatGenerationResponse2,
   generateFromGraph,
+  getWorkflowBoostCost,
   getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
   updateWorkflow,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { generationSurfaceForRequest } from '~/server/services/orchestrator/generation-surface';
-import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { getWorkflow as clientGetWorkflow } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   logToAxiom,
@@ -19,7 +22,7 @@ import {
   buildServerFaultErrorLog,
   markServerFaultLogged,
 } from '~/server/logging/client';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
 import {
@@ -34,6 +37,9 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
+import { getImage } from '~/server/services/image.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { MAX_SOURCE_IMAGES, signProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -49,7 +55,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
-import { getRequiredFeatureFlagForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -80,6 +86,21 @@ import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isRawAirResource } from '~/shared/utils/air';
+
+/**
+ * True when the (unvalidated) graph input carries raw-AIR resources — training
+ * epoch blobs referenced directly, without a ModelVersion row. Used to gate the
+ * feature-flag before the input reaches the service, mirroring the
+ * workflow-flag gates below.
+ */
+function containsRawAirResources(formInput: unknown): boolean {
+  const resources = (formInput as { resources?: unknown } | undefined)?.resources;
+  if (!Array.isArray(resources)) return false;
+  return resources.some(
+    (r) => typeof r === 'object' && r !== null && isRawAirResource(r as { id?: unknown })
+  );
+}
 
 /**
  * Resolves the currencies to use for a generation request.
@@ -236,9 +257,36 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await updateWorkflow({ ...input, token: ctx.token });
+      const result = await updateWorkflow({
+        ...input,
+        token: ctx.token,
+        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+      });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+      return result;
+    }),
+  getBoostCost: orchestratorProcedure
+    // Each call is a whatif PUT to the orchestrator, and a window focus re-prices every boostable
+    // card at once.
+    .use(
+      rateLimit([{ limit: 120, period: 60 }], undefined, { sharedKey: 'orchestrator:boost-cost' })
+    )
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflowBoostCost({ token: ctx.token, workflowId: input.workflowId })
+    ),
+  boostWorkflow: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ workflowId: z.string(), expectedCost: z.number().int().min(0) }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await boostWorkflow({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        expectedCost: input.expectedCost,
+        user: ctx.user,
+      });
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
       return result;
     }),
@@ -344,7 +392,11 @@ export const orchestratorRouter = router({
         buzzType,
         externalId,
         acknowledgedSoftBlock,
+        sourceProvenance,
+        downloadPriority,
       } = input;
+      // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
+      assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
       const { externalCtx, status } = await buildGenerationContext(
@@ -382,6 +434,15 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Raw-AIR (training epoch blob) resources are flag-gated. The service
+      // still enforces ownership regardless of the flag; this is the rollout gate.
+      if (containsRawAirResources(formInput) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
+        });
+      }
+
       // Check generation status early
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
@@ -414,9 +475,34 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         externalId,
+        // Tokens minted by `mintRemixProvenance` for the sources this submission
+        // started from. `.input(z.any())`, so the shape is asserted here rather
+        // than assumed: anything that is not a string survives to
+        // `verifyProvenance`, which returns null for a non-string, but narrowing
+        // at the boundary keeps that a type guarantee instead of a coincidence.
+        // Bounded HERE, at the boundary. `.input(z.any())` means the array arrives
+        // unvalidated, and every element past the cap costs an AES-GCM decrypt
+        // attempt on the event loop before the prompt audit or any Buzz check.
+        //
+        // `.slice` BEFORE `.filter`, deliberately: filtering first walks and
+        // reallocates the whole caller-controlled array before the cap applies,
+        // so the crypto would be bounded while the O(n) pass was not.
+        //
+        // What this trims is TOKENS, not resolved ids — `unionSourceImageIds`
+        // caps the ids. The two differ only when more than `MAX_SOURCE_IMAGES`
+        // tokens arrive and some of the first few fail to verify, where tokens
+        // that would once have backfilled the cap are now dropped unread. That
+        // direction is strictly fewer verified ids, never more, so it can only
+        // under-grant the free-submission gate.
+        sourceProvenance: Array.isArray(sourceProvenance)
+          ? sourceProvenance
+              .slice(0, MAX_SOURCE_IMAGES)
+              .filter((x): x is string => typeof x === 'string')
+          : undefined,
         // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
+        downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -464,6 +550,14 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Mirror of the raw-AIR flag gate in `generateFromGraph`.
+      if (containsRawAirResources(input) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
+        });
+      }
+
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -477,15 +571,19 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Rides alongside the graph input rather than inside it — it is not a graph node.
+      const { downloadPriority, ...graphInput } = (input ?? {}) as Record<string, unknown>;
+
       try {
         return await whatIfFromGraph({
-          input,
+          input: graphInput,
           externalCtx,
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
           token: ctx.token,
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+          downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
         });
       } catch (e) {
         // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
@@ -523,6 +621,87 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
+  // #region [Remix provenance]
+  /**
+   * Issue a provenance token for a source image the user picked through a remix
+   * entry point.
+   *
+   * Why this exists as its own call rather than being derived at submit: the
+   * generation form re-uploads any source that is not already an orchestrator
+   * URL, so the `image.civitai.com` URL a remix seeds is gone by the time
+   * `resolveSourceImageIds` runs — measured, the engine the Animate button picks
+   * kept its on-site URL 98 times out of 2,526. Minting here binds the token to
+   * the image the user actually clicked, before the form can rewrite it.
+   *
+   * `getImage` is the gate, not a bare id lookup: it applies the needs-review,
+   * published-or-owner and Blocked checks, so a token cannot be minted for an
+   * image the caller could not open. Reused rather than reimplemented — a second
+   * copy of those rules is a second place for them to drift.
+   *
+   * Returns `{ provenance: undefined }` rather than throwing when signing is
+   * unavailable (`signProvenance` fails closed on a missing secret). An absent
+   * token means the remix simply carries no verified link, which is the same
+   * state as an off-site remix and is handled everywhere downstream.
+   */
+  mintRemixProvenance: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await getImage({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+      return {
+        // `mint`, so this token is spendable ONLY into a submit. The upload path
+        // refuses it — otherwise a click here would be worth a free remix-gallery
+        // submission with no generation behind it.
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'mint',
+        }),
+      };
+    }),
+
+  /**
+   * The same mint for the reuse-prompt entry point, which seeds no media and so
+   * leaves the server nothing to resolve a link from at submit.
+   *
+   * Separate from `mintRemixProvenance` rather than a `kind` parameter: the kind
+   * is the whole security property, and a client-chosen one would let the caller
+   * ask for the stronger `mint` audience from the weaker click.
+   *
+   * The gate is `image.get`'s visibility (needs-review, published-or-owner, Blocked) plus its
+   * owner block check, so a token cannot be minted for an image the caller could not open. Only
+   * that: the full `getImage` payload and the orchestrator middlewares (a token mint, a client
+   * version header, a response URL rewrite) cost the click seconds and refuse nothing here, and
+   * the token lands in the form only once this returns.
+   */
+  mintPromptProvenance: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await assertImageVisibleToViewer({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        // The mint is a write: a cache "not blocked" is confirmed on the primary.
+        confirmBlockOnPrimary: true,
+      });
+
+      return {
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'prompt',
+        }),
+      };
+    }),
+  // #endregion
+
   // #region [Image upload]
   imageUpload: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
@@ -543,6 +722,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
+        domain: ctx.domain,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);
@@ -608,7 +788,10 @@ export const orchestratorRouter = router({
 
   // ── Generic iterative image editor endpoints ──
 
-  iterateGenerate: protectedProcedure
+  // `guardedProcedure`, like every other generation entry point on this router: this submits a
+  // workflow and spends Buzz, so it answers to the same onboarding, mute and email-verification
+  // checks. It was the one that did not.
+  iterateGenerate: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({

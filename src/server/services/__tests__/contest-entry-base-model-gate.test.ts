@@ -19,7 +19,7 @@ const START_DATE = new Date('2026-07-24T00:00:00.000Z');
 const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
 const mockDbRead = dbMock.dbRead;
-const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 const mockModelFindMany = mockDbRead.model.findMany;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));

@@ -1,6 +1,7 @@
 ---
 name: civitai-correctness-review
 description: Reviews a feature segment in the main Civitai Next.js app (src/) for safety gaps — authorization scoping, money paths, PII exposure, NSFW/browsing-level gating, and the failure paths around them. Use before calling a segment done, alongside civitai-reuse-review, civitai-perf-review, civitai-test-review and civitai-intent-review.
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is `src/` and the packages it imports.** The SvelteKit apps under `apps/` belong to the
 `svelte-*-review` trio.
 
-Read the root `CLAUDE.md` first — its **Security** section and its **Server-Side Architecture Map**.
+Read the root `CLAUDE.md` first — its **Security** section — and the architecture map in `.claude/rules/server.md`.
 Then read `docs/features/nsfw-filtering.md`, `docs/features/buzz-accounts.md` and
 `docs/features/monetization-rules.md` if the segment touches those domains.
 

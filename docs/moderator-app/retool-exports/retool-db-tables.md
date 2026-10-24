@@ -102,7 +102,7 @@ migrate into `ModActivity`, keep as a read-only archive, or drop. It cannot be j
 | table | rows | owner |
 | --- | --- | --- |
 | `RatingChanges` | 363,465 | **Front Page Audit** — `LogNsfwLevel` / `LogNsfwLevel2` write here. Resolved 2026-08-06 once that export arrived; it is the audit trail of front-page rating corrections, and the largest table in the migration. |
-| `ModelNotes` | 930 | **Keep.** No Retool app writes it — the data was exported *into* Retool. Ticket 868kn8aa0 wants these surfaced on model pages with add/edit-own. Deferred, but do not drop. |
+| `ModelNotes` | 930 | **Keep — and now read.** No Retool app ever wrote it; the data was exported *into* Retool. Surfaced on Model Lookup with add and edit-own (`868mb8h0y`), so the moderator app is the only writer. |
 | `BuzzCodes` | 294 | **Drop.** Confirmed unused by Seb (2026-08-06): "buzzcodes is indeed not used… it can probably be dropped". |
 
 `RatingChanges` was invisible to the first pass because Retool writes it through a **GUI-mode query**

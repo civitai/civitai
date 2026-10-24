@@ -16,6 +16,15 @@ export const articleStatusBadge: Record<string, { label: string; class: string }
   UnpublishedViolation: { label: 'ToS Violation', class: 'bg-red-500/15 text-red-300' },
 };
 
+/** An article that is not live, in a few words — the queue row's note and the article panel's "nothing
+ *  to unpublish" line. Published has none: it is the state these describe a departure from. */
+export const ARTICLE_STATUS_NOTES: Partial<Record<string, string>> = {
+  UnpublishedViolation: 'unpublished as a violation',
+  Unpublished: 'unpublished by its author',
+  Draft: 'a draft',
+  Processing: 'still processing',
+};
+
 // Humanize the stored reason key; 'other' falls back to the moderator's custom message.
 export function humanizeUnpublishReason(reason: string): string {
   return reason.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

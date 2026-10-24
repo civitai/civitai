@@ -168,7 +168,7 @@ describe('blocks.listMySubscriptions (guarded)', () => {
 
   // GA-relax (gotcha #66): the manage-page reflection queries are now
   // protectedProcedure (not moderatorProcedure) — a logged-in non-mod reads
-  // their OWN subscriptions, since /apps/installed is reachable by any user the
+  // their OWN subscriptions, since /apps/activity is reachable by any user the
   // per-user appBlocks flag admits. Scoped to ctx.user.id, so no cross-user read.
   it('allows a non-mod authed viewer — returns their own subscriptions', async () => {
     mockListUserSubscriptions.mockResolvedValue([]);
@@ -497,6 +497,23 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       expect(mockInstallOnModel).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', installedByUserId: OWNER_ID })
       );
+    });
+
+    // `{"s":"…"}` is 8 bytes of framing; each 日 is 3 UTF-8 bytes.
+    it('caps install settings at 4096 UTF-8 bytes', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
+      const settings = (extra: string) => ({ s: '日'.repeat(1_362) + extra });
+      await caller.installOnModel({ ...input, settings: settings('ab') });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
+      await expect(
+        caller.installOnModel({ ...input, settings: settings('abc') })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('settings exceeds 4KB'),
+      });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
     });
 
     it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED, never installs', async () => {

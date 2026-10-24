@@ -19,7 +19,7 @@ export default defineModeratorEndpoint('csam.trainingDataReport', {
     contents: csamReportDetails.shape.contents.describe('What the material may involve.'),
   }),
   async handler(input, ctx) {
-    const { denyFailed } = await fileCsamReport({
+    const { denyFailed, denyBookkeepingFailed } = await fileCsamReport({
       userId: input.userId,
       type: CsamReportType.TrainingData,
       details: {
@@ -38,6 +38,11 @@ export default defineModeratorEndpoint('csam.trainingDataReport', {
         ? {
             warning:
               'The report was filed and the account removed, but the training run could not be stopped — tell an infra owner.',
+          }
+        : denyBookkeepingFailed
+        ? {
+            warning:
+              'The report was filed, the account removed and the run denied, but this version could not be taken out of Paused. Do NOT repeat the action — tell an infra owner.',
           }
         : {}),
       affected: { userIds: [input.userId] },

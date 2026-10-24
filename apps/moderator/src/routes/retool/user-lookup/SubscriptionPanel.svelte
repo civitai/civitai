@@ -16,6 +16,13 @@
   {:else}
     <div class="flex flex-wrap items-baseline gap-x-2 text-sm">
       <span class="font-medium text-white">{subscription.productName ?? 'Unknown plan'}</span>
+      <!-- A perks-only tier (Buzz-bought or a referral grant) delivers none of the card tier's monthly
+           Buzz, badge or Creator Program access, so it must not read as an ordinary paid membership. -->
+      {#if subscription.buzzType === 'buzzPurchase'}
+        <Badge variant="outline">Buzz-bought</Badge>
+      {:else if subscription.buzzType === 'referral'}
+        <Badge variant="outline">Referral grant</Badge>
+      {/if}
       <!-- Annual against monthly is the fact a refund amount turns on, so it sits with the plan name
            rather than in the detail list below. -->
       {#if subscription.interval}

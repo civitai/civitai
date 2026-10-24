@@ -1,15 +1,42 @@
-import { Text, Stack } from '@mantine/core';
+import { Switch, Text, Stack } from '@mantine/core';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
+import { SettingRow } from '~/components/Account/SettingsLayout';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
-export function MatureContentSettings() {
+export function MatureContentSettings({ flat }: { flat?: boolean } = {}) {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const setState = useBrowsingSettings((x) => x.setState);
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleShowNsfw = () => setState((state) => ({ showNsfw: !state.showNsfw }));
+
+  if (flat)
+    return (
+      <>
+        <SettingRow
+          label="Show mature content"
+          description="Confirms you are over 18."
+          control={<Switch checked={showNsfw} onChange={toggleShowNsfw} />}
+        />
+        <SettingRow
+          label="Blur mature content"
+          control={
+            <Switch checked={showNsfw && blurNsfw} onChange={toggleBlurNsfw} disabled={!showNsfw} />
+          }
+        />
+        {showNsfw && (
+          <SettingRow
+            block
+            label="Browsing level"
+            description="Everything at or below your highest pick is shown."
+          >
+            <BrowsingLevelsStacked />
+          </SettingRow>
+        )}
+      </>
+    );
 
   return (
     <Stack>

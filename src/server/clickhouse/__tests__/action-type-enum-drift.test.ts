@@ -52,12 +52,24 @@ describe('actions.type enum drift', () => {
     ),
   }));
 
-  const actionsBlock = enumBlocks.find((b) => b.table === 'default.actions');
+  // 🔴 The LAST block, not the first. `MODIFY COLUMN` replaces the definition, so once a
+  // second migration restates the column the newest file is the live one — reading the
+  // oldest checks a definition prod no longer has, and every value added after it reads as
+  // missing. Files are read in name order and these migrations are date-prefixed, so last
+  // is newest.
+  const actionsBlocks = enumBlocks.filter((b) => b.table === 'default.actions');
+  const actionsBlock = actionsBlocks[actionsBlocks.length - 1];
 
-  // The prod indices this guard was written against (SHOW CREATE TABLE actions,
-  // 2026-08-21). These predate the migrations directory, so no file here introduces them
-  // — but any migration that RESTATES the column must reproduce them exactly, because a
+  // The indices every migration that RESTATES this column must reproduce exactly, because a
   // MODIFY COLUMN is a replacement.
+  //
+  // ⚠️ 1-21 are the prod indices this guard was originally written against (SHOW CREATE
+  // TABLE actions, 2026-08-21) and predate the migrations directory, so no file there
+  // introduces them. 🔴 THAT IS NO LONGER TRUE OF THE WHOLE MAP: 22-25 were added on
+  // 2026-09-05 and ARE introduced by files in that directory (see the block below). The
+  // original sentence said it of every entry, which the four new ones falsify — it is split
+  // rather than deleted because the 1-21 half is still the reason those indices cannot be
+  // re-derived from any file here.
   //
   // 🔴 Do not add a name here to silence a failing case. That is the one-line bypass of
   // this whole guard, and it produces exactly the "looks instrumented, writes no rows"
@@ -84,13 +96,38 @@ describe('actions.type enum drift', () => {
     ['Image_Remix_Click', 19],
     ['Generator_Submit', 20],
     ['Generator_JobLinked', 21],
+    // 🔴 22-25 ADDED 2026-09-05, AND THIS IS A WIDENING OF THE GUARD, NOT AN EXEMPTION —
+    // read the warning above before assuming otherwise. Every name below is already
+    // carried by an APPLIED migration at exactly this index (`Feed_TagBar_Click` by
+    // 2026-08-21-feed-tag-bar-action.sql, the three announcement values by
+    // 2026-09-04-announcement-click-action.sql). Listing them here makes the
+    // "restates every pre-existing value at the index it already has" case cover them;
+    // it does NOT exempt anything from needing a migration, because the `it.each` below
+    // is driven by `ActionType` and skips only names present in this map — and each of
+    // these four is in a migration already.
+    //
+    // WHY IT MATTERED: before this, values past 21 were checked for NAME PRESENCE only.
+    // Measured — editing a migration to `'Announcement_Unmute' = 30` passed 10/10, i.e.
+    // the one destructive class the migrations' own headers forbid ("Do NOT renumber…
+    // that WOULD rewrite the whole table") was unguarded, and every value added after
+    // the baseline enlarged the blind set. Positive control from the same measurement:
+    // dropping `'ProfanitySearch' = 16` correctly reds, so the mechanism itself works.
+    ['Feed_TagBar_Click', 22],
+    ['Announcement_Click', 23],
+    ['Announcement_Mute', 24],
+    ['Announcement_Unmute', 25],
   ]);
 
   it('freezes the pre-existing baseline', () => {
     // Growing this map is how a new type gets exempted without a migration, so the size
     // is pinned. If prod legitimately gains a value outside these migrations, update it
     // deliberately and say why.
-    expect(PRE_EXISTING.size).toBe(21);
+    //
+    // 21 -> 25 on 2026-09-05: the four values above were moved from "name checked, index
+    // unchecked" into the index-pinned set. The number is a tripwire on THIS list, so it
+    // moves with it; what must never happen is a name being added here INSTEAD of to a
+    // migration.
+    expect(PRE_EXISTING.size).toBe(25);
   });
 
   it('found an ALTER on default.actions to scan', () => {
@@ -101,13 +138,13 @@ describe('actions.type enum drift', () => {
       actionsBlock,
       'no MODIFY COLUMN on default.actions found in any migration'
     ).toBeDefined();
-    expect(actionsBlock!.arms.size).toBeGreaterThan(0);
+    expect(actionsBlock.arms.size).toBeGreaterThan(0);
   });
 
   it.each([...ActionType].filter((t) => !PRE_EXISTING.has(t)))(
     '%s is widened into the actions enum by a migration',
     (type) => {
-      expect([...actionsBlock!.arms.keys()]).toContain(type);
+      expect([...actionsBlock.arms.keys()]).toContain(type);
     }
   );
 
@@ -116,12 +153,73 @@ describe('actions.type enum drift', () => {
     // column, and a name given a different index silently remaps existing rows. The
     // migration's own header forbids both; this is what makes that enforceable.
     for (const [name, index] of PRE_EXISTING) {
-      expect(actionsBlock!.arms.get(name), `${name} missing from the restated enum`).toBe(index);
+      expect(actionsBlock.arms.get(name), `${name} missing from the restated enum`).toBe(index);
     }
   });
 
+  /**
+   * 🔴 THE DDL IS ONLY HALF THE OPERATION, AND THE OTHER HALF HAS SHIPPED BROKEN TWICE.
+   *
+   * `civitai-clickhouse-tracker` builds its column serializers from the schema its pods read
+   * AT CONNECT TIME and never re-reads them. A value added to the enum after those pods booted
+   * is rejected CLIENT-SIDE, inside the tracker, before ClickHouse is asked — so the ALTER
+   * verifies perfectly against `system.columns` and the type still collects ZERO rows.
+   *
+   * Measured: `Announcement_Click` (2026-09-04) collected NOTHING for ~2.5 days; its first row
+   * ever landed ten minutes after an unrelated tracker restart on 2026-09-07, then 253 rows
+   * across 170 real users within the day. `App_Open` (2026-09-05) went the same way until it
+   * was caught by hand. Both migrations were CORRECT. Both headers already carried the
+   * "apply the DDL before the emitting code" rule and obeyed it — that rule addresses deploy
+   * ordering and cannot fix a cache predating both the DDL and the deploy.
+   *
+   * 🔴 WHY AN EXACT STRING RATHER THAN A LOOSE MATCH: the artifact under test is PROSE, and a
+   * guard on words is walkable by rewording — /restart/i would pass on any sentence containing
+   * the word. Pinning the whole normalised line makes it a machine-checkable claim. A cosmetic
+   * reword fails this test on purpose; change the constant and the README together.
+   */
+  const POST_APPLY_MARKER =
+    '-- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.';
+
+  /** Every migration file that widens `default.actions.type`, by name, with its raw text. */
+  const actionsMigrations = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .map((f) => ({ name: f, raw: fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf-8') }))
+    .filter(({ raw }) =>
+      /ALTER\s+TABLE\s+default\.actions\s+MODIFY\s+COLUMN\s+`?type`?\s+Enum16/i.test(
+        raw
+          .split('\n')
+          .filter((line) => !line.trim().startsWith('--'))
+          .join('\n')
+      )
+    );
+
+  it('found actions migrations to check for the post-apply marker', () => {
+    // The positive control for the case below. Without it, a regex that matches nothing
+    // makes every `every()` assertion vacuously true — a green that means "scanned zero
+    // files", which is exactly the reassuring-zero this whole file exists to prevent.
+    expect(
+      actionsMigrations.length,
+      'no migration widening default.actions.type was found — the marker check below would be vacuous'
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(actionsMigrations.map((m) => m.name))(
+    '%s carries the POST-APPLY tracker-restart marker verbatim',
+    (name) => {
+      const raw = actionsMigrations.find((m) => m.name === name)!.raw;
+      expect(
+        raw.includes(POST_APPLY_MARKER),
+        `${name} widens actions.type but does not carry the post-apply marker.\n` +
+          `Add this line verbatim to its header:\n  ${POST_APPLY_MARKER}\n` +
+          `Applying the DDL without restarting the tracker ships a type that collects ZERO ` +
+          `rows while every signal says it worked — see migrations/README.md.`
+      ).toBe(true);
+    }
+  );
+
   it('assigns every value a distinct index', () => {
-    const indices = [...actionsBlock!.arms.values()];
+    const indices = [...actionsBlock.arms.values()];
     expect(new Set(indices).size).toBe(indices.length);
   });
 

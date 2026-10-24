@@ -9,11 +9,11 @@
  * It matches against workspace member usernames (case-insensitive).
  *
  * Examples:
- *   @[justin]        → fuzzy matches "Justin Maier" (user 10620972)
- *   @[10620972]      → direct user ID
+ *   @[jane]          → fuzzy matches "Jane Doe" (user 12345678)
+ *   @[12345678]      → direct user ID
  *   @[jane@co.com]   → matches by email
- *   @Justin Maier    → bare match against workspace members
- *   @Justin          → bare partial match (first name only)
+ *   @Jane Doe        → bare match against workspace members
+ *   @Jane            → bare partial match (first name only)
  */
 
 import { findUser, getTeamId, getTeamMembers } from '../api/user.mjs';
@@ -36,7 +36,7 @@ export function extractMentionSyntax(text) {
 
 /**
  * Detect bare @Name mentions by matching against workspace members.
- * Tries longest match first (e.g. "@Justin Maier" before "@Justin").
+ * Tries longest match first (e.g. "@Jane Doe" before "@Jane").
  * Only matches at word boundaries to avoid false positives.
  *
  * @param {string} text - Text with @[...] patterns already removed/replaced

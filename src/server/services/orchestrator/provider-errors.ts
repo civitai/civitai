@@ -1,10 +1,7 @@
-// External-provider generation error handling.
-//
-// External providers (xAI/Grok, and Fal-routed engines like Flux/SeeDream) report
-// failures as a job-level `reason` rather than on `step.output.errors`, so the old
-// collection (which only read `step.output.errors`) dropped them and users saw a
-// generic "generation error". `extractStepErrors` looks in every place a failed step
-// can carry a message; `sanitizeProviderError` decides what is safe to show.
+import { MATURE_SOURCE_HINT } from '~/shared/constants/mature-source.constants';
+
+// Provider generation errors. `sanitizeProviderError` decides what is safe to show a user;
+// `providerNameMap` brands the message with the provider behind an engine id.
 
 export const providerNameMap: Record<string, string> = {
   grok: 'xAI (Grok)',
@@ -23,28 +20,17 @@ export const providerNameMap: Record<string, string> = {
   'flux1-kontext': 'Fal.ai (Flux Kontext)',
   seedream: 'Fal.ai (SeeDream)',
   zimage: 'Fal.ai (zImage)',
+  seedance: 'Seedance',
 };
 
 export function providerName(engine?: string): string | undefined {
   return engine ? providerNameMap[engine.toLowerCase()] : undefined;
 }
 
-/**
- * Collect raw error strings from every place a failed step can carry them —
- * `step.output.errors` / TOS message, failed `step.jobs[].reason`, and
- * `step.metadata.error`. Deduped. The job path is the one that actually surfaces
- * external-provider failures; the rest preserve prior behavior.
- */
+/** Deduped error strings from a failed step's output and metadata. */
 export function extractStepErrors(step: unknown): string[] {
   const s = step as {
     output?: { errors?: unknown; message?: unknown; externalTOSViolation?: unknown };
-    jobs?: Array<{
-      status?: string;
-      reason?: unknown;
-      error?: unknown;
-      message?: unknown;
-      errors?: unknown;
-    }>;
     metadata?: { error?: unknown; errors?: unknown };
   } | null;
   if (!s) return [];
@@ -60,14 +46,6 @@ export function extractStepErrors(step: unknown): string[] {
   if (s.output) {
     pushAll(s.output.errors);
     if ('externalTOSViolation' in s.output) push(s.output.message);
-  }
-
-  if (Array.isArray(s.jobs)) {
-    for (const job of s.jobs) {
-      if (job?.status !== 'failed') continue;
-      push(job.reason ?? job.error ?? job.message);
-      pushAll(job.errors);
-    }
   }
 
   if (s.metadata) {
@@ -98,7 +76,7 @@ const UNSAFE_PATTERNS: RegExp[] = [
 
 const MAX_SAFE_LENGTH = 300;
 
-function isLikelySafeMessage(msg: string): boolean {
+export function isLikelySafeMessage(msg: string): boolean {
   if (!msg || msg.length > MAX_SAFE_LENGTH) return false;
   if (/[\r\n]/.test(msg)) return false; // multi-line ⇒ almost always a dump/trace
   return !UNSAFE_PATTERNS.some((re) => re.test(msg));
@@ -129,4 +107,49 @@ export function sanitizeProviderError(rawMessage: string, engine?: string): stri
     .filter(Boolean);
   const alreadyMentioned = aliases.some((a) => msg.toLowerCase().includes(a));
   return alreadyMentioned ? msg : `${provider}: ${msg}`;
+}
+
+// Providers name the offending request part by index, e.g. "input image 'content[1]'". The
+// bracket rule in UNSAFE_PATTERNS would redact the whole refusal for that token alone.
+const PROVIDER_INDEX_TOKEN = /\s*'?\b\w+\[\d+\]'?/g;
+
+const CONTENT_FILTER_REFUSAL = "The provider's content filter rejected this request.";
+
+/** Flux 3 Video's provider rejects mature source images; other engines are not pointed at H3. */
+function isFlux3ImageToVideoStep(step: unknown) {
+  const s = step as { $type?: unknown; input?: { engine?: unknown; operation?: unknown } } | null;
+  return (
+    s?.$type === 'videoGen' && s.input?.engine === 'flux' && s.input.operation !== 'textToVideo'
+  );
+}
+
+/**
+ * Sanitised, user-facing errors for a failed step. A provider content refusal
+ * (`externalTOSViolation`) keeps its reason; every other message is sanitised unchanged.
+ */
+export function sanitizeStepErrors(step: unknown, engine?: string): string[] {
+  const output = (step as { output?: { externalTOSViolation?: unknown; message?: unknown } } | null)
+    ?.output;
+  const refused = output?.externalTOSViolation === true;
+  const refusal =
+    output && 'externalTOSViolation' in output && typeof output.message === 'string'
+      ? output.message.trim()
+      : undefined;
+
+  const raw = extractStepErrors(step);
+  const errors = raw.map((msg) =>
+    sanitizeProviderError(msg === refusal ? msg.replace(PROVIDER_INDEX_TOKEN, '') : msg, engine)
+  );
+  if (!refused || !isFlux3ImageToVideoStep(step)) return errors;
+
+  // A refusal too unsafe to show reads as a system error, which would contradict the hint.
+  const refusalIndex = refusal ? raw.indexOf(refusal) : -1;
+  const shown =
+    refusalIndex >= 0 && isLikelySafeMessage(refusal!.replace(PROVIDER_INDEX_TOKEN, ''))
+      ? errors[refusalIndex]
+      : CONTENT_FILTER_REFUSAL;
+  const withHint = `${shown} ${MATURE_SOURCE_HINT}`;
+  return refusalIndex >= 0
+    ? errors.map((msg, i) => (i === refusalIndex ? withHint : msg))
+    : [...errors, withHint];
 }

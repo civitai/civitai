@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, uniqueToken } from './preview-trpc';
 
@@ -100,7 +100,7 @@ const MIGRATED_PATHS = [
 ] as const;
 
 // Mirror preview-smoke.spec.ts: assert we cleared the preview gate.
-function assertGatePassed(page: import('@playwright/test').Page, path: string) {
+function assertGatePassed(page: Page, path: string) {
   expect(page.url(), `${path}: should not redirect to /login`).not.toContain('/login');
   expect(page.url(), `${path}: should not redirect to /preview-restricted`).not.toContain(
     '/preview-restricted'
@@ -176,22 +176,20 @@ test.describe('moderation surface (mod)', () => {
 
     // 2) Report that post. Minimal valid variant of the createReportInputSchema
     //    discriminatedUnion is reason:'Spam' (reportSpamSchema → just baseDetailSchema).
-    //    type:'post' is ReportEntity.Post. createReport returns the row incl. id.
+    //    type:'post' is ReportEntity.Post. report.create returns no data.
     // NOTE: 'Spam' / type:'post' verified in report.schema.ts + report-helpers.ts:8.
     // If the CSRF/origin gate (createContext.ts) rejects this direct tRPC POST with
     // 403 live, the UI-driven fallback would be: open the post page → use the report
     // menu.
-    const report = await trpcMutation<{ id: number; status: string }>(
-      page.request,
-      'report.create',
-      { type: 'post', id: post.id, reason: 'Spam', details: {} }
-    );
+    const report = await trpcMutation<null>(page.request, 'report.create', {
+      type: 'post',
+      id: post.id,
+      reason: 'Spam',
+      details: {},
+    });
     // trpcMutation throws on any tRPC error envelope or non-2xx, so reaching here
-    // already means the mutation succeeded; the id assertion pins that the handler
-    // returned the row (createReportHandler `return result`) rather than undefined.
-    expect(report?.id, 'report.create should return a numeric report id').toEqual(
-      expect.any(Number)
-    );
+    // already means the mutation succeeded. report.create returns no data.
+    expect(report, 'report.create should resolve to null').toBeNull();
 
     // 🔴 The ACTIONING legs (report.getAll → report.setStatus → re-read as
     // 'Actioned') used to live here. #3573 deleted both procedures from this app's

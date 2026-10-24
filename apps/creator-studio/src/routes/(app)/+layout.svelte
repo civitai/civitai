@@ -34,7 +34,9 @@
 
   const wordmark = buildWordmarkSvg({ base: '#e8eaed' });
 
-  const nav = $derived(navForMember(data.membership.isCreatorProgramMember, data.enabledFlags));
+  const nav = $derived(
+    navForMember(data.membership.isCreatorProgramMember, data.enabledFlags, data.isStudioAdmin)
+  );
   const who = $derived(data.user.username ?? `user #${data.user.id}`);
   // Any load in flight — a real page nav or an in-place query change (e.g. the analytics range selector, which
   // re-runs the server load without leaving the route). Drives the top progress bar.
@@ -55,11 +57,11 @@
     invalidateAll();
   }
 
-  // The early-access ladder keys off the models score, not membership, so simulating a tier can't reach
-  // those flows on an account below the first rung (40k).
+  // The early-access ladder keys off the creator score (`scores.total`), not membership, so simulating
+  // a tier can't reach those flows on an account below the first rung (10k).
   const scoreOptions = [
     { value: '', label: 'Real score' },
-    ...[40000, 90000, 250000].map((score) => {
+    ...[9_999, 10_000, 90_000, 250_000].map((score) => {
       const days = earlyAccessDaysForScore(score);
       const slots = earlyAccessQuantityForScore(score);
       return {

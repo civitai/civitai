@@ -14,6 +14,8 @@ import type { SessionUser } from '~/types/session';
  */
 const ANONYMOUS_ENTITY_ID = 'anonymous';
 
+export const FEEDBACK_AREA_DISABLED_MESSAGE = 'Feedback is not being collected here right now.';
+
 /**
  * Is this feedback area collecting right now, for THIS user?
  *

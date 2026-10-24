@@ -55,12 +55,17 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
-import { activeMemberStatuses, formatChatSystemMessage } from '~/shared/utils/chat';
+import {
+  activeMemberStatuses,
+  filterBlockedChatMessages,
+  formatChatSystemMessage,
+} from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -1254,27 +1259,35 @@ function DisplayMessages({
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
   const tChat = allChatData?.find((chat) => chat.id === existingChatId);
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const blockedUserIds = useMemo(() => blockedUsers.map((u) => u.id), [blockedUsers]);
+  const blockedIdSet = useMemo(() => new Set(blockedUserIds), [blockedUserIds]);
+  const visibleChats = useMemo(
+    () => filterBlockedChatMessages(chats, blockedUserIds),
+    [chats, blockedUserIds]
+  );
+
   const stickerIds = useMemo(
     () => [
       ...new Set(
-        chats.flatMap((c) => [
+        visibleChats.flatMap((c) => [
           ...parseStickerIds(c.content),
           ...(c.referenceMessage ? parseStickerIds(c.referenceMessage.content) : []),
         ])
       ),
     ],
-    [chats]
+    [visibleChats]
   );
 
   const blur = replaceBadWords || domainColor === 'green';
 
-  const rowFlags = useMemo(() => getMessageRowFlags(chats), [chats]);
+  const rowFlags = useMemo(() => getMessageRowFlags(visibleChats), [visibleChats]);
   const bubbles = useChatLayout() === 'bubbles';
 
   return (
     <StickerProvider ids={stickerIds}>
       <LazyMotion features={loadMotion}>
-        {chats.map((c, idx) => {
+        {visibleChats.map((c, idx) => {
           const { showHeader, showDayChip, isNewSender } = rowFlags[idx];
           const isEmbed = c.contentType === ChatMessageType.Embed;
 
@@ -1289,6 +1302,9 @@ function DisplayMessages({
           const quotedUser = !!c.referenceMessage
             ? tChat?.chatMembers?.find((cm) => cm.userId === c.referenceMessage?.userId)?.user
             : undefined;
+          // A reply re-surfaces the quoted message's author and text, so a blocked
+          // author has to be suppressed here too, not just in the top-level list.
+          const quotedBlocked = !!c.referenceMessage && blockedIdSet.has(c.referenceMessage.userId);
 
           return (
             <React.Fragment key={c.id}>
@@ -1302,7 +1318,7 @@ function DisplayMessages({
                   [classes.bubbles]: bubbles,
                   [classes.mineRow]: bubbles && isMySide,
                 })}
-                style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+                style={idx === visibleChats.length - 1 ? { paddingBottom: 12 } : {}}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.12 }}
@@ -1339,21 +1355,28 @@ function DisplayMessages({
                     )}
 
                     <div className={classes.messageBody}>
-                      {!!c.referenceMessage && (
-                        <div className={classes.replyQuote}>
-                          <div className={classes.replyQuoteName}>
-                            {quotedUser?.username ?? 'Unknown user'}
+                      {!!c.referenceMessage &&
+                        (quotedBlocked ? (
+                          <div className={classes.replyQuote}>
+                            <div className={classes.replyQuoteText}>
+                              <em>Blocked message</em>
+                            </div>
                           </div>
-                          <div className={classes.replyQuoteText}>
-                            <ChatMessageContent
-                              content={c.referenceMessage.content}
-                              blur={blur}
-                              stickerSize={STICKER_SIZE.preview}
-                              fallback={<em>Could not load message.</em>}
-                            />
+                        ) : (
+                          <div className={classes.replyQuote}>
+                            <div className={classes.replyQuoteName}>
+                              {quotedUser?.username ?? 'Unknown user'}
+                            </div>
+                            <div className={classes.replyQuoteText}>
+                              <ChatMessageContent
+                                content={c.referenceMessage.content}
+                                blur={blur}
+                                stickerSize={STICKER_SIZE.preview}
+                                fallback={<em>Could not load message.</em>}
+                              />
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        ))}
                       <Tooltip
                         label={formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}
                         style={{ opacity: 0.85 }}

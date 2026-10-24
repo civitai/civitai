@@ -32,6 +32,50 @@ within about a poll interval.
 opening a PR against the state repo, never by calling the API. This skill refuses
 writes for that reason.
 
+## What a key does to the app
+
+The monolith's flag registry (`src/server/services/feature-flags.service.ts`) declares a
+static `availability` per flag, and Flipt overrides it in both directions — **except on a flag
+whose `FEATURE_FLAG_<KEY>` environment variable was APPLIED**, which is removed from Flipt's
+control entirely (`createFeatureFlags` records it in `envOverriddenFlags`; `hasFeature` then
+skips Flipt for it).
+
+Whether a variable is applied has exactly one rule, and it is not "is the variable set":
+
+| Registry entry | Its `FEATURE_FLAG_<KEY>` variable | Flipt |
+| --- | --- | --- |
+| `availability: []` **with** a `fliptKey` | **ignored** — cannot switch it on | **keeps control** |
+| anything else | **applied** | **skipped entirely** |
+
+🔴 **So a NON-dark flag can carry a `fliptKey`, have that key set `enabled: false`, and still be
+on for everyone.** Toggling it in flag state changes nothing and looks like Flipt is broken.
+Before you read such a flag's Flipt value as its effective state — or set one expecting an effect
+— check whether a variable names it in the environment you care about.
+
+🔴 **Do not invert that check on a dark flag.** A variable naming an `availability: []` flag that
+has a key is discarded, so the flag is dark, off, and still Flipt-owned — the opposite of pinned
+out. The server logs a `[feature-flags]` warning naming each one it discards at startup.
+
+Consequences before you add or toggle a key:
+
+- A flag declared `availability: []` **that has a `fliptKey`** is **dark**: static evaluation is
+  false for everyone and that key is its only on-switch. A `FEATURE_FLAG_<KEY>` environment
+  variable cannot lift it. Creating the key and enabling it is what ships the feature.
+- A flag declared `availability: []` with **no** `fliptKey` has no Flipt switch at all, so its
+  `FEATURE_FLAG_<KEY>` variable still applies and is the only way to turn it on. Today that is
+  `coinbasePayments` and `nowpaymentPayments`, both written in the legacy array form
+  (`coinbasePayments: []`), which a search for `availability: []` does not find. Adding a
+  `fliptKey` to one of these moves ownership to Flipt and makes its variable inert.
+- A flag declared `['public']` (or any role) is **live**: creating its key with
+  `enabled: false` and no rollout turns the feature off for everyone — the intended kill switch,
+  and the intended accident. **Only if no `FEATURE_FLAG_<KEY>` variable names it.** If one does,
+  that kill switch is inert and nothing reports it.
+
+To switch on a dark flag **that has a `fliptKey`** locally, set
+`FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` rather than touching shared flag state; it is ignored when
+`NODE_ENV=production`, and it does not reach `getFliptBoolean` call sites. For a dark flag with
+no key there is nothing to name here — use its `FEATURE_FLAG_<KEY>` variable.
+
 Treat `FLIPT_API_TOKEN` as a live secret: read it from env, never inline it, and
 don't copy it into anything new.
 
@@ -134,3 +178,30 @@ cp .claude/skills/flipt/.env.example .claude/skills/flipt/.env
 ```
 
 The skill needs `FLIPT_URL` and `FLIPT_API_TOKEN` to connect to Flipt.
+
+🔴 **THE SKILL'S OWN `.env` IS NOT OPTIONAL, AND THE ROOT `.env` IS NOT A SUBSTITUTE.**
+`loadEnv` reads this skill's `.env` and then the project root's, first value winning — so the
+root's `FLIPT_URL` IS picked up when this file is absent, and that is the trap rather than the
+rescue. The root's `FLIPT_URL` is the BROWSER-FACING host: every path under it answers 302 to a
+GitHub OAuth login, so no bearer token will ever work against it. Measured 2026-10-05, after this
+skill's `.env` had been lost: `/meta/info`, `/health`, `/api/v1/namespaces`,
+`/api/v2/environments` and `/evaluate/v1/boolean` all 302 to the OAuth provider.
+
+So adding only a token to the root `.env` leaves the skill broken in a WORSE way than it is
+now: the "FLIPT_URL and FLIPT_API_TOKEN must be set" error disappears and is replaced by HTML
+login pages failing to parse as JSON — a confusing failure instead of a clear one. Both values
+belong in this skill's `.env` together.
+
+`FLIPT_FETCHER_SECRET`, which the root `.env` does carry, is a DIFFERENT credential and is not
+an API token — it does not authenticate these calls.
+
+**Ask an infra owner for the API endpoint and a read/query token.** The specifics are
+deliberately not written here: this repository is public, and how to reach a production service
+past its proxy is exactly what the Security section of `CLAUDE.md` keeps out of it.
+
+Once you have it, protect it — these files are one `git clean` from gone and this one has already
+been lost once:
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt env --backup    # copies skill credentials outside the repo
+```

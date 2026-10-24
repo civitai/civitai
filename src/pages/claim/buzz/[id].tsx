@@ -55,7 +55,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const { data: claim, isLoading: claimLoading } = trpc.buzz.getClaimStatus.useQuery(
     { id },
-    { enabled: features.buzz }
+    { enabled: !!features.buzz }
   );
   const theme = getCurrencyConfig({ currency: Currency.BUZZ, type: claim?.details?.accountType });
   const color = theme.color;

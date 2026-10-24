@@ -48,16 +48,49 @@ import { trpcQuery } from './preview-trpc';
  *    redirects to `/apps/store-preview/<slug>` (or `notFound` when the app has no
  *    approved listing). It no longer renders, so this spec asserts the REDIRECT
  *    rather than a heading on it.
- *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar — its
- *    first tab is `{ href: '/apps', label: 'Marketplace' }` (AppsSubNav.tsx:55) —
- *    plus a search `TextInput` (placeholder "Search by name or block id"). It no
- *    longer renders a `<Title>Civitai App Blocks</Title>`: the app-blocks nav
- *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title
- *    on the marketplace surface ("omit for a header with just the tabs, e.g. the
- *    marketplace" — AppsPageLayout.tsx:36), so the heading no longer exists by
- *    design. We assert the "Marketplace" tab instead — it uniquely identifies the
- *    rendered apps surface for an appBlocks-enabled viewer; a non-appBlocks viewer
- *    gets the Next 404 (resolveAppsPageAccess.ts → notFound).
+ *  - Marketplace page (`/apps/index.tsx`) renders the apps navigation as a LEFT RAIL of
+ *    links, whose rows come from `appsSections` in `~/components/Apps/apps-sections`.
+ *    The row this spec keys on is `{ id: 'marketplace', path: '', label: 'Marketplace' }`
+ *    — `path` is the URL segment UNDER `/apps`, so the marketplace row's is the empty
+ *    string, not `'/apps'`. It is the only row whose `visible` predicate is unconditional
+ *    for a store-eligible viewer: `(_s, c) => c.canSeeStore`, which is exactly the gate
+ *    the page itself is behind. ⚠️ An earlier revision of this line added "every other
+ *    row is summary-conditional" as the reason — that is wrong for the BUILD row, which
+ *    is `(_s, c) => c.canBuild`, context-conditional and deliberately summary-free. The
+ *    conclusion still holds by a different route: `canBuild` is
+ *    `hasAppsStoreAccess(features) && (isAppDeveloper || appBlocksGetStarted)`, strictly
+ *    NARROWER than `canSeeStore`, so it cannot be visible where the marketplace row is
+ *    not. It is NOT necessarily the first row, so the assertion below selects it BY NAME
+ *    and the order is irrelevant to it.
+ *
+ *    🔴 THE RAIL IS VIEWPORT-GATED, so this spec asserts BOTH nav forms: the drawer
+ *    trigger at this config's default 1280×720 (below `APPS_RAIL_MIN_VIEWPORT`, 1300),
+ *    and the `App sections` landmark plus the `Marketplace` LINK after widening to
+ *    1440. See the block comment on the assertion itself for why both are required.
+ *
+ *    ⚠️ This docblock described an `AppsSubNav` TABS BAR sourced from `SUB_NAV_LINKS`
+ *    until the rail landed. Both are gone — `AppsSubNav.tsx` was DELETED by this PR and
+ *    `SUB_NAV_LINKS` no longer exists — and the stale text is what made the assertion
+ *    below look correct while it queried a `role="tab"` that nothing renders.
+ *
+ *    The page ALSO renders a search control, which this spec does not assert:
+ *    `AppListingsMarketplaceBody.tsx` renders `<TextInput aria-label="Search"
+ *    placeholder="Search by name">` inside the `apps-store-control-row` group. ⚠️ An
+ *    earlier revision of this docblock gave the placeholder as "Search by name or block
+ *    id" (stale — only the placeholder text changed), and a later one deleted the whole
+ *    claim as "removed upstream in #2767". BOTH were wrong: the control exists at
+ *    `origin/main` and at this PR's head, and #2767 does not touch that file. The
+ *    deletion was derived from `git log -S`, which reports commits where an occurrence
+ *    COUNT changed — a rename is indistinguishable from a removal in that output.
+ *
+ *    The page renders no `<Title>Civitai App Blocks</Title>`: the app-blocks nav
+ *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title on
+ *    the marketplace surface ("omit for a header with just the chrome, e.g. the
+ *    marketplace" — the `title` prop's docstring in `AppsPageLayout.tsx`; the wording
+ *    was "just the tabs" before the rail, and this citation pointed at a line number
+ *    that has since drifted onto unrelated text). The nav is therefore what uniquely
+ *    identifies the rendered apps surface for an appBlocks-enabled viewer; a
+ *    non-appBlocks viewer gets the Next 404 (resolveAppsPageAccess.ts → notFound).
  */
 
 const ROLE = 'mod' as const;
@@ -99,20 +132,50 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
     page,
   }) => {
     // The marketplace index renders for an appBlocks-enabled viewer (the mod) and
-    // 404s for everyone else. Asserting it loads (status < 400) + shows the
-    // marketplace's "Marketplace" sub-nav tab proves the mod cleared the
-    // `features.appBlocks` SSR gate and the page rendered (NOT the 404 a
-    // non-appBlocks user gets). The page no longer renders a "Civitai App Blocks"
-    // heading — the app-blocks nav refactor (#2749/#2758) made AppsPageLayout omit
-    // the title on the marketplace surface — so we assert the always-on
-    // "Marketplace" tab, which uniquely identifies the apps surface.
+    // 404s for everyone else. Asserting it loads (status < 400) + shows the apps
+    // navigation proves the mod cleared the `features.appBlocks` SSR gate and the page
+    // rendered (NOT the 404 a non-appBlocks user gets). The page renders no "Civitai App
+    // Blocks" heading — the app-blocks nav refactor (#2749/#2758) made AppsPageLayout omit
+    // the title on the marketplace surface — so the nav is what uniquely identifies the
+    // apps surface.
+    //
+    // 🔴 THE NAV IS A LEFT RAIL OF LINKS, NOT A TAB STRIP, AND IT IS VIEWPORT-GATED.
+    // This assertion read `getByRole('tab', { name: 'Marketplace' })` until the rail
+    // landed; there are no `role="tab"` elements on `/apps` any more. Two things had to
+    // change together, and the second is the one that bites:
+    //   • the role is `link` — the rail is a `<nav aria-label="App sections">` of real
+    //     anchors;
+    //   • the rail is `display: none` below `APPS_RAIL_MIN_VIEWPORT` (1300px), where a
+    //     "App sections" drawer trigger stands in for it — and this config's
+    //     `devices['Desktop Chrome']` viewport is **1280×720**, i.e. BELOW that line. So
+    //     the default preview viewport renders the DRAWER form and a bare
+    //     `getByRole('link', …)` would fail on a perfectly healthy page.
+    // Both forms are asserted below rather than one, because both are real surfaces a
+    // user gets and the smoke suite is the only tier that sees this page deployed.
     // domcontentloaded ONLY — never networkidle.
     const resp = await page.goto('/apps', { waitUntil: 'domcontentloaded' });
     expect(resp?.status(), 'GET /apps status for the appBlocks-enabled mod').toBeLessThan(400);
+
+    // (a) THE DEFAULT (1280) FORM — the drawer trigger is the only nav affordance here.
     await expect(
-      page.getByRole('tab', { name: 'Marketplace' }),
-      '/apps should render the AppsSubNav "Marketplace" tab for an appBlocks-enabled mod (not a 404)'
+      page.getByRole('button', { name: 'App sections' }),
+      '/apps at 1280 should render the "App sections" drawer trigger for an ' +
+        'appBlocks-enabled mod (not a 404). Below 1300px the rail is display:none.'
     ).toBeVisible();
+
+    // (b) THE RAIL FORM — widen past the threshold and the landmark + entries appear.
+    // This is the half that proves the nav actually has destinations rather than just a
+    // button, and it is the shape the overwhelming majority of desktop viewers get.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(
+      page.getByRole('navigation', { name: 'App sections' }),
+      '/apps at 1440 should expose the "App sections" navigation landmark'
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: 'Marketplace' }),
+      '/apps should render the rail\'s "Marketplace" entry for an appBlocks-enabled mod'
+    ).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     // DISCOVER an appBlockId at runtime from the public listing. Never hardcode
     // one — the weekly dev clone's approved set varies. `{}` input is valid (all

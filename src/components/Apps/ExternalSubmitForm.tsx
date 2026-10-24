@@ -114,7 +114,7 @@ export const OAUTH_REQUIREMENT_EXPLAINER =
   'An OAuth app is the registration that lets people sign in to your app with their Civitai account, and that decides what your app may read or do on their behalf. Every standalone listing links to one, so visitors can see up front what they would be granting.';
 
 /** Where Cancel / "View my submissions" go. One constant, two call sites. */
-const MY_APPS_HREF = '/apps/mine';
+const MY_APPS_HREF = '/apps/build';
 
 /** The exact sentence shown when the author owns no eligible OAuth client. */
 export const NO_ELIGIBLE_CLIENTS_TEXT =
@@ -376,7 +376,7 @@ function ExternalCreateForm() {
    * 🔴 CANCEL DISCARDS EVERYTHING, SILENTLY — so confirm, but ONLY when there is
    * something to lose.
    *
-   * `Cancel` used to be a plain `<Button component={Link} href="/apps/mine">`: one
+   * `Cancel` used to be a plain `<Button component={Link} href="/apps/build">`: one
    * click and every field entered (URL, name, description, the scope justifications)
    * was gone with no warning and no undo. It is now a real button that asks first.
    *
@@ -900,7 +900,7 @@ function ExternalCreateForm() {
                   <Group justify="flex-end">
                     <Button
                       component={Link}
-                      href="/apps/mine"
+                      href="/apps/build"
                       rightSection={<IconExternalLink size={16} />}
                     >
                       View my submissions

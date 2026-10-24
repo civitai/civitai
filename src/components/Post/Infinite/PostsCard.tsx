@@ -1,4 +1,4 @@
-import { ThemeIcon, Tooltip } from '@mantine/core';
+import { Badge } from '@mantine/core';
 import { IconClock2 } from '@tabler/icons-react';
 import { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -10,6 +10,7 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
@@ -17,6 +18,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user, publishedAt },
@@ -28,10 +30,18 @@ export function PostsCard({
   const currentUser = useCurrentUser();
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
-  const scheduled = publishedAt && new Date(publishedAt) > new Date();
+  const scheduledAt = publishedAt && new Date(publishedAt) > new Date() ? publishedAt : null;
+  const impressionRef = useTrackImpression<HTMLElement>([
+    { entityType: 'Post', entityId: id },
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
   return (
     <TwCosmeticWrapper cosmetic={cosmetic?.data} style={cosmetic?.data ? { height } : undefined}>
-      <TwCard className="border shadow" style={!cosmetic?.data ? { height } : undefined}>
+      <TwCard
+        ref={impressionRef}
+        className="border shadow"
+        style={!cosmetic?.data ? { height } : undefined}
+      >
         <ImageGuard2 image={image} connectType="post" connectId={id}>
           {(safe) => (
             <>
@@ -44,6 +54,7 @@ export function PostsCard({
                     <ImageContextMenu
                       image={image}
                       context="post"
+                      postImageCount={imageCount}
                       className=""
                       additionalMenuItems={
                         isOwner ? (
@@ -56,18 +67,13 @@ export function PostsCard({
                         ) : null
                       }
                     />
-                    {scheduled && (
-                      <Tooltip label="Scheduled">
-                        <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
-                          <IconClock2 size={16} strokeWidth={2.5} />
-                        </ThemeIcon>
-                      </Tooltip>
-                    )}
                   </div>
                 </div>
               )}
 
-              <NextLink href={`/posts/${id}`}>
+              {/* The grid sizes the card, so the media has to fill it: without flex-1 this link is
+                  content-height and `.image`'s height: 100% resolves against auto. */}
+              <NextLink href={`/posts/${id}`} className="min-h-0 flex-1">
                 {!safe ? (
                   <div style={{ aspectRatio: (image?.width ?? 1) / (image?.height ?? 1) }}>
                     <MediaHash {...image} />
@@ -87,6 +93,17 @@ export function PostsCard({
                   />
                 )}
               </NextLink>
+              {(scheduledAt || !publishedAt) && (
+                <Badge
+                  className={classes.publishState}
+                  color={scheduledAt ? 'blue' : 'gray'}
+                  variant="filled"
+                  radius="sm"
+                  leftSection={<IconClock2 size={12} strokeWidth={2.5} />}
+                >
+                  {scheduledAt ? <DaysFromNow date={scheduledAt} live /> : 'Draft'}
+                </Badge>
+              )}
               <PostReactions
                 className={classes.reactions}
                 imageCount={imageCount}

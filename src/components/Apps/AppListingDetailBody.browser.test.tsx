@@ -9,8 +9,8 @@ import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * `AppListingDetailBody` component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gates are `__tests__/appListingDetailView.test.ts`,
+ * `AppListingDetailBody` component tests (`Component tests` in CI; the node-tier
+ * gates are `__tests__/appListingDetailView.test.ts`,
  * `__tests__/appListingDetailRows.test.ts` and `__tests__/appsPageWidths.test.ts`).
  *
  * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE — read before treating any result here
@@ -69,6 +69,12 @@ const mocks = vi.hoisted(() => ({
     string,
     boolean
   >,
+  // The owner "Visibility" item's lazy read, recorded with its `enabled` per call. Data is
+  // returned only when enabled, matching React Query for a disabled query.
+  authoringCalls: [] as { input: unknown; enabled: boolean | undefined }[],
+  authoringContext: null as null | Record<string, unknown>,
+  setVisibilityMutate: vi.fn(),
+  setVisibilityAsModMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -196,6 +202,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 THE TWO VISIBILITY PICKERS' HOOKS. Both modals mount (lazily) the first time an
+      // owner's or moderator's menu opens, so a missing key here throws AT MOUNT and fails
+      // every test in this file that opens such a menu — measured: 15 of 99 went red.
+      getAuthoringContext: {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          mocks.authoringCalls.push({ input, enabled: opts?.enabled });
+          return opts?.enabled
+            ? { data: mocks.authoringContext ?? undefined, isError: false }
+            : { data: undefined, isError: false };
+        },
+      },
+      setListingVisibility: {
+        useMutation: () => ({ mutate: mocks.setVisibilityMutate, isPending: false }),
+      },
+      setListingVisibilityAsModerator: {
+        useMutation: () => ({ mutate: mocks.setVisibilityAsModMutate, isPending: false }),
+      },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
     // `publicProcedure` in `src/server/routers/user.router.ts`, which is why this page
@@ -212,6 +235,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         getMyReview: { invalidate: async () => undefined },
         listReviews: { invalidate: async () => undefined },
         getAppDetail: { invalidate: async () => undefined },
+        getAuthoringContext: { invalidate: async () => undefined },
+        listMine: { invalidate: async () => undefined },
       },
     }),
   },
@@ -284,6 +309,10 @@ beforeEach(async () => {
   mocks.delistMutate.mockClear();
   mocks.resetOffsiteMutate.mockClear();
   mocks.resetOnsiteMutate.mockClear();
+  mocks.authoringCalls = [];
+  mocks.authoringContext = null;
+  mocks.setVisibilityMutate.mockClear();
+  mocks.setVisibilityAsModMutate.mockClear();
   // 🔴 Restore the WIDE viewport before every test. The viewport is browser-global
   // state, so without this a narrow-layout test silently re-runs every later test at
   // 390px — the "config pins a dimension" trap, arriving by leakage instead of config.
@@ -302,6 +331,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     description: null,
     category: 'utility',
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: { id: 5, username: 'alice', image: null },
@@ -313,8 +343,21 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
+    // No declared scopes: this file is not about the permission disclosure, and an
+    // empty array renders no section at all. `projectListingDetail` guarantees an
+    // array, so a fixture omitting it would not match any real payload.
+    scopes: [],
+    // Same contract as `scopes`: `projectListingDetail` guarantees an array, and
+    // the body reads `.length` — a fixture omitting it would not match any real
+    // payload. `[]` keeps these ON-SITE fixtures rendering no connect-permissions
+    // section, which is what an on-site listing produces.
+    connectScopes: [],
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
@@ -335,11 +378,14 @@ function relatedCard(id: string, name: string): ListingCard {
     tagline: null,
     category: 'utility',
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `ab-${id}`,
@@ -501,6 +547,18 @@ describe('AppListingDetailBody', () => {
     ).toBe('/apps/submit?edit=l1');
   });
 
+  /**
+   * 🔴 THIS IS ALSO THE SURFACE GUARD, AND IT IS THE HALF THAT MUST NOT REGRESS.
+   *
+   * The store CARD stopped offering these two items — `surface="card"`, decided in
+   * `appListingMenuSurface.ts` — because on a grid of ~24 tiles they invite a viewer
+   * to review an app they have not opened. The DETAIL page is the surface those
+   * items are FOR, and the narrowing is only correct if it left this one alone. So
+   * this test is the other side of `AppListingCard.browser.test.tsx`'s "a signed-in
+   * NON-owner, NON-moderator gets NO menu on the CARD": the same viewer, the same
+   * two items, opposite expected answers. A change that tightened the gate globally
+   * — the obvious wrong implementation — passes the card test and fails this one.
+   */
   test('🔴 a signed-in NON-owner gets Review + Report, and NO Edit', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
@@ -510,6 +568,8 @@ describe('AppListingDetailBody', () => {
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).toBeNull();
+    // The owner Visibility item is owner-only, like Edit.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
   });
 
   test('🔴 the OWNER gets no Review item (no self-review), but keeps Report', async () => {
@@ -519,7 +579,36 @@ describe('AppListingDetailBody', () => {
     // Positive control from the same dropdown: Report and Edit ARE there.
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).not.toBeNull();
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).toBeNull();
+  });
+
+  test('🔴 the owner Visibility item fetches the authoring context only when clicked', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    mocks.authoringContext = {
+      status: 'approved',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: 'moderators',
+      visibilityAvailable: true,
+    };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-owner-visibility"]'
+    ) as HTMLElement | null;
+    expect(item).not.toBeNull();
+    // Menu open, picker mounted, read still disabled.
+    expect(mocks.authoringCalls.length).toBeGreaterThan(0);
+    expect(mocks.authoringCalls.every((c) => c.enabled === false)).toBe(true);
+
+    await userEvent.click(item as HTMLElement);
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-save').first())
+      .toBeInTheDocument();
+    expect(mocks.authoringCalls.filter((c) => c.enabled).map((c) => c.input)).toContainEqual({
+      appListingId: 'l1',
+    });
   });
 
   test('🔴 a SIGNED-OUT viewer gets no menu at all (nothing in it is available)', async () => {
@@ -745,6 +834,37 @@ describe('AppListingDetailBody', () => {
     // The prose is in the MAIN column, not the rail — the whole reason there are two.
     expect(main.textContent).toContain('Body');
     expect(rail.textContent).not.toContain('Body');
+  });
+
+  // ── Action-card header ─────────────────────────────────────────────────────
+
+  test('🔴 the action card is headed "Use this app"', async () => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+
+    // Anchored to the CARD, never a loose page-wide text match — the CTA button
+    // labels below this header live in the same card and change independently
+    // (`getDetailPrimaryAction`), so a free-floating text query would drift onto
+    // them.
+    const card = container.querySelector(
+      '[data-testid="apps-listing-action-card"]'
+    ) as HTMLElement | null;
+    // Positive control: without the card the header assertion below would be a
+    // claim about nothing, and a `toBeNull`-style guard on an absent element
+    // passes vacuously.
+    expect(card, 'the action card must render in the non-preview arm').not.toBeNull();
+
+    // The header is the card's first section. Pin the WHOLE normalised string,
+    // not a substring — a substring guard is walkable by rewording ("Get this app
+    // to use it" would satisfy `toContain('Use this app')`).
+    const header = card!.firstElementChild as HTMLElement | null;
+    expect(header).not.toBeNull();
+    expect(header!.textContent?.trim()).toBe('Use this app');
+
+    // …and the superseded label is gone from the card entirely. Plain `toContain`
+    // on `textContent`, because `expect.element(...).not.toBeInTheDocument()` is
+    // inert in this repo (#4197) and passes for any string whatsoever.
+    expect(card!.textContent).not.toContain('Get this app');
   });
 
   // ── Creator card ───────────────────────────────────────────────────────────
@@ -1707,8 +1827,8 @@ describe('AppListingDetailBody — store-scope review seam', () => {
  * fix — which is precisely the defect class here.
  *
  * 🔴 NOT A MERGE GATE: this file is in the browser-mode `component` project, which CI
- * runs only as the preview pipeline's report-only `preview / component-tests` (the
- * same caveat `.gallery.browser.test.tsx` carries). The blocking half of this change
+ * runs as `Component tests`, and no check in this repo blocks a merge (the same
+ * caveat `.gallery.browser.test.tsx` carries). The node-tier half of this change
  * is `__tests__/appListingDescription.test.ts` in the node project — it gates the
  * renderer rule but cannot see a node's position. Both are needed; neither substitutes.
  *
@@ -1840,6 +1960,7 @@ describe('AppListingDetailBody — moderator menu section', () => {
   const NON_MOD = { id: 999, username: 'bob' };
   const MESSAGE_ITEM = 'apps-listing-mod-message-owner';
   const MANAGE_ITEM = 'apps-listing-mod-manage';
+  const VISIBILITY_ITEM = 'apps-listing-mod-visibility';
   // Menu items and confirm fields share a stem per action — see `TAKEDOWN_TESTID_STEM`.
   const UNPUBLISH = 'apps-listing-unpublish';
   const HIDE = 'apps-listing-hide';
@@ -1871,13 +1992,18 @@ describe('AppListingDetailBody — moderator menu section', () => {
     await page.getByTestId(`${stem}-submit`).first().click();
   }
 
-  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, and the review-queue link', async () => {
+  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, Set visibility, and the review-queue link', async () => {
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)?.textContent).toContain(
+      'Set visibility'
+    );
+    // Not the owner, so not the owner's copy of the control.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
     // The INVERSE affordance. There is no Relist button because a removed listing 404s
     // on this route; the link is where a removed listing can actually be acted on.
     //
@@ -1893,6 +2019,23 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.textContent).not.toContain('Relist');
   });
 
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    // Same viewer shape as MOD, differing only in the id: 5 is `base().creator.id`.
+    mocks.currentUser = { ...MOD, id: 5 };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(
+      dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')?.textContent
+    ).toContain('Visibility');
+    // Positive control: the moderator section is there, so the absence is set-visibility's.
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
+    expect(dropdown.textContent).not.toContain('Set visibility');
+  });
+
   test('🔴 the two takedown items are TELLABLE APART in the rendered menu', async () => {
     // 🔴 The defect this exists for is not a missing button, it is two adjacent buttons a
     // moderator cannot choose between. They have the same immediate effect and differ
@@ -1905,7 +2048,9 @@ describe('AppListingDetailBody — moderator menu section', () => {
     const unpublishText = dropdown
       .querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)!
       .textContent!.trim();
-    const hideText = dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)!.textContent!.trim();
+    const hideText = dropdown
+      .querySelector(`[data-testid="${HIDE}-menu-item"]`)!
+      .textContent!.trim();
     expect(unpublishText).not.toBe(hideText);
     expect(unpublishText.toLowerCase()).toContain('review');
     expect(hideText.toLowerCase()).toContain('reversible');
@@ -1923,7 +2068,19 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).toBeNull();
+  });
+
+  test('the Set visibility item opens the moderator picker (menu → modal wiring)', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, VISIBILITY_ITEM);
+    // The REAL `ModListingVisibilityModal`: its required reason field and its title.
+    await expect
+      .element(page.getByTestId('apps-mod-visibility-reason').first())
+      .toBeInTheDocument();
+    expect(document.body.textContent).toContain('Set visibility for my-app');
   });
 
   test('the Contact app owner item opens the composer (menu → modal wiring)', async () => {
@@ -2103,5 +2260,166 @@ describe('AppListingDetailBody — moderator menu section', () => {
     // assertion dressed as coverage. The trigger's absence entails the items' absence,
     // and `appListingDetailModActions` returning `[]` in preview is pinned in the
     // blocking tier.
+  });
+});
+
+/**
+ * The author-declared BETA badge + notice on the store DETAIL page.
+ *
+ * 🔴 ABSENCE IS ASSERTED VIA `querySelectorAll(...).length` / `textContent`, NEVER via
+ * `expect.element(...).not.toBeInTheDocument()` — that matcher is INERT in this repo
+ * (civitai/civitai#4197) and passes whether or not the node exists. Every absence below
+ * is paired with a positive control proving the same fixture rendered.
+ */
+describe('AppListingDetailBody — the beta badge + notice', () => {
+  test('renders BOTH the badge and the notice when the listing declares beta', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ isBeta: true, betaMessage: 'Export is still WIP.' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-beta-badge')).toBeInTheDocument();
+    await expect.element(within.getByTestId('apps-listing-beta-notice')).toBeInTheDocument();
+    expect(container.textContent).toContain('This app is in beta');
+    expect(container.textContent).toContain('Export is still WIP.');
+  });
+
+  test('a beta listing with NO message still gets a badge and a complete fallback sentence', async () => {
+    // 🔴 The message is OPTIONAL. Deriving the notice from `betaMessage != null` would make
+    // writing a note the price of the label — this pins that it does not.
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ isBeta: true, betaMessage: null })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-beta-badge')).toBeInTheDocument();
+    expect(container.textContent).toContain('still in development');
+  });
+
+  test('renders NEITHER when the listing is not in beta', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ isBeta: false, betaMessage: null })} />
+    );
+    // Positive control: the page really rendered.
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-testid="apps-listing-beta-badge"]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="apps-listing-beta-notice"]')).toHaveLength(0);
+    expect(container.textContent).not.toContain('This app is in beta');
+  });
+
+  test('🔴 the message is rendered as PLAIN TEXT — no markdown, no injected element', async () => {
+    // 🔴 THE SECURITY ASSERTION. `betaMessage` is unreviewed author copy (beta is a TRIVIAL
+    // patch field, so no moderator sees it before it is public). The description beside it
+    // DOES go through `CustomMarkdown`; this must not. Both halves are asserted: the markup
+    // arrives as literal text, and no element was minted from it.
+    const evil = 'click [here](https://evil.example) **now** <img src=x onerror=1>';
+    const { container } = await renderScoped(
+      <AppListingDetailBody detail={base({ isBeta: true, betaMessage: evil })} />
+    );
+    const notice = container.querySelector('[data-testid="apps-listing-beta-notice"]');
+    expect(notice).not.toBeNull();
+    // The raw source is on screen verbatim — i.e. nothing parsed it.
+    expect(notice?.textContent).toContain('[here](https://evil.example)');
+    expect(notice?.textContent).toContain('**now**');
+    // …and it minted no anchor, no strong, no img.
+    expect(notice?.querySelectorAll('a, strong, img')).toHaveLength(0);
+    // Positive control on the SAME mount: the description path DOES parse markdown, so
+    // "nothing parsed" above is a property of this element and not of the harness.
+    const { container: md } = await renderScoped(
+      <AppListingDetailBody detail={base({ description: 'a **bold** word' })} />
+    );
+    expect(md.querySelector('.markdown-content strong')?.textContent).toBe('bold');
+  });
+
+  test('🔴 the notice is NOT inside the mutually-exclusive off-site alert pair', async () => {
+    // `shouldShowOffsiteDisclosure` / `shouldShowConnectCapability` are exact complements
+    // over one shared domain, pinned as "never both, never neither". The beta notice is an
+    // independent signal and must not have been wired in as a third condition there — so it
+    // has to be able to render ALONGSIDE one of them.
+    const { container } = await renderScoped(
+      <AppListingDetailBody
+        detail={base({
+          isBeta: true,
+          betaMessage: 'beta note',
+          kindData: { kind: 'offsite', externalUrl: 'https://x.example', connectClientId: null },
+        })}
+      />
+    );
+    expect(container.querySelectorAll('[data-testid="apps-listing-beta-notice"]')).toHaveLength(1);
+    // The off-site disclosure — the other member of the pair — is still on screen too.
+    expect(container.textContent).toContain('This app runs entirely off-platform');
+  });
+
+  test('🔴 preview KEEPS the beta badge + notice — a documented ledger DECISION', async () => {
+    // 🔴 THIS IS THE ONE PREVIEW CASE THAT IS A *KEEP*, and it needs the same rigour as the
+    // omissions above precisely because it points the other way. The omission ledger
+    // withholds everything LIVE, INTERACTIVE or AGGREGATE; the beta declaration is none of
+    // those — `getListingPreviewForReview` resolves it for a shadow by reading the PARENT,
+    // since beta is never staged — and a moderator approving a shadow must see the beta
+    // framing they are approving.
+    //
+    // The badge deliberately lives in the identity block rather than in the `!preview` meta
+    // line beside the category badge — placing it there would have silently reversed this
+    // decision via a gate that exists for an unrelated reason (that line's date is wrong in
+    // preview). This test is what would catch that move.
+    const detail = base({ isBeta: true, betaMessage: 'Reviewer should see this.' });
+
+    // POSITIVE CONTROL: the live arm renders both.
+    const live = await renderScoped(<AppListingDetailBody detail={detail} canOpenPage />);
+    expect(live.container.querySelectorAll('[data-testid="apps-listing-beta-badge"]')).toHaveLength(
+      1
+    );
+    expect(
+      live.container.querySelectorAll('[data-testid="apps-listing-beta-notice"]')
+    ).toHaveLength(1);
+
+    // …and the preview arm keeps BOTH. `canOpenPage` stays true so `preview` is the only
+    // variable, exactly as the omission cases above are constructed.
+    const prev = await renderScoped(<AppListingDetailBody detail={detail} canOpenPage preview />);
+    await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-beta-badge"]').length,
+      'the beta badge is a documented KEEP in the preview ledger'
+    ).toBe(1);
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-beta-notice"]').length,
+      'the beta notice is a documented KEEP in the preview ledger'
+    ).toBe(1);
+    expect(prev.container.textContent).toContain('Reviewer should see this.');
+
+    // NEGATIVE CONTROL on the SAME preview arm: the preview really is suppressing things,
+    // so "it kept beta" is a statement about beta and not about a `preview` flag that did
+    // nothing. The action card is one of the ledger's omissions.
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-action-card"]'),
+      'preview must still be suppressing the surfaces it is documented to omit'
+    ).toHaveLength(0);
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge in the detail header. Copy decisions are pinned in the
+ * blocking unit tier (`visibilityBadgeFor`); this pins the render. Absences via
+ * `querySelectorAll` (the negative matcher is inert — civitai/civitai#4197), after a
+ * positive control.
+ */
+describe('AppListingDetailBody — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience })} />
+    );
+    const badge = within.getByTestId('apps-listing-detail-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience: null })} />
+    );
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-detail-visibility"]')
+    ).toHaveLength(0);
   });
 });

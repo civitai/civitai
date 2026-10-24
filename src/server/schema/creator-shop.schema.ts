@@ -6,6 +6,14 @@ import {
 } from '~/shared/constants/cosmetic-shop.constants';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { STICKER_MAX_ASPECT_RATIO, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import {
+  CREATOR_BOX_MAX_CONTENTS,
+  CREATOR_BOX_MAX_TIERS,
+  CREATOR_BOX_MIN_TIERS,
+  CREATOR_BOX_STEEPNESS,
+  type CreatorBoxSteepness,
+} from '@civitai/shared/creator-box-rules';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 /**
  * Creator Shop input contracts. See docs/features/creator-shop.md.
@@ -95,6 +103,10 @@ export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS)
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 /** Review-queue filter value for packs, which have no CosmeticType of their own. */
 export const PACK_FILTER_VALUE = 'Pack' as const;
+/** Review-queue filter value for a creator's mystery pack: a box listing whose box has a seller. */
+export const MYSTERY_PACK_FILTER_VALUE = 'MysteryPack' as const;
+/** Above this value the review pane shows a content's shelf sales: a real price, not just a claimed one. */
+export const SHELF_SALES_VALUE_THRESHOLD = 5_000;
 /** A shop type filter: a CosmeticType, or the pack pseudo-type. */
 export type ShopFilterType = CosmeticType | typeof PACK_FILTER_VALUE;
 export const shopFilterTypeSchema = z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)]);
@@ -114,6 +126,8 @@ const SUBMISSION_FEE_DEFAULT = 10000;
  * was submitted.
  */
 const PACK_SUBMISSION_FEE_DEFAULT = 1000;
+/** A mystery pack is built from the creator's own reviewed items, like a pack. */
+const MYSTERY_PACK_SUBMISSION_FEE_DEFAULT = 1000;
 
 /** What a creator pays to submit this cosmetic type for review. */
 export const submissionFeeDefault = (type: CosmeticType): number => {
@@ -129,12 +143,13 @@ export const submissionFeeDefault = (type: CosmeticType): number => {
 };
 
 /**
- * Operator-tunable submission fees. A pack carries one figure rather than a
- * per-type map because it has no CosmeticType of its own.
+ * Operator-tunable submission fees. A pack and a mystery pack carry one figure
+ * each rather than a per-type map because neither has a CosmeticType of its own.
  */
 export type CreatorShopFees = {
   submission: Record<CreatorCosmeticType, number>;
   pack: number;
+  mysteryPack: number;
 };
 
 export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
@@ -142,6 +157,7 @@ export const DEFAULT_CREATOR_SHOP_FEES: CreatorShopFees = {
     creatorCosmeticTypes.map((type) => [type, submissionFeeDefault(type)])
   ) as Record<CreatorCosmeticType, number>,
   pack: PACK_SUBMISSION_FEE_DEFAULT,
+  mysteryPack: MYSTERY_PACK_SUBMISSION_FEE_DEFAULT,
 };
 
 // A fee is charged before anything is reviewed, so a mistyped row must not reach
@@ -159,7 +175,7 @@ const usableFee = (value: unknown, fallback: number): number =>
     : fallback;
 
 export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
-  const row = (value ?? {}) as { submission?: unknown; pack?: unknown };
+  const row = (value ?? {}) as { submission?: unknown; pack?: unknown; mysteryPack?: unknown };
   const submission = (row.submission ?? {}) as Record<string, unknown>;
   return {
     submission: Object.fromEntries(
@@ -172,6 +188,7 @@ export const normalizeCreatorShopFees = (value: unknown): CreatorShopFees => {
       ])
     ) as Record<CreatorCosmeticType, number>,
     pack: usableFee(row.pack, DEFAULT_CREATOR_SHOP_FEES.pack),
+    mysteryPack: usableFee(row.mysteryPack, DEFAULT_CREATOR_SHOP_FEES.mysteryPack),
   };
 };
 
@@ -210,8 +227,14 @@ export const isConsumableCosmeticType = (type: CosmeticType): boolean =>
  * so an unmigrated read path fails loudly instead of silently rendering (and
  * granting) one cosmetic.
  */
-export const isPackShopItem = (item: { cosmeticId: number | null }): boolean =>
-  item.cosmeticId == null;
+export const isPackShopItem = (item: {
+  cosmeticId: number | null;
+  /** A mystery box listing has no cosmetic either. Required, so a row selected without it fails to compile. */
+  itemDefinitionId: number | null;
+}): boolean => item.cosmeticId == null && item.itemDefinitionId == null;
+
+/** `isPackShopItem` as a `CosmeticShopItem` where clause. */
+export const PACK_SHOP_ITEM_WHERE = { cosmeticId: null, itemDefinitionId: null } as const;
 
 export type PackMemberPricing = {
   cosmeticId: number;
@@ -275,6 +298,39 @@ export const computePackOwnershipDiscount = ({
 };
 
 /**
+ * A member the buyer created, listed by someone else.
+ *
+ * The buyer is neither charged for it, paid for it, nor granted it — charging
+ * and then paying them back through the bank would cost them the platform's cut
+ * to buy their own work. The charge and the grant derive from here; while
+ * the grant read its own rule, a subtracted member was still granted, and a pack
+ * of the buyer's own uncapped stickers minted free top-ups indefinitely.
+ *
+ * `computePackPayouts` states the rule a third time and is deliberately NOT
+ * routed through this: its filter runs where `buyerId` may be absent, and `0`
+ * is a real account id there, so the two disagree on a falsy buyer. Widen one
+ * and you must widen the other by hand.
+ */
+export const isSelfAuthoredPackMember = (
+  member: { createdById: number | null },
+  buyerId: number | undefined,
+  packCreatorId: number | null
+) => !!buyerId && member.createdById === buyerId && member.createdById !== packCreatorId;
+
+/**
+ * How many of the members a pack was built with it can no longer deliver; only
+ * zero is purchasable. The purchase refuses on it and the detail view disables
+ * the button on it, so the two cannot disagree about a short pack.
+ *
+ * Measured against `meta.packMemberCount`, never the join rows: deleting a member
+ * Cosmetic cascades its row away, so a live count shrinks with the pack and
+ * agrees with itself. A pack with no recorded count cannot be shown whole, so it
+ * counts as short rather than falling back to the rows.
+ */
+export const packMembersMissing = (packMemberCount: number | undefined, deliverableCount: number) =>
+  packMemberCount == null ? 1 : Math.abs(packMemberCount - deliverableCount);
+
+/**
  * What a specific viewer owes for a pack.
  *
  * Shared deliberately: the detail view quotes this and the purchase charges it.
@@ -300,12 +356,9 @@ export const computePackAmountDue = ({
     members,
     ownedCosmeticIds,
   });
-  // A member the buyer created is theirs already; charging for it and paying
-  // them back through the bank would cost them the platform's cut to buy their
-  // own work. They are excluded from the payout for the same reason.
   const selfAuthored = buyerId
     ? members
-        .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
+        .filter((m) => isSelfAuthoredPackMember(m, buyerId, packCreatorId))
         .reduce((sum, m) => sum + m.listPrice, 0)
     : 0;
 
@@ -366,7 +419,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
-// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:9".
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:8".
 export const aspectRatioLabel = (width: number, height: number): string => {
   const g = gcd(width, height) || 1;
   return `${width / g}:${height / g}`;
@@ -433,12 +486,15 @@ export const cosmeticImageMetaSchema = z.object({
 // Per-side fit adjustment for avatar decorations, stored on the cosmetic's
 // `data.offsets` as pixels. Negative extends the frame outside the avatar —
 // effectively scaling it up (see decorationFrameStyle).
-export const DECORATION_OFFSET_LIMIT = 5;
+export const CREATOR_OFFSET_LIMIT = 20;
+export const MODERATOR_OFFSET_LIMIT = 50;
+// The schema takes the moderator ceiling because moderators call the same procedures;
+// the creator range is enforced in the service (`assertCreatorOffsets`).
 const cosmeticOffsetSideSchema = z
   .number()
   .int()
-  .min(-DECORATION_OFFSET_LIMIT)
-  .max(DECORATION_OFFSET_LIMIT);
+  .min(-MODERATOR_OFFSET_LIMIT)
+  .max(MODERATOR_OFFSET_LIMIT);
 export type CosmeticOffsets = z.infer<typeof cosmeticOffsetsSchema>;
 export const cosmeticOffsetsSchema = z.object({
   top: cosmeticOffsetSideSchema,
@@ -681,7 +737,8 @@ export const getCommunityCosmeticsSchema = z.object({
   // Capped quantity and/or a hard end date.
   limited: z.boolean().optional(),
   acceptsBlueBuzz: z.boolean().optional(),
-  // Matched against the listing title and the cosmetic's own name. Empty after
+  // Matched against the listing title and description, the cosmetic's own name,
+  // and a sticker's slug. Empty after
   // trimming is dropped so a cleared search box doesn't filter on ''.
   query: z
     .string()
@@ -699,6 +756,11 @@ export const reviewCreatorShopItemSchema = z
     // revert = pull a published item back into the review queue.
     action: z.enum(['approve', 'reject', 'request-changes', 'revert']),
     rejectionReason: z.string().max(1000).optional(),
+    // A mystery pack's verdict names the edit (BoxRevision) the moderator reviewed.
+    boxRevisionId: z.number().int().positive().optional(),
+    // `shopItemReviewVersion` of the item as the moderator saw it; refused if it has moved since.
+    // shortcut: optional so API callers keep working; make it required once none omit it.
+    reviewedVersion: z.string().nullish(),
   })
   .refine((v) => v.action === 'approve' || !!v.rejectionReason?.length, {
     message: 'A note is required when rejecting, requesting changes, or reverting',
@@ -709,6 +771,14 @@ export type TakedownCosmeticShopItemInput = z.infer<typeof takedownCosmeticShopI
 export const takedownCosmeticShopItemSchema = z.object({
   id: z.number(),
   reason: z.string().min(1).max(1000),
+});
+
+export type RefundShopPurchasesInput = z.infer<typeof refundShopPurchasesSchema>;
+export const refundShopPurchasesSchema = z.object({
+  buzzTransactionIds: z.array(z.string().min(1)).min(1).max(50),
+  clawback: z.boolean(),
+  reason: z.string().min(1).max(1000),
+  dryRun: z.boolean().default(true),
 });
 
 export const reviewQueueSortValues = ['oldest', 'newest'] as const;
@@ -729,8 +799,16 @@ export const getReviewQueueSchema = z.object({
   userId: z.number().optional(),
   // 'Pack' is not a CosmeticType — a pack has no cosmetic and therefore no type.
   // It rides in this filter because to a moderator it is one more kind of thing
-  // in the same queue.
-  cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal(PACK_FILTER_VALUE)])).optional(),
+  // in the same queue. So does a creator's mystery pack.
+  cosmeticTypes: z
+    .array(
+      z.union([
+        z.enum(CosmeticType),
+        z.literal(PACK_FILTER_VALUE),
+        z.literal(MYSTERY_PACK_FILTER_VALUE),
+      ])
+    )
+    .optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;
@@ -744,12 +822,13 @@ export const creatorShopSectionKeys = [
   'featured',
   'cosmetics',
   'resold',
+  'services',
   'merch',
   'models',
 ] as const;
 export type CreatorShopSectionKey = (typeof creatorShopSectionKeys)[number];
 export const creatorShopSectionSchema = z.object({
-  key: z.enum(['featured', 'cosmetics', 'resold', 'merch', 'models']),
+  key: z.enum(creatorShopSectionKeys),
   visible: z.boolean(),
 });
 
@@ -777,3 +856,59 @@ export const getSimilarCosmeticsSchema = z.object({
   limit: z.number().min(1).max(COSMETIC_SIMILARITY_LIMIT).optional(),
 });
 export type GetSimilarCosmeticsInput = z.infer<typeof getSimilarCosmeticsSchema>;
+
+/**
+ * The one gate for mystery pack procedures; don't check a subset. Packs need `creatorShop` and
+ * `cosmeticPacks`, and the box they make needs `mysteryBox`.
+ */
+export const creatorMysteryPacksEnabled = (
+  features: Pick<
+    FeatureAccess,
+    'creatorShop' | 'cosmeticPacks' | 'mysteryBox' | 'creatorMysteryPacks'
+  >
+) =>
+  features.creatorShop &&
+  features.cosmeticPacks &&
+  features.mysteryBox &&
+  features.creatorMysteryPacks;
+
+/** A mystery pack's contents: cosmetic ids by tier, commonest first. */
+const mysteryPackTiersSchema = z
+  .array(z.array(z.number().int().positive()).min(1).max(CREATOR_BOX_MAX_CONTENTS))
+  .min(CREATOR_BOX_MIN_TIERS)
+  .max(CREATOR_BOX_MAX_TIERS)
+  // Bounded here, before the service loads each item.
+  .refine((tiers) => tiers.flat().length <= CREATOR_BOX_MAX_CONTENTS, {
+    message: `A mystery pack holds at most ${CREATOR_BOX_MAX_CONTENTS} items`,
+  })
+  .refine((tiers) => new Set(tiers.flat()).size === tiers.flat().length, {
+    message: 'A mystery pack cannot contain the same item twice',
+  });
+
+const mysteryPackProposalSchema = z.object({
+  steepness: z.enum(Object.keys(CREATOR_BOX_STEEPNESS) as [CreatorBoxSteepness]),
+  tiers: mysteryPackTiersSchema,
+  price: z.number().int().positive(),
+});
+
+export type SubmitMysteryPackInput = z.infer<typeof submitMysteryPackSchema>;
+export const submitMysteryPackSchema = mysteryPackProposalSchema.extend({
+  name: z.string().min(1).max(255),
+  description: z.string().max(1000).nullish(),
+  imageUrl: z.string().optional(),
+  rightsAffirmed: rightsAffirmedSchema.optional(),
+  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
+  quotedFee: quotedFeeSchema,
+});
+
+export type ReviseMysteryPackInput = z.infer<typeof reviseMysteryPackSchema>;
+export const reviseMysteryPackSchema = mysteryPackProposalSchema.extend({ boxId: z.number() });
+
+export type WithdrawMysteryPackRevisionInput = z.infer<typeof withdrawMysteryPackRevisionSchema>;
+export const withdrawMysteryPackRevisionSchema = z.object({ boxId: z.number() });
+
+export type LowerMysteryPackPriceInput = z.infer<typeof lowerMysteryPackPriceSchema>;
+export const lowerMysteryPackPriceSchema = z.object({
+  boxId: z.number(),
+  price: z.number().int().positive(),
+});

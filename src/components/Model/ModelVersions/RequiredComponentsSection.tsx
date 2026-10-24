@@ -36,6 +36,11 @@ import { componentTypeConfig } from '~/utils/file-display-icons';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  paidAccessBuzzBackground,
+  paidAccessBuzzLabel,
+} from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -45,6 +50,8 @@ interface RequiredComponentsSectionProps {
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
   downloadPrice?: number;
+  /** The paid-access terms accept Blue Buzz — the purchase button shows both colours. */
+  acceptsBlueBuzz?: boolean;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -62,6 +69,7 @@ export function RequiredComponentsSection({
   userPreferences,
   canDownload,
   downloadPrice,
+  acceptsBlueBuzz,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -70,6 +78,11 @@ export function RequiredComponentsSection({
 }: RequiredComponentsSectionProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const { isGreen } = useFeatureFlags();
+  // The purchase button's colour is the currency it takes: the domain's own Buzz, split with Blue
+  // when the terms accept it — never a flat yellow, which read as "paid Buzz only".
+  const buzzBackground = paidAccessBuzzBackground({ isGreen, acceptsBlueBuzz });
+  const buzzLabel = paidAccessBuzzLabel({ isGreen, acceptsBlueBuzz });
 
   // Get only required component types that have files (now data-driven)
   const requiredComponents = useMemo(() => {
@@ -326,8 +339,8 @@ export function RequiredComponentsSection({
               fullWidth
               pos="relative"
               className="overflow-visible"
-              variant={isPrimary ? 'filled' : 'light'}
-              color={needsPurchase ? 'yellow' : 'blue'}
+              variant={needsPurchase || isPrimary ? 'filled' : 'light'}
+              color="blue"
               size={isPrimary ? 'md' : 'sm'}
               leftSection={
                 needsPurchase ? (
@@ -340,7 +353,13 @@ export function RequiredComponentsSection({
               loading={downloading}
               disabled={archived || isLoadingAccess || downloading}
               style={
-                isPrimary || needsPurchase
+                needsPurchase
+                  ? {
+                      background: buzzBackground,
+                      color: 'white',
+                      textShadow: '0 1px 1px rgba(0, 0, 0, 0.35)',
+                    }
+                  : isPrimary
                   ? undefined
                   : {
                       backgroundColor: 'rgba(34, 139, 230, 0.15)',
@@ -351,7 +370,7 @@ export function RequiredComponentsSection({
               <Group gap={8}>
                 <span>
                   {needsPurchase
-                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })})`
+                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })} ${buzzLabel})`
                     : 'Download All Components'}
                 </span>
                 {!needsPurchase && (

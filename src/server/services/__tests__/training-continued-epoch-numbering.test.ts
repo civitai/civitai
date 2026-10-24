@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Trivial stubs so training.service imports in node. The @aws-sdk stub needs `default` for CJS
 // interop; without it the file collects zero tests instead of failing
 // (training-status.sysredis-soft.test.ts).
-vi.mock('@civitai/client', () => ({ handleError: vi.fn() }));
+vi.mock('@civitai/orchestration-client', () => ({ handleError: vi.fn() }));
 vi.mock('@aws-sdk/lib-storage', () => {
   const Upload = class {};
   return { Upload, default: { Upload } };

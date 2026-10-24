@@ -1,7 +1,23 @@
 .inner {
+  /* 🔴 THIS RULE DELIBERATELY OUTRANKS THE SHELL'S DRAWER INSET, SO IT HAS TO
+     RE-PAY IT ITSELF. `globals.css` shrinks `.mantine-Drawer-inner` from the top
+     by `--safe-area-inset-top` for every drawer, but it does that inside
+     `@layer mantine` precisely so a component that has reasoned about its own
+     geometry — this one — keeps control. Winning that cascade means inheriting
+     the responsibility: without the inset here, this drawer would sit at a flat
+     60px from the layout viewport top while `#__next`'s padding has moved the
+     header down to [inset, inset + 60], so the drawer would overlap the bottom
+     of the header by exactly the inset.
+
+     The height follows for the same reason — `top` and an explicit `height`
+     together decide where the bottom lands, so growing one without the other
+     pushes the drawer's bottom off-screen.
+
+     Only >=xs, which is where this rule already only applied: below it the
+     drawer is a full-height bottom sheet and the shell's rule is what governs. */
   @media (min-width: theme('screens.xs')) {
-    top: var(--header-height);
-    height: calc(100% - var(--header-height));
+    top: calc(var(--header-height) + var(--safe-area-inset-top));
+    height: calc(100% - var(--header-height) - var(--safe-area-inset-top));
   }
 }
 

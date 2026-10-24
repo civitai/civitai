@@ -32,6 +32,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -40,6 +41,10 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import {
+  ImageMediaHat,
+  imageMediaHatClearLeft,
+} from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -55,6 +60,8 @@ import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -97,6 +104,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
   return (
     <TwCosmeticWrapper
@@ -109,10 +121,16 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.sponsored && (
+            <div className="relative z-10 flex px-2 pt-2">
+              <SponsoredBadge kind="post" />
+            </div>
+          )}
           {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">
@@ -180,7 +198,8 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      px="xs"
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -279,7 +298,11 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       {(safe) => (
         <>
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(image.eventDecoration)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -316,6 +339,8 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -330,6 +355,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -400,8 +426,13 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(image.eventDecoration)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -441,6 +472,8 @@ function PostCarouselSlide({
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -453,6 +486,7 @@ function PostCarouselSlide({
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -622,7 +656,15 @@ export function LazyPostImagesCarousel({
   const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
       postId != null
-        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        ? {
+            postId,
+            imageCount: total,
+            filters,
+            browsingLevel,
+            hiddenImageIds,
+            hiddenTags,
+            hiddenUsers,
+          }
         : undefined,
     [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );

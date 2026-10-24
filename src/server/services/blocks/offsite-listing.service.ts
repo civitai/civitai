@@ -5,6 +5,13 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import {
+  bustAppListingCatalogCache,
+  listingQueueFacts,
+  NO_LISTING_QUEUE_FACTS,
+} from '~/server/services/blocks/app-listing.service';
 import {
   listingAssetTooLargeReason,
   MAX_LISTING_ASSET_SIZE_BYTES,
@@ -22,6 +29,20 @@ import {
   type ListingSourceRepoRead,
 } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
+  BETA_NOT_SET,
+  assertBetaWritable,
+  readListingBeta,
+  type ListingBetaRead,
+} from '~/server/services/blocks/app-listing-beta.service';
+import {
+  FORKABLE_OFFSITE_MESSAGE,
+  FORKABLE_ON_REVISION_MESSAGE,
+  assertForkableWritable,
+  readListingForkable,
+  writeListingForkable,
+} from '~/server/services/blocks/app-fork.service';
+import {
+  BETA_MESSAGE_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
   OFFSITE_REJECTION_REASON_MIN,
@@ -33,6 +54,7 @@ import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabiliti
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
+  consentableScopes,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
@@ -43,6 +65,20 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import {
+  applyListingMediaSplitDecision,
+  applyRevisionRedSlots,
+  cloneListingRedSlots,
+  readListingRedMediaManyForRender,
+  readListingRedSlotAssets,
+  readListingRedSlots,
+  type ListingRedMediaImages,
+} from '~/server/services/blocks/listing-media-split.service';
+import {
+  ratingFloorAssets,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -52,8 +88,10 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
+  type ListingAssetScan,
   type ListingProblemKind,
 } from '~/server/services/blocks/listing-problems';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
@@ -142,6 +180,24 @@ function slugTakenError(slug: string): TRPCError {
  */
 export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
 
+/**
+ * The author-written text a submission or patch carries. Tagline and description edits on a
+ * live listing apply in place without review, so this is scanned on every path that writes them.
+ */
+function listingAuthorText(
+  fields: Pick<UpdateListingPatch, 'name' | 'tagline' | 'description' | 'betaMessage'> & {
+    scopeJustifications?: Record<string, string> | null;
+  }
+) {
+  return [
+    fields.name,
+    fields.tagline,
+    fields.description,
+    fields.betaMessage,
+    ...Object.values(fields.scopeJustifications ?? {}),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // submitExternalListing (author).
 // ---------------------------------------------------------------------------
@@ -199,6 +255,11 @@ export async function submitExternalListing(opts: {
 }): Promise<SubmitExternalListingResult> {
   const { input, userId, isModerator = false } = opts;
 
+  await throwOnBlockedUserContent([input.slug, input.changelog, ...listingAuthorText(input)], {
+    isModerator,
+    surface: 'offsite-listing',
+  });
+
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
   // is exported + unit-tested directly, not only reached through the schema.
@@ -253,7 +314,7 @@ export async function submitExternalListing(opts: {
 
   // Load + gate the caller's OAuth client (exists / owned / not-app-block). The
   // listing's requested scopes are AUTO-DERIVED from the client's CURRENT
-  // `allowedScopes` — the client already declares its scopes at creation, so a
+  // consentable scopes — the client already declares its scopes at creation, so a
   // form-supplied `input.requestedScopes` mask is IGNORED (server-authoritative
   // snapshot). This snapshots the reviewed set: a later widening of the client's
   // allowedScopes does NOT silently expand a live/approved listing (a re-submit /
@@ -382,7 +443,8 @@ export async function submitExternalListing(opts: {
  * Load an OAuth client and assert it is eligible to back an external listing: it must
  * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
  * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
- * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * `userId` (IDOR). Returns the client's consentable scopes as its
+ * `allowedScopes` ceiling. An external listing
  * does NOT require the client to be `isVerified` (decision Q4). All failures are
  * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
  *
@@ -420,7 +482,8 @@ export async function loadConnectClientForListing(
       message: 'you can only list an OAuth client you own',
     });
   }
-  return { id: client.id, allowedScopes: client.allowedScopes };
+  // A client_credentials-only bit is never something a user is asked to consent to.
+  return { id: client.id, allowedScopes: consentableScopes(client.allowedScopes) };
 }
 
 /**
@@ -454,7 +517,7 @@ function assertConnectScopesValid(opts: {
  * For an EDIT patch that touches the OAuth-connect scope disclosure (carries
  * `requestedScopes` and/or `scopeJustifications`), resolve the listing's connect
  * client and return an `effectivePatch` whose `requestedScopes` is DERIVED from the
- * client's CURRENT `allowedScopes` (server-authoritative — a form-supplied mask is
+ * client's CURRENT consentable scopes (server-authoritative — a form-supplied mask is
  * ignored) plus that ceiling. A non-scope patch is passed through unchanged.
  *
  * Re-asserts the caller still OWNS the client (mirrors `loadConnectClientForListing`):
@@ -467,7 +530,7 @@ function assertConnectScopesValid(opts: {
  * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
  * may edit a listing that links a client they don't own (mirroring the mod-only
  * client search on submit). The existence check + scope-subset / justification
- * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * validation (server-authoritative snapshot from the client's CURRENT consentable scopes)
  * are UNCHANGED. A non-mod is still refused a foreign client.
  */
 export async function deriveScopePatch(opts: {
@@ -502,9 +565,9 @@ export async function deriveScopePatch(opts: {
       message: 'you can only list an OAuth client you own',
     });
   }
-  const connectAllowedScopes = client.allowedScopes;
+  const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
-  // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // consentable scopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
   // approved edit re-enters mod review via a shadow revision.
   const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
@@ -785,6 +848,72 @@ async function closeTerminalListing(
 const MATERIAL_PATCH_FIELDS = MATERIAL_LISTING_PATCH_FIELDS;
 
 /**
+ * The patch keys that carry the AUTHOR'S BETA DECLARATION. ONE definition, read by
+ * {@link splitBetaPatch} and by the tests, so "which keys are beta" cannot be spelled twice.
+ */
+export const BETA_PATCH_FIELDS = ['isBeta', 'betaMessage'] as const;
+
+/**
+ * Split a patch into its BETA half and everything else. PURE.
+ *
+ * 🔴 THIS EXISTS BECAUSE BETA IS NEVER STAGED ON A SHADOW REVISION, which is the single
+ * design decision this feature turns on. Beta is TRIVIAL — an edit applies in place with no
+ * moderator re-review — so a beta write always targets the LIVE listing, even when the rest
+ * of the same patch is being staged on a shadow for review.
+ *
+ * 🔴 THE ALTERNATIVE (letting beta ride the shadow like `sourceRepoUrl` does) IS WRONG IN
+ * THREE SEPARATE WAYS, and it is worth naming all three because the shadow route is the
+ * obvious one:
+ *   1. IT REVERTS THE AUTHOR. A shadow can sit in the review queue for days while the
+ *      author keeps editing the LIVE listing — beta is trivial, so those edits apply
+ *      immediately. `applyApprovedRevision` copies the shadow's scalars UNCONDITIONALLY, so
+ *      approving a week-old revision would restore the beta value as it was when the shadow
+ *      was cloned and silently undo every beta edit since.
+ *   2. IT WOULD BREAK THE ON-SITE NO-OP CLAIM. `applyApprovedRevision`'s on-site branch is
+ *      ASSETS-ONLY, and `revisionApplyScope('onsite') === 'assets-only'` is precisely what
+ *      licenses the review panel's "approving changes nothing" statement. Copying a scalar
+ *      there would make that statement false for every on-site media revision — the exact
+ *      defect `OFFSITE_UNCOMPARED_APPLY_FIELDS` exists to prevent — and the only fix would
+ *      be to withdraw the claim, losing a real moderator signal for a cosmetic label.
+ *   3. IT WOULD PUT A TRIVIAL FIELD IN A REVIEW QUEUE. The product decision is that beta
+ *      needs no review; staging it re-introduces one through the back door, because an
+ *      author whose patch ALSO touches a material field would find their beta toggle
+ *      pending a moderator.
+ *
+ * So: the beta half goes to the parent, the rest routes as it always has, and NEITHER beta
+ * column appears in `applyApprovedRevision`'s copy or in `OFFSITE_UNCOMPARED_APPLY_FIELDS`
+ * (that list names what the apply copies WITHOUT comparing — the apply copies nothing here).
+ *
+ * 🔴 A SHADOW'S OWN BETA COLUMNS ARE THEREFORE READ BY NOTHING, and that is the intended end
+ * state rather than an oversight. Nothing writes them (this split routes every beta write to
+ * the parent), the apply does not copy them, and the moderator review preview reads beta from
+ * the PARENT for a shadow. An earlier version DID clone them onto the shadow so that preview
+ * could render them, which bought nothing and cost an ordering constraint: the parent's beta
+ * write had to land before the shadow was minted, which hoisted a WRITE above the patch
+ * validation and made a REJECTED patch apply its beta half anyway. If you find yourself
+ * reading a shadow's `isBeta`, you almost certainly want its parent's.
+ */
+export function splitBetaPatch(patch: UpdateListingPatch): {
+  betaPatch: UpdateListingPatch;
+  restPatch: UpdateListingPatch;
+} {
+  const betaPatch: UpdateListingPatch = {};
+  const restPatch: UpdateListingPatch = { ...patch };
+  for (const field of BETA_PATCH_FIELDS) {
+    if (patch[field] === undefined) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (betaPatch as any)[field] = patch[field];
+    delete restPatch[field];
+  }
+  return { betaPatch, restPatch };
+}
+
+/** True when a split half carries at least one key (⇒ there is a write to make). */
+export function patchHasAnyField(patch: UpdateListingPatch): boolean {
+  return Object.keys(patch).length > 0;
+}
+
+/**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
  * Re-runs the shared URL / category / contentRating validators (this fn is
  * exported + unit-tested directly, so it can't trust the schema boundary) and
@@ -818,9 +947,105 @@ export function buildListingPatchData(
      * can act on beats a 500 they cannot).
      */
     sourceRepoAvailable: boolean;
+    /**
+     * Whether the MANUAL-APPLY `app_listings.is_beta` / `beta_message` columns exist, from
+     * the caller's guarded read (`EditableListing.betaAvailable`).
+     *
+     * 🔴 REQUIRED FOR THE SAME REASON `sourceRepoAvailable` IS, and stated separately
+     * rather than folded into one "migrations applied" flag: the two migrations land
+     * independently, per environment, by hand, so an environment can have one and not the
+     * other. A shared flag would make the source-repo column's presence decide whether the
+     * beta columns may be written, which is a guess dressed as a check.
+     */
+    betaAvailable: boolean;
+    /**
+     * The listing's CURRENT beta flag, from the caller's guarded read
+     * (`EditableListing.isBeta`).
+     *
+     * 🔴 REQUIRED, for the same reason `betaAvailable` is: the note/flag rule below needs
+     * the EFFECTIVE flag, and a patch that touches only `betaMessage` does not carry it. A
+     * defaulted parameter would silently read every such patch as "beta is off" (or, worse,
+     * as on), and it is exactly the patch shape a stale form produces. At runtime an absent
+     * value reads as `false` — fail CLOSED, which refuses rather than storing a note the
+     * store can never render.
+     */
+    currentIsBeta: boolean;
   }
 ): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
+  // Author-declared beta status + note. Gated on the manual-apply columns FIRST, before the
+  // values are looked at, for the same reason the source-repo gate is: an explicit `null`
+  // is as unwritable as a value while the column is missing (Prisma raises the same P2022
+  // for `{betaMessage: null}` as for a string), so BOTH instructions have to be refused,
+  // and refused with a message about the environment rather than about the author's input.
+  if (patch.isBeta !== undefined || patch.betaMessage !== undefined) {
+    assertBetaWritable(opts?.betaAvailable === true);
+  }
+  if (patch.isBeta !== undefined) data.isBeta = patch.isBeta;
+  if (patch.betaMessage !== undefined) {
+    // 🔴 RE-BOUNDED HERE, not only in zod. This function is exported and unit-tested
+    // directly, so it cannot trust the schema boundary — the same defence-in-depth every
+    // other validated field in this builder gets. `BETA_MESSAGE_MAX` is the one shared
+    // number; a second literal is how the two bounds drift apart.
+    if (patch.betaMessage !== null && patch.betaMessage.length > BETA_MESSAGE_MAX) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `betaMessage must be ≤ ${BETA_MESSAGE_MAX} characters`,
+      });
+    }
+    // An empty / whitespace-only note is stored as NULL rather than as `''`. They render
+    // identically (nothing), so keeping both would give the notice two spellings for one
+    // state and make every "is there a note?" test ambiguous.
+    const trimmed = patch.betaMessage === null ? null : patch.betaMessage.trim();
+    data.betaMessage = trimmed !== null && trimmed.length > 0 ? trimmed : null;
+  }
+  // 🔴 THE NOTE EXISTS ONLY WHILE THE FLAG DOES, AND THIS ENFORCES THE WHOLE RULE — not
+  // just the OFF transition, which is all an earlier version checked.
+  //
+  // The defect the OFF half closes: nothing used to write `beta_message = NULL` when the
+  // flag went off, so a note the author DELETED came back. Set beta + a note; untick beta
+  // (the patch is `{isBeta:false}` — the note box is not in the diff, so the column keeps
+  // its string while every projection hides it); re-tick weeks later (the prefill nulls the
+  // note, so the textarea is empty and the diff emits `{isBeta:true}` alone) — and the
+  // original sentence is public again, invisible in the author's own form.
+  //
+  // 🔴 THE OFF TRANSITION WAS NOT THE ONLY WAY IN, which is why this reads the EFFECTIVE
+  // flag rather than the patch's. A patch that names `betaMessage` and NOT `isBeta`, on a
+  // listing whose flag is already off, stored a live note behind an off flag — re-creating
+  // the exact precondition above. That is reachable from a stale form or a second tab (the
+  // baseline says beta is on, the author retypes the note, `buildScalarPatch` emits
+  // `{betaMessage}` alone because the checkbox matches its stale baseline) and directly
+  // through the tRPC mutation, since the patch schema does not couple the two keys.
+  const effectiveIsBeta = patch.isBeta ?? opts.currentIsBeta;
+  if (patch.betaMessage !== undefined || patch.isBeta !== undefined) {
+    if (!effectiveIsBeta) {
+      // 🔴 A NON-EMPTY NOTE WITH THE FLAG OFF IS REFUSED, NOT SILENTLY DROPPED. The author
+      // typed that sentence; discarding it would show them a saved form with their text
+      // gone and no explanation — the same reasoning that makes the manual-apply guard an
+      // error rather than an omission. A patch that merely turns beta OFF (or clears the
+      // note) has nothing to refuse, so it falls through to the clear below.
+      const typedANote =
+        patch.betaMessage !== undefined &&
+        patch.betaMessage !== null &&
+        patch.betaMessage.trim().length > 0;
+      // 🔴 ONLY WHEN THE PATCH IS NOT ITSELF TURNING BETA OFF. `{isBeta:false,
+      // betaMessage:'x'}` is coherent — the author is switching beta off and the note is moot
+      // — so it CLEARS below rather than erroring; refusing it would reject a save whose
+      // intent is unambiguous. The refusal is for the genuinely contradictory shape: a note
+      // set on a listing that is not in beta and that this patch does not turn on, which is
+      // what a stale form emits.
+      if (typedANote && patch.isBeta === undefined) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            'a beta message can only be set while the app is marked as in beta — tick "This app is in beta" and save again',
+        });
+      }
+      // Everything left is "turn it off" / "clear it": the note goes, LAST, so it overrides
+      // an explicit empty-string `betaMessage` in the same patch.
+      data.betaMessage = null;
+    }
+  }
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
@@ -1027,6 +1252,19 @@ type EditableListing = {
   sourceRepoUrl: string | null;
   /** See {@link ListingSourceRepoRead.available} — `false` ⇒ never write the column. */
   sourceRepoAvailable: boolean;
+  /**
+   * The author's beta declaration, resolved SEPARATELY from the select below.
+   *
+   * 🔴 DELIBERATELY NOT IN `editableListingSelect`, for the same reason `sourceRepoUrl` is
+   * not: `is_beta` / `beta_message` are MANUAL-APPLY columns, so naming them in that select
+   * would make every author edit and every `beginListingRevision` throw P2022 until a human
+   * runs the migration — breaking two pre-existing flows for an additive field.
+   * `loadOwnedEditableListing` fills these via the guarded `readListingBeta` instead.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
+  /** See {@link ListingBetaRead.available} — `false` ⇒ never write the columns. */
+  betaAvailable: boolean;
 };
 
 const editableListingSelect = {
@@ -1123,7 +1361,10 @@ async function loadOwnedEditableListing(
   const listing = (await dbRead.appListing.findUnique({
     where: { id: listingId },
     select: editableListingSelect,
-  })) as Omit<EditableListing, 'sourceRepoUrl' | 'sourceRepoAvailable'> | null;
+  })) as Omit<
+    EditableListing,
+    'sourceRepoUrl' | 'sourceRepoAvailable' | 'isBeta' | 'betaMessage' | 'betaAvailable'
+  > | null;
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
@@ -1141,12 +1382,21 @@ async function loadOwnedEditableListing(
   // `sourceRepoUrl` field note on `EditableListing`. Costs one extra round trip on an
   // author edit path (a handful of calls per editing session, not a hot read); the
   // alternative is a select that 500s the whole edit flow until a human runs SQL.
-  const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
+  // Both guarded reads issue TOGETHER, so the author edit path costs ONE extra round trip
+  // for the two manual-apply migrations rather than one each. Each degrades independently —
+  // an environment can genuinely have one migration and not the other.
+  const [sourceRepo, beta]: [ListingSourceRepoRead, ListingBetaRead] = await Promise.all([
+    readListingSourceRepoUrl(listingId, dbRead),
+    readListingBeta(listingId, dbRead),
+  ]);
   return {
     ...listing,
     callerRole,
     sourceRepoUrl: sourceRepo.value,
     sourceRepoAvailable: sourceRepo.available,
+    isBeta: beta.isBeta,
+    betaMessage: beta.betaMessage,
+    betaAvailable: beta.available,
   };
 }
 
@@ -1178,6 +1428,11 @@ export async function updateListing(opts: {
       'this listing is an internal revision draft and cannot be edited directly'
     );
   }
+  // Before any branch below can open a shadow revision, for the reason the hoists below give.
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
 
   // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
   // and DERIVE the requested-scope snapshot from it (server-authoritative — a
@@ -1206,11 +1461,42 @@ export async function updateListing(opts: {
   if (effectivePatch.sourceRepoUrl !== undefined) {
     assertSourceRepoWritable(listing.sourceRepoAvailable);
   }
+  // Same hoist, same reasoning, for the second manual-apply migration. Both refusals land
+  // before ANY branch below opens a shadow revision, so neither can leave an orphan draft.
+  if (effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined) {
+    assertBetaWritable(listing.betaAvailable);
+  }
+  // FORK OPT-IN ("Let others fork this app's source"). TRIVIAL like beta — never material, never
+  // staged on a shadow — so it is written to the LIVE listing after whichever branch below
+  // applies the rest of the patch. Its refusals are hoisted here with the others, so nothing has
+  // been written when one throws.
+  //
+  // `buildListingPatchData` does not know this key, so it never reaches a Prisma `data` object —
+  // which is required, not incidental: the column is no-type and does not exist on the delegate.
+  const forkable = effectivePatch.forkable;
+  if (forkable !== undefined) {
+    // An off-site app has no source on the platform, so there is nothing to fork.
+    if (listing.kind !== 'onsite') {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_OFFSITE_MESSAGE });
+    }
+    // Read only when the patch names the key, so no other edit pays for it.
+    assertForkableWritable((await readListingForkable(listingId, dbRead)).available);
+  }
   const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: listing.sourceRepoAvailable,
+    betaAvailable: listing.betaAvailable,
+    currentIsBeta: listing.isBeta,
   };
+  // 🔴 BETA IS NEVER STAGED — see {@link splitBetaPatch}. Only the `approved` + MATERIAL
+  // branch below actually needs the halves apart (it is the one branch whose write target
+  // is a SHADOW rather than the live listing); every other branch writes to the parent
+  // anyway, so it applies the whole patch in one update exactly as before.
+  const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
 
+  // Every non-throwing branch assigns this and `break`s, so the fork opt-in below has ONE write
+  // site after whichever branch ran.
+  let result: UpdateListingResult;
   switch (listing.status) {
     case 'removed': {
       // 🔴 `removed` IS TWO DIFFERENT STATES WEARING ONE STATUS STRING. An owner who
@@ -1298,7 +1584,18 @@ export async function updateListing(opts: {
       // the `approved` trivial-only branch makes.
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis. This branch edits a `removed`
+      // (owner-unpublished) row, which the approved-only catalog query already excludes, so
+      // it is INERT today. Of the trivial fields it can write, only `category` is a cached
+      // axis at all (tagline/description are hydrated live); it becomes load-bearing the
+      // moment such a row is republished, and that path busts too. Kept because the cost is
+      // one tag delete on a rare owner action — NOT because "every mutation busts": a
+      // number of `AppListing` writers deliberately do not, enumerated as `EXEMPT` in
+      // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'rejected':
       // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
@@ -1313,7 +1610,13 @@ export async function updateListing(opts: {
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis — a `draft`/`pending` row is
+      // outside the approved-only catalog query, so this is INERT today. Same reasoning as
+      // the `removed` branch above, including the part about the rule not being uniform.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
+      result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+      break;
     }
     case 'approved': {
       const material = patchHasMaterialChange(effectivePatch, {
@@ -1329,15 +1632,67 @@ export async function updateListing(opts: {
         // false), so writing it is a harmless no-op.
         const data = buildListingPatchData(effectivePatch, patchOpts);
         await dbWrite.appListing.update({ where: { id: listingId }, data });
-        return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        // Catalog bust: LOAD-BEARING. This is the one edit branch that writes a LIVE
+        // (approved) row, and `category` — trivial by the material/trivial split, cached by
+        // the `al.category` filter — is exactly what it can move. (`tagline`/`description`
+        // are hydrated live and could never be stale; only `category` needs this.)
+        await bustAppListingCatalogCache().catch(() => undefined);
+
+        result = { listingId, status: listing.status, requiresReview: false, shadowId: null };
+        break;
       }
       // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
-      // FULL patch (material + trivial) is written to the shadow. Assets are edited
+      // patch (material + trivial) is written to the shadow. Assets are edited
       // separately against the shadow id, then submitListingRevision re-reviews it.
+      //
+      // 🔴 EXCEPT THE BETA HALF, WHICH GOES TO THE LIVE PARENT — the ONE place in this file
+      // where a single patch produces two writes. Beta is TRIVIAL and is never staged; see
+      // {@link splitBetaPatch} for the three separate ways staging it goes wrong, the
+      // sharpest being that `applyApprovedRevision` copies a shadow's scalars unconditionally
+      // — so a staged beta value would be written back onto the parent at approve time,
+      // silently undoing every beta edit the author made while the revision sat in the queue.
+      //
+      // 🔴 EVERY THROWING STEP RUNS BEFORE THE FIRST WRITE. That is the invariant this
+      // function states 180 lines up — "Checked here, nothing has been written when it
+      // throws" — and an earlier version of this block broke it. `buildListingPatchData` is
+      // where `externalUrl` / `sourceRepoUrl` / scope validation actually happens (the PATCH
+      // schema deliberately does not superRefine them), and a beta write hoisted above it
+      // meant an author saving a bad URL together with a beta change got a failed save AND a
+      // live Beta badge on the public store page. `materialPatchChanges` classifies an
+      // invalid URL as material precisely so it routes here, so that path was reachable
+      // through the ordinary edit form. Build both payloads, mint the shadow, THEN write.
+      const shadowData = buildListingPatchData(restPatch, patchOpts);
+      const betaData = patchHasAnyField(betaPatch)
+        ? buildListingPatchData(betaPatch, patchOpts)
+        : null;
       const { shadowId } = await beginListingRevision({ listingId, userId });
-      const data = buildListingPatchData(effectivePatch, patchOpts);
-      await dbWrite.appListing.update({ where: { id: shadowId }, data });
-      return { listingId, status: listing.status, requiresReview: true, shadowId };
+      // 🔴 BOTH WRITES IN ONE TRANSACTION, so a failure between them cannot leave the beta
+      // half applied while the material half was never staged. The interactive (callback)
+      // form rather than `$transaction([...])`: every transaction in this file is
+      // interactive, and the suite's mocks call `$transaction` with the callback, so the
+      // array form fails as `TypeError: cb is not a function` in unrelated tests.
+      //
+      // 🔴 THE BETA HALF STILL TARGETS THE **PARENT**, not the shadow — see
+      // {@link splitBetaPatch}. The ordering constraint that used to force this write out of
+      // the transaction is gone: the moderator preview now reads beta from the parent, so
+      // nothing depends on the shadow being minted after it.
+      await dbWrite.$transaction(async (tx) => {
+        await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
+        if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
+      });
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis. The MATERIAL half is staged on a
+      // shadow (excluded from the catalog by both the approved-only and `revision_of_id IS
+      // NULL` filters), and the beta half writes `isBeta` to the LIVE parent — but the cache
+      // holds `{id, sort_key}` only and `isBeta` is a hydrated projection field, so it can
+      // never be served stale. INERT today; kept because it costs one tag delete on a path
+      // that already runs a transaction. 🔴 It is NOT evidence of a uniform rule:
+      // `updateRevisionDraft` writes the SAME beta half to the SAME live parent and has no
+      // bust, and that is equally correct — it is an `EXEMPT` row in
+      // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
+      result = { listingId, status: listing.status, requiresReview: true, shadowId };
+      break;
     }
     default:
       throw new OffsiteRequestError(
@@ -1345,6 +1700,16 @@ export async function updateListing(opts: {
         `cannot edit a listing in status ${listing.status}`
       );
   }
+
+  // FORK OPT-IN, onto the LIVE listing — `listingId`, never the shadow the material branch may
+  // have just minted (a shadow's opt-in would be read by nothing). Reached only after a branch
+  // succeeded, so a refused edit never changes it. Not atomic with that branch's write: a failure
+  // here leaves the rest of the patch applied and surfaces the error, and re-saving converges
+  // (both writes are idempotent). Not a catalog axis, so no bust.
+  if (forkable !== undefined) {
+    await writeListingForkable(dbWrite, listingId, forkable);
+  }
+  return result;
 }
 
 export type BeginListingRevisionResult = { shadowId: string; created: boolean };
@@ -1357,7 +1722,8 @@ export type BeginListingRevisionResult = { shadowId: string; created: boolean };
  * shadow). Otherwise the approved parent is cloned into a hidden DRAFT AppListing
  * — scalars copied, appBlockId NULL, a synthetic unique slug (`rev-<ulid>`, never
  * public), revisionOfId = parentId, owned by the parent's owner — and each of the
- * parent's screenshots is copied (imageId/order/caption). The author then edits
+ * parent's screenshots is copied (imageId/order/caption), as are its civitai.red icon /
+ * cover overrides (`cloneListingRedSlots`). The author then edits
  * the shadow's ASSETS via the EXISTING setIcon/setCover/addScreenshot procs by
  * passing the shadow id (no new asset procs).
  */
@@ -1437,6 +1803,13 @@ export async function beginListingRevision(opts: {
           // replica-sourced `available: false` paired with a primary-sourced
           // `available: true` at apply time is what silently clears a live link.
           ...sourceRepoWriteFragment(parentSourceRepo),
+          // 🔴 NO BETA COLUMNS ON THE CLONE, DELIBERATELY, and this used to carry them.
+          // Beta is never staged — every write targets the live listing — so a shadow's beta
+          // columns are not a source of truth for anything. They were cloned for ONE reason:
+          // the moderator review preview renders the shadow row and had to show the beta
+          // framing. `getListingPreviewForReview` now reads beta from the PARENT for a
+          // shadow, so the clone bought nothing and cost an ordering constraint on
+          // `updateListing` that hoisted a write above the patch validation.
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -1472,6 +1845,10 @@ export async function beginListingRevision(opts: {
           ),
         });
       }
+      // 🔴 The civitai.red icon / cover overrides are carried onto the shadow too, for the same
+      // reason as the source link above: `applyApprovedRevision` applies the shadow's overrides
+      // to the parent, so a revision that does not touch them must hold them already.
+      await cloneListingRedSlots(tx, { fromListingId: listingId, toListingId: shadowId });
     });
   } catch (err) {
     // A concurrent creator committed its shadow between our in-tx read-check and
@@ -1520,6 +1897,7 @@ export async function submitListingRevision(opts: {
 }): Promise<SubmitListingRevisionResult> {
   const { shadowId, userId } = opts;
   const changelog = opts.changelog ?? null;
+  await throwOnBlockedUserContent(changelog, { surface: 'offsite-listing' });
 
   const shadow = (await dbRead.appListing.findUnique({
     where: { id: shadowId },
@@ -1631,6 +2009,15 @@ export async function submitListingRevision(opts: {
       changelog,
     },
   });
+  // Catalog bust: DEFENCE IN DEPTH. Today this writes only a publish-request row against a
+  // `draft` shadow, which the approved-only catalog query already excludes, so the bust is a
+  // no-op. It is kept against a future parent write being added to this path — a judgement
+  // about THIS function, not an instance of a universal rule (see
+  // `bustAppListingCatalogCache`'s header, and the `EXEMPT` list in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts` for the
+  // writers that correctly do not bust).
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
@@ -1661,9 +2048,73 @@ export type ListingEditScalars = {
    * types into it, so an unreadable column cannot cause a spurious write.
    */
   sourceRepoUrl: string | null;
+  /**
+   * The author's beta declaration. `false` / `null` for "not in beta" AND (indistinguishably,
+   * on purpose) while the manual-apply columns are absent: to the FORM those are the same
+   * state — an unchecked box — and the form's diff only emits these keys when the author
+   * actually changes them, so unreadable columns cannot cause a spurious write.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
+
+/**
+ * The edit target's civitai.red icon / cover overrides, for the author's editor. `available:
+ * false` while the environment does not have the slot columns (or this role cannot read them):
+ * the editor then offers no picker, matching `setListingRedMedia`'s refusal.
+ */
+export type ListingEditRedMedia = {
+  available: boolean;
+  icon: ListingEditAsset;
+  cover: ListingEditAsset;
+};
+
+/**
+ * {@link ListingEditRedMedia} of `listingId` — the same edit target whose `assets` the editor is
+ * handed. Read through the WRITE client, like `getListingAssets`' read of the same slots: the
+ * editor re-reads after every slot write, and a slot set on a shadow minted milliseconds ago must
+ * not read back empty off a lagging replica.
+ *
+ * NEVER THROWS, like the store's read of the same slots (`readListingRedMediaManyForRender`): the
+ * editor must not fail to open because of the manual-apply slot table. A failed read reads as
+ * "not available" (no picker), and is logged.
+ */
+export async function loadListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  try {
+    return await readListingEditRedMedia(listingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[offsite-listing] civitai.red slot read for the editor failed; offering no picker: ' +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return { available: false, icon: NO_EDIT_ASSET, cover: NO_EDIT_ASSET };
+  }
+}
+
+const NO_EDIT_ASSET: ListingEditAsset = Object.freeze({ imageId: null, url: null });
+
+async function readListingEditRedMedia(listingId: string): Promise<ListingEditRedMedia> {
+  const red = await readListingRedSlots(dbWrite, listingId);
+  const ids = [red.redIconId, red.redCoverId].filter((v): v is number => v != null);
+  const images = ids.length
+    ? await dbWrite.image.findMany({ where: { id: { in: ids } }, select: { id: true, url: true } })
+    : [];
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const urlOf = (id: number | null, width: number) => {
+    const url = id == null ? null : images.find((i) => i.id === id)?.url;
+    return url ? getEdgeUrl(url, { width }) : null;
+  };
+  return {
+    available: red.available,
+    // The same preview widths as the regular icon / cover in `loadListingEditView`.
+    icon: { imageId: red.redIconId, url: urlOf(red.redIconId, 256) },
+    cover: { imageId: red.redCoverId, url: urlOf(red.redCoverId, 1200) },
+  };
+}
+
 export type ListingEditScreenshot = {
   id: string;
   imageId: number | null;
@@ -1720,10 +2171,12 @@ export type GetMyListingForEditResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The effective source's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
-   * The client's CURRENT `allowedScopes` (null when no client / not found). This IS
+   * The client's CURRENT consentable scopes (null when no client / not found). This IS
    * the derived requested-scope set the edit form displays read-only + submits — the
    * server re-snapshots `requestedScopes` from it on save.
    */
@@ -1757,7 +2210,21 @@ export type GetMyListingForEditResult = {
  * Do NOT route a non-shadow (in-place draft/pending) read to the primary. */
 async function loadListingEditView(
   listingId: string,
-  db: typeof dbRead = dbRead
+  db: typeof dbRead = dbRead,
+  /**
+   * The LIVE parent's id when `listingId` is a shadow revision, else omitted.
+   *
+   * 🔴 ONLY the beta prefill reads it — see the comment at its use. Optional rather than
+   * required because the non-shadow callers genuinely have no separate parent, and an
+   * absent value correctly falls back to `listingId`, which IS the parent in that case.
+   */
+  parentIdForBeta?: string,
+  /**
+   * Skip the guarded beta read entirely. For a caller that destructures only `assets` — the
+   * beta columns then cost a round trip nobody reads. `false` (the default) keeps every
+   * existing caller's behaviour.
+   */
+  skipBeta = false
 ): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
@@ -1769,6 +2236,16 @@ async function loadListingEditView(
   // to the select below, which would 500 the whole author edit-prefill page until a
   // human runs the migration. Degrades to null; see app-listing-source-repo.service.
   const sourceRepo = await readListingSourceRepoUrl(listingId, db);
+  // 🔴 THE BETA PREFILL IS READ FROM THE **PARENT**, NOT FROM `listingId`, and that is the
+  // one asymmetry in this loader. Every other scalar here comes from the EFFECTIVE source
+  // (the in-progress shadow when there is one), because those are the values under review.
+  // Beta is not staged — it lives on the live listing and is written there directly — so
+  // prefilling it from a shadow would show the author the schema DEFAULTS (nothing writes a
+  // shadow's beta columns) instead of what their listing says right now, and their next save
+  // would diff against the wrong baseline and either re-send a value they never touched or
+  // drop one they did.
+  const betaSourceId = parentIdForBeta ?? listingId;
+  const beta = skipBeta ? BETA_NOT_SET : await readListingBeta(betaSourceId, db);
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -1828,6 +2305,10 @@ async function loadListingEditView(
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
       sourceRepoUrl: sourceRepo.value,
+      isBeta: beta.isBeta,
+      // Only surfaced when the flag is set, matching the public projections: an author who
+      // switched beta off and back on should not find a note they thought they had removed.
+      betaMessage: beta.isBeta ? beta.betaMessage : null,
     },
     connectRequestedScopes: row.connectRequestedScopes ?? null,
     connectScopeJustifications:
@@ -1942,9 +2423,17 @@ export async function getMyListingForEdit(opts: {
   // 🔴 READ-AFTER-WRITE — same rule as `getMyListingForApp`: a SHADOW target is read
   // from the PRIMARY (it may have been minted microseconds ago by ANY caller), an
   // in-place target from the replica. See `loadListingEditView`.
-  const view = await loadListingEditView(effectiveId, effectiveId !== listingId ? dbWrite : dbRead);
+  // The third argument is the LIVE parent id, and it is only read by the beta prefill —
+  // beta is not staged, so it must be shown from the live listing even when every other
+  // scalar here comes from the shadow. `listingId` IS the parent on both paths (the
+  // non-shadow case makes it a no-op), which is why it can be passed unconditionally.
+  const view = await loadListingEditView(
+    effectiveId,
+    effectiveId !== listingId ? dbWrite : dbRead,
+    listingId
+  );
 
-  // Resolve the connect client's CURRENT allowedScopes — this is the derived
+  // Resolve the connect client's CURRENT consentable scopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
   // re-snapshots `requestedScopes` from it on save). null when the listing has no
   // client or the client no longer exists.
@@ -1954,7 +2443,7 @@ export async function getMyListingForEdit(opts: {
       where: { id: listing.connectClientId },
       select: { allowedScopes: true },
     });
-    connectAllowedScopes = client?.allowedScopes ?? null;
+    connectAllowedScopes = client ? consentableScopes(client.allowedScopes) : null;
   }
 
   return {
@@ -1967,6 +2456,7 @@ export async function getMyListingForEdit(opts: {
     shadowId,
     scalars: view.scalars,
     assets: view.assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
     connectClientId: listing.connectClientId,
     connectAllowedScopes,
     connectRequestedScopes: view.connectRequestedScopes,
@@ -2002,6 +2492,8 @@ export type GetMyListingForAppResult = {
    * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
    */
   shadowId: string | null;
+  /** The rating the author declared, which approval may have raised `contentRating` above. */
+  declaredContentRating: string | null;
   /**
    * The id the client hands to the asset procs: `shadowId` when a shadow already
    * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
@@ -2039,6 +2531,8 @@ export type GetMyListingForAppResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The same EFFECTIVE edit target's civitai.red icon / cover overrides, edge-resolved. */
+  redMedia: ListingEditRedMedia;
 };
 
 /**
@@ -2094,9 +2588,11 @@ export async function getMyListingForApp(opts: {
   // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
+    kind: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
+    appBlock: { select: { contentRating: true } },
   } as const;
   let listing = appBlockId
     ? await dbRead.appListing.findUnique({
@@ -2210,9 +2706,13 @@ export async function getMyListingForApp(opts: {
   // (`retry: false`), discarding the editor mid-upload. Every non-shadow target
   // (draft/pending edited in place, or an approved parent with no shadow yet) is old
   // and stays on the replica.
+  // `skipBeta` — this caller reads ONLY `assets`, so the guarded beta read would be a round
+  // trip whose result is discarded.
   const { assets } = await loadListingEditView(
     effectiveId,
-    effectiveId !== listing.id ? dbWrite : dbRead
+    effectiveId !== listing.id ? dbWrite : dbRead,
+    undefined,
+    true
   );
 
   // 🔴 Only a `removed` listing needs this — it is the ONE status whose editability is not
@@ -2231,11 +2731,17 @@ export async function getMyListingForApp(opts: {
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
+    declaredContentRating: declaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+      listingRating: listing.contentRating,
+    }),
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
     editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
     assets,
+    redMedia: await loadListingEditRedMedia(effectiveId),
   };
 }
 
@@ -2356,10 +2862,20 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
+  // 🔴 THE FORK OPT-IN IS NEVER STAGED, and this path cannot write it: `buildListingPatchData`
+  // does not know the key, so accepting it here would DROP it silently and report success. It is
+  // refused instead, before anything is written; `updateListing` writes it to the live listing.
+  if (patch.forkable !== undefined) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: FORKABLE_ON_REVISION_MESSAGE });
+  }
+  await throwOnBlockedUserContent(listingAuthorText(patch), {
+    isModerator,
+    surface: 'offsite-listing',
+  });
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a
-  // shadow re-snapshots against the client's CURRENT allowedScopes.
+  // shadow re-snapshots against the client's CURRENT consentable scopes.
   const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
     connectClientId: shadow.connectClientId,
     patch,
@@ -2373,11 +2889,92 @@ export async function updateRevisionDraft(opts: {
   if (effectivePatch.sourceRepoUrl !== undefined) {
     assertSourceRepoWritable(shadow.sourceRepoAvailable);
   }
-  const data = buildListingPatchData(effectivePatch, {
+  // Same up-front gate for the beta columns. `shadow.betaAvailable` came from the guarded
+  // read on the SHADOW row, which is the same table and therefore the same columns — the
+  // question is about the schema, not about which row was asked.
+  const touchesBeta =
+    effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined;
+  if (touchesBeta) {
+    assertBetaWritable(shadow.betaAvailable);
+  }
+  // 🔴 THE BETA HALF TARGETS THE LIVE PARENT, NOT THIS SHADOW — the same rule
+  // `updateListing`'s approved-material branch applies, and it has to be applied HERE too
+  // because this is the mutation the edit form actually calls for an APPROVED listing.
+  // Writing beta onto the shadow instead would look correct and would be undone at approve:
+  // `applyApprovedRevision` copies no beta column, so the value would simply never reach
+  // the live listing and the author's toggle would appear to do nothing.
+  // `shadow.revisionOfId` is non-null (asserted above) and IS the live parent's id.
+  const parentId = shadow.revisionOfId;
+
+  // 🔴 EVERYTHING THE PARENT WRITE NEEDS IS RESOLVED HERE, AND ONLY WHEN BETA IS IN PLAY.
+  // Two things come off the parent: its EDITABILITY (the gate below) and its CURRENT beta
+  // flag (which `buildListingPatchData` needs to evaluate the note/flag rule against the
+  // row the note will actually sit beside — the shadow's own columns are not a source of
+  // truth for beta and nothing writes them any more).
+  //
+  // 🔴 SCOPED TO `touchesBeta`, AND THE FIRST VERSION OF THIS GATE WAS NOT — it read the
+  // parent and threw `NOT_FOUND` on EVERY call. That is wrong twice over: it puts a round
+  // trip on every shadow scalar edit, and it invents a new failure mode for edits that never
+  // touch the parent at all (a revision draft whose parent row is momentarily unreadable
+  // used to save fine and would have started 404ing). The gate exists BECAUSE of the parent
+  // write, so no parent write ⇒ no gate and no read. Caught by two pre-existing source-repo
+  // tests that patch a shadow without naming beta.
+  //
+  // 🔴 THE EDITABILITY GATE EXISTS BECAUSE THIS FUNCTION DID NOT PREVIOUSLY WRITE TO THE
+  // PARENT AT ALL. Every other write here targets the shadow, whose `status === 'draft'`
+  // check above is the whole gate it needs. Routing the beta half to the live parent reaches
+  // a row `updateListing` guards much more strictly: its `removed` branch refuses EVERY edit
+  // on a listing a MODERATOR took down, and lets only an OWNER-unpublished one through.
+  // Without this, a delist (which sets `status='removed'` without deleting rows, so a shadow
+  // opened beforehand survives it) would leave its owner able to set public copy on a
+  // moderator-removed listing through a door `updateListing` closes. Reads the PRIMARY for
+  // the same reason that branch does — the takedown may be seconds old.
+  let parentIsBeta = false;
+  if (touchesBeta) {
+    const parent = await dbWrite.appListing.findUnique({
+      where: { id: parentId },
+      select: { status: true },
+    });
+    if (!parent) {
+      throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
+    }
+    if (parent.status === 'removed' && !(await isOwnerUnpublishedListing(dbWrite, parentId))) {
+      throw new OffsiteRequestError(
+        'FORBIDDEN',
+        'this listing has been removed by a moderator and can no longer be edited'
+      );
+    }
+    parentIsBeta = (await readListingBeta(parentId, dbWrite)).isBeta;
+  }
+
+  const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: shadow.sourceRepoAvailable,
+    betaAvailable: shadow.betaAvailable,
+    // 🔴 THE **PARENT'S** FLAG, not the shadow's — see the read above. `false` when the
+    // patch does not touch beta, which is unreachable by the rule that consumes it (it only
+    // fires when one of the two keys is present).
+    currentIsBeta: parentIsBeta,
+  };
+
+  // 🔴 BOTH PAYLOADS BUILT BEFORE EITHER WRITE. `buildListingPatchData` is where validation
+  // throws, so building both first keeps this path's refusals side-effect-free — the same
+  // invariant `updateListing` states and that an earlier version of this feature broke.
+  const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
+  const shadowData = buildListingPatchData(restPatch, patchOpts);
+  const betaData = patchHasAnyField(betaPatch) ? buildListingPatchData(betaPatch, patchOpts) : null;
+
+  // 🔴 BOTH WRITES IN ONE TRANSACTION — they touch two different rows, so a failure between
+  // them would leave the beta half applied while the shadow edit was never staged. The
+  // interactive (callback) form rather than `$transaction([...])`: every transaction in this
+  // file is interactive, and the suite's mocks call `$transaction` with the callback, so the
+  // array form fails as `TypeError: cb is not a function` in tests unrelated to this feature.
+  // (Stated here rather than pointing at `updateListing` — the paragraph this used to
+  // reference was deleted when that branch's transaction was restructured.)
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
+    if (betaData) await tx.appListing.update({ where: { id: parentId }, data: betaData });
   });
-  await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
 
@@ -2437,14 +3034,19 @@ export type ApproveExternalRequestResult = {
  * Compute the content rating to STAMP on an off-site listing at approve. The
  * scanner's per-image rating is imprecise, so the AUTHOR is never blocked on it +
  * the author's declared rating is only a hint — the authoritative rating is DERIVED
- * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots) at
- * review, with an optional mod OVERRIDE.
+ * from the assets' MAX detected `nsfwLevel` (icon + cover + real screenshots + the
+ * civitai.red icon / cover overrides) at review, with an optional mod OVERRIDE.
  *
  * 🔴 SAFETY (floor-at-derived): an override whose ceiling is BELOW the derived value
  * would publish mature assets under a too-low rating — so it is clamped UP to the
  * derived rating (never silently under-rated). An override AT or ABOVE the derived
  * value is honoured (a mod may always rate UP). Reads the backing Image levels from
  * the PRIMARY (`tx`) so the derived rating is row-consistent with the approve flip.
+ * With `mediaSplit` the derive reads only the civitai.com-eligible assets (never an override).
+ *
+ * `redSlotsListingId` names the listing whose civitai.red overrides go live with this approve,
+ * when that is not `appListingId`: a revision that staged no overrides keeps the LIVE listing's
+ * (`applyRevisionRedSlots`), so its approve must be floored by those, not by the shadow's none.
  */
 async function resolveApprovalContentRating(
   tx: Prisma.TransactionClient,
@@ -2453,6 +3055,8 @@ async function resolveApprovalContentRating(
     iconId: number | null;
     coverId: number | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
+    redSlotsListingId?: string;
   }
 ): Promise<OffsiteContentRating> {
   const shots = await tx.appListingScreenshot.findMany({
@@ -2465,7 +3069,14 @@ async function resolveApprovalContentRating(
   const images = imageIds.length
     ? await tx.image.findMany({ where: { id: { in: imageIds } }, select: { nsfwLevel: true } })
     : [];
-  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // The civitai.red overrides floor it too, unless the listing is split (`ratingFloorAssets`).
+  const redSlots = await readListingRedSlotAssets(tx, args.redSlotsListingId ?? args.appListingId);
+  const derived = deriveContentRatingFromAssets(
+    ratingFloorAssets(
+      [...images.map((i) => ({ nsfwLevel: i.nsfwLevel })), ...redSlots],
+      args.mediaSplit
+    )
+  );
   const override = args.override ?? null;
   if (override == null) return derived;
   return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
@@ -2512,9 +3123,15 @@ async function resolveOnsiteApprovalContentRating(
     appListingId: string;
     declared: string | null;
     override?: OffsiteContentRating | null;
+    mediaSplit: boolean;
   }
 ): Promise<string | null> {
-  const floored = await resolveListingRatingFloorInTx(tx, args.appListingId, args.declared);
+  const floored = await resolveListingRatingFloorInTx(
+    tx,
+    args.appListingId,
+    args.declared,
+    args.mediaSplit
+  );
   const override = args.override ?? null;
   if (override == null) return floored;
   return nsfwLevelFromContentRating(override) > nsfwLevelFromContentRating(floored)
@@ -2604,6 +3221,8 @@ export async function approveExternalRequest(opts: {
   approvalNotes?: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  /** The moderator's media-split decision; omitted means `rate-mature`. */
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -2684,6 +3303,7 @@ export async function approveExternalRequest(opts: {
       reviewerUserId,
       approvalNotes,
       contentRating: opts.contentRating,
+      mediaSplit: opts.mediaSplit,
     });
   }
 
@@ -2710,8 +3330,15 @@ export async function approveExternalRequest(opts: {
   // replica; re-asserted AUTHORITATIVELY on the primary/tx in (5) (TOCTOU: a scan
   // can flip between these reads — the in-tx one is the authority). This is the
   // QUALITY gate that lets attach + submit stay permissive with an in-flight scan.
+  const replicaRedSlots = await readListingRedSlots(dbRead, appListingId);
   await assertAssetsScanClean(
-    { iconId: listing.iconId, coverId: listing.coverId, screenshotImageIds },
+    {
+      iconId: listing.iconId,
+      coverId: listing.coverId,
+      screenshotImageIds,
+      redIconId: replicaRedSlots.redIconId,
+      redCoverId: replicaRedSlots.redCoverId,
+    },
     dbRead
   );
 
@@ -2751,7 +3378,7 @@ export async function approveExternalRequest(opts: {
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     // AUTHORITATIVE asset gate — re-read from the PRIMARY (`tx`), not the replica.
     // The sibling asset mutators (add/reorder/removeListingScreenshot,
     // setListingIcon/Cover) deliberately read+write dbWrite to avoid replica-lag
@@ -2804,11 +3431,14 @@ export async function approveExternalRequest(opts: {
     // Pending/Blocked on the primary is caught HERE and rolls the whole tx back
     // before anything is approved. Upholds the invariant: no approved listing may
     // ever reference a non-`Scanned` / `Blocked` image.
+    const primaryRedSlots = await readListingRedSlots(tx, appListingId);
     await assertAssetsScanClean(
       {
         iconId: primaryListing.iconId,
         coverId: primaryListing.coverId,
         screenshotImageIds: primaryScreenshotImageIds,
+        redIconId: primaryRedSlots.redIconId,
+        redCoverId: primaryRedSlots.redCoverId,
       },
       tx
     );
@@ -2897,18 +3527,26 @@ export async function approveExternalRequest(opts: {
     // returns above via `applyApprovedRevision`. An on-site listing's `contentRating`
     // describes the APP (manifest-declared), so it must be raised by mature media and
     // never lowered by tame media. See {@link resolveOnsiteApprovalContentRating}.
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId,
+      face: { iconId: primaryListing.iconId, coverId: primaryListing.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
     const finalRating =
       request.kind === 'onsite'
         ? await resolveOnsiteApprovalContentRating(tx, {
             appListingId,
             declared: primaryListing.contentRating,
             override: opts.contentRating,
+            mediaSplit,
           })
         : await resolveApprovalContentRating(tx, {
             appListingId,
             iconId: primaryListing.iconId,
             coverId: primaryListing.coverId,
             override: opts.contentRating,
+            mediaSplit,
           });
     // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
     // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
@@ -2973,6 +3611,13 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+    return { before: primaryListing.contentRating, after: finalRating };
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId,
+    slug: listing.slug,
+    ...rating,
+    actorUserId: reviewerUserId,
   });
 
   // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
@@ -2987,6 +3632,9 @@ export async function approveExternalRequest(opts: {
     key: `app-listing-approved:${publishRequestId}`,
     details: { slug: listing.slug, name: listing.name, listingId: appListingId, reason: null },
   });
+
+  // Catalog bust: approve puts the listing INTO the store catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { publishRequestId, listingId: appListingId, slug: request.slug };
 }
@@ -3010,7 +3658,9 @@ export async function approveExternalRequest(opts: {
  *   4. REPARENT the shadow's screenshots onto the parent: delete the parent's
  *      existing screenshot rows, then UPDATE the shadow's screenshots'
  *      appListingId → parent BEFORE deleting the shadow, so the CASCADE on the
- *      shadow delete drops nothing (the rows have already left the shadow).
+ *      shadow delete drops nothing (the rows have already left the shadow). Then apply the
+ *      shadow's civitai.red icon / cover overrides to the parent (`applyRevisionRedSlots`),
+ *      also before the delete, which cascades the shadow's overrides row away.
  *   5. Delete the shadow (guarded to a revision row so it can never remove a real
  *      listing). Its screenshots are gone (moved) and its only request is re-pointed
  *      at the parent, so the cascade is a no-op.
@@ -3023,6 +3673,7 @@ async function applyApprovedRevision(opts: {
   approvalNotes: string | null;
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
+  mediaSplit?: ListingMediaSplitDecision | null;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -3032,7 +3683,7 @@ async function applyApprovedRevision(opts: {
   // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true, kind: true },
+    select: { id: true, slug: true, status: true, kind: true, contentRating: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -3061,7 +3712,18 @@ async function applyApprovedRevision(opts: {
   // of this path rather than merely intended.
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
-  await dbWrite.$transaction(async (tx) => {
+  const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // 🔴 LOCK THE PARENT FIRST — before ANY statement, and in particular before any on the
+    // split / civitai.red-override table. Unlike the first-time approves, this writes the
+    // split, the overrides and the media of a listing that is ALREADY `approved`, which a
+    // moderator's image re-rate (`reDeriveListingRatingInTx`) can re-rate concurrently: it
+    // takes `FOR UPDATE` on this row and then reads the split and the media. Without this lock
+    // the re-rate could read them as they stood before this apply and commit a rating floored
+    // by the wrong set of media. With it, the re-rate waits for this transaction and reads
+    // what it committed.
+    await tx.$queryRaw`SELECT "id" FROM "app_listings" WHERE "id" = ${parentId} FOR UPDATE`;
+    // Set by the off-site branch only; the on-site one leaves the rating alone.
+    let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
     // gate could pass on stale-complete state — re-assert here.
@@ -3122,11 +3784,23 @@ async function applyApprovedRevision(opts: {
     // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
     // live while any of its media is still scanning or was `Blocked`. Rolls the
     // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    //
+    // The civitai.red overrides it checks are the ones live AFTER step (4b): the shadow's when
+    // it staged a row (a row of nulls included, which clears them), otherwise the parent's,
+    // which `applyRevisionRedSlots` leaves in place. Both kinds. The rating floor below reads
+    // the same listing (`redSlotsListingId`), so the two cannot disagree about which overrides
+    // go live.
+    const shadowRedSlots = await readListingRedSlots(tx, shadowId);
+    const redSlotsListingId = shadowRedSlots.staged ? shadowId : parentId;
+    const liveRedSlots =
+      redSlotsListingId === shadowId ? shadowRedSlots : await readListingRedSlots(tx, parentId);
     await assertAssetsScanClean(
       {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         screenshotImageIds: shadowScreenshotImageIds,
+        redIconId: liveRedSlots.redIconId,
+        redCoverId: liveRedSlots.redCoverId,
       },
       tx
     );
@@ -3209,6 +3883,16 @@ async function applyApprovedRevision(opts: {
       connectClientId: shadow.connectClientId,
     });
 
+    // The decision belongs to the live parent; the face it is checked against is the
+    // shadow's, which is what goes live. (The parent is already locked: see the top of this
+    // transaction.)
+    const mediaSplit = await applyListingMediaSplitDecision(tx, {
+      appListingId: parentId,
+      face: { iconId: shadow.iconId, coverId: shadow.coverId },
+      decision: opts.mediaSplit,
+      actorUserId: reviewerUserId,
+    });
+
     // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
     // untouched). KIND-AWARE:
     if (parent.kind === 'onsite') {
@@ -3219,8 +3903,31 @@ async function applyApprovedRevision(opts: {
       // and leaves ALL manifest-governed scalars untouched. CAP-AT-APP-RATING:
       // `resolveApprovalContentRating`'s asset-floor is deliberately NOT applied here —
       // the listing rating stays the app's manifest rating; over-rated media is a
-      // mod-reject at review, never an auto-raise. The connect fields are also left
+      // mod-reject at review, never an auto-raise. If such media IS approved, the store's
+      // per-image gate (`listing-media-audience`) still keeps it off any card or gallery
+      // whose host and rating do not allow its level. The connect fields are also left
       // untouched (an onsite listing has no OAuth-connect client — always null).
+      //
+      // 🔴 AND THAT INCLUDES THE BETA COLUMNS, WHICH ARE **NOT** COPIED HERE — deliberately,
+      // and not because beta is manifest-governed (it is not; it is listing-native on both
+      // kinds, which is exactly the shape that would otherwise justify a carve-out from the
+      // assets-only rule). The reason is narrower and stronger: beta is never STAGED. Every
+      // beta write in this file targets the LIVE listing, including from
+      // `updateRevisionDraft`, so a shadow's own beta columns are never written at all —
+      // they hold the schema defaults. Copying them here would therefore not restore an
+      // older value, it would CLEAR the live one.
+      //
+      // 🔴 DO NOT "FRESHEN" THE SHADOW TO FIX THAT. `beginListingRevision` deliberately
+      // clones NO beta column, and re-adding one re-imposes the ordering constraint that was
+      // removed: the parent's beta write would have to land before the shadow is minted,
+      // which hoists a write above `buildListingPatchData` and makes a REJECTED patch apply
+      // its beta half anyway (pinned by "a REJECTED patch writes NOTHING"). The moderator
+      // preview does not need a clone — `getListingPreviewForReview` reads beta from the
+      // PARENT for a shadow.
+      //
+      // Keeping the branch assets-only is also what preserves
+      // `revisionApplyScope('onsite') === 'assets-only'`, which is the sole thing licensing
+      // the review panel's "approving changes nothing" claim. See {@link splitBetaPatch}.
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3238,7 +3945,11 @@ async function applyApprovedRevision(opts: {
         iconId: shadow.iconId,
         coverId: shadow.coverId,
         override: opts.contentRating,
+        mediaSplit,
+        // The overrides live AFTER step (4b) — the same listing the scan gate above checked.
+        redSlotsListingId,
       });
+      appliedOffsiteRating = finalRating;
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3255,6 +3966,16 @@ async function applyApprovedRevision(opts: {
           // tell a moderator this apply "changes nothing" while it rewrites a public
           // outbound link. Omitted (not null) while the manual-apply column is absent.
           ...sourceRepoWriteFragment(shadowSourceRepo),
+          // 🔴 NO BETA COLUMNS HERE EITHER, and this is the branch where their absence is
+          // easiest to mistake for an omission: everything else the author can edit IS
+          // copied. Beta is the exception because it is never staged — it is written
+          // straight to this parent by `updateListing` / `updateRevisionDraft` the moment
+          // the author toggles it, so the live row is already correct. The shadow's own beta
+          // columns are never written at all — they hold the schema defaults — so copying
+          // them here would not restore an older value, it would CLEAR the live one. That is
+          // also why neither
+          // column belongs in `OFFSITE_UNCOMPARED_APPLY_FIELDS`: that list names fields this
+          // apply COPIES without comparing, and this apply copies neither.
           connectClientId: shadow.connectClientId,
           // Apply the revision's disclosed OAuth scopes + justifications onto the live
           // parent (a scope change is material, so the shadow carries the reviewed set).
@@ -3276,13 +3997,53 @@ async function applyApprovedRevision(opts: {
       where: { appListingId: shadowId },
       data: { appListingId: parentId },
     });
+    // (4b) The civitai.red icon / cover overrides, BOTH KINDS (they are assets, so an on-site
+    // assets-only apply carries them too). Also before the shadow delete: the shadow's row goes
+    // with it. The shadow's overrides replace the parent's; a shadow that staged none (no row)
+    // leaves the parent's alone — see `applyRevisionRedSlots`.
+    await applyRevisionRedSlots(tx, { shadowId, parentId });
 
     // (5) Retire the shadow (guarded to a revision row). Screenshots already moved;
     // the request already re-pointed — the cascade drops nothing.
     await tx.appListing.deleteMany({
       where: { id: shadowId, revisionOfId: { not: null } },
     });
+    return appliedOffsiteRating;
   });
+  if (appliedRating != null) {
+    await recordListingRatingChangeAfterCommit({
+      appListingId: parentId,
+      slug: parent.slug,
+      before: parent.contentRating ?? null,
+      after: appliedRating,
+      actorUserId: reviewerUserId,
+    });
+  }
+
+  // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
+  // that caller `return`s into this function BEFORE reaching its bust, and it does so
+  // for EVERY approval of an edit to an already-live listing (`revisionOfId != null`),
+  // not for some corner case.
+  //
+  // The offsite branch above writes onto the LIVE parent, and two of the columns it
+  // writes are axes of the CACHED statement, not merely of the live-hydrated card:
+  //   · `contentRating` — via `resolveApprovalContentRating`, which can RAISE it. A
+  //     `g`→`r` re-rating that is not busted leaves the newly-`r` listing sitting in
+  //     the cached SFW page (`listingMatureFilter`) for the rest of the TTL.
+  //   · `category` — the cached query filters on `al.category`, so a category move
+  //     leaves the app in the wrong filtered grid.
+  //   · `name` — the `sort='name'` sort key, cached as `sort_key`.
+  // The onsite branch is assets-only and touches none of those, but the bust is
+  // unconditional across the two branches of THIS function rather than gated on which
+  // one ran — the gate would be a per-branch judgement inside a function whose branches
+  // already share a return path, and it would save one tag delete on a mod action. That
+  // is a statement about this function, not a universal rule: a number of `AppListing`
+  // writers correctly do not bust at all, enumerated as `EXEMPT` in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
+  //
+  // Post-commit and fire-and-forget, matching every sibling site — a cache-bus outage
+  // must never fail an approval that has already committed.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { publishRequestId: request.id, listingId: parentId, slug: parent.slug };
 }
@@ -3423,6 +4184,15 @@ export async function rejectExternalRequest(opts: {
       },
     });
   }
+  // Catalog bust: DEFENCE IN DEPTH, and the justification this comment used to give was
+  // wrong — it said both outcomes are "catalog membership changes". Neither is. Reject
+  // reaches the table only through `closeTerminalListing`, which DELETES a `draft` or
+  // flips `pending`→`removed`; the catalog query is approved-only, so both rows were
+  // already outside it and the bust is INERT today. It is kept because reject is a rare
+  // moderator action and this function is the one most likely to grow a live-parent write
+  // (a revision reject already reads the parent). If `closeTerminalListing` ever gains an
+  // `approved` branch, this becomes load-bearing with no further edit.
+  await bustAppListingCatalogCache().catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -3564,6 +4334,7 @@ const mySubmissionSelect = {
        * read); the mod queues that spread the base `submissionSelect` are untouched.
        */
       kind: true,
+      appBlock: { select: { contentRating: true } },
       iconId: true,
       coverId: true,
       description: true,
@@ -3587,7 +4358,96 @@ const mySubmissionSelect = {
   },
 } as const;
 
-const submitterChip = { select: { id: true, username: true, image: true } } as const;
+/**
+ * The user chip the moderator queue renders for an OFF-SITE row.
+ *
+ * 🔴 THE SAME SELECT AS EVERY ON-SITE READER, from the one declaration, and that matters
+ * because the two render SIDE BY SIDE in one list. `UnifiedReviewList` hands both to the
+ * same `UserAvatar` with `linkToProfile`, so while this chip omitted `deletedAt` and the
+ * on-site ones carried it, a closed account read as `[deleted]` on one row and as a live,
+ * clickable profile on the row beneath — two rows on one screen disagreeing about the
+ * identity a moderator is judging.
+ */
+const submitterChip = { select: reviewUserChipSelect } as const;
+
+/**
+ * `submissionSelect` PLUS the store-listing facts the MODERATOR queue shows beside each
+ * row — lifetime plays and the listing's media.
+ *
+ * 🔴 A THIRD SELECT RATHER THAN THREE MORE KEYS ON `submissionSelect`. That base select is
+ * shared with the author-facing `listMySubmissions`, which renders none of this; widening
+ * it would add two image joins and a metric join to a read that does not use them.
+ *
+ * Keyed off the row's own `appListingId` relation, so there is no slug join here — unlike
+ * the on-site queue, whose request table has no FK while a first version is pending.
+ */
+const modQueueSubmissionSelect = {
+  ...submissionSelect,
+  appListing: {
+    select: {
+      ...submissionSelect.appListing.select,
+      // 🔴 THE LISTING's kind, not the REQUEST's — `submissionSelect` already carries the
+      // latter and they are different columns on different tables. `cardOpenCount`
+      // discriminates on the listing's, and says in capitals never to substitute
+      // `appBlockId` nullness for it.
+      kind: true,
+      // `id` + `nsfwLevel` beside the url: the review holds an above-SFW image behind a
+      // click-to-reveal on civitai.com (moderator-only, like the rest of this select).
+      icon: { select: { id: true, url: true, nsfwLevel: true } },
+      cover: { select: { id: true, url: true, nsfwLevel: true } },
+      metric: { select: { openCount: true } },
+    },
+  },
+} as const;
+
+/**
+ * Project the mod-queue listing facts onto a row, through the shared `listingQueueFacts`
+ * so the store card and the review row cannot answer "how many plays" differently.
+ *
+ * 🔴 AN OFF-SITE LISTING'S COUNT IS STRUCTURALLY UNMEASURABLE — its CTA is an external
+ * anchor — so `cardOpenCount` returns `null` for it rather than the literal `0` the
+ * `NOT NULL DEFAULT 0` column carries. Only the `onsite` media-revision rows in this queue
+ * can ever show a number.
+ */
+function withModQueueListingFacts<
+  T extends {
+    appListingId?: string | null;
+    appListing: {
+      kind?: string | null;
+      icon?: { id: number; url: string | null; nsfwLevel: number } | null;
+      cover?: { id: number; url: string | null; nsfwLevel: number } | null;
+      metric?: { openCount: number } | null;
+    } | null;
+  }
+>(row: T, red?: Map<string, ListingRedMediaImages>) {
+  const { appListing, ...rest } = row;
+  // The three relation objects are stripped so the derived strings are the payload, which
+  // is the on-site path's shape. ⚠️ A DENYLIST, so it is not a guarantee about keys added
+  // later: everything else in `modQueueSubmissionSelect.appListing.select` still rides
+  // through, `kind` included.
+  const { icon: _icon, cover: _cover, metric: _metric, ...listingRest } = appListing ?? {};
+  return {
+    ...rest,
+    appListing: appListing
+      ? (listingRest as Omit<NonNullable<T['appListing']>, 'icon' | 'cover' | 'metric'>)
+      : null,
+    ...(appListing
+      ? listingQueueFacts(appListing, row.appListingId ? red?.get(row.appListingId) : null)
+      : NO_LISTING_QUEUE_FACTS),
+  };
+}
+
+/**
+ * {@link withModQueueListingFacts} for a whole page, with ONE batched read of the page's
+ * civitai.red overrides (each row's own listing — a revision's shadow carries its own).
+ */
+async function withModQueueListingFactsPage<
+  T extends Parameters<typeof withModQueueListingFacts>[0]
+>(rows: T[]) {
+  const ids = rows.flatMap((r) => (r.appListingId ? [r.appListingId] : []));
+  const red = await readListingRedMediaManyForRender(dbRead, ids);
+  return rows.map((r) => withModQueueListingFacts(r, red));
+}
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
 
@@ -3725,31 +4585,28 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
   const ingestionRows = assetImageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: assetImageIds } },
-        select: { id: true, ingestion: true },
+        select: { id: true, ingestion: true, nsfwLevel: true },
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
+  const levelByImageId = new Map(ingestionRows.map((i) => [i.id, i.nsfwLevel ?? null]));
   const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;
     coverId: number | null;
     screenshots?: { imageId: number | null }[] | null;
-  }): { kind: 'icon' | 'cover' | 'screenshot'; status: 'scanned' | 'pending' | 'blocked' }[] => {
-    const scans: {
-      kind: 'icon' | 'cover' | 'screenshot';
-      status: 'scanned' | 'pending' | 'blocked';
-    }[] = [];
-    if (listing.iconId != null)
-      scans.push({ kind: 'icon', status: scanStatusOf(ingestionByImageId.get(listing.iconId)) });
-    if (listing.coverId != null)
-      scans.push({ kind: 'cover', status: scanStatusOf(ingestionByImageId.get(listing.coverId)) });
+  }): ListingAssetScan[] => {
+    const scans: ListingAssetScan[] = [];
+    const scanOf = (kind: ListingAssetScan['kind'], imageId: number): ListingAssetScan => ({
+      kind,
+      status: scanStatusOf(ingestionByImageId.get(imageId)),
+      nsfwLevel: levelByImageId.get(imageId) ?? null,
+    });
+    if (listing.iconId != null) scans.push(scanOf('icon', listing.iconId));
+    if (listing.coverId != null) scans.push(scanOf('cover', listing.coverId));
     for (const s of listing.screenshots ?? [])
-      if (s.imageId != null)
-        scans.push({
-          kind: 'screenshot',
-          status: scanStatusOf(ingestionByImageId.get(s.imageId)),
-        });
+      if (s.imageId != null) scans.push(scanOf('screenshot', s.imageId));
     return scans;
   };
 
@@ -3779,6 +4636,13 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
           tagline: r.appListing.tagline,
           category: r.appListing.category,
           assetScans: assetScansFor(r.appListing),
+          status: r.appListing.status,
+          contentRating: r.appListing.contentRating,
+          declaredContentRating: declaredListingRating({
+            kind: r.appListing.kind ?? 'offsite',
+            appRating: r.appListing.appBlock?.contentRating,
+            listingRating: r.appListing.contentRating,
+          }),
         }).problems
       : [],
   }));
@@ -3798,10 +4662,10 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: { ...submissionSelect, submittedBy: submitterChip },
+    select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -3814,13 +4678,13 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -3833,12 +4697,12 @@ export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = await withModQueueListingFactsPage(hasNext ? rows.slice(0, limit) : rows);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

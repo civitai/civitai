@@ -5,6 +5,7 @@ import {
   REMIX_QUEUE_RECEIVED_URL,
   STICKER_QUEUE_RECEIVED_URL,
 } from '~/components/Placement/queue-routes';
+import { STICKER_AUTO_SPACE_KEY } from '~/shared/utils/sticker-placement';
 
 /**
  * A pending placement is invisible to the creator until something tells them.
@@ -131,12 +132,21 @@ function declineMessage(details: Record<string, unknown>) {
   return `${declined}. They kept ${fee} Buzz${rest}.`;
 }
 
+/**
+ * "image" unless the row says video. A notification created before `mediaType`
+ * rode in `details` has none, and an image is what it was written about.
+ */
+export const stickerTargetNoun = (mediaType: unknown) =>
+  mediaType === 'video' ? 'video' : 'image';
+
 export const placementNotifications = createNotificationProcessor({
   'sticker-placement-pending': {
     displayName: 'Sticker awaiting your review',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.placerUsername} wants to place a sticker on your image for ${details.amount} Buzz`,
+      message: `${details.placerUsername} wants to place a sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )} for ${details.amount} Buzz`,
       // The queue, not `/images/${details.imageId}` — see the note at the top of
       // this file. Static, because the whole point is the rows this owner has
       // not seen; a per-placement URL would land them back on one image.
@@ -152,10 +162,12 @@ export const placementNotifications = createNotificationProcessor({
             'imageId', p."targetId",
             'placerId', p."placerId",
             'placerUsername', u.username,
-            'amount', p.amount
+            'amount', p.amount,
+            'mediaType', i.type::text
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
           -- Paid rows only. A free one carries amount 0, so without this it
@@ -216,7 +228,9 @@ export const placementNotifications = createNotificationProcessor({
     displayName: 'Free sticker awaiting your review',
     category: NotificationCategory.Creator,
     prepareMessage: ({ details }) => ({
-      message: `${details.placerUsername} wants to place a free sticker on your image`,
+      message: `${details.placerUsername} wants to place a free sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )}`,
       // Same queue as the paid one: a free placement holds a slot and expires
       // the same way, and splitting the two destinations would teach an owner
       // two different routes for one job.
@@ -231,10 +245,12 @@ export const placementNotifications = createNotificationProcessor({
             'placementId', p.id,
             'imageId', p."targetId",
             'placerId', p."placerId",
-            'placerUsername', u.username
+            'placerUsername', u.username,
+            'mediaType', i.type::text
           ) as "details"
         FROM "Placement" p
         JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
         WHERE p.surface = 'sticker'
           AND p."targetType" = 'image'
           AND p.free = true
@@ -503,6 +519,81 @@ export const placementNotifications = createNotificationProcessor({
   },
 
   /**
+   * The one refund that needs explaining: a submission paid for from the post
+   * editor whose image never became submittable.
+   *
+   * Deliberately NOT a general expiry notification. `remix-gallery-resolved`
+   * excludes `expired` because "nobody decided anything and the refund is full,
+   * so any message here would describe a decision that was never made" — and
+   * that reasoning still holds for a creator who simply never answered. This
+   * covers the other cause, where we took the money and then could not deliver:
+   * the image stayed a draft, was blocked, or came back rated above what the
+   * creator accepts.
+   *
+   * The two are told apart by `awaitingReadiness`, which the readiness pass
+   * CLEARS when it starts the clock. So a row still carrying it at expiry never
+   * reached the owner's queue, and one without it did — a distinction no status
+   * column records, which is why this reads the surface's own payload.
+   */
+  'remix-gallery-undelivered': {
+    displayName: 'A remix submission could not be delivered',
+    category: NotificationCategory.Creator,
+    // The money sentence comes from `amount`, not from `free` — a free row moved
+    // no Buzz, and telling someone their Buzz came back when none was spent is
+    // false in a way they can check. Same rule the sticker type follows, and the
+    // reason one type can serve both.
+    prepareMessage: ({ details }) => ({
+      message:
+        Number(details.amount ?? 0) > 0
+          ? `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery, so your Buzz has been returned.`
+          : `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery.`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."placerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            -- The party to name on the avatar. This notification is addressed to
+            -- the PLACER, so the other party is the owner; without the id the row
+            -- falls back to a generic bell.
+            'ownerId', p."ownerId",
+            'ownerUsername', u.username,
+            -- Decides the money sentence above. A free row is 0 and must not be
+            -- told about Buzz that never moved.
+            'amount', p.amount
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."ownerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status = 'expired'
+          -- Refused for something about the IMAGE, not by a deadline passing.
+          -- A draft the submitter simply never published also ends as expired
+          -- with the same refund, and telling THEM we could not deliver would be
+          -- the false-blame message the resolved type exists to avoid. Only the
+          -- readiness pass sets this.
+          AND p.data ->> 'undeliverable' = 'true'
+          -- Keyed off when it was settled, not when it was created: a submission
+          -- made before the last run and expired after it would be missed by a
+          -- createdAt window.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('remix-gallery-undelivered:',"placementId") "key",
+        "userId",
+        'remix-gallery-undelivered' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'remix-gallery-undelivered')
+    `,
+  },
+
+  /**
    * The sticker placer's side, and the gap Ellie reported: a placement could be
    * accepted and the only signal was the placer's Buzz balance moving.
    *
@@ -707,6 +798,92 @@ export const placementNotifications = createNotificationProcessor({
         details
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-resolved')
+    `,
+  },
+
+  /**
+   * The owner's side of an `auto` space, which has no review step to notify them
+   * about.
+   *
+   * The two pending types gate on `status = 'pending'`, and an auto space
+   * approves at the call site before the job next runs, so an owner who chose
+   * "Accept all" hears nothing at all — their image changes and the only record
+   * is a queue they turned off. This is the one notification that tells them.
+   *
+   * 🔴 **Opt-IN, which inverts what a settings row MEANS here.** A row is
+   * SUBSCRIBED, and the absence of one is off. That is the rare shape in this
+   * codebase — one other type has it — so this query derives its recipients by
+   * JOINing `UserNotificationSettings` and must never also carry the usual
+   * `NOT EXISTS` clause, which would make a row mean both at once. The polarity
+   * guard pins both halves.
+   *
+   * Opt-in rather than opt-out because choosing "Accept all" is already a
+   * decision to stop being asked. Defaulting this on would hand that creator a
+   * notification per placement in exchange for the setting they picked to avoid
+   * exactly that.
+   *
+   * Reads `data ->> 'autoSpace'` rather than joining `PlacementSpace`, for the
+   * reason `remix-gallery-undelivered` reads its own payload: no status column
+   * records the distinction. `settlePlacement` is called with the same action and
+   * the same `actorId` whether a space auto-approved or its owner clicked
+   * approve, and `mode` is a three-level cascade resolved in one function that
+   * SQL here would have to re-derive — as of the job, not as of the approval.
+   *
+   * Keyed on the placement alone, unlike `sticker-placement-resolved`: an auto
+   * space accepts a given placement once, and a later takedown is the placer's
+   * notification rather than another of these.
+   */
+  'sticker-placement-auto-accepted': {
+    optIn: true,
+    displayName: 'A sticker was accepted on your image automatically',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} placed a sticker on your ${stickerTargetNoun(
+        details.mediaType
+      )}`,
+      // The revealing URL, not the queue: this sticker is live on the image and
+      // there is nothing to review. Placed stickers are hidden by default, so the
+      // plain URL would land the owner on work that looks untouched.
+      url: imageWithStickersUrl(details.imageId),
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username,
+            'mediaType', i.type::text
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        LEFT JOIN "Image" i ON i.id = p."targetId"
+        -- A row means SUBSCRIBED for this type, so the join IS the filter and an
+        -- owner with no row gets nothing. Inner, deliberately: a LEFT JOIN here
+        -- restricts no one and would send this to every creator on the site.
+        JOIN "UserNotificationSettings" uns ON uns."userId" = p."ownerId" AND uns.type = 'sticker-placement-auto-accepted'
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.status = 'approved'
+          -- Covers paid and free alike. The message quotes no amount, so unlike
+          -- the pending pair there is nothing here that a free row's 0 makes
+          -- false, and one type serves both.
+          AND p.data ->> '${STICKER_AUTO_SPACE_KEY}' = 'true'
+          -- Keyed off when it was approved, not when it was created: the two are
+          -- seconds apart on this path, but a createdAt window would still miss a
+          -- placement created just before a run and approved just after it.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('sticker-placement-auto-accepted:',"placementId") "key",
+        "userId",
+        'sticker-placement-auto-accepted' "type",
+        details
+      FROM data
     `,
   },
 });

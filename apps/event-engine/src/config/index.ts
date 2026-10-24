@@ -19,6 +19,13 @@ export const config = {
     // makes the increment a no-op on replay. Redelivery from a rebalance lands
     // within seconds, so this only needs to cover the realistic replay gap.
     cacheDedupeTtlSeconds: parseInt(process.env.CACHE_DEDUPE_TTL_SECONDS ?? '3600'),
+    // How often the reaction-farm exclusion list is re-read from ClickHouse. The
+    // admin endpoint that writes it documents the effect as landing "within ~5
+    // min", so matching that keeps the increment path no staler than the promise
+    // already made about the aggregate. MetricExcludedUsers floors this at 1s —
+    // it drives a setInterval, so an unparseable value would otherwise become a
+    // 1ms query loop against ClickHouse from every pod.
+    metricExclusionRefreshMs: parseInt(process.env.METRIC_EXCLUSION_REFRESH_MS ?? '300000', 10),
   },
   kafka: {
     brokers: (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(','),
@@ -51,6 +58,11 @@ export const config = {
       'public.Article',
       'public.ComicProjectEngagement'
     ],
+
+    // Streamed by the connector but not consumed by the metrics watcher (only by
+    // vector-sync). Adding a table here changes the Debezium publication, and the
+    // watcher recreates the connector on startup, so each entry is opt-in.
+    cdcOnlyTables: process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : [],
 
     // ClickHouse topics streamed directly to Kafka
     clickhouseTopics: [
@@ -114,7 +126,33 @@ export const config = {
   s3: {
     accessKey: process.env.S3_ACCESS_KEY ?? '',
     secretKey: process.env.S3_SECRET_KEY ?? '',
-  }
+  },
+  // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
+  vectorSync: {
+    consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    pgPoolMax: Math.max(1, parseInt(process.env.VECTOR_PG_POOL_MAX ?? '4', 10)),
+    // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
+    // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
+    // embedBlockedReason in vector-sync/sync.ts.
+    embedEnabled: process.env.VECTOR_SYNC_EMBED_ENABLED === 'true',
+    // Events for one image arriving within this window collapse into one re-read.
+    debounceMs: parseInt(process.env.VECTOR_SYNC_DEBOUNCE_MS ?? '5000', 10),
+    qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
+    qdrantApiKey: process.env.QDRANT_API_KEY || undefined,
+    // Writes go to the collection, reads to the alias, so a model migration can fill a new
+    // collection while the old one keeps serving.
+    collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
+    alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
+    imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
+    orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
+    embedToken: process.env.VECTOR_EMBED_TOKEN ?? '',
+    embedMaxInFlight: Math.max(1, parseInt(process.env.VECTOR_EMBED_MAX_IN_FLIGHT ?? '4', 10)),
+    embedMaxRetries: parseInt(process.env.VECTOR_EMBED_MAX_RETRIES ?? '8', 10),
+    // Inputs per workflow, 1 to 128.
+    embedBatchSize: Math.min(128, Math.max(1, parseInt(process.env.VECTOR_EMBED_BATCH_SIZE ?? '128', 10) || 128)),
+    embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
+  },
 };
 
 export function validateConfig() {

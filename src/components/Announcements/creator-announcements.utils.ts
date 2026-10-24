@@ -1,10 +1,16 @@
+import { useMemo } from 'react';
+import { useMergeServerDismissals } from '~/components/Announcements/announcement-dismissal-merge';
+import { useServerDismissedAnnouncements } from '~/components/Announcements/announcement-dismissal-sync';
+import { mergeDismissedCreatorAnnouncements } from '~/components/Announcements/creator-announcement-dismissals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function useCreatorAnnouncementsFeature() {
   const features = useFeatureFlags();
-  return features.creatorAnnouncements;
+  // Coerced HERE rather than at the four call sites: the sparse payload reads `undefined` when
+  // the flag is absent, and `enabled: undefined` is ENABLED in React Query.
+  return !!features.creatorAnnouncements;
 }
 
 export function useQueryCreatorAnnouncements(userId?: number, limit = 10) {
@@ -30,7 +36,19 @@ export function useQueryFollowedAnnouncements(enabled = true, limit = 20) {
     { enabled: active }
   );
 
-  return { announcements: data?.items ?? [], isLoading: active ? isLoading : false };
+  const announcements = useMemo(() => data?.items ?? [], [data]);
+
+  // Both the panel and the bell's badge read this hook, so the account-level merge lives here
+  // rather than in either of them — two copies would be two chances to drift.
+  const serverDismissedIds = useServerDismissedAnnouncements();
+  const liveIds = useMemo(() => announcements.map((x) => x.id), [announcements]);
+  useMergeServerDismissals({
+    liveIds,
+    serverDismissedIds,
+    merge: mergeDismissedCreatorAnnouncements,
+  });
+
+  return { announcements, isLoading: active ? isLoading : false };
 }
 
 export function useMutedCreators() {
@@ -48,14 +66,17 @@ export function useIsCreatorMuted(creatorId?: number) {
   return data ?? false;
 }
 
-export function useToggleAnnouncementMute(creatorId: number) {
+export function useToggleAnnouncementMute(creatorId: number, creatorName?: string | null) {
   const queryUtils = trpc.useUtils();
   const mutation = trpc.announcement.toggleAnnouncementMute.useMutation({
     onSuccess: async (result) => {
+      // Mute and dismiss sit adjacent on the same card, so a confirmation naming neither the
+      // action nor the creator cannot tell a reader which of the two they just used.
+      const who = creatorName || 'this creator';
       showSuccessNotification({
         message: result.muted
-          ? 'Announcements from this creator are muted'
-          : 'Announcements from this creator are unmuted',
+          ? `Muted announcements from ${who}`
+          : `Unmuted announcements from ${who}`,
       });
       await Promise.all([
         queryUtils.announcement.getMutedCreators.invalidate(),
@@ -82,7 +103,14 @@ export function useDeleteCreatorAnnouncement() {
   const mutation = trpc.announcement.deleteCreatorAnnouncement.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: 'Announcement deleted' });
-      await queryUtils.announcement.getCreatorAnnouncements.invalidate();
+      // Both feeds, as the mute mutation above already does. The panel reads the followed
+      // feed, and trpc sets `staleTime: Infinity` with `refetchOnWindowFocus: false` — so
+      // without this a delete from the panel reports success and leaves the card on screen
+      // for the rest of the session, where a second click reports failure.
+      await Promise.all([
+        queryUtils.announcement.getCreatorAnnouncements.invalidate(),
+        queryUtils.announcement.getFollowedAnnouncements.invalidate(),
+      ]);
     },
     onError: (error) => {
       showErrorNotification({

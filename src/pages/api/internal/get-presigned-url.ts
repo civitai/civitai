@@ -22,6 +22,9 @@ export default JobEndpoint(async function getPresignedUrl(
     return res.status(404).json({ error: 'File not found' });
   }
 
-  const result = await resolveDownloadUrl(fileId, file.url, file.name);
+  const result = await resolveDownloadUrl(fileId, file.url, file.name, {
+    caller: 'internal-presigned',
+    actor: 'internal',
+  });
   return res.status(200).json(result);
 });

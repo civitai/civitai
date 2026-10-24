@@ -1,4 +1,4 @@
-import { serverSchema } from '~/env/server-schema';
+import type { serverSchema as ServerSchema } from '~/env/server-schema';
 
 /**
  * Canonical mock for `~/env/server`.
@@ -31,7 +31,7 @@ const overrides = new Map<string, unknown>();
  * This is the single source of truth: a key gaining a `.default()` in the schema
  * automatically appears here, so the hand-enumerated list can never silently diverge.
  */
-function schemaDefaults(): Record<string, unknown> {
+function schemaDefaults(serverSchema: typeof ServerSchema): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, field] of Object.entries(serverSchema.shape)) {
     try {
@@ -42,6 +42,24 @@ function schemaDefaults(): Record<string, unknown> {
     }
   }
   return result;
+}
+
+let schemaLoaded = false;
+
+/**
+ * Lays the schema's defaults UNDER every default already set, so TEST_ENV_DEFAULTS and setup's
+ * keypair still win. Called from the `~/env/server` mock factory, which runs before the first
+ * module that imports env is evaluated. Not at import: setup.ts loads this file for every test,
+ * and a static schema import keyed all of them on `server-schema.ts`, one of the most-edited
+ * files in the repo, for the test cache.
+ */
+export async function loadSchemaDefaults() {
+  if (schemaLoaded) return;
+  const { serverSchema } = await import('~/env/server-schema');
+  for (const [key, value] of Object.entries(schemaDefaults(serverSchema))) {
+    if (!(key in defaults)) defaults[key] = value;
+  }
+  schemaLoaded = true;
 }
 
 /** Worker-level, applied before any test file runs. For values a module reads at import. */
@@ -113,18 +131,15 @@ export const env: Record<string, unknown> = new Proxy(
 export const envMock = { set: setEnv, setDefaults: setEnvDefaults, reset: resetEnv };
 
 /**
- * The defaults every test starts from. Derived from the env schema's own .default()
- * values, with test-specific overrides layered on top for values the schema leaves
- * required (no default) or where the test needs a different value.
+ * The test-specific defaults: values the schema leaves required (no default), or where the
+ * test needs a different value. The schema's own .default() values sit under these,
+ * added by `loadSchemaDefaults` when env is first imported.
  *
  * 🔴 The schema-derived base means a key gaining a `.default()` in the schema
- * automatically appears here — the hand-enumerated divergence that caused OC-317
+ * automatically appears in env — the hand-enumerated divergence that caused OC-317
  * (REPLICATION_LAG_DELAY missing, read as undefined under test) cannot recur.
  */
 export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
-  // Schema-derived defaults (every .default() from serverSchema)
-  ...schemaDefaults(),
-
   // ── Test-specific overrides ──────────────────────────────────────────────
   // Required fields the schema leaves without defaults — tests need values:
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
@@ -149,6 +164,10 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   LOGGING: '',
+
+  // The schema defaults this to `isProd`, read when the schema loads: inside the test file's own
+  // import, under its mocks. ~20 files mock `~/env/other` with `isProd: true`.
+  DATABASE_IS_PROD: false,
 
   // Schema defaults overridden for test speed/behaviour:
   DATABASE_SSL: false, // schema default: true — tests don't need SSL

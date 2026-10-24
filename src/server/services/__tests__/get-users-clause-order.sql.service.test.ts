@@ -81,12 +81,20 @@ describe('getUsers clause order', () => {
     expect(sql.indexOf('LIMIT')).toBeGreaterThan(sql.indexOf('ORDER BY'));
   });
 
-  it('emits no ORDER BY without a query, which is what every contest-ban caller does today', async () => {
-    // The negative control. If this ever starts emitting one, the first test stops proving anything
-    // about ordering because the clause it measures would be present either way.
+  it('orders the contest-ban list by ban time, newest first', async () => {
+    // The list is a WINDOW over a larger set, so with no order it returned an arbitrary twenty and a
+    // ban that had just succeeded landed anywhere in them — reported as "a new ban appears to do
+    // nothing". Only newest-ban-first makes the write visible.
     const sql = await sqlFor({ contestBanned: true, limit: 20 });
 
+    expect(sql).toContain(`ORDER BY u."meta" #>> '{contestBanDetails,bannedAt}' DESC`);
+  });
+
+  it('emits no ORDER BY when neither a query nor the contest filter asks for one', async () => {
+    // The negative control. Without it the ordering assertions above prove nothing — a clause that is
+    // always present cannot show that a branch put it there.
+    const sql = await sqlFor({ limit: 20 });
+
     expect(sql).not.toContain('ORDER BY');
-    expect(sql).toContain('contestBanDetails');
   });
 });

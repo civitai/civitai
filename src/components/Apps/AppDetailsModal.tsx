@@ -128,7 +128,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             >
               <Group gap={6} wrap="nowrap">
                 <Avatar
-                  src={author.image ? getEdgeUrl(author.image, { width: 64 }) : undefined}
+                  src={
+                    author.image
+                      ? getEdgeUrl(author.image, { width: 64, optimized: true })
+                      : undefined
+                  }
                   alt=""
                   radius="xl"
                   size={20}

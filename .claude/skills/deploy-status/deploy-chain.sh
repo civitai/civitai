@@ -82,12 +82,24 @@ resolve_run() {
 
 short() { echo "${1:0:7}"; }
 
+run_commit() {
+  k -n "$NS_BUILD" get pipelinerun "$1" \
+    -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}'
+}
+
+# True when image ($1), tagged <timestamp>-<sha>, carries short sha ($2). Anchored to
+# the tag's sha: an all-digit short sha can occur inside another release's timestamp.
+# The image policy accepts any sha length, so longer shas still match.
+tag_has_sha() { [[ "$2" =~ ^[0-9a-f]{7}$ ]] && [[ "$1" =~ -"$2"[0-9a-f]*$ ]]; }
+
+# True when Flux's latest image ($2) was built from the run's commit ($1).
+image_ready() { [ -n "$1" ] && tag_has_sha "$2" "$(short "$1")"; }
+
 # ---- phase 1: build -------------------------------------------------------------
 print_build() {
   local run="$1"
   local commit cond reason msg
-  commit=$(k -n "$NS_BUILD" get pipelinerun "$run" \
-    -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}')
+  commit=$(run_commit "$run")
   reason=$(k -n "$NS_BUILD" get pipelinerun "$run" -o jsonpath='{.status.conditions[0].reason}')
   msg=$(k -n "$NS_BUILD" get pipelinerun "$run" -o jsonpath='{.status.conditions[0].message}')
 
@@ -155,7 +167,7 @@ print_primaries() {
 app_rollout() {
   local tshort="$1"
   ROLLOUT_DONE=1; ROLLOUT_DETAIL=""; ROLLOUT_LAG=""
-  local name up des rdy img
+  local name up des rdy img checked=0 saw_ssr=0 saw_api=0
   while read -r name up des rdy img; do
     [ -z "$name" ] && continue
     case "$img" in "$IMAGE_REPO"*) ;; *) continue ;; esac   # app deployments only
@@ -163,8 +175,11 @@ app_rollout() {
     up=${up:-0}; des=${des:-0}; rdy=${rdy:-0}
     # Skip scaled-to-0 deployments (Flagger canary shells at rest) — not a serving pool.
     [ "$des" -eq 0 ] 2>/dev/null && continue
+    checked=$((checked + 1))
+    [ "$name" = "$PRIMARY_SSR" ] && saw_ssr=1
+    [ "$name" = "$PRIMARY_API" ] && saw_api=1
     ROLLOUT_DETAIL+="    $name: ${up}/${des} updated, ${rdy} ready, ${img##*:}"$'\n'
-    if [[ "$img" != *"$tshort"* ]]; then
+    if ! tag_has_sha "$img" "$tshort"; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(old image ${img##*:}) "
     elif [ "$up" != "$des" ] || [ "$rdy" != "$des" ]; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(${up}/${des} rolled, ${rdy} ready) "
@@ -172,6 +187,11 @@ app_rollout() {
   done < <(k -n "$NS_APP" get deploy \
     -o custom-columns='N:.metadata.name,U:.status.updatedReplicas,D:.spec.replicas,R:.status.readyReplicas,I:.spec.template.spec.containers[0].image' \
     --no-headers)
+  # k() swallows kubectl errors, so a failed list reads as zero rows, which would
+  # otherwise leave ROLLOUT_DONE=1 with nothing checked.
+  if [ "$checked" -eq 0 ] || [ "$saw_ssr" = 0 ] || [ "$saw_api" = 0 ]; then
+    ROLLOUT_DONE=0; ROLLOUT_LAG+="(deployment list incomplete: $checked serving, primaries ssr=$saw_ssr api=$saw_api) "
+  fi
 }
 
 # ---- overall summary ------------------------------------------------------------
@@ -186,7 +206,7 @@ summarize() {
   # The target (this run's) image being in the policy means build-image + push +
   # Flux scan all completed — even if trailing notify/github taskruns are still Running.
   local img_ready=0
-  if [ -n "$target" ] && [[ "$latest" == *"$(short "$target")"* ]]; then img_ready=1; fi
+  if image_ready "$target" "$latest"; then img_ready=1; fi
 
   if [ "$img_ready" = 0 ]; then
     if [ "$breason" = "Succeeded" ] || [ "$breason" = "Completed" ]; then
@@ -255,7 +275,9 @@ cmd_status() {
 cmd_watch() {
   local run; run=$(resolve_run "${1:-}")
   [ -z "$run" ] && die "could not resolve a prod PipelineRun for '${1:-latest}'"
-  echo "Watching prod deploy chain for run: $run  (Ctrl-C to stop)"
+  local commit; commit=$(run_commit "$run")
+  [ -z "$commit" ] && die "run $run has no commit label, so its image cannot be told from the previous release's"
+  echo "Watching prod deploy chain for run: $run commit $(short "$commit")  (Ctrl-C to stop)"
   local last=""
   while true; do
     local breason cphase capi latest ssr api
@@ -285,18 +307,15 @@ cmd_watch() {
     if [[ "$cphase" =~ Failed ]] || [[ "$capi" =~ Failed ]]; then
       echo ">>> CANARY FAILED/ROLLED BACK (SSR=$cphase API=$capi). Exiting."; exit 1
     fi
-    # Fully done = new image promoted AND both primaries fully rolled
-    # (updated == desired == ready), so every serving pod runs the new code.
-    local rollout_done=""
-    if [ -n "$sd" ] && [ "$su" = "$sd" ] && [ "$sr2" = "$sd" ] \
-       && [ -n "$ad" ] && [ "$au" = "$ad" ] && [ "$ar" = "$ad" ]; then
-      rollout_done=1
-    fi
-    if [ -n "$latest" ] && [ "$ssr" = "$latest" ] && [ "$api" = "$latest" ] \
+    # Before Flux picks up this run's image, every deployment is still fully rolled
+    # onto the PREVIOUS release, which is indistinguishable from done without the sha.
+    if image_ready "$commit" "$latest" \
        && { [ "$cphase" = "Succeeded" ] || [ "$cphase" = "Initialized" ]; } \
-       && { [ "$capi" = "Succeeded" ] || [ "$capi" = "Initialized" ]; } \
-       && [ -n "$rollout_done" ]; then
-      echo ">>> PROD FULLY ON $latest — both primaries promoted AND rolled out (SSR ${su}/${sd}, API ${au}/${ad}). Done."; exit 0
+       && { [ "$capi" = "Succeeded" ] || [ "$capi" = "Initialized" ]; }; then
+      app_rollout "$(short "$commit")"
+      if [ "$ROLLOUT_DONE" = 1 ]; then
+        echo ">>> PROD FULLY ON $latest — every app deployment rolled onto $(short "$commit"). Done."; exit 0
+      fi
     fi
     sleep 30
   done

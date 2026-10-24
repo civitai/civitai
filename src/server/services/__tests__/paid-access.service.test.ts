@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockBust, mockBustFetchThrough, mockCacheFetch } = vi.hoisted(() => ({
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
   mockBust: vi.fn(),
+  mockBustFetchThrough: vi.fn(),
 }));
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
@@ -12,6 +13,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
     bust: mockBust,
   }),
+  // The whole-set gated-model-id cache: `bustPaidAccessCache` drops it alongside the per-entity
+  // caches, because a set keyed by nothing has no entity id to bust.
+  fetchThroughCache: (_key: string, fn: () => unknown) => fn(),
+  bustFetchThroughCache: mockBustFetchThrough,
 }));
 
 import {
@@ -24,6 +29,7 @@ import {
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 
 const mockDbWrite = dbMock.dbWrite;
@@ -300,7 +306,7 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
 // only case either rule applies to — the "editing is always free" direction is at the end, and is the
 // property that grandfathers everything priced before these rules existed.
 describe('assertMonetizationWrite', () => {
-  const ELIGIBLE = { scores: { models: 50000 } };
+  const ELIGIBLE = { scores: { total: 50000 } };
 
   beforeEach(() => {
     mockCacheFetch.mockImplementation(async () => ({}));
@@ -351,7 +357,9 @@ describe('assertMonetizationWrite', () => {
         ownerId: 1,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'gold',
-        userMeta: { scores: { models: 9999 } },
+        // Both keys, unequal: with `total` alone a "take the best of both during migration" edit at
+        // the call site would be a no-op here and re-open the gate in production.
+        userMeta: { scores: { total: 9999, models: 50_000 } },
       })
     ).rejects.toThrow(/creator score of 10,000/);
   });
@@ -365,7 +373,122 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: ELIGIBLE,
       })
-    ).rejects.toThrow(/monetized 3 of 3 model versions this month/);
+    ).rejects.toThrow(/priced 3 of 3 model versions this month on Free/);
+  });
+
+  describe('a creator holding the licensing-fee boost', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+      redisMock.sysRedis.hGet.mockResolvedValue('100' as never);
+      mockSlotCount.mockResolvedValue(3);
+      mockDbWrite.pricingSlot.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-10-02T00:00:00Z'),
+      } as never);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+      mockDbWrite.paidAccess.findUnique.mockResolvedValue(null as never);
+    });
+
+    // The form sends `paidAccess: null` when no gate is set, and a timed object for early access.
+    it.each([
+      ['no gate', null],
+      ['a timed early-access window', { permanent: false, timeframeDays: 7, terms: {} }],
+    ])(
+      'may set a new licensing fee past the tier allowance alongside %s',
+      async (_, paidAccess) => {
+        await expect(
+          assertMonetizationWrite({
+            ownerId: 1,
+            paidAccess: paidAccess as never,
+            licensingFee: 10,
+            storedLicensingFee: 0,
+            tier: 'free',
+            userMeta: ELIGIBLE,
+          })
+        ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      }
+    );
+
+    it('may not add permanent paid access to a licensed version once past the tier allowance', async () => {
+      mockDbWrite.pricingSlot.count.mockResolvedValue(4);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).rejects.toThrow(/licensing fees only/);
+      expect(mockDbWrite.pricingSlot.findUnique).toHaveBeenCalledWith({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: 5 } },
+        select: { createdAt: true },
+      });
+    });
+
+    it('may add permanent paid access to a version licensed in an earlier month', async () => {
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
+      mockDbWrite.pricingSlot.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-09-12T00:00:00Z'),
+      } as never);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+    });
+
+    it('may still change the fee on a licensed version once past the tier allowance', async () => {
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: null,
+          licensingFee: 12,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+    });
+
+    it('may still re-save a version that already has its gate once past the tier allowance', async () => {
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
+      mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: null } as never);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+    });
+
+    it('may not add permanent paid access past it, even alongside a fee', async () => {
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          paidAccess: { permanent: true, terms: {} } as never,
+          licensingFee: 10,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).rejects.toThrow(/licensing fees only/);
+    });
   });
 
   it('never blocks gold — its allowance is unlimited, so no count is even read', async () => {
@@ -390,7 +513,7 @@ describe('assertMonetizationWrite', () => {
         isModerator: true,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 100 } },
+        userMeta: { scores: { total: 100 } },
       })
     ).rejects.toThrow(/creator score/);
   });
@@ -429,7 +552,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -449,7 +572,7 @@ describe('assertMonetizationWrite', () => {
             terms: { download: { price: 99999 } },
           } as never,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -467,7 +590,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 50000 } },
+          userMeta: { scores: { total: 50000 } },
         })
       ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     });
@@ -484,7 +607,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).rejects.toThrow(/creator score/);
     });
@@ -501,7 +624,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 0,
           storedLicensingFee: 5,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -517,7 +640,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 500,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'SDXL 1.0',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -534,7 +657,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: undefined,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'SDXL 1.0',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -549,7 +672,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 500,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'Hunyuan Video',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -565,7 +688,7 @@ describe('assertMonetizationWrite', () => {
         isModerator: true,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).rejects.toThrow(/3 of 3/);
   });
@@ -581,7 +704,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 5,
         storedLicensingFee: 2,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -593,7 +716,7 @@ describe('assertMonetizationWrite', () => {
         paidAccess: null,
         storedLicensingFee: 2,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -606,7 +729,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 0,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -621,7 +744,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 5,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
   });
@@ -639,7 +762,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 5,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -656,7 +779,7 @@ describe('assertMonetizationWrite', () => {
         paidAccess: null,
         storedLicensingFee: 0,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
   });
@@ -668,7 +791,7 @@ describe('assertMonetizationWrite', () => {
         ownerId: 1,
         paidAccess: { permanent: false, timeframeDays: 7, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });

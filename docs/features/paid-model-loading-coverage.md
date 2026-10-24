@@ -1,0 +1,548 @@
+# Paid Model Loading — coverage, and what has to change
+
+What decides whether a model can be generated with, what decides whether it can be *loaded*, and the
+audit of the gap between them. Numbers are dated where they were taken — the original audit is
+production, 2026-09-08; later ones name their own date and source. The query is described either way,
+so it can be re-run rather than trusted.
+
+Companion to [paid-model-loading.md](paid-model-loading.md) — the feature itself: how the boost
+works, what is built, the open items and the deploy checklists.
+
+This audit matters more under the boost model, not less: the swap to the new view is what lets a
+normal user pick a checkpoint that is not loaded, and so reach the download queue and the boost at
+all.
+
+**One view, two columns, two flags.** `GenerationCoverage` carries both rules as booleans — `covered`
+(live: a checkpoint needs a `CoveredCheckpoint` row) and `coveredNext` (staged: community checkpoints
+qualify on a scanned SafeTensor weight file and load on demand) — and the Flipt boolean
+`generation-coverage-next` decides which column answers, per request, globally, default **off**
+(`20260923140000_generation_coverage_two_rules_one_view`). Choosing a rule is now choosing a column,
+not a table name. A second flag, `generation-loading-open-to-all`, decides **who** gets the staged rule
+once it is on, so the per-request answer is also per-user —
+[paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
+`src/server/services/generation/coverage-source.ts` is the only place either choice is made
+server-side (`nextCoverageEnabled` / `coverageColumn` / `pickCovered` / `coveredBy`, plus
+`coverageAudience` / `coveredForUser` / `coveredForUserSql` / `coveredByForUser`), and
+`src/shared/generation/coverage-fields.ts` is its indexed half (`coverageIndexField` /
+`versionCanGenerate`, plus `versionGeneratableFor` / `coverageFilter`); `no-divergent-coverage-read`
+keeps both out of the rest of `src/`.
+
+🔴 **A row exists when EITHER rule covers, so row existence is no longer a coverage test.** Both old
+views emitted rows only for covered versions, so `EXISTS (SELECT 1 FROM "GenerationCoverage" …)`
+answered the question. Every reader must now test a column.
+
+🔴 **Both rules exclude moderated models.** `m.mode IS NULL` had guarded the staged rule since
+2026-09-11 and never guarded the live one, so a flag choosing between them could un-block generation
+for `Archived` and `TakenDown` models. Measured on the replica 2026-09-23: 1,801 versions of mode-set
+models were covered by the live rule (1,724 LORA, 39 LoCon, 21 LORA under `TakenDown`,
+12 TextualInversion, 5 DoRA); they lose coverage when the migration runs.
+
+⚠️ **`GenerationCoverageNext` still exists and nothing reads it.** It is left in place so pods on the
+previous build keep working, and drops after this deploys. It is frozen at its `20260922190000`
+definition, so it does *not* carry the moderated-model exclusion — never use it to check what the site
+will answer. `20260909180000` and `20260922190000` are history only: they define that view, not this
+one.
+
+---
+
+## The model, decided 2026-09-08
+
+Justin's framing, which the audit below tests and supports:
+
+- **`EcosystemCheckpoints`** is the list of models the orchestrator should support **by default** —
+  the generator's default model for each ecosystem.
+- **`GenerationBaseModel`** is the list of base models where the orchestrator has extended
+  checkpoint/diffuser support, i.e. where **community** models can be run.
+- **Both populations go through the model-loading system.**
+- **File-less models — external API coverage — never touch the loader.** There is nothing to
+  download.
+- **Every other checkpoint requires a correct model file to use the loader.**
+
+🔴 **"File-less" must mean "has no *loadable* file", not "has no file row."** 36 of the 125
+`EcosystemCheckpoints` are external API models carrying a single `Training Data` archive. Keyed on
+"has any file", every one of them reads as loadable, and the site would sell a load for a model with
+no weights — a guaranteed failure, and a refund once pricing exists. See
+[the 36](#the-36-mislabelled-api-models).
+
+### Coverage becomes three branches
+
+1. **No loadable file** → covered, never offered a load. External/API generation.
+2. **In `EcosystemCheckpoints` with a loadable file** → covered; the orchestrator should carry it by
+   default.
+3. **Checkpoint on a `GenerationBaseModel` base model**, licensed, scanned, `baseModelType =
+   'Standard'`, with a loadable file → covered, loadable on demand. This is the population
+   `CoveredCheckpoint` used to gate. The view admits these whatever `modelLocked` says;
+   `isGenerationEligible` is what withholds them on a locked ecosystem — see "Model-locked
+   ecosystems" below.
+
+The existing LORA / TextualInversion / VAE / LoCon / DoRA / Upscaler branch is unchanged.
+
+The load CTA fires only for branches 2 and 3, and only when the resource is not resident. Never for
+branch 1.
+
+---
+
+## The two tables do opposite jobs
+
+This is the thing an earlier reading of these docs got wrong, and it inverted a plan.
+
+| Table | Rows | What it is |
+| --- | --- | --- |
+| `CoveredCheckpoint` | 514 rows | Auction-won community checkpoints — a **residency proxy**. Written and pruned weekly by `handle-auctions.ts`. **This is what paid loading replaces.** (638 versions are covered *as checkpoints* — the rest come from `EcosystemCheckpoints`.) |
+| `EcosystemCheckpoints` | 125 | The generator's **default model per ecosystem**. **62 of the 63 checkpoint defaults are covered through it — and zero through `CoveredCheckpoint`.** Not a loophole; the registry that keeps the generator working. |
+
+⚠️ **`CoveredCheckpoint` gates the LIVE rule and nothing else.** It is a conjunct of `covered` only;
+`coveredNext` ignores it (Justin's call, 2026-09-22: a checkpoint meeting none of the other
+qualifications is not covered whether or not the auction made it resident). Measured against the
+replica that day, dropping it from the staged rule cost 5 versions (940,125 → 940,120 rows). It stops
+gating anything the moment `generation-coverage-next` goes on.
+
+Dropping `EcosystemCheckpoints` instead would remove the default model from half the ecosystems the
+generator supports — see [the defaults audit](#the-defaults-audit).
+
+`CoveredCheckpoint` has five uses:
+
+- the `covered` column of `GenerationCoverage` — live today, inert once the flag flips.
+  `event-engine-common` selects that column from its own repo and keeps working unchanged; the
+  post-deploy item in [paid-model-loading.md](paid-model-loading.md#post-deploy-checklist) is about
+  moving it onto `coveredNext`, not about the view name
+- `handle-auctions.ts` — inserts winners, deletes everything outside the weekly set
+- `toggleCheckpointCoverage` — a moderator tRPC tool
+- `getCheckpointGenerationCoverage` — **zero callers; dead code**
+- `/api/v1/model-versions/mini/[id]` — reports a winner as `isPromoted` for the orchestrator to
+  prioritise its download. Not a coverage read, and not internal: it is on the public v1 API.
+
+So dropping it from coverage costs nothing, but deleting the table now also retires a public API field.
+
+---
+
+## What changes, in numbers
+
+Both views counted in the same query, 2026-09-08, so these reconcile:
+
+| | `covered` (live rule) | `coveredNext` (staged rule) |
+| --- | --- | --- |
+| Covered **checkpoints** | 638 | **33,796** |
+| Covered rows, all types | 899,553 | 933,386 |
+
+**+33,158 checkpoints, +33,833 rows.** The two deltas differ because dropping `Diffusers` from the
+excluded formats helps every type, not only checkpoints — about 675 of the added rows are LoRAs and
+friends.
+
+⚠️ **514 is not the number of covered checkpoints.** It is the row count of `CoveredCheckpoint`, the
+auction's list; 638 versions are covered as checkpoints today because `EcosystemCheckpoints` also
+contributes. Earlier drafts of these docs used 514 for both, which is what made the headline figures
+fail to add up.
+
+155 published, licensed, standard checkpoints on supported base models were blocked **only** by file
+format under `GenerationCoverage`: 132 Diffusers, 21 Core ML, 2 ONNX.
+
+⚠️ **Diffusers was ruled loadable (Justin, 2026-09-08) and then narrowed back out for CHECKPOINTS on
+2026-09-09.** The loader serves SafeTensor only, so the checkpoint half of the **staged** rule
+(`coveredNext`) requires a SafeTensor weight file unconditionally, and `checkLoadable` in
+`resource-load.service.ts` refuses everything else with `unsupported-format`. Diffusers remains
+accepted for **every other model type** under the staged rule; the live rule (`covered`) still
+excludes Diffusers for every type, which is the 155-version gap above. The Core ML / ONNX deny-list
+governs LoRA/TI/VAE/LoCon/DoRA/Upscaler under both.
+
+🔴 **The SafeTensor narrowing took 2,242 checkpoints back out.** Measured 2026-09-09 against the
+production replica: covered checkpoints **33,811 -> 31,569**, total view rows **933,851 -> 931,609**
+(every row of the delta a checkpoint; textual inversions unchanged at 6,299, all 514 auction rows
+retained). 834 of the 2,242 have any generation history — 6.5M lifetime generations, 0.43% of all
+checkpoint generation. Scoping matters: putting the rule on the shared `EXISTS` instead would have
+removed 3,287 textual inversions carrying **1.39 billion** generations, more than every SafeTensor TI
+combined.
+
+### The loader population, split by bucket
+
+| | `EcosystemCheckpoints` | Community checkpoints |
+| --- | --- | --- |
+| Total | 125 | 33,792 |
+| **A** — no loadable file → never loaded | 51 (15 with no file at all + 36 training-data-only) | 123 |
+| **B** — has a loadable file → goes through the loader | **74** | **33,669** |
+
+≈ **33,743 loadable checkpoints**, against 514 covered by auction today.
+
+---
+
+## The licence gate
+
+**Zero covered versions lack `RentCivit`.** Verified two ways: branch by branch, and end-to-end
+against the view (`899,068` covered rows, `0` without the licence).
+
+The view has two branches that do not check the licence — `EcosystemCheckpoints` membership and
+`usageControl = 'ExternalGeneration'` — but nothing is currently using them to escape it. All 143
+versions covered via those branches hold `RentCivit` anyway.
+
+**Consequence:** "refuse when `RentCivit` is false" and "refuse when not in `GenerationCoverage`"
+select the same set today. Gate on **coverage**, because it stays correct if a version later does
+use a bypass, and because it inherits the licence rule instead of keeping a second opinion of it.
+
+---
+
+## The defaults audit
+
+`basemodel.constants.ts` declares generation support; `ecosystemSettings[].defaults.model.id` names
+the default model per ecosystem. Run against the real exports (via `tsx`), not by grepping:
+
+- **105** base model records; **90** ecosystems; **60** base models with generation support
+- **64** ecosystem default model versions — **all 64 covered today**
+- **63** of them are checkpoints; **62** are covered via `EcosystemCheckpoints`, **0** via
+  `CoveredCheckpoint`
+
+### What a naive unification would have cost
+
+Evaluated against the main path with `CoveredCheckpoint` dropped, Diffusers allowed and **no**
+`EcosystemCheckpoints` branch: **33 of the 64 defaults lose coverage.** Nine have no file at all
+(Flux3Video, HappyHorse, MAI, MuseImage, Qwen3, Reve, Seedream, Veo3, WanVideo30 — all
+`ExternalGeneration`); the rest fail on base model and/or file type.
+
+That is why branch 1 and branch 2 both have to exist.
+
+### `basemodel.constants.ts` ↔ `GenerationBaseModel` disagree
+
+**17 base models declare generation support in the constants but have no `GenerationBaseModel` row:**
+
+> ACE Audio, Flux.1 Kontext, Grok, HappyHorse, HiDream-O1, Lens, MAI, MageFlow, MiniMax Music 3,
+> Qwen 2, Reve, Upscaler, Wan Image 2.7, Wan Video 2.5 I2V, Wan Video 2.5 T2V, Wan Video 2.7,
+> Wan Video 3.0
+
+**5 go the other way** — in the table, not declared in the constants: Nano Banana, SDXL 0.9,
+SDXL 1.0 LCM, Wan Video, Wan Video 1.3B t2v.
+
+Those 17 line up with the failing defaults above: **those ecosystems work today only because
+`EcosystemCheckpoints` covers their default model.** The base-model allowlist never learned about
+them, and nothing surfaced the inconsistency because the other table was quietly compensating.
+
+This is a real inconsistency independent of paid loading. It has no owner —
+[the open items](paid-model-loading.md#open-with-owners) (2.6).
+
+---
+
+## What stays out of scope
+
+**1,676 published checkpoints across 43 base models have no `GenerationBaseModel` row**, so they are
+not loadable under the rule above. Decided (Justin, 2026-09-08): loading supports only base models in
+`GenerationBaseModel`. They fall into four groups that want different messages, not different rules:
+
+| Group | Versions | Why not |
+| --- | --- | --- |
+| `Other` — the catch-all | 785 | Architecture unknown |
+| Legacy SD 2.x (2.1 768, 2.1, 2.0, 2.0 768, Unclip) | 537 | Deliberately retired |
+| API-only (Veo 3, Sora 2, Kling, Seedance, Seedream, Imagen4, OpenAI, Vidu Q1, Grok, Ideogram 4.5, Reve, MAI, Wan 2.5/2.7/3.0, MiniMax Music 3) | ~35 | Nothing to load, ever |
+| Open architectures the generator does not support yet (PixArt E 95, Lumina 39, Flux.1 Kontext 26, Kolors 19, ACE Audio 10, HiDream-O1 8, AuraFlow 7, Hunyuan 1 7, Mochi 5, MageFlow 5, Qwen 2 4, …) | ~240 | The generator cannot run the architecture |
+
+Every one would fail at generation time even if loaded perfectly, so the gate is right. ⚠️ But all
+four currently produce the same silence in the UI. "We don't support this architecture yet" is a
+roadmap answer, "this is API-only" is permanent, and `Other` means the upload is missing metadata —
+worth distinguishing whenever a load CTA appears on a model page.
+
+---
+
+## The 36 mislabelled API models
+
+36 `EcosystemCheckpoints` versions are external API models whose **only** file is type
+`Training Data`, format `Other`, scanned, with `usageControl = 'Generation'`.
+
+They are FLUX, Flux.1 Kontext, Flux.2, Grok Imagine, Google Imagen 4, Kling Video, Nano Banana,
+ChatGPT Images / GPT-image-1, Qwen Image (API), Seedance, Seedream, Sora 2, Vidu Video and
+Wan 2.2 / 2.5 / 2.7 — several carrying "(API)" in the model name. **17 are ecosystem defaults.**
+
+All 36 are `Published`, none is POI, none is private, and **all 36 are covered and in use in the
+generator today**.
+
+**Decided (Justin, 2026-09-08): set their `usageControl` to `ExternalGeneration`,** which is what
+they are. The codebase already treats that value as "intentionally file-less, routed via external
+engines" — `ModelVersionList` stops reporting them as missing files, the upload step is skipped in
+the wizard, and `reset-to-draft-without-requirements` excludes them. A fourth consumer joined them
+later, and users see this one: `generatorReadiness` (`src/shared/generation/generator-readiness.ts`)
+keys on `usageControl`, so the label decides whether a version reads **No download needed** or
+**Not loaded** and whether the picker's **Loaded only** filter keeps it.
+
+✅ **Applied.** Verified by query against the prod replica 2026-09-23: **51** file-less
+`EcosystemCheckpoints` versions carry `ExternalGeneration` — the 15 already flagged plus these 36 —
+and **no** file-less `EcosystemCheckpoints` version is still labelled `Generation`. Every model named
+above is relabelled.
+
+**Five file-less versions of those same models are NOT in the set**, because they are not
+`EcosystemCheckpoints` rows: `FLUX / Pro (Legacy)`, `Veo 3 / Veo 3`, `Veo 3 / Veo 3 Fast`,
+`Veo 3 / Veo 3 Image to Video` and `Grok Imagine / v2.0`. None is covered — no row, no weights, so no
+branch reaches them — so nothing offers them and nothing mislabels them either. **They stay
+`Generation`** (Briant, 2026-09-23): those models are not supported in the generator, and relabelling
+would have *added* coverage rather than corrected a display bug.
+
+The relabel is also **not self-maintaining**: a new version of an already-relabelled API model gets the
+default `Generation`, which is how `Grok Imagine / v2.0` came to sit outside the set.
+
+Verified safe: the `ExternalGeneration` branch of the view requires published and not-POI, and all 36
+satisfy both, so **coverage is preserved for 36 of 36**.
+
+Notes for whoever runs it:
+
+- `model-version.controller.ts` refuses `ExternalGeneration` from non-moderators, so this is a direct
+  DB write or a moderator action — not creator-serviceable.
+- The `Training Data` files stay attached. Harmless for coverage, and the new rule ignores them
+  because they are not loadable files. Whether an API model should carry one is a separate question.
+- Four of the file-less versions report `generatorLoaded = true` (`FLUX / Pro (Legacy)` and the three
+  `Veo 3`s, measured 2026-09-23), so the orchestrator does hold something resident under their AIRs
+  even though their only file rows are `Training Data`. Our file rows are not a reliable picture of
+  what the cluster has.
+- After this, "no loadable file" and `ExternalGeneration` nearly coincide (51 file-less ecosystem
+  checkpoints: 15 already flagged, 36 newly). **Keep the loader gated on "no loadable file" anyway** —
+  it fails safe, so a future mislabelled model gets no CTA rather than an undeliverable load. The load
+  *indicators* key on `usageControl` instead (`generatorReadiness`), which fails safe in the other
+  direction: a mislabelled model reads cold, promising a download rather than hiding one. Two keys for
+  nearly the same population, deliberately.
+
+---
+
+## `covered` is not `canGenerate`
+
+The database view and `basemodel.constants.ts` answer different questions, and both are needed.
+Only the database knows licence, scan state, status and POI. Only the constants know which **model
+types** an ecosystem supports for generation — the view's type branch is one flat list
+(`LORA, TextualInversion, VAE, LoCon, DoRA`) applied to every base model.
+
+Measured 2026-09-08: **736 versions across 33 (baseModel, type) pairs** are covered by the view and
+excluded by the constants — Wan Video + LORA (337), Flux.1 D + DoRA (102) / LoCon (76) / VAE (7) /
+TextualInversion (3), LTXV + LORA (67), and 28 smaller pairs on Flux.2, Krea 2, ZImage and Qwen.
+
+Nothing was broken by this, because all three consumers composed the pair correctly — but each did
+so **by hand**: the models search index (twice), `model.service`, and the batch resolver in
+`generation.service`. A fourth consumer reading `covered` alone would offer those 736 a paid load,
+for a resource search already hides and the orchestrator cannot generate with.
+
+**Resolved 2026-09-08.** The pair is composed once, in
+`isGenerationEligible` (`packages/civitai-shared/src/generation-eligibility.ts`), and every reader
+goes through it (8 calls across 5 files today). `no-divergent-can-generate-derivation` keeps
+`isBaseModelGenerationSupported` and `isModelLockedBaseModel` out of `src/` entirely, with an empty allowlist that fails if it
+grows — the same shape as `no-divergent-paid-gate-derivation`, written after the paid badge was
+copied four times.
+
+🔴 **The paid-loading CTA gates on `isGenerationEligible`, never on `covered`.**
+
+A longer-term fix would remove the divergence rather than compose around it: derive per-ecosystem
+type support into the database so the view's coarse type branch disappears. Bigger than this
+feature needs; worth filing.
+
+## Coverage changes have to reach the orchestrator
+
+The orchestrator keeps its own copy of the answer, read from `/api/v1/model-versions/mini/<id>` with
+no user, and caches it **per AIR string**. So a Checkpoint whose weight file is a `Diffusion Model`
+or `UNet` is cached twice over — under `…:diffusionmodel:…` and `…:checkpoint:…` — and only the key
+the generator submits decides a generation. A stale entry does not degrade to *covered*: it answers
+`"<resource> is not enabled for generation"` until it expires on its own.
+
+The scheduled inputs bust in code. `handle-auctions` invalidates the versions that join
+`CoveredCheckpoint` **and the ones that leave** — the set is rebuilt daily from auction winners plus
+the top 20 weekly earners, so a version drops out with no auction event of its own. `applyScanOutcome`
+invalidates on the scan that first sets `scannedAt`, which is what makes any file arm of the view
+answer at all.
+
+🔴 **A backfill that can move coverage must bust the versions it touched.** A raw `UPDATE` has no hook
+that will do it, and every column the view reads is reachable that way: `ModelFile.metadata`
+(`format`), `scannedAt`, `Model.allowCommercialUse`, `ModelVersion.baseModelType`. Run the SQL, then
+`bustOrchestratorModelCache(versionIds)` over what it changed.
+
+Measured 2026-09-28. Relabelling ~580 `.safetensors` files `Other` → `SafeTensor` turned `coveredNext`
+true for the checkpoint versions behind them with no bust behind it; three days later two of those
+were still refused by the orchestrator while `/mini` had answered `canGenerate: true` throughout. A
+third version *did* get a bust, on re-entry to `CoveredCheckpoint` — aimed at its `checkpoint` AIR,
+which is not the entry the generator reads. 554 published checkpoint versions have only a
+`Diffusion Model`/`UNet` public file, so that mismatch applied to every one of them until
+`getGenerationFile` made the bust invalidate both AIR forms.
+
+## Model-locked ecosystems — covered, and still unusable
+
+Supporting a model TYPE is not the same as accepting a *particular checkpoint*. An ecosystem whose
+`ecosystemSettings` defaults carry `modelLocked: true` pins generation to its own versions:
+`createCheckpointGraph` rewrites any version id outside the current workflow's visible list back to
+that workflow's `defaultModelId`. That rewrite lives in the graph's input schema, so it runs on the
+**server** parse as well as in the browser form — on-site submit, the bearer-token API and the App
+Blocks bridge alike. (The rewrite itself is deliberate and unchanged; it is counted by
+`generation-model-substitution.metrics.ts`, issue #3520.)
+
+So on those ecosystems a community checkpoint can never reach the orchestrator, however it was
+selected — and the staged rule covered it anyway, because `coveredNext` asks only for a Standard
+Checkpoint on a `GenerationBaseModel` base model with a scanned SafeTensor. The site offered it as
+generatable **and** offered its on-demand load: a download nothing will ever reference — free at
+today's pricing, and a purchase that buys nothing the moment the explicit load is priced (open item
+C2 in [paid-model-loading.md](paid-model-loading.md)).
+
+Measured on the replica **2026-09-29**, checkpoint versions with `coveredNext` on a locked base
+model, excluding `EcosystemCheckpoints` and `ExternalGeneration`:
+
+| Base model | Offered | Already loaded |
+| --- | --- | --- |
+| Qwen | 150 | 0 |
+| Flux.2 Klein 9B | 106 | 0 |
+| Wan Video 2.2 I2V-A14B | 88 | 0 |
+| MiniMax H3 | 47 | 4 |
+| Ernie | 39 | 1 |
+| LTXV 2.3 | 39 | 0 |
+| Hunyuan Video | 38 | 1 |
+| Wan Video 14B t2v | 30 | 0 |
+| 15 smaller base models | 201 | 2 |
+| **total** | **738** | **8** |
+
+Of the 738, **zero** are covered under the live rule — no `EcosystemCheckpoints` row, no auction
+winner, none reachable by the `ext` branch. Every one of them became generatable only through the
+staged expansion, so narrowing it restores the answer the live rule already gives and costs nothing
+that worked before. Eight had already been loaded — free at today's pricing, so the cost was cluster capacity rather
+than anyone's Buzz.
+
+That is worth stating precisely, because several of the 738 look official and are not:
+`wan2.1_t2v_1.3B_fp16` (1500646) and `Lightricks LTXV 2b 0.9.1` (1182093) are CivitaiOfficial or
+vendor uploads. Each is a **sibling** of the version its ecosystem actually runs, and each already
+read `covered = false`.
+
+🔴 **Hunyuan was the exception, and the measurement got it wrong.** The handler named no model, so
+the orchestrator ran its own default, `720_cfgdistill_bf16` (1313562), while the site's default and
+`EcosystemCheckpoints` row were the fp8 build (1314512), which never ran a job. bf16 was covered only
+as a top weekly earner in `CoveredCheckpoint`. When it dropped out, around 2026-09-24, every Hunyuan
+submit failed with "not enabled for generation". Fixed 2026-10-08: bf16 has its own
+`EcosystemCheckpoints` row, is the ecosystem default, and the handler sends its AIR. 1500646 appears in
+`wanBaseModelGroupIdMap`, which `getMetaResources` uses to attribute the implied Wan checkpoint on an
+image; that is a display path and was already operating against an uncovered version.
+
+**Resolved 2026-09-29, in `isGenerationEligible`** — no migration, and the view is untouched. A
+Checkpoint whose base model reads `isModelLockedBaseModel` is held to `coveredLive`, the live rule's
+answer, instead of the flag-picked column. The live rule admits a checkpoint only through
+`EcosystemCheckpoints`, the auction, or file-less API coverage, which is exactly the population the
+graph can run. LoRAs and embeddings are untouched — their handlers do pass per-resource AIRs, so a
+community LoRA on Wan or Qwen really does run.
+
+🔴 **Keyed on the live COLUMN, not on `EcosystemCheckpoints` directly, so the locked list lives only
+in `basemodel.constants.ts`.** The first attempt put a generated copy of the list in the view, which
+would have meant a `CREATE OR REPLACE VIEW` migration every time an ecosystem was added or
+`modelLocked` moved — Justin's objection, and the right one. It also leaves an auction slot somebody
+paid Buzz for alone. The cost is that this rests on `covered` continuing to exist; retiring the live
+rule has to revisit it. The population it withholds is identical to what the rejected view change
+would have removed.
+
+`isGenerationEligible` takes `coveredLive` as a **required** argument rather than an optional one: a
+call site that could omit it would silently refuse every checkpoint on 50-odd ecosystems. Making it
+required is what surfaced the sites the first pass missed — `model.controller` (twice),
+`model-version.controller`, `workflow.service` (twice) and `blocks.router`'s `buildGateVersion` all
+**feed** the gate rather than calling it, and `getResourceData` was reading `getResourceCanGenerate`
+alone, so the generator answered `true` for a checkpoint the model page, the search index and
+`mini/[id]` all refused. `no-divergent-can-generate-derivation` keeps `isModelLockedBaseModel` out
+of `src/` alongside `isBaseModelGenerationSupported`, so the rule cannot be restated at a call site.
+
+The example that opened this: model 2803528 *Phr00t/Qwen-Image-Edit-Rapid-AIO*, version 3161121. It
+was read as a taxonomy gap — no base model distinguishes a Qwen-Image-Edit build from a
+Qwen-Image one — but that is not what stops it. Plain community Qwen text-to-image finetunes are
+equally covered and equally unusable, so a new base model would have fixed none of them.
+
+🔴 **`modelLocked` is a proxy, and it is not exact in either direction.**
+
+* **Misses one case.** Boogu is *not* locked, yet `boogu.handler.ts` resolves `data.model.id`
+  through a fixed id→variant map and ignores anything else, so its community checkpoints stay
+  over-covered. Closing that needs a list of handlers that hardcode their model, which is not
+  derivable from the constants. Open.
+* **Over-shoots harmlessly.** `minimax.handler.ts` and `ltx.handler.ts` *do* pass the selected
+  version's AIR, but their ecosystems are locked, so the graph never gives them a custom one. If
+  either ecosystem is unlocked later, eligibility follows on the next request — the list is read
+  from the constants. `qwen21DiffusionModel` is the shape that needs no exclusion at all: it
+  forwards the selected version's AIR as `diffusionModel` whenever it is not the ecosystem default,
+  so unlocking Qwen 2.1 would work.
+
+## The `covered` readers audit
+
+Readers of `GenerationCoverage` / `generationCoverage.covered`, classified by what changes
+when `covered` stops implying *resident*. The generation gate was read closely; the rest are
+identified and grouped, not yet read line by line.
+
+### A — the generation gate. The swap has shipped; this is why it was the risky one.
+
+`canGenerate` in [generation.service.ts](../../src/server/services/generation/generation.service.ts)
+is `getResourceCanGenerate` — `(resource.covered || explicitCoveredModelVersionIds.includes(id)) &&
+!isUnavailable`, plus status/privacy and the hidden gates — and an uncovered resource is routed
+through `getResourceDataSubstitutes`.
+
+🔴 **`getResourceData` uses that helper ALONE, and must keep doing so.** `resolveCanGenerateForVersions`
+ANDs `isGenerationEligible`; this path cannot, because it receives every resource in the request and
+the helper carries the ecosystem model-TYPE list, which the generator has never applied to additional
+resources. Measured on the replica 2026-09-29: adding it refuses **701** published, live-covered
+versions — Wan Video LORA 304, Flux.1 D DoRA 101 / LoCon 67, LTXV LORA 66, Krea 2 LoCon 33, Wan 1.3B
+LORA 28, ZImageTurbo LoCon 21, plus VAEs, Upscalers and embeddings — with a hard
+"not available for generation" from `orchestration-new.service`. 86 generations in the preceding 30
+days used one, and **42,889 posted images** reference one, so remix from any of them would throw. The
+view's `other_type` disjunct covers those by design, so the two rules disagree permanently rather
+than by oversight.
+
+The cost of that decision is a real divergence: a community checkpoint on a `modelLocked` ecosystem
+reads generatable through `getResourceData` while the model page, the search index and `mini/[id]`
+refuse it. Submitting it is then the silent substitution of issue #3520 — counted by
+`generation-model-substitution.metrics.ts`, deliberately not changed. `getResourceDataSubstitutes`
+likewise still picks substitutes on the coverage column alone, so it can substitute a checkpoint the
+graph will clamp. `resource-data.redis.ts` carries
+`covered` into the generation resource cache and refuses to cache anything uncovered.
+
+So the swap makes tens of thousands more versions generatable ([the numbers](#what-changes-in-numbers)),
+and for a non-resident checkpoint the
+orchestrator starts the download **implicitly, on submit**.
+
+🔴 **That is free, uncapped model loading at the scale of the whole checkpoint catalogue.**
+`CalculateCost` returns zero, and the C10 rate limit only guards `resourceLoad.submit` — the
+implicit path via a generation submit has no cap at all. The gap was already recorded; the coverage
+change turns it from a theoretical bypass into an invitation with 33k entries.
+
+**Superseded by [the boost model](paid-model-loading.md).** Downloads are free there by design, so the
+abuse controls are the download lanes, the queue slot a waiting job occupies, and cancellation removing
+its downloads — not a price or a rate limit on submit. The sequencing this section originally demanded
+(a shared rate-limit key on the generation submit path, and C2 pricing, both landing before anything
+read the new view) was dropped with it: the swap shipped without either.
+
+### B — search
+
+[models.search-index.ts](../../src/server/search-index/models.search-index.ts) and
+[models-update.ts](../../src/pages/api/mod/search/models-update.ts) derive an indexed `canGenerate`
+from `covered`. After the swap, search advertises every one of them as generatable — with no
+indication that many need a paid load first. Load state in search was deliberately deferred, so
+this widens exactly the surface that has no way to express the difference.
+
+The index carries both fields: `canGenerate` / `versions.canGenerate` from
+`generationCoverage.covered` and `canGenerateNext` / `versions.canGenerateNext` from
+`generationCoverage.coveredNext`, each composed with the type check and the model-locked rule by
+`isGenerationEligible`. There
+is no raw SQL leg any more — the relation carries both columns. The picker's filter is built by
+`coverageFilter()` (`src/shared/generation/coverage-fields.ts`): for a member it is
+`coverageIndexField()`'s single field, and for a non-member with the staged rule on it widens to
+`canGenerate = true OR (canGenerateNext = true AND (type != "Checkpoint" OR versions.generatorLoaded
+= true))`. The server passes both the flag answer and `member` to the client, so the hit list
+re-checks the same rule through `versionGeneratableFor()`. Both fields collapse to one at the cutover.
+
+### C — display
+
+`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector`,
+`generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
+button — mostly correct after the change, since that is where the load CTA belongs.
+
+**`/api/v1/model-versions/mini/[id]`'s `covered` is flag-gated like everything else**
+(`coverageColumn(await nextCoverageEnabled())`). It is what the orchestrator reads for `CanGenerate`,
+and on the live rule `prepareResource` refuses the very checkpoints paid loading exists for — verified
+2026-09-08 on version 3040959. Turning the flag off therefore closes this surface too, which it must:
+otherwise the orchestrator keeps loading community checkpoints the site has stopped offering.
+
+### D — pools and adjacent consumers
+
+`daily-challenge-processing.ts` picks challenge models joined on coverage; `blocks/workflow.service.ts`
+reports coverage for App Blocks; `caches.ts` and `model.service.ts` filter model lists on it. Each
+widens with the view. None looks dangerous; all need a look before the swap.
+
+### E — no action
+
+`getCheckpointGenerationCoverage` is dead code (zero callers) and can go with `CoveredCheckpoint`.
+`backfill-trained-model-permissions.ts` asserts coverage never grants without `RentCivit` — still
+true under the new view.
+
+## How to re-run this
+
+- View definition: `SELECT pg_get_viewdef('public."GenerationCoverage"'::regclass, true)`
+- Constants side: run the real exports through `node_modules/.bin/tsx` —
+  `getGenerationBaseModelRecords()`, `ecosystemSettings`, `allEcosystemDefaultVersionIds`. Regex over
+  the file gives wrong answers; the array literal starts after `= [`, not at the first `[` (which
+  belongs to `BaseModelRecord[]`).
+- ⚠️ Counting against `GenerationCoverage` directly is slow enough to hit the statement timeout on a
+  899k-row view. Evaluate the branch predicates against the base tables instead.

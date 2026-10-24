@@ -39,7 +39,7 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/Generation/footer-parts';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -65,7 +65,10 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema';
+import {
+  audioSampleOverrideSchema,
+  yue2SampleOverrideSchema,
+} from '~/server/schema/model-version.schema';
 import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -81,6 +84,7 @@ import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
+  baseTypePrefersCaptions,
   formatTrainingValidationError,
   getTrainingFields,
   getAiToolkitEcosystem,
@@ -102,21 +106,6 @@ import { isDefined } from '~/utils/type-guards';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
-
-const prefersCaptions: TrainingBaseModelType[] = [
-  'flux',
-  'flux2',
-  'flux2klein',
-  'sd35',
-  'hunyuan',
-  'wan',
-  'chroma',
-  'zimage',
-  'ernie',
-  'hidream-o1',
-  'acestep15',
-  'acestep15xl',
-];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -252,6 +241,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // State lags a burst of clicks, and the confirm modal's onConfirm closes over a stale render,
+  // so only a ref can stop the same version being submitted (and charged) twice.
+  const submitLockRef = useRef(false);
   const [acknowledgedBases, setAcknowledgedBases] = useState<string[]>([]);
 
   const baseModelNameFor = (base: string) =>
@@ -359,6 +352,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       const retData: ImageTrainingRouterWhatIfSchema = {
         ...baseData,
+        samplesOverrides: selectedRun.samplesOverrides,
         ecosystem,
         ...(modelVariant && { modelVariant }),
         epochs: selectedRun.params.maxTrainEpochs,
@@ -408,8 +402,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [
     formBaseModel,
     selectedRun.highPriority,
+    selectedRun.baseType,
     selectedRun.params.engine,
     selectedRun.samplePrompts,
+    selectedRun.samplesOverrides,
     thisNumImages,
     selectedRun.params.resolution,
     selectedRun.params.trainBatchSize,
@@ -498,6 +494,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const doTraining = trpc.orchestrator.createTraining.useMutation();
 
+  const releaseSubmit = () => {
+    submitLockRef.current = false;
+    setAwaitInvalidate(false);
+  };
+
   const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
       await doTraining.mutateAsync({ modelVersionId, buzzType: selectedType });
@@ -522,7 +523,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         await queryUtils.model.getAvailableTrainingModels.invalidate();
 
         await router.replace(userTrainingDashboardURL);
-        setAwaitInvalidate(false);
+        releaseSubmit();
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
@@ -539,7 +540,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       finishedRuns++;
       if (finishedRuns === runs.length) {
-        setAwaitInvalidate(false);
+        releaseSubmit();
       }
     }
   };
@@ -547,6 +548,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
 
   const handleSubmit = () => {
+    if (submitLockRef.current) return;
+
     // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
     if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
       showNotification({
@@ -625,7 +628,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       if (r.samplesOverrides && r.samplesOverrides.length > 0) {
         const badIndex = r.samplesOverrides.findIndex(
-          (o) => !audioSampleOverrideSchema.safeParse(o).success
+          (o) =>
+            !(
+              r.baseType === 'yue2' ? yue2SampleOverrideSchema : audioSampleOverrideSchema
+            ).safeParse(o).success
         );
         if (badIndex !== -1) {
           showErrorNotification({
@@ -673,6 +679,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
 
     const performTransaction = () => {
+      if (submitLockRef.current) return;
+      submitLockRef.current = true;
+      setConfirmOpen(true);
+      let confirmed = false;
+
       return openConfirmModal({
         title: 'Confirm Buzz Transaction',
         children: (
@@ -714,7 +725,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
         centered: true,
         onConfirm: () => {
+          if (confirmed) return;
+          confirmed = true;
           handleConfirm();
+        },
+        onClose: () => {
+          setConfirmOpen(false);
+          if (!confirmed) submitLockRef.current = false;
         },
       });
     };
@@ -732,6 +749,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         title: 'Unsaved training data',
         autoClose: false,
       });
+      releaseSubmit();
       return;
     }
 
@@ -776,7 +794,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
         return;
       }
 
@@ -787,7 +805,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
         });
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
         return;
       }
 
@@ -814,7 +832,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             autoClose: false,
           });
           finishedRuns++;
-          if (finishedRuns === runs.length) setAwaitInvalidate(false);
+          if (finishedRuns === runs.length) releaseSubmit();
           return;
         }
 
@@ -944,7 +962,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             });
             // TODO ideally, mark this as errored and don't leave the screen
             finishedRuns++;
-            if (finishedRuns === runs.length) setAwaitInvalidate(false);
+            if (finishedRuns === runs.length) releaseSubmit();
           }
         }
       } catch (e) {
@@ -957,7 +975,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
       }
     });
   };
@@ -1171,7 +1189,27 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Stack>
       )}
 
-      {prefersCaptions.includes(selectedRun.baseType) &&
+      {runs.some((r) => r.params.engine === 'kohya') && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Stack gap={4}>
+            <Text fw={600}>Kohya is no longer actively maintained</Text>
+            <Text>
+              Kohya training is no longer actively maintained and may become less stable over time.
+              We do not recommend using Kohya for new model training. For a more reliable and
+              actively maintained training experience, we recommend AI-Toolkit instead.
+            </Text>
+          </Stack>
+        </AlertWithIcon>
+      )}
+
+      {baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -1200,7 +1238,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </AlertWithIcon>
         )}
 
-      {!prefersCaptions.includes(selectedRun.baseType) &&
+      {!baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -1259,8 +1297,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         >
           <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>
-              Z&ndash;Image training is experimental, and we're still fine-tuning things behind the
-              scenes{' '}
+              Z&ndash;Image training is experimental, and we&apos;re still fine-tuning things behind
+              the scenes{' '}
             </Text>
           </Group>
         </AlertWithIcon>
@@ -1570,6 +1608,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               !status.available ||
               !allLabeled ||
               awaitInvalidate ||
+              confirmOpen ||
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
               hasIssue ||

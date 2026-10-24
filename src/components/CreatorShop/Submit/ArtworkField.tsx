@@ -3,6 +3,7 @@ import { Dropzone } from '@mantine/dropzone';
 import { IconUpload } from '@tabler/icons-react';
 import { ArtThumb } from '~/components/CreatorShop/Submit/ArtThumb';
 import { ChecksPanel } from '~/components/CreatorShop/Submit/ChecksPanel';
+import { notifyUploadRejection } from '~/components/CreatorShop/upload-rejection';
 import type { AutoCheck } from '~/server/schema/creator-shop.schema';
 import type { CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -55,6 +56,7 @@ export function ArtworkField({
           accept={['image/png', 'image/webp']}
           maxFiles={1}
           maxSize={maxSize}
+          onReject={(rejections) => notifyUploadRejection(rejections, maxSize)}
           loading={uploading}
         >
           <Center mih={120}>

@@ -13,9 +13,16 @@ export type ThirdPartyConsentContext = {
 // Default value applies in two situations:
 //  1) Non-CA users: ThirdPartyConsentProvider intentionally renders no Provider,
 //     so consumers fall through to this default — scripts allowed, no banner.
-//  2) Initial render on the server / before the lazy CA manager hydrates: the
-//     CA manager wraps its children in another Provider with the real state.
-const defaultValue: ThirdPartyConsentContext = {
+//  2) A consumer mounted outside ThirdPartyConsentProvider entirely — component
+//     tests, which mount no provider: same fall-through. (NOT standalone pages:
+//     those render via `getLayout` INSIDE _app's provider tree.)
+// 🔴 This default is ALLOW, so anything that unmounts CAConsentManager silently
+// re-enables third-party analytics/ads for a CA visitor who rejected them — it
+// does not merely lose state. That is why ThirdPartyConsentProvider's
+// `isConsentRequired` input must come from a source that survives client-side
+// navigation (`useAppContext().region`, not `_app`'s SSR-only prop). Do not
+// "simplify" that back into a prop; see that file's header.
+export const CONSENT_NOT_REQUIRED: ThirdPartyConsentContext = {
   consent: null,
   required: false,
   allowed: true,
@@ -24,7 +31,8 @@ const defaultValue: ThirdPartyConsentContext = {
   reset: () => undefined,
 };
 
-export const ThirdPartyConsentContext = createContext<ThirdPartyConsentContext>(defaultValue);
+export const ThirdPartyConsentContext =
+  createContext<ThirdPartyConsentContext>(CONSENT_NOT_REQUIRED);
 
 export function useThirdPartyConsent(): ThirdPartyConsentContext {
   return useContext(ThirdPartyConsentContext);

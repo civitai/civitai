@@ -39,8 +39,10 @@ function specOf(mod: EndpointModule, method: string): EndpointSpec | undefined {
 function visibleTo(user: SessionUser, auth: EndpointAuth | null): boolean {
   // A legacy route carries no readable auth, so listing it would be a claim we cannot support.
   if (!auth) return false;
-  // WEBHOOK_TOKEN is a deployment secret, not a per-moderator grant: any moderator may read that these
-  // endpoints exist, and none of them can call one from a browser anyway.
+  // A webhook credential (MOD_INBOUND_TOKEN) is a deployment secret, not a per-moderator grant: any
+  // moderator may read that these endpoints exist, and none of them can call one from a browser
+  // anyway. Named generically on purpose — this branch keys on `auth.kind`, not on which variable is
+  // accepted, so it stays correct if the accepted set changes again.
   if (auth.kind === 'webhook') return true;
   return canAccess(user, auth.page);
 }

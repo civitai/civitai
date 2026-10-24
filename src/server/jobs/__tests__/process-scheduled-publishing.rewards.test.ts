@@ -7,6 +7,11 @@ const {
   mockSetLastRun,
   mockProcessEngagement,
   mockCreateNotification,
+  mockQueueImageSearchIndexUpdate,
+  mockRefreshImageVideoCounts,
+  mockBustMvCache,
+  mockPublishDueArticles,
+  mockScanEntitiesInBackground,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -14,6 +19,15 @@ const {
   mockSetLastRun: vi.fn(),
   mockProcessEngagement: vi.fn(),
   mockCreateNotification: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
+  mockRefreshImageVideoCounts: vi.fn(),
+  mockBustMvCache: vi.fn(async () => undefined),
+  mockPublishDueArticles: vi.fn(
+    async (): Promise<
+      { published: number[]; processing: number[]; failed: number[] } | undefined
+    > => undefined
+  ),
+  mockScanEntitiesInBackground: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -27,12 +41,14 @@ vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
-  userImageVideoCountCaches: { refresh: vi.fn() },
+  userImageVideoCountCaches: { refresh: mockRefreshImageVideoCounts },
 }));
-vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({
+  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
+}));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/services/model-version.service', () => ({
-  bustMvCache: vi.fn(),
+  bustMvCache: mockBustMvCache,
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
@@ -41,12 +57,20 @@ vi.mock('~/server/services/notification.service', () => ({
 vi.mock('~/server/services/nsfwLevels.service', () => ({
   updateComicNsfwLevels: vi.fn(async () => undefined),
 }));
+vi.mock('~/server/services/article-schedule.service', () => ({
+  publishDueScheduledArticles: mockPublishDueArticles,
+}));
+vi.mock('~/server/services/text-scan/submit', () => ({
+  scanEntitiesInBackground: mockScanEntitiesInBackground,
+}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
   getJobDate: async () => [jobDate.lastRun, mockSetLastRun] as const,
 }));
 
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -65,11 +89,15 @@ type Follower = { projectId: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({
+  models = [],
+  versions = [],
   scheduled = [],
   newlyLive = [],
   chapters = [],
   followers = [],
 }: {
+  models?: Row[];
+  versions?: (Row & { extras: { modelId: number } })[];
   scheduled?: Row[];
   newlyLive?: Row[];
   chapters?: Chapter[];
@@ -82,6 +110,8 @@ const stubReads = ({
     if (sql.includes('"ComicEngagement"'))
       throw new Error('relation "ComicEngagement" does not exist');
     if (sql.includes('"ComicProjectEngagement"')) return followers;
+    if (sql.includes('FROM "Model"') && !sql.includes('FROM "Model" m')) return models;
+    if (sql.includes("'hasEarlyAccess'")) return versions;
     if (sql.includes('"ComicChapter"')) return chapters;
     if (sql.includes('JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"')) return scheduled;
     if (sql.includes('FROM "Post" p')) return newlyLive;
@@ -202,6 +232,51 @@ describe('processScheduledPublishing :: first daily post reward', () => {
   });
 });
 
+describe('processScheduledPublishing :: search index reindex', () => {
+  // A standalone scheduled post goes live when the clock passes publishedAt, with no
+  // write anywhere. images_v6 gates on `p."publishedAt" <= NOW()` at pull time, so the
+  // enqueue updatePost fired at schedule time was rejected as future-dated, and
+  // Image.updatedAt never moves afterwards for the delta scan to re-derive it. If this
+  // sweep skips them the image is absent from site search permanently.
+  it('reindexes standalone scheduled posts on the day they go live', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 900 }]);
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [900],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  });
+
+  it('reindexes both publish paths in one pass, deduped', async () => {
+    stubReads({ scheduled: [{ id: 1, userId: 10 }], newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 901 }]);
+    await runJob();
+    expect(mockDbWrite.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: { in: [1, 2] } } })
+    );
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not enqueue when the published posts carry no images', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
+  });
+
+  // The count refresh compensates for this job publishing via raw SQL instead of
+  // updatePost, so it belongs to the posts this job actually flips. The sweep half was
+  // published by something else, which already refreshed. Widening it to `publishedPosts`
+  // would refresh up to REWARD_SWEEP_LIMIT users every minute.
+  it('keeps the count refresh to the posts this job flips', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 902 }]);
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
+    expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();
+  });
+});
+
 describe('processScheduledPublishing :: comic chapter notifications', () => {
   const chapter: Chapter = {
     projectId: 5,
@@ -271,7 +346,122 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
     const interval = standaloneCall().find(
       (value) => typeof (value as Prisma.Sql)?.sql === 'string'
     ) as Prisma.Sql;
-    expect(interval.sql).toBe('make_interval(mins => 60)');
+    expect(interval.sql).toBe('make_interval(mins => 10)');
     expect(interval.values).toEqual([]);
+  });
+
+  // To whoever is about to give the sweep its own, larger offset: post.controller skips the
+  // inline reward for any post scheduled at least POST_MINIMUM_SCHEDULE_MINUTES out, and this
+  // sweep is then its only reward. A post created and scheduled the same minimum ahead sits
+  // only about that far past createdAt, so an offset above the minimum never pays it at all.
+  // Model and version publishes also stamp Post.publishedAt with no inline reward, so this
+  // offset decides which of their gallery posts earn it too.
+  it('offsets the sweep by no more than the schedule minimum', async () => {
+    await runJob();
+    const interval = standaloneCall().find(
+      (value) => typeof (value as Prisma.Sql)?.sql === 'string'
+    ) as Prisma.Sql;
+    const offset = Number(/mins => (\d+)/.exec(interval.sql)?.[1]);
+    expect(offset).toBeLessThanOrEqual(POST_MINIMUM_SCHEDULE_MINUTES);
+  });
+});
+
+describe('processScheduledPublishing :: lastVersionAt', () => {
+  // sync_model_to_metric skips a lastVersionAt later than the DB's NOW(); a JS timestamp from a
+  // pod clock running ahead, or a bare NOW() rounded up by the timestamp(3) column, left
+  // ModelMetric.lastVersionAt NULL and the model off the Newest feed.
+  it('stamps lastVersionAt from the database clock, not the job clock', async () => {
+    const txExecuteRaw = vi.fn();
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: txExecuteRaw, $queryRaw: vi.fn().mockResolvedValue([]) })
+    );
+    stubReads({ versions: [{ id: 100, userId: 10, extras: { modelId: 42 } }] });
+
+    await runJob();
+
+    const call = txExecuteRaw.mock.calls.find((args) =>
+      (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as string[]).join('?')).toContain(
+      `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
+    );
+    expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
+  });
+});
+
+describe('processScheduledPublishing :: model version cache busts', () => {
+  const versions = [
+    { id: 101, userId: 10, extras: { modelId: 11 } },
+    { id: 102, userId: 10, extras: { modelId: 12 } },
+  ];
+
+  // `clearAllMocks` keeps implementations, so a throwing engagement would leak into the next case.
+  beforeEach(() => {
+    mockProcessEngagement.mockReset();
+    mockBustMvCache.mockReset();
+    mockBustMvCache.mockResolvedValue(undefined);
+  });
+
+  // The versions already read Published, so a bust this run skips is never retried.
+  it.each([
+    ['a version engagement', { entityType: 'modelVersion', entityId: 101 }],
+    ['a model engagement', { entityType: 'model', entityId: 7 }],
+  ])('busts every published version when %s throws', async (_name, failing) => {
+    stubReads({ models: [{ id: 7, userId: 10 }], versions });
+    mockProcessEngagement.mockImplementation(
+      async (e: { entityType: string; entityId: number }) => {
+        if (e.entityType === failing.entityType && e.entityId === failing.entityId)
+          throw new Error('engagement down');
+      }
+    );
+
+    await expect(runJob()).rejects.toThrow('engagement down');
+    expect(mockBustMvCache.mock.calls).toEqual([
+      [101, 11],
+      [102, 12],
+    ]);
+  });
+
+  it('a failing bust is logged and the engagements still run', async () => {
+    stubReads({ versions });
+    mockBustMvCache.mockRejectedValueOnce(new Error('redis down'));
+
+    await runJob();
+
+    expect(mockBustMvCache).toHaveBeenCalledTimes(2);
+    expect(mockProcessEngagement.mock.calls.map(([e]) => e.entityId)).toEqual([101, 102]);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ modelVersionId: 101, error: 'redis down' })
+    );
+  });
+});
+
+describe('processScheduledPublishing :: scheduled articles', () => {
+  it('takes due articles live on every run', async () => {
+    await runJob();
+    expect(mockPublishDueArticles).toHaveBeenCalledExactlyOnceWith(expect.any(Date));
+  });
+
+  it('scans the articles it takes live or into processing', async () => {
+    mockPublishDueArticles.mockResolvedValueOnce({ published: [1], processing: [2], failed: [3] });
+    await runJob();
+    expect(mockScanEntitiesInBackground).toHaveBeenCalledExactlyOnceWith('Article', [1, 2]);
+  });
+
+  it('scans nothing when no article went live or into processing', async () => {
+    mockPublishDueArticles.mockResolvedValueOnce({ published: [], processing: [], failed: [3] });
+    await runJob();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
+  });
+
+  it('still records the run when the article go-live throws', async () => {
+    mockPublishDueArticles.mockRejectedValueOnce(new Error('article table locked'));
+    await runJob();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: 'scheduled article go-live failed' })
+    );
+    expect(mockSetLastRun).toHaveBeenCalled();
+    expect(mockScanEntitiesInBackground).not.toHaveBeenCalled();
   });
 });

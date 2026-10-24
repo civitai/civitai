@@ -137,6 +137,21 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'report-resolve',
       'report-dismiss',
       'message-owner',
+      'purge-user-storage',
+      // The per-listing VISIBILITY LEVEL set by a moderator. NEUTRAL: `applyVisibility`
+      // writes the `visibility` column and nothing else — it re-asserts `status` in its CAS
+      // `WHERE` but never assigns it — so this event must never displace the one that
+      // explains a removal.
+      'set-visibility',
+      // Writes `content_rating` only, and is recorded right after a go-live's own status
+      // event — so it is routinely the newest event and must not displace that one.
+      'rating-change',
+      // Document-store takedowns: they change a row in the app's document store, nothing
+      // in `app_listings`.
+      'storage-doc-hide',
+      'storage-doc-unhide',
+      'storage-doc-delete',
+      'storage-doc-dismiss',
     ]);
   });
 
@@ -156,6 +171,16 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     'report-dismiss',
     // The listing's `userId` moves; its `status` does not.
     'claim',
+    // A moderator purged one USER's per-user App Storage rows. Nothing in
+    // `app_listings` is written at all — the rows live in a per-app schema in a
+    // different database; this taxonomy only records that it happened.
+    'purge-user-storage',
+    // A moderator hid, unhid or deleted one user-authored document in the app's
+    // document store — a different database; nothing in `app_listings` moves.
+    'storage-doc-hide',
+    'storage-doc-unhide',
+    'storage-doc-delete',
+    'storage-doc-dismiss',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

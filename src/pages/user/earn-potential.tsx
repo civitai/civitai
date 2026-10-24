@@ -41,7 +41,7 @@ export default function EarnPotential() {
 
   const { data: potential, isLoading } = trpc.buzz.getEarnPotential.useQuery(
     { username: query.username as string },
-    { enabled: features.buzz }
+    { enabled: !!features.buzz }
   );
 
   const currencyBadgeProps = {

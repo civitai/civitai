@@ -5,6 +5,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import type { InferGetServerSidePropsType } from 'next';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { Meta } from '~/components/Meta/Meta';
 import type { ActionIconProps, BadgeProps } from '@mantine/core';
 import {
@@ -487,6 +488,13 @@ export default function BountyEntryDetailsPage({
             {userSection}
             {awardSection}
             {shareSection}
+            {bountyEntry && (
+              <OwnerRatingControls
+                entityType="BountyEntry"
+                entityId={bountyEntry.id}
+                isOwner={!!isOwner}
+              />
+            )}
             {filesSection}
             {activeImage && (
               <VotableTags

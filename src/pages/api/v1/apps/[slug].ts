@@ -1,11 +1,12 @@
 import * as z from 'zod';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { getListingDetail } from '~/server/services/blocks/app-listing.service';
+import { withoutViewerScopedFields } from '~/server/schema/blocks/app-listing-read.schema';
 import { recordStoreScopeApplied } from '~/server/prom/store-scope.metrics';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
-import { isHostForColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
@@ -53,11 +54,6 @@ function firstQuery(v: string | string[] | undefined): string | undefined {
   return first === '' ? undefined : first;
 }
 
-/** RED-capable host membership test — mirrors the store router's maturity gate. */
-function isRedCapableRequest(host: string | undefined): boolean {
-  return !!host && host !== '' && isHostForColor(host, 'red');
-}
-
 const slugSchema = z.object({ slug: z.string().min(1).max(64) });
 
 export default MixedAuthEndpoint(async function handler(req, res, user) {
@@ -101,12 +97,16 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
 
     const detail = await getListingDetail(
       { slug: parsed.data.slug },
-      { redCapable: isRedCapableRequest(req.headers.host), scope }
+      // `floor: 'public'` — the public catalog grant lifts the SURFACE scope, never the
+      // per-listing audience. What keeps an UNREVIEWED listing off this endpoint is the
+      // review ceiling (`maxVisibilityForStatus`), not this argument; see the sibling list
+      // endpoint, whose comment used to credit the wrong guard.
+      { redCapable: isRedCapableHost(req.headers.host), scope, floor: 'public' }
     );
     if (!detail) {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));
     }
-    return res.status(200).json(detail);
+    return res.status(200).json(withoutViewerScopedFields(detail));
   } catch (e) {
     return handleEndpointError(res, e);
   }

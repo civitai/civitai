@@ -35,7 +35,10 @@ describe('attachSysSentinelListeners', () => {
       errorCounter,
     });
 
-    client.fire('topology-change', { type: 'MASTER_CHANGE', node: { host: '10.0.0.5', port: 6379 } });
+    client.fire('topology-change', {
+      type: 'MASTER_CHANGE',
+      node: { host: '10.0.0.5', port: 6379 },
+    });
 
     expect(log).toHaveBeenCalledOnce();
     expect(topologyCounter.labels).toHaveBeenCalledWith({
@@ -47,7 +50,10 @@ describe('attachSysSentinelListeners', () => {
     expect(errorCounter.inc).not.toHaveBeenCalled();
   });
 
-  it('logs + counts client-error events', () => {
+  // RedisSentinel forwards its connections' errors as `error` (passthroughClientErrorEvents), in
+  // the shape @redis/client 6.3.0 builds; sentinel-master-loss.integration.test.ts checks that
+  // shape against a real master loss.
+  it('logs + counts a forwarded master/replica/Sentinel connection error', () => {
     const client = fakeClient();
     const log = vi.fn();
     const topologyCounter = fakeCounter();
@@ -55,11 +61,35 @@ describe('attachSysSentinelListeners', () => {
 
     attachSysSentinelListeners(client, { deployment: 'pod-9', log, topologyCounter, errorCounter });
 
-    client.fire('client-error', { type: 'REPLICA', node: { host: 'h1', port: 6380 }, error: new Error('x') });
+    const cause = new Error('connect ECONNREFUSED');
+    client.fire('error', new Error('Replica Client (h1:6380): connect ECONNREFUSED', { cause }));
 
-    expect(errorCounter.labels).toHaveBeenCalledWith({ type: 'REPLICA', host: 'h1', deployment: 'pod-9' });
+    expect(errorCounter.labels).toHaveBeenCalledWith({
+      type: 'REPLICA',
+      host: 'h1',
+      deployment: 'pod-9',
+    });
     expect(errorCounter.inc).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(
+      'Redis sentinel sub-client error [type=REPLICA, host=h1, port=6380]',
+      cause
+    );
     expect(topologyCounter.inc).not.toHaveBeenCalled();
+  });
+
+  it('ignores an error that is not a forwarded connection error', () => {
+    const client = fakeClient();
+    const log = vi.fn();
+    const topologyCounter = fakeCounter();
+    const errorCounter = fakeCounter();
+
+    attachSysSentinelListeners(client, { deployment: 'd', log, topologyCounter, errorCounter });
+
+    client.fire('error', new Error('None of the sentinels are available'));
+    client.fire('error', 'obseve client error: Error: connect ECONNREFUSED');
+
+    expect(errorCounter.inc).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('falls back to "unknown"/"?" when event fields are missing', () => {
@@ -72,7 +102,11 @@ describe('attachSysSentinelListeners', () => {
 
     client.fire('topology-change', undefined);
 
-    expect(topologyCounter.labels).toHaveBeenCalledWith({ type: 'unknown', host: '?', deployment: 'd' });
+    expect(topologyCounter.labels).toHaveBeenCalledWith({
+      type: 'unknown',
+      host: '?',
+      deployment: 'd',
+    });
     expect(topologyCounter.inc).toHaveBeenCalledOnce();
   });
 });

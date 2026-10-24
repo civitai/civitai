@@ -4,6 +4,8 @@ import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurfac
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AppsTableColgroup, APPS_ACTIVE_PREVIEWS_COLUMNS } from '~/components/Apps/appsWideLayout';
+import { compactRelativeAgeOf } from '~/components/Apps/reviewRelativeTime';
 
 /**
  * MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Extracted from
@@ -24,22 +26,6 @@ import { trpc } from '~/utils/trpc';
  * `useFeatureFlags`, `~/utils/notifications`, and `~/utils/trpc` are the same
  * imports the browser-tested `OnsiteReviewModal` uses.
  */
-
-// Compact relative age ("just now" / "5m" / "2h" / "3d") for the active-preview
-// panel — the exact timestamp isn't useful there, freshness is.
-export function formatAge(d: string | Date | null | undefined): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  const ms = Date.now() - date.getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '—';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
 
 export function ActivePreviewsPanel() {
   const features = useFeatureFlags();
@@ -110,9 +96,14 @@ export function ActivePreviewsPanel() {
         )}
       </Group>
       <Table verticalSpacing="xs" horizontalSpacing="md">
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. This panel is
+            the reason that module's guard ENUMERATES tables: `/apps/review` gave up its
+            1368 body cap, and measured at 1440 → 2560 without a ledger the gap between a
+            row's slug and its "Tear down" button grew 817.36 → 1381.23. */}
+        <AppsTableColgroup columns={APPS_ACTIVE_PREVIEWS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>App</Table.Th>
+            <Table.Th data-testid="apps-active-previews-col-app">App</Table.Th>
             <Table.Th>Version</Table.Th>
             <Table.Th>State</Table.Th>
             <Table.Th>Age</Table.Th>
@@ -132,14 +123,31 @@ export function ActivePreviewsPanel() {
                 <Badge
                   size="sm"
                   variant="light"
+                  // 🔴 `nowrap` so min-content == max-content. This column's ledger share is
+                  // deliberately below its content (the shrink-to-content idiom that keeps
+                  // the slug→button gap constant), and a share below min-content only works
+                  // when min-content is the WHOLE label. Without this a one-word state
+                  // broke across lines and the row grew.
+                  style={{ whiteSpace: 'nowrap' }}
                   color={p.state === 'preview-live' ? 'green' : 'blue'}
                 >
                   {p.state.replace('preview-', '')}
                 </Badge>
               </Table.Td>
               <Table.Td>
-                <Text size="xs" c="dimmed">
-                  {formatAge(p.updatedAt)}
+                {/* Same reason as the state badge above: a relative-age label
+                    ("3 minutes ago") is one phrase and wrapping it is never right.
+
+                    The local `formatAge` ladder this used to call is DELETED — the
+                    shared `compactRelativeAgeOf` is the only one now. Three labels
+                    moved: sub-minute reads `now` (was `just now`), 7+ days reads
+                    `1w`/`2mo`/`1y` (was an unbounded `12d`/`400d`), and a FUTURE
+                    timestamp reads `now` rather than `—`, because DB-written times
+                    rendered against a browser clock are a few seconds ahead all the
+                    time and `—` made ordinary skew look like missing data. Absence
+                    still reads `—`. */}
+                <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                  {compactRelativeAgeOf(p.updatedAt)}
                 </Text>
               </Table.Td>
               <Table.Td>

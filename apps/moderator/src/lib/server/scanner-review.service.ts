@@ -158,8 +158,8 @@ export async function listScans(
     ch.query({ query: countQuery, query_params: params, format: 'JSONEachRow' }),
   ]);
 
-  const rows = await dataResp.json<AggregatedScanRow[]>();
-  const countRows = await countResp.json<Array<{ total: string }>>();
+  const rows = await dataResp.json<AggregatedScanRow>();
+  const countRows = await countResp.json<{ total: string }>();
   const total = Number(countRows[0]?.total ?? 0);
 
   if (rows.length === 0) return { rows: [], total };
@@ -213,7 +213,7 @@ async function getActiveLabels(scanner: Scanner): Promise<Set<string>> {
     query_params: { scanner },
     format: 'JSONEachRow',
   });
-  const rows = await resp.json<Array<{ label: string }>>();
+  const rows = await resp.json<{ label: string }>();
   return new Set(rows.map((r) => r.label));
 }
 
@@ -326,7 +326,7 @@ export async function focusedRun(input: {
     },
     format: 'JSONEachRow',
   });
-  const allRows = await resp.json<AggregatedScanRow[]>();
+  const allRows = await resp.json<AggregatedScanRow>();
 
   const lookbackCutoff = new Date(Date.now() - lookback * 24 * 60 * 60 * 1000);
   const verdictedInLookbackRow = await dbRead

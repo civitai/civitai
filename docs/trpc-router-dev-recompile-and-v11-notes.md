@@ -60,7 +60,7 @@ surface across the whole codebase, not just the data-graph.** Plan for a cycle-f
 - **Break bidirectional edges by extracting shared leaf values** (constants, schemas, enums)
   into zero-import leaf modules. Example fix from this session: moved `klingVersionIds` /
   `nanoBananaVersionIds` / `viduVersionIds` out of the `*-graph.ts` files into a new leaf
-  `src/shared/data-graph/generation/version-ids.ts`; both the graphs and `config/workflows.ts`
+  `src/shared/generation/version-ids.ts`; both the graphs and `config/workflows.ts`
   import the leaf → edge becomes one-directional. (Graph files re-export the consts so existing
   handler imports keep working.)
 - **Import leaf schemas from their source, not via a big module's re-export.** `kling-graph`
@@ -90,7 +90,7 @@ the known blockers are:
 - **CSS Modules `:global` nested inside native CSS nesting** in `*.module.css` — Turbopack's
   Lightning CSS parser rejects it (`css-loader` tolerates it). Fix: don't nest `:global {}`;
   reference global keyframes by plain name (they resolve if defined outside the module).
-- **`@civitai/client` `ERR_UNSUPPORTED_DIR_IMPORT`** — needs `transpilePackages: ['@civitai/client']`.
+- **`@civitai/orchestration-client` `ERR_UNSUPPORTED_DIR_IMPORT`** — needs `transpilePackages: ['@civitai/orchestration-client']`.
   But that also makes the cold compile *slower* (Turbopack then transpiles the large generated client).
 - Net: cold compile was not faster; warm was. Parked in favor of the v11 path.
 

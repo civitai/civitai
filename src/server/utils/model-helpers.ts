@@ -23,6 +23,48 @@ const preferenceWeight: Partial<Record<FileMetaKey, number>> = {
   quantType: 0.5,
 };
 
+/**
+ * Serving order for a precision tie — lower wins. NOT `fpQualityRank` below, which ranks the same
+ * values by fidelity for the model sidebar; `mxfp8` sitting under `int8` here is deliberate.
+ *
+ * Without a total tie-break the served precision is whichever row the query returned first, so two
+ * versions of the same model can go out at different precisions.
+ */
+const fpServingPreference: Record<ModelFileFp, number> = {
+  fp8: 1,
+  fp8_scaled: 2,
+  fp8_mixed: 3,
+  bf16: 4,
+  fp16: 5,
+  fp32: 6,
+  int8: 7,
+  mxfp8: 8,
+  nvfp4: 9,
+  nf4: 10,
+  int4: 11,
+};
+
+/**
+ * Whether `candidate` should be served ahead of `incumbent`, both having scored equally.
+ *
+ * 🔴 SAME `type` ONLY. `Model`, `Pruned Model`, `Diffusion Model` and `UNet` all score +1000, so a
+ * tie can span them — and `fileTypeUrnMap` gives those different AIR **type segments**, so choosing
+ * across them would move the AIR string the orchestrator caches by. Precision decides which build of
+ * one component to serve; it is not a vote on which component.
+ */
+function preferredPrecision(candidate: FileFormatType, incumbent: FileFormatType) {
+  if (candidate.type !== incumbent.type) return false;
+  const fpA = candidate.metadata?.fp;
+  const fpB = incumbent.metadata?.fp;
+  if (fpA === fpB) return false;
+  // Precision options are mod-managed at runtime and the `ModelFileFp` union lags behind them (see
+  // `inferSafetensorsPrecision`), so a stored value can be absent from the record. Unranked ranks
+  // last, which also covers a file stating no precision at all.
+  const rank = (fp?: ModelFileFp) =>
+    (fp ? fpServingPreference[fp] : undefined) ?? Number.MAX_SAFE_INTEGER;
+  return rank(fpA) < rank(fpB);
+}
+
 export function getPrimaryFile<T extends FileFormatType>(
   files: Array<T>,
   preferences: Partial<FileFormatType> = defaultFilePreferences
@@ -46,12 +88,16 @@ export function getPrimaryFile<T extends FileFormatType>(
     return score;
   };
 
+  // A max, not a sort: the precision tie-break is deliberately undefined across `type`, so it is not
+  // a transitive comparator and feeding it to `sort` would leave the result up to the engine.
   return files
-    .map((file) => ({
-      file,
-      score: getScore(file),
-    }))
-    .sort((a, b) => b.score - a.score)[0]?.file;
+    .map((file) => ({ file, score: getScore(file) }))
+    .reduce((best, entry) =>
+      entry.score > best.score ||
+      (entry.score === best.score && preferredPrecision(entry.file, best.file))
+        ? entry
+        : best
+    ).file;
 }
 
 /**

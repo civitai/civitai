@@ -1,23 +1,34 @@
 import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { searchClient } from '~/server/meilisearch/client';
-import { deleteImages, queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { bustCachesForPosts } from '~/server/services/post.service';
+import { deleteImages } from '~/server/services/image.service';
+import {
+  accountHoldSql,
+  assertAccountNotUnderLegalHold,
+  isLegalHoldAbort,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
-  batchSize: z.coerce.number().default(100),
+  batchSize: z.coerce.number().int().min(1).default(100),
 });
 
 export default ModEndpoint(
   async function deleteUserImages(req: NextApiRequest, res: NextApiResponse) {
     try {
       const { userId, batchSize } = schema.parse(req.query);
+      const { markerView } = await assertAccountNotUnderLegalHold(userId);
+      // Repeated in each delete, so a hold that lands mid-run stops the rest.
+      const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);
+      const unlessHeld = Prisma.sql`NOT ${held}`;
 
       const images = await dbRead.image.findMany({
         where: { userId },
@@ -32,7 +43,7 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch);
+        const result = await deleteImages(batch, true, { onlyWhere: unlessHeld });
         deletedImages += result.length;
       }
 
@@ -40,89 +51,30 @@ export default ModEndpoint(
       if (postIds.length) {
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
-        const result = await dbWrite.post.deleteMany({
-          where: { userId, id: { in: postIds } },
-        });
-        deletedPosts = result.count;
+        deletedPosts = await dbWrite.$executeRaw`
+          DELETE FROM "Post"
+          WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+        `;
       }
+
+      // A hold that landed mid-run stopped the deletes above without an error.
+      const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+      if (after?.held !== false) throw new LegalHoldStoppedError();
 
       return res.status(200).json({ deletedImages, deletedPosts });
     } catch (e) {
+      if (e instanceof LegalHoldStoppedError || isLegalHoldAbort(e))
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
+        );
+      if (e instanceof LegalHoldError)
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) })
+        );
       return handleEndpointError(res, e);
     }
   },
   ['GET']
 );
-
-// Cleans up stale image documents in the search index for a given search query.
-// Paginates meilisearch, cross-references against the DB, and queues deletes
-// for any document whose underlying image row no longer exists.
-// queueImageSearchIndexUpdate targets both images_v6 and metrics_images_v1.
-// async function deleteDeletedImages(query: string) {
-//   if (!searchClient) throw new Error('Search client not available');
-
-//   // Paginate through meilisearch collecting { id, postId } for each hit
-//   type MeiliHit = { id: number; postId: number | null };
-//   const hits: MeiliHit[] = [];
-//   const pageSize = 1000;
-//   let offset = 0;
-//   while (true) {
-//     const results = await searchClient.index(IMAGES_SEARCH_INDEX).search<MeiliHit>(query, {
-//       limit: pageSize,
-//       offset,
-//       attributesToRetrieve: ['id', 'postId'],
-//     });
-//     if (!results.hits.length) break;
-//     hits.push(...results.hits);
-//     if (results.hits.length < pageSize) break;
-//     offset += pageSize;
-//   }
-
-//   if (!hits.length) return { found: 0, orphanedImages: 0, deletedPosts: 0 };
-
-//   // Determine which image IDs are truly orphaned (present in meili but gone from DB)
-//   const meiliIds = hits.map((h) => h.id);
-//   const existing = await dbRead.image.findMany({
-//     where: { id: { in: meiliIds } },
-//     select: { id: true },
-//   });
-//   const existingIds = new Set(existing.map((i) => i.id));
-//   const orphanHits = hits.filter((h) => !existingIds.has(h.id));
-//   const orphanImageIds = orphanHits.map((h) => h.id);
-
-//   if (orphanImageIds.length) {
-//     // queueImageSearchIndexUpdate targets both images_v6 and metrics_images_v1
-//     await queueImageSearchIndexUpdate({
-//       ids: orphanImageIds,
-//       action: SearchIndexUpdateQueueAction.Delete,
-//     });
-//   }
-
-//   // Find posts referenced by the orphaned images that still exist in DB and are now empty
-//   const candidatePostIds = [
-//     ...new Set(orphanHits.map((h) => h.postId).filter((id): id is number => id != null)),
-//   ];
-
-//   let deletedPosts = 0;
-//   if (candidatePostIds.length) {
-//     const posts = await dbRead.post.findMany({
-//       where: { id: { in: candidatePostIds } },
-//       select: { id: true, _count: { select: { images: true } } },
-//     });
-//     const emptyPostIds = posts.filter((p) => p._count.images === 0).map((p) => p.id);
-
-//     if (emptyPostIds.length) {
-//       const result = await dbWrite.post.deleteMany({
-//         where: { id: { in: emptyPostIds } },
-//       });
-//       deletedPosts = result.count;
-//       await bustCachesForPosts(emptyPostIds);
-//     }
-//   }
-
-//   return {
-//     found: hits.length,
-//     orphanedImages: orphanImageIds.length,
-//     deletedPosts,
-//   };
-// }

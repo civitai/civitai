@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { BuzzWriteOptions } from '@civitai/buzz';
+import type { BuzzReadOptions, BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -18,6 +18,7 @@ import type {
 } from '~/shared/constants/buzz.constants';
 import type {
   ClaimWatchedAdRewardInput,
+  CompensationSource,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   CreateMultiAccountBuzzTransactionInput,
@@ -27,7 +28,7 @@ import type {
   // GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
-  // GetTransactionsReportResultSchema,
+  GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
   ExportUserBuzzTransactionsSchema,
   GetUserBuzzAccountSchema,
@@ -55,6 +56,7 @@ import {
   coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -76,6 +78,7 @@ import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
+import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
@@ -235,10 +238,17 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
     ? Math.min(Math.max(rawMultiplier, 1), MAX_GLOBAL_BONUS)
     : 1;
 
+  // `globalRewardsBonus` is guarded above; `base.rewardsMultiplier` is read straight off
+  // operator-authored `Product.metadata`, and this is the value the award computation and the Redis
+  // Lua cap script are handed. `foldUserMultipliers` floors it on the way in, but that runs on a
+  // cache MISS: `userMultipliersCache` has a 1-day TTL, so entries folded before this shipped are
+  // served unfloored until they expire.
+  const baseRewardsMultiplier = clampRewardMultiplier(base.rewardsMultiplier);
+
   return {
     ...base,
-    rewardsMultiplier: base.rewardsMultiplier * globalRewardsBonus,
-    baseRewardsMultiplier: base.rewardsMultiplier,
+    rewardsMultiplier: baseRewardsMultiplier * globalRewardsBonus,
+    baseRewardsMultiplier,
     globalRewardsBonus,
     rewardsBonusEvent:
       event && globalRewardsBonus > 1
@@ -303,21 +313,94 @@ export async function getUserBuzzTransactions({
 
   return {
     cursor,
-    transactions: transactions.map((t) => ({
-      ...t,
-      // Assign each user to their corresponding transaction
-      toUser: toUsers.find((u) => u.id === t.toAccountId),
-      fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
-    })),
+    transactions: transactions.map((t) =>
+      redactTransactionCounterparty({
+        ...t,
+        // Assign each user to their corresponding transaction
+        toUser: toUsers.find((u) => u.id === t.toAccountId),
+        fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
+      })
+    ),
   };
 }
 
 // The buzz service caps at 200 transactions per call and takes a single account
 // type, so a multi-account view or an export would need hundreds of sequential
 // round-trips. ClickHouse answers the same question in one query.
-function toClickhouseTransactionType(type: TransactionType) {
+export function toClickhouseTransactionType(type: TransactionType) {
   const name = TransactionType[type];
   return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+/**
+ * The inverse, and it MUST also accept a member the ingest MV has no name for.
+ *
+ * 🔴 The MV writes a member missing from its int→string map as `unknown_<n>`, not
+ * by name: prod holds `AppAuthorFee` (28) only as `'unknown_28'`. Without this arm
+ * those rows fall through to the `Tip` fallback in the transaction list and the
+ * CSV export. A bare `'<n>'` is accepted too, as `buzz.schema.ts` does for the
+ * buzz-service API read path.
+ */
+export function fromClickhouseTransactionType(raw: string): TransactionType {
+  const digits = /^(?:unknown_)?(\d+)$/.exec(raw)?.[1];
+  if (digits !== undefined) {
+    const numeric = Number(digits);
+    // A reverse-mapped name proves it is a real member; anything else keeps the
+    // long-standing Tip fallback rather than rendering blank.
+    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+  }
+  const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
+  // 🔴 A `typeof` test, not `??`. `TransactionType['__proto__']` resolves up the
+  // prototype chain to a non-nullish OBJECT, which `??` accepts — so the obvious
+  // `TransactionType[name] ?? Tip` returns `Object.prototype` typed as a
+  // `TransactionType`.
+  //
+  // Narrowing on the RESULT rejects that, and no input STRING can defeat it: every
+  // `Object.prototype` key that survives the capitalisation above starts with `_`
+  // and holds a function or an accessor. What it does NOT cover — stated because an
+  // earlier revision of this comment claimed nothing could — is a numeric-valued
+  // own property added to `Object.prototype` by something else in the process.
+  // That is prototype pollution, out of scope for this function rather than
+  // impossible; an `Object.hasOwn` check here would catch it and was removed as
+  // untestable by any reachable input.
+  const resolved: unknown = TransactionType[name];
+  return typeof resolved === 'number' ? resolved : TransactionType.Tip;
+}
+
+/**
+ * 🔴 EVERY SPELLING the column can hold for one member. A name-only `type = '…'`
+ * predicate is a SILENT ZERO for a member the MV writes as `unknown_<n>`: the
+ * transaction list renders empty and the CSV export answers 200 with a
+ * header-only body.
+ *
+ * The non-name arms admitting nothing extra is a premise about what the MV writes,
+ * NOT something any test here establishes: `Number(type)` is always a real member
+ * integer (both entry points gate `type` through `z.enum(TransactionType)`), so
+ * they can only ever match rows of that same type.
+ */
+function clickhouseTransactionTypeSpellings(type: TransactionType) {
+  const numeric = Number(type);
+  return [toClickhouseTransactionType(type), String(numeric), `unknown_${numeric}`];
+}
+
+export function clickhouseTransactionTypePredicate(type: TransactionType) {
+  const spellings = clickhouseTransactionTypeSpellings(type);
+  return `type IN (${spellings.map((s) => `'${s}'`).join(',')})`;
+}
+
+/**
+ * The exclusion form of the same rule. Inert today, since every excluded member
+ * is stored by name, but it keeps an exclusion list correct the day it gains a
+ * member the MV cannot name.
+ */
+export function clickhouseTransactionTypeExclusionPredicate(types: TransactionType[]) {
+  // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
+  // passes a non-empty constant, but this is exported, and a caller that filtered
+  // its list down to nothing would take out the whole query rather than excluding
+  // nothing.
+  if (!types.length) return '1 = 1';
+  const spellings = types.flatMap(clickhouseTransactionTypeSpellings);
+  return `type NOT IN (${spellings.map((s) => `'${s}'`).join(',')})`;
 }
 
 // Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
@@ -374,7 +457,7 @@ function buildBranchQuery({
     `date >= '${toClickhouseDate(start)}'`,
     `date <= '${toClickhouseDate(end)}'`,
     cursor ? `(date, toString(transactionId)) < ${toClickhouseCursor(cursor)}` : null,
-    type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
+    type !== undefined ? clickhouseTransactionTypePredicate(type) : null,
   ].filter(isDefined);
 
   return `
@@ -504,12 +587,9 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
 
   return rows.map((row) => {
     const details = parseDetails(row.details);
-    const type =
-      TransactionType[
-        (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-      ] ?? TransactionType.Tip;
+    const type = fromClickhouseTransactionType(row.type);
 
-    return {
+    return redactTransactionCounterparty({
       date: new Date(`${row.date.replace(' ', 'T')}Z`),
       type,
       // ClickHouse stores every amount as a positive magnitude; the direction
@@ -524,7 +604,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
       externalTransactionId: row.externalTransactionId || null,
       fromUser: usersById.get(row.fromAccountId),
       toUser: usersById.get(row.toAccountId),
-    };
+    });
   });
 }
 
@@ -691,10 +771,7 @@ async function formatExportBatch(
     rows.map((row) => {
       const isDebit = row.fromAccountId === accountId;
       const details = parseDetails(row.details);
-      const type =
-        TransactionType[
-          (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-        ] ?? TransactionType.Tip;
+      const type = fromClickhouseTransactionType(row.type);
       const { url } = parseBuzzTransactionDetails(details, type);
       const entityUrl = !url ? '' : url.startsWith('http') ? url : `${baseUrl}${url}`;
 
@@ -707,7 +784,8 @@ async function formatExportBatch(
         counterpartyName(row.toAccountId, usernames.get(row.toAccountId)),
         row.description,
         entityUrl,
-        row.externalTransactionId,
+        redactTransactionCounterparty({ type, externalTransactionId: row.externalTransactionId })
+          .externalTransactionId ?? '',
       ];
     })
   );
@@ -1237,8 +1315,8 @@ export async function pingBuzzService() {
   return buzzService.ping();
 }
 
-export async function getTransactionByExternalId(externalId: string) {
-  const data = await buzzService.getTransactionByExternalId(externalId);
+export async function getTransactionByExternalId(externalId: string, opts?: BuzzReadOptions) {
+  const data = await buzzService.getTransactionByExternalId(externalId, opts);
   if (data === null) return null;
   return getBuzzTransactionResponse.parse(data);
 }
@@ -1343,7 +1421,7 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
   // Create the transaction
   await createBuzzTransaction({
     amount: claimStatus.details.useMultiplier
-      ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
+      ? Math.ceil(claimStatus.details.amount * clampRewardMultiplier(rewardsMultiplier))
       : claimStatus.details.amount,
     externalTransactionId: claimStatus.claimId,
     fromAccountId: 0,
@@ -1539,6 +1617,14 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
+// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
+// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
+  compensation: "NOT IN ('licenseFee', 'tip')",
+  licenseFee: "= 'licenseFee'",
+  tip: "= 'tip'",
+};
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -1580,7 +1666,7 @@ export const getDailyCompensationRewardByUser = async ({
       WHERE date BETWEEN ${minDate} AND ${maxDate}
         AND modelVersionId IN (${versionIds})
         AND amount > 0
-        AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
+        AND source ${COMPENSATION_SOURCE_SQL[source]}
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
         -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
         -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under
@@ -1598,7 +1684,10 @@ export const getDailyCompensationRewardByUser = async ({
       GROUP BY modelVersionId, accountType, date
       ORDER BY date DESC, total DESC
     `,
-    'Daily Buzz compensation is temporarily unavailable, please retry.'
+    {
+      path: 'buzz-compensation',
+      message: 'Daily Buzz compensation is temporarily unavailable, please retry.',
+    }
   );
 
   if (!generationData.length) return { resources: [], hasPublishedResources };
@@ -1679,29 +1768,221 @@ export async function claimWatchedAdReward({
   // return true;
 }
 
+type TransactionsReportWindow = GetTransactionsReportSchema['window'];
+
+// Cash-out plumbing, excluded from BOTH sides of the chart. At creator volume one of these bars is
+// thousands of times the tallest other one, so the axis scales to it and every other bar renders under
+// a pixel; measured over the 89 creators who cashed out in a 30-day window, tallest bar over median
+// day falls 39.5x -> 4.1x once they are out.
+//
+// Which side each type lands on, over 180 days of production rows:
+//   bank        yellow/green -> creatorProgramBank   the Spent bar. 2,174 rows, max 10,477,563.
+//   extract     creatorProgramBank -> yellow/green   the GAINED bar. 79 rows, max 500,000.
+//   withdrawal  cashSettled -> yellow, toAccountId 0  neither, inside any window this chart can
+//               render today. Kept because the type has credited a creator's yellow out of the
+//               program bank as recently as 2025-08-07 (8 rows, max 5,233,644) and debited it
+//               directly until 2025-02-27 — both shapes land on a bar when they occur.
+//
+// So the gained branch is not defence-in-depth — `extract` reaches it and nothing else would remove
+// it. Nothing legitimate is lost there: an `extract` credit is the creator's own banked Buzz coming
+// back, the mirror of the `bank` debit already excluded on the other side.
+//
+// A `purchase` credit is deliberately NOT here. It is much larger than `extract` (max 3,549,405) but
+// it is buzz the creator bought or was sold — a real gain on a gained/spent chart, and for a creator
+// selling access it is their revenue.
+const CHART_EXCLUDED_TYPES = [
+  TransactionType.Bank,
+  TransactionType.Withdrawal,
+  TransactionType.Extract,
+];
+
+const REPORT_BUCKET_SQL: Record<TransactionsReportWindow, string> = {
+  hour: 'toStartOfHour(date)',
+  day: 'toDate(date)',
+  week: 'toMonday(date)',
+  month: 'toStartOfMonth(date)',
+};
+
+// Buckets are UTC on both sides: the `date` column is written UTC and `toClickhouseDate` compares in
+// UTC, so a local-calendar bucket sequence would key off by the host's offset and every bucket would
+// read zero.
+function reportBucketStart(value: Dayjs, window: TransactionsReportWindow) {
+  switch (window) {
+    case 'hour':
+      return value.startOf('hour');
+    case 'day':
+      return value.startOf('day');
+    // ClickHouse `toMonday`. dayjs `startOf('week')` is locale-dependent and lands on Sunday here.
+    case 'week':
+      return value.startOf('day').subtract((value.day() + 6) % 7, 'day');
+    case 'month':
+      return value.startOf('month');
+  }
+}
+
+function buildTransactionsReportQuery({
+  userId,
+  accountType,
+  window,
+  start,
+  end,
+}: {
+  userId: number;
+  accountType: BuzzSpendType;
+  window: TransactionsReportWindow;
+  start: Date;
+  end: Date;
+}) {
+  const bucket = REPORT_BUCKET_SQL[window];
+  const excluded = clickhouseTransactionTypeExclusionPredicate(CHART_EXCLUDED_TYPES);
+  const range = `date >= '${toClickhouseDate(start)}' AND date < '${toClickhouseDate(end)}'`;
+
+  return `
+    SELECT bucket, sum(gained) AS gained, sum(spent) AS spent
+    FROM (
+      SELECT ${bucket} AS bucket, amount AS gained, 0 AS spent
+      FROM buzzTransactions
+      WHERE toAccountId = ${userId} AND toAccountType = '${accountType}' AND ${range}
+        AND ${excluded}
+      UNION ALL
+      SELECT ${bucket} AS bucket, 0 AS gained, amount AS spent
+      FROM buzzTransactions
+      WHERE fromAccountId = ${userId} AND fromAccountType = '${accountType}' AND ${range}
+        AND ${excluded}
+    )
+    GROUP BY bucket
+  `;
+}
+
+type ClickhouseReportBucket = { bucket: string; gained: number | string; spent: number | string };
+
 export async function getTransactionsReport({
   userId,
   ...input
 }: GetTransactionsReportSchema & { userId: number }) {
-  const startDate =
-    input.window === 'hour'
-      ? dayjs().startOf('day')
-      : input.window === 'day'
-      ? dayjs().startOf('day').subtract(7, 'day')
-      : input.window === 'week'
-      ? dayjs().startOf('day').subtract(1, 'month')
-      : dayjs().startOf('day').subtract(1, 'year');
+  const window = input.window;
+  const accountType = input.accountType ?? 'yellow';
+
+  // The range is derived from the bucket sequence rather than the other way round. The chart keys each
+  // dataset by a `MMM-DD` label, so two buckets that format alike overwrite each other: a 12-month
+  // window started a calendar year back spans THIRTEEN months, and its first and last both render as
+  // `Aug-01`. Counting back whole buckets from the last one keeps every label distinct and stops the
+  // first bucket being a partial period drawn as a whole one. `week` is pinned at the WIDEST the old
+  // calendar subtraction reached: that varied 5 or 6 by weekday and month length (5 on 790 of 1,200
+  // enumerated days, 6 on the rest), and a window whose length depends on today's date is worse than
+  // either number.
+  const lastBucket = reportBucketStart(dayjs.utc(), window);
+  const firstBucket =
+    window === 'hour'
+      ? lastBucket.startOf('day')
+      : window === 'day'
+      ? lastBucket.subtract(7, 'day')
+      : window === 'week'
+      ? lastBucket.subtract(5, 'week')
+      : lastBucket.subtract(11, 'month');
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
 
-  const data = await buzzService.getUserTransactionsReport(userId, {
-    accountType: input.accountType ?? 'yellow',
-    window: input.window,
-    start: startDate.toDate(),
-    end: endDate.toDate(),
-  });
+  // The buzz service's report endpoint answers with pre-aggregated spent/gained per bucket and carries
+  // no transaction type, so the cash-out exclusion cannot be expressed against it. It stays the
+  // fallback for both ways ClickHouse can be unavailable — unconfigured, or the query failing — because
+  // it degrades to showing the cash-out, which is what the chart did before this. Throwing instead
+  // leaves the client rendering "no data on the provided timeframe" over a creator's real activity.
+  const fallback = async () => {
+    try {
+      const data = await buzzService.getUserTransactionsReport(userId, {
+        accountType,
+        window,
+        start: firstBucket.toDate(),
+        end: endDate.toDate(),
+      });
 
-  return getTransactionsReportResultSchema.parse(data);
+      // Only these two paths agree on a UTC host. The schema's `z.coerce.date()` reads the buzz
+      // service's bare timestamps as LOCAL and formats them as UTC, while the ClickHouse path is UTC
+      // throughout — so off UTC a fallback also shifts every bar's label by the host offset, and the
+      // degradation looks like a data bug. Production runs UTC.
+      return getTransactionsReportResultSchema.parse(data);
+    } catch (error) {
+      // `mapError` already turns every buzz-service HTTP status into a TRPCError carrying the
+      // BuzzApiError as `cause`. Re-wrapping one would relabel a 404 as a 500 — counting it in the
+      // 5xx SLO, and burying the status a level deeper than `getBuzzApiStatus` looks.
+      if (error instanceof TRPCError) throw error;
+
+      // What is left is transport-level: refused, aborted, DNS. The handler's own try/catch cannot
+      // wrap it, being synchronous around an async call, so it would reach the client raw.
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Could not load the Buzz report right now. Please try again shortly.',
+        cause: error,
+      });
+    }
+  };
+
+  if (!clickhouse) return fallback();
+
+  const rows = await queryTransactionsReport(
+    buildTransactionsReportQuery({
+      userId,
+      accountType,
+      window,
+      start: firstBucket.toDate(),
+      end: endDate.toDate(),
+    })
+  );
+
+  if (!rows) return fallback();
+
+  const totals = new Map(
+    rows.map((row) => [reportBucketStart(dayjs.utc(row.bucket), window).valueOf(), row])
+  );
+
+  // Every bucket in the range is emitted whether it has rows or not. The chart draws one bar per
+  // returned bucket, so dropping the empty ones would silently shorten the axis instead of showing a
+  // quiet day, and an account with no activity at all would render as a broken chart rather than a
+  // flat one.
+  const report: GetTransactionsReportResultSchema = [];
+  let cursor = firstBucket;
+  while (!cursor.isAfter(lastBucket)) {
+    const next = cursor.add(1, window);
+    const row = totals.get(cursor.valueOf());
+    report.push({
+      date: cursor.format('YYYY-MM-DDTHH:mm:ss'),
+      start: cursor.format('YYYY-MM-DDTHH:mm:ss'),
+      end: next.format('YYYY-MM-DDTHH:mm:ss'),
+      accounts: [
+        {
+          accountType,
+          gained: Number(row?.gained ?? 0),
+          spent: Number(row?.spent ?? 0),
+        },
+      ],
+    });
+    cursor = next;
+  }
+
+  return report;
+}
+
+// Returns undefined rather than throwing so the caller can fall back to the buzz service. An empty
+// array is a real answer here — a creator with no activity in the window — so the two cannot share a
+// value.
+//
+// The trade this makes: a ClickHouse outage silently reverts the chart to its pre-exclusion behaviour
+// — the cash-out bar returns and the page looks normal. That is deliberate (a working chart beats an
+// error), and it means the ONLY signal is this log line. Alert on it rather than on the UI.
+async function queryTransactionsReport(query: string) {
+  try {
+    return await clickhouse!.$query<ClickhouseReportBucket>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-report',
+      type: 'error',
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+    }).catch(() => undefined);
+
+    return undefined;
+  }
 }
 
 export async function getCounterPartyBuzzTransactions({
@@ -1811,8 +2092,11 @@ export const grantBuzzPurchase = async ({
   return transactionId;
 };
 
-export async function getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix: string) {
-  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix });
+export async function getMultiAccountTransactionsByPrefix(
+  externalTransactionIdPrefix: string,
+  opts?: BuzzReadOptions
+) {
+  const data = await buzzService.listMultiTransactions({ externalTransactionIdPrefix }, opts);
 
   return data.map((item) => ({
     ...item,

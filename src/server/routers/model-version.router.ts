@@ -1,7 +1,9 @@
-import { finiteOrNull, monthlyPricingAllowance, pricingEligibility } from '@civitai/buzz';
+import { pricingAllowanceLimits, pricingEligibility } from '@civitai/buzz';
 import {
   countPricingSlotsThisMonth,
+  getFeeAllowanceBoost,
   getCreatorScore,
+  listPricingSlots,
 } from '~/server/services/pricing-slot.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import {
@@ -32,9 +34,7 @@ import {
   earlyAccessModelVersionsOnTimeframeSchema,
   getLicensingRootsSchema,
   getModelVersionByModelTypeSchema,
-  getModelVersionPopularityInput,
   getModelVersionSchema,
-  getModelVersionsPopularityInput,
   modelVersionEarlyAccessPurchase,
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
@@ -50,10 +50,8 @@ import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
-  getModelVersionPopularity,
   getLicensingRoots,
   getModelVersionsByModelType,
-  getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
   addLinkedComponent,
@@ -75,8 +73,16 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { ownerOnlyFileUrls, withoutFileUrls } from '~/server/utils/owner-only-file-urls';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const versionFileUrlsForOwner = ownerOnlyFileUrls<
+  Awaited<ReturnType<typeof getModelVersionHandler>>
+>({
+  ownerId: ({ data }) => data.model.user.id,
+  strip: (data) => ({ ...data, files: withoutFileUrls(data.files) as typeof data.files }),
+});
 
 // Per-procedure because `modelId` does not mean the same thing in every input here. On `upsert` it
 // names the model the write LANDS on, and on the exploration-prompt inputs it restates the host's own
@@ -125,20 +131,24 @@ const isVersionOwnerOrModerator = ownershipGuard({ authorizeInputModelId: false 
 
 export const modelVersionRouter = router({
   getPricingAllowance: protectedProcedure.query(async ({ ctx }) => {
-    const [tier, used, score] = await Promise.all([
+    const [tier, used, score, feeBoost] = await Promise.all([
       getCapTier(ctx.user.id),
       countPricingSlotsThisMonth(ctx.user.id),
       getCreatorScore(ctx.user.id),
+      getFeeAllowanceBoost(ctx.user.id),
     ]);
     return {
       used,
-      limit: finiteOrNull(monthlyPricingAllowance(tier)),
+      ...pricingAllowanceLimits({ tier, boost: feeBoost }),
+      feeBoost,
       eligibility: pricingEligibility(score),
     };
   }),
+  getPricingSlots: protectedProcedure.query(({ ctx }) => listPricingSlots(ctx.user.id)),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionSchema)
+    .use(versionFileUrlsForOwner)
     .query(getModelVersionHandler),
   // Owner-only variant that reads from the primary DB. Used by the upload/edit
   // wizards and the files modal so a freshly-mutated file or linked-component
@@ -157,14 +167,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(getModelVersionRunStrategiesHandler),
-  getPopularity: publicProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getModelVersionPopularityInput)
-    .query(({ input }) => getModelVersionPopularity(input)),
-  getPopularities: publicProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getModelVersionsPopularityInput)
-    .query(({ input }) => getModelVersionsPopularity(input)),
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)

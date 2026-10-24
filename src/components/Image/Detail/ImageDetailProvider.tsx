@@ -7,7 +7,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCollection } from '~/components/Collections/collection.utils';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
-import { useQueryImages } from '~/components/Image/image.utils';
+import { parseImageQueryParams, useQueryImages } from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -53,7 +53,6 @@ export function ImageDetailProvider({
   hideReactions,
   filters,
   collectionId,
-  withoutPost,
 }: {
   children: React.ReactElement;
   imageId: number;
@@ -62,7 +61,6 @@ export function ImageDetailProvider({
   hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
   collectionId?: number;
-  withoutPost?: boolean;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -75,10 +73,14 @@ export function ImageDetailProvider({
     enabled: !!collectionId,
   });
 
-  const { postId: queryPostId, active = false } = browserRouter.query as {
-    postId?: number;
-    active?: boolean;
-  };
+  // `browserRouter.query` holds raw strings, so reading `postId` off it with a cast
+  // was not a parse: on `?postId=null` this handed the string 'null' to the `??`
+  // below, it beat the parsed filter, and `image.getInfinite` was called with a
+  // string against an input schema typed `z.number()` — a guaranteed failed request
+  // on every load of the very links this page was fixed to serve. Parse it the same
+  // way the filters are parsed; `active` is a genuine boolean read and stays a cast.
+  const { postId: queryPostId } = parseImageQueryParams(browserRouter.query);
+  const { active = false } = browserRouter.query as { active?: boolean };
   const { modelId, modelVersionId, username, userId, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
@@ -111,7 +113,7 @@ export function ImageDetailProvider({
   // TODO - this needs to return the data as `ImagesInfiniteModel`
   // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageQueryLoading } = trpc.image.get.useQuery(
-    { id: imageId, withoutPost },
+    { id: imageId },
     { enabled: shouldFetchImage }
   );
   // A disabled observer still reports `isInitialLoading` while *another* observer

@@ -2,14 +2,23 @@ import {
   checkListingAssetsComplete,
   type MissingAsset,
 } from '~/server/services/blocks/app-listing-assets.service';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { listingAssetAudience } from '~/shared/utils/listing-media-split';
+import {
+  assetRating,
+  MATURE_STORE_HOST,
+  SFW_STORE_HOST,
+  summarizeListingRating,
+} from '~/shared/utils/listing-rating-display';
 
 /**
  * Advisory "listing completeness" surface for /apps/my-submissions.
  *
- * PURE + unit-tested. Given the subset of an `AppListing`'s asset ids + key text
- * fields, it enumerates the row's PROBLEMS — missing assets (icon / cover /
- * screenshots, delegated to the shared {@link checkListingAssetsComplete} gate)
- * PLUS empty key fields (description / tagline / category). `name` is always
+ * PURE + unit-tested. Given a listing's asset ids, key text fields, scan states, status
+ * and ratings, it enumerates the row's PROBLEMS — missing assets (icon / cover /
+ * screenshots, delegated to the shared {@link checkListingAssetsComplete} gate), empty
+ * key fields (description / tagline / category), blocked or still-scanning media, and a
+ * rating raised above the declared one that hides an approved listing from the SFW store. `name` is always
  * filled from the manifest so it is intentionally NOT checked.
  *
  * This is a heads-up for the developer, NOT a hard gate — nothing here blocks
@@ -30,6 +39,8 @@ export type ListingAssetScan = {
   kind: 'icon' | 'cover' | 'screenshot';
   /** `scanned` (clean), `pending` (still scanning), `blocked` (prohibited content). */
   status: 'scanned' | 'pending' | 'blocked';
+  /** The image's detected level; feeds the civitai.com media problems. Absent ⇒ none of those. */
+  nsfwLevel?: number | null;
 };
 
 /**
@@ -84,6 +95,15 @@ export type ListingProblemInput = {
    * scan-dimension behavior, so existing callers are unchanged.
    */
   assetScans?: ListingAssetScan[];
+  /** Lifecycle status; only an `approved` listing is in the store to be hidden from it. */
+  status: string;
+  /** The rating the listing row carries — what the store gates on. */
+  contentRating: string | null;
+  /**
+   * The rating the author declared, from `declaredListingRating`; `null` when the
+   * listing has no separate declaration.
+   */
+  declaredContentRating: string | null;
 };
 
 export type ListingProblemCode =
@@ -94,14 +114,17 @@ export type ListingProblemCode =
   | 'empty-tagline'
   | 'empty-category'
   | 'blocked-media'
-  | 'scanning-media';
+  | 'scanning-media'
+  | 'hidden-mature-rating'
+  | 'sfw-slot-mature';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
- *   - `blocking`  — below the floor; the listing CANNOT publish until fixed
- *                   (missing icon / cover).
- *   - `advisory`  — recommended but optional; does NOT block publish (missing
- *                   screenshots, empty description / tagline / category).
+ *   - `blocking`  — the listing CANNOT publish until fixed (missing icon / cover,
+ *                   or a blocked asset).
+ *   - `advisory`  — does NOT block publish: recommended-but-optional items (missing
+ *                   screenshots, empty description / tagline / category), a
+ *                   still-scanning asset, and the hidden-rating notice.
  */
 export type ListingProblemSeverity = 'blocking' | 'advisory';
 
@@ -219,10 +242,11 @@ function isEmpty(value: string | null | undefined): boolean {
 }
 
 /**
- * Enumerate a listing's advisory problems. Never throws. Order is stable:
- * assets first (icon → cover → screenshots, from the shared gate), then the
- * empty text fields (description → tagline → category). An all-complete listing
- * returns `{ problems: [] }`.
+ * Enumerate a listing's advisory problems. Never throws. Order is stable: assets
+ * (icon → cover → screenshots, from the shared gate), empty text fields (description →
+ * tagline → category), media scans (blocked, then pending), the hidden-rating notice,
+ * then the civitai.com media problems (icon → cover). Returns
+ * `{ problems: [] }` when none apply.
  */
 export function computeListingProblems(listing: ListingProblemInput): ListingProblemsResult {
   const problems: ListingProblem[] = [];
@@ -292,5 +316,68 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
       severity: 'advisory',
     });
 
+  const hidden = hiddenMatureRatingLabel(listing);
+  if (hidden) problems.push({ code: 'hidden-mature-rating', label: hidden, severity: 'advisory' });
+
+  problems.push(...comMediaProblems(listing, scans));
+
   return { problems };
+}
+
+/**
+ * A live listing still shown on civitai.com whose icon or cover is rated above what
+ * civitai.com shows for its rating: the store there falls back past it (a placeholder icon,
+ * another image as cover), and only civitai.red shows it. Advisory — the listing stays listed
+ * either way. Screenshots above the rating raise nothing: they are hidden per image on
+ * civitai.com and nothing stands in for them.
+ */
+function comMediaProblems(
+  listing: ListingProblemInput,
+  scans: ListingAssetScan[]
+): ListingProblem[] {
+  if (listing.status !== 'approved') return [];
+  const { current } = summarizeListingRating({
+    declaredRating: listing.declaredContentRating,
+    listingRating: listing.contentRating,
+  });
+  if (current.hiddenOnSfw) return [];
+  const redOnly = scans.filter(
+    (s) => listingAssetAudience(s.nsfwLevel, listing.contentRating) === 'red-only'
+  );
+  const out: ListingProblem[] = [];
+  for (const kind of ['icon', 'cover'] as const) {
+    const asset = redOnly.find((s) => s.kind === kind);
+    if (!asset) continue;
+    const rating = assetRating(asset.nsfwLevel);
+    out.push({
+      code: 'sfw-slot-mature',
+      label: `Your ${kind} is rated ${
+        rating ? offsiteContentRatingLabel(rating) : 'higher'
+      }, above this listing's rating, so ${SFW_STORE_HOST} shows ${
+        kind === 'icon' ? 'a placeholder' : 'another image'
+      } instead (${MATURE_STORE_HOST} still shows it). Replace it with an image within the listing's rating.`,
+      severity: 'advisory',
+    });
+  }
+  return out;
+}
+
+/**
+ * The label for an approved listing that a rating ABOVE what its author declared hides
+ * from the SFW store. A listing declared mature is hidden by the author's own choice and
+ * has nothing to fix, so it is not a problem (the CLI's `app doctor` has no remedy for it).
+ */
+function hiddenMatureRatingLabel(listing: ListingProblemInput): string | null {
+  if (listing.status !== 'approved') return null;
+  const { current, declared } = summarizeListingRating({
+    declaredRating: listing.declaredContentRating,
+    listingRating: listing.contentRating,
+  });
+  if (!current.hiddenOnSfw || !current.raised || current.rating == null || declared == null)
+    return null;
+  return `Rated ${offsiteContentRatingLabel(
+    current.rating
+  )} — hidden on ${SFW_STORE_HOST} (visible on ${MATURE_STORE_HOST}). You declared ${offsiteContentRatingLabel(
+    declared
+  )}; a listing is rated at least as high as its most mature store image — check its images`;
 }

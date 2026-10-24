@@ -8,6 +8,9 @@ import {
   FREE_PLACEMENTS_PER_DAY,
   FREE_SLOT_HOLDING_STATUSES,
   freePlacementDayStart,
+  HOST_DECLINE_FEE_SETTING,
+  hostDeclineFeePercentRefusal,
+  isDeclineFeeHostAdjustable,
   isPlacementSurface,
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   placementFreeSlotCap,
@@ -20,8 +23,10 @@ import {
   PLACEMENT_PRICE_STEP,
   placementPriceUsable,
   placementPriceTrack,
+  placementSurfaceAllowsZeroPrice,
   placementSurfaces,
   placementTransactionId,
+  resolveHostDeclineFeePercent,
   resolvePlacementSpace,
   splitPlacementPayment,
 } from '~/shared/utils/placement';
@@ -240,6 +245,83 @@ describe('declineFeeAmount', () => {
   it('is zero only when the rate is', () => {
     expect(declineFeeAmount(100, 0)).toBe(0);
   });
+
+  // `100 * 0.29` is 28.999999999999996 in floating point. A host who sets 29%
+  // keeps 29 of 100, not 28.
+  it('keeps the whole percent a host set, despite floating point', () => {
+    for (let percent = 0; percent <= 30; percent++)
+      for (const amount of [100, 200, 400, 800, 1500, 2100])
+        expect(`${percent}% of ${amount} = ${declineFeeAmount(amount, percent / 100)}`).toBe(
+          `${percent}% of ${amount} = ${
+            percent === 0 ? 0 : Math.max(1, Math.floor((amount * percent) / 100))
+          }`
+        );
+  });
+});
+
+describe('the host decline fee', () => {
+  it('is fixed at 30% for stickers, remixes and storylines, and adjustable for promotions', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [
+          surface,
+          [isDeclineFeeHostAdjustable(surface), PLACEMENT_SURFACES[surface].defaultDeclineFeeRate],
+        ])
+      )
+    ).toEqual({
+      sticker: [false, 0.3],
+      remixGallery: [false, 0.3],
+      galleryPromotion: [true, 0],
+      modelPromotion: [true, 0],
+      storyline: [false, 0.3],
+    });
+  });
+
+  it('defaults a promotion host who never chose to 0%', () => {
+    expect(resolveHostDeclineFeePercent('galleryPromotion', undefined)).toBe(0);
+    expect(resolveHostDeclineFeePercent('modelPromotion', {})).toBe(0);
+  });
+
+  it('reads each promotion surface from its own settings', () => {
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: 15 })
+    ).toBe(15);
+  });
+
+  it('clamps a hand-edited value into range rather than closing the space', () => {
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: 99 })
+    ).toBe(30);
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: -5 })
+    ).toBe(0);
+    expect(
+      resolveHostDeclineFeePercent('galleryPromotion', { [HOST_DECLINE_FEE_SETTING]: '20' })
+    ).toBe(0);
+  });
+
+  it('has no host value to read on a fixed surface', () => {
+    expect(() => resolveHostDeclineFeePercent('sticker', {})).toThrow('not host-adjustable');
+  });
+
+  it('accepts whole percents from 0 to 30 and a reset, on promotions', () => {
+    for (const value of [0, 1, 29, 30, null])
+      expect(hostDeclineFeePercentRefusal('galleryPromotion', value)).toBeNull();
+  });
+
+  it('refuses anything outside that range', () => {
+    for (const value of [-1, 31, 100, 12.5, Number.NaN, '10', undefined])
+      expect([value, hostDeclineFeePercentRefusal('modelPromotion', value)]).toEqual([
+        value,
+        'The decline fee must be a whole percent from 0 to 30',
+      ]);
+  });
+
+  it('refuses every value on stickers and remixes, even 30% and a reset', () => {
+    for (const surface of ['sticker', 'remixGallery'] as const)
+      for (const value of [0, 30, null])
+        expect(hostDeclineFeePercentRefusal(surface, value)).toMatch(/is fixed$/);
+  });
 });
 
 describe('clampDeclineFeeRate', () => {
@@ -322,6 +404,14 @@ describe('space resolution', () => {
       // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
       // reads open, `canPlace` is true, and the escrow short-circuits: free
       // placements on every creator's work, platform-wide, by default.
+      //
+      // Exception: a zero-priceable surface defaults to free on purpose; its target is opt-in,
+      // since a continuation needs a storyline chapter to continue.
+      if (placementSurfaceAllowsZeroPrice(surface)) {
+        expect(defaultPrice, `${surface} defaults to charging`).toBe(0);
+        expect(defaultMode, `${surface} defaults to accepting without review`).toBe('review');
+        continue;
+      }
       expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
 
       // A default of `auto` removes the review step for every creator who never
@@ -443,15 +533,53 @@ describe('the surface table', () => {
 
   // Equality, not containment, so a third surface has to come here and be given
   // a decline rate and an expiry rather than silently inheriting someone else's.
-  it('is exactly the two surfaces this foundation was built for', () => {
-    expect([...placementSurfaces].sort()).toEqual(['remixGallery', 'sticker']);
+  it('is exactly the surfaces that have been given their own rates', () => {
+    expect([...placementSurfaces].sort()).toEqual([
+      'galleryPromotion',
+      'modelPromotion',
+      'remixGallery',
+      'sticker',
+      'storyline',
+    ]);
+  });
+
+  /**
+   * 🔴 Only the storyline surface may be priced at zero. Elsewhere the floor is the spam gate and
+   * their free tier is a deliberately scarce exception to it; a zero floor would allow unlimited
+   * free submissions with no allowance or slot cap. Pinned by value, so moving any floor is a
+   * deliberate edit here.
+   */
+  it('keeps the price floor on every surface that has one', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [surface, PLACEMENT_SURFACES[surface].serverMinPrice])
+      )
+    ).toEqual({
+      sticker: 50,
+      remixGallery: 50,
+      galleryPromotion: 50,
+      modelPromotion: 50,
+      storyline: 0,
+    });
+    expect(placementSurfaces.filter(placementSurfaceAllowsZeroPrice)).toEqual(['storyline']);
+  });
+
+  // The free path refuses these surfaces, so the resolver must not advertise a free slot on one.
+  it('gives a zero-priced surface no free slots by default', () => {
+    for (const surface of placementSurfaces.filter(placementSurfaceAllowsZeroPrice))
+      expect(PLACEMENT_SURFACES[surface].defaultFreeSlots).toBe(0);
   });
 
   it('gives every surface a usable decline rate and expiry', () => {
     for (const surface of placementSurfaces) {
       const config = PLACEMENT_SURFACES[surface];
-      expect(config.defaultDeclineFeeRate).toBeGreaterThanOrEqual(MIN_DECLINE_FEE_RATE);
-      expect(config.defaultDeclineFeeRate).toBeLessThanOrEqual(MAX_DECLINE_FEE_RATE);
+      const range = config.hostDeclineFeePercent;
+      // A host-set fee may be 0; a platform-fixed one is held to the operator band.
+      const [min, max] = range
+        ? [range.min / 100, range.max / 100]
+        : [MIN_DECLINE_FEE_RATE, MAX_DECLINE_FEE_RATE];
+      expect(config.defaultDeclineFeeRate).toBeGreaterThanOrEqual(min);
+      expect(config.defaultDeclineFeeRate).toBeLessThanOrEqual(max);
       expect(config.expiryHours).toBeGreaterThan(0);
     }
   });

@@ -67,7 +67,7 @@ describe('shared-module mocks', () => {
     // shims construct Prisma/Redis clients at module scope, so spreading them forced real
     // construction into EVERY test file — and a file whose own `@prisma/client` mock lacks a
     // `PrismaClient` constructor then died at module scope, collecting ZERO tests while the
-    // failure count stayed at 0. Both shims stash their clients on globalThis outside prod,
+    // failure count stayed at 0. Both shims stash their clients on globalThis in every env,
     // so an absent global is direct evidence the module body never ran.
     const g = globalThis as { __civitaiPrismaClients?: unknown; __civitaiRedisClients?: unknown };
     expect(g.__civitaiPrismaClients).toBeUndefined();

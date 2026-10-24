@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { describe, expect, it, vi } from 'vitest';
 import type * as ArticleService from '~/server/services/article.service';
+import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * `/articles/<id>` SSR: which article states reach a crawler as a 200, and which as a 404.
@@ -19,7 +20,7 @@ type Resolver = (ctx: any) => Promise<any>;
 
 // `vi.hoisted` so these exist before the hoisted page import below runs the module factory.
 const captured = vi.hoisted(() => ({ resolver: undefined as Resolver | undefined }));
-const isArticlePublishedMock = vi.hoisted(() => vi.fn(async () => false));
+const getPublishedArticleIngestionMock = vi.hoisted(() => vi.fn(async () => null as any));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: ({ resolver }: { resolver: Resolver }) => {
@@ -30,7 +31,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 
 vi.mock('~/server/services/article.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ArticleService>()),
-  isArticlePublished: (...args: [number]) => isArticlePublishedMock(...args),
+  getPublishedArticleIngestion: (...args: [number]) => getPublishedArticleIngestionMock(...args),
 }));
 
 // Module scope, not inside a test: transforming the page's graph (Mantine, tabler, the SCSS
@@ -50,15 +51,15 @@ const draft = {
 
 const run = async ({
   fetchImpl,
-  published = false,
+  ingestion = null,
   clientNav = false,
 }: {
   fetchImpl?: () => Promise<unknown>;
-  published?: boolean;
+  ingestion?: ArticleIngestionStatus | null;
   clientNav?: boolean;
 }) => {
   if (!captured.resolver) throw new Error('resolver was never captured');
-  isArticlePublishedMock.mockResolvedValue(published);
+  getPublishedArticleIngestionMock.mockResolvedValue(ingestion);
 
   return captured.resolver({
     ctx: { query: { id: String(ARTICLE_ID), slug: [SLUG] } },
@@ -78,7 +79,7 @@ const rejectWith = (code: TRPCError['code']) => async () => {
 
 describe('article detail SSR', () => {
   it('404s an article the viewer cannot see and nobody else can either', async () => {
-    const result = await run({ fetchImpl: rejectWith('NOT_FOUND'), published: false });
+    const result = await run({ fetchImpl: rejectWith('NOT_FOUND'), ingestion: null });
 
     expect(result).toEqual({ notFound: true });
   });
@@ -93,12 +94,38 @@ describe('article detail SSR', () => {
     expect(result.gating).toEqual({ contentNsfwLevel: draft.nsfwLevel });
   });
 
-  it('keeps serving a published article that is only unreadable while it re-scans', async () => {
-    const result = await run({ fetchImpl: rejectWith('NOT_FOUND'), published: true });
+  // Pending is the publish window a notification links into; Rescan is the same window re-entered
+  // by an edit to a live article. Both resolve on their own, so neither may 404 an indexed URL.
+  it.each([ArticleIngestionStatus.Pending, ArticleIngestionStatus.Rescan])(
+    'keeps serving a published article that is only unreadable while it scans (%s)',
+    async (ingestion) => {
+      const result = await run({ fetchImpl: rejectWith('NOT_FOUND'), ingestion });
+
+      expect(result.notFound).toBeUndefined();
+      expect(result.redirect).toBeUndefined();
+      expect(result.props).toMatchObject({ id: ARTICLE_ID });
+    }
+  );
+
+  // Error can still recover on a scan retry, so it keeps the 200 even though the viewer-facing
+  // `isProcessing` check deliberately refuses to promise a wait for it.
+  it('keeps serving a published article whose scan errored', async () => {
+    const result = await run({
+      fetchImpl: rejectWith('NOT_FOUND'),
+      ingestion: ArticleIngestionStatus.Error,
+    });
 
     expect(result.notFound).toBeUndefined();
-    expect(result.redirect).toBeUndefined();
     expect(result.props).toMatchObject({ id: ARTICLE_ID });
+  });
+
+  it('404s a published article that was blocked — it never resolves for the public', async () => {
+    const result = await run({
+      fetchImpl: rejectWith('NOT_FOUND'),
+      ingestion: ArticleIngestionStatus.Blocked,
+    });
+
+    expect(result).toEqual({ notFound: true });
   });
 
   it('keeps serving the page when the fetch fails for a reason other than NOT_FOUND', async () => {
@@ -107,6 +134,13 @@ describe('article detail SSR', () => {
     expect(result.notFound).toBeUndefined();
     expect(result.redirect).toBeUndefined();
     expect(result.props).toMatchObject({ id: ARTICLE_ID });
+  });
+
+  it('does not consult ingestion when the article resolved — no wasted query on the happy path', async () => {
+    getPublishedArticleIngestionMock.mockClear();
+    await run({ fetchImpl: async () => draft });
+
+    expect(getPublishedArticleIngestionMock).not.toHaveBeenCalled();
   });
 
   it('leaves client-side navigation alone — the status code is an SSR-only decision', async () => {

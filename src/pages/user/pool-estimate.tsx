@@ -38,7 +38,7 @@ export default function EarnPotential() {
 
   const { data: potential, isLoading } = trpc.buzz.getPoolForecast.useQuery(
     { username: query.username as string },
-    { enabled: features.buzz }
+    { enabled: !!features.buzz }
   );
   const poolValue = potential?.poolValue ?? 0;
   const poolSize = potential?.poolSize ?? 0;

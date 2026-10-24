@@ -5,12 +5,17 @@ import type * as Workflows from '~/server/services/orchestrator/workflows';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const findMany = vi.fn();
+const metaFetch = vi.fn();
 const getWorkflowMock = vi.fn();
 const getTokenMock = vi.fn();
 
 vi.mock('~/server/db/client', async (importOriginal) => ({
   ...(await importOriginal<typeof DbClient>()),
   dbRead: { image: { findMany: (...args: unknown[]) => findMany(...args) } },
+}));
+
+vi.mock('~/server/redis/caches', () => ({
+  imageMetaCache: { fetch: (...args: unknown[]) => metaFetch(...args) },
 }));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
@@ -32,6 +37,7 @@ const {
   sanitizeProvenance,
   signProvenance,
   storedSourceImageIds,
+  unionSourceImageIds,
   verifyProvenance,
 } = await import('~/server/services/orchestrator/remix-provenance');
 
@@ -250,5 +256,266 @@ describe('sanitizeProvenance', () => {
 
     expect(sanitizeProvenance(meta)).toBe(meta);
     expect(sanitizeProvenance(null)).toBeNull();
+  });
+});
+
+describe('unionSourceImageIds', () => {
+  const USER = 42;
+
+  // Every token here is `mint`: the submit path accepts only tokens the mint
+  // issued, so a `job` token would (correctly) contribute nothing.
+
+  /**
+   * The bug this exists for. A remix seeds an on-site URL, the generation form
+   * re-uploads it as an orchestrator blob, and by submit time the URL route can
+   * resolve nothing — so before the token route, a remix through the Animate
+   * button recorded no derivation at all.
+   */
+  it('recovers the link when the url route found nothing', async () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
+    ).toEqual([7]);
+  });
+
+  it('keeps url-derived ids when there is no token', async () => {
+    expect(await unionSourceImageIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
+  });
+
+  it('does not double-count an image both routes name', async () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
+    ).toEqual([7, 9]);
+  });
+
+  /**
+   * Each route caps itself at MAX_SOURCE_IMAGES, so a union of two full sets is
+   * twice the bound unless the union re-applies it.
+   */
+  it('bounds the union, not just each route', async () => {
+    // Six plus four is ten. Deliberately NOT eight-plus-anything: with a full url
+    // set the cap is satisfied by the url ids alone, so the assertion would hold
+    // even if tokens were ignored entirely and the test could not fail.
+    const urlSourceImageIds = [1, 2, 3, 4, 5, 6];
+    const token = signProvenance({
+      userId: USER,
+      sourceImageIds: [101, 102, 103, 104],
+      kind: 'mint',
+    });
+
+    const ids = await unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
+
+    expect(ids).toHaveLength(8);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 101, 102]);
+  });
+
+  /**
+   * The whole reason this is a sealed token and not an id in the request body:
+   * `sourceImageIds` gates the FREE remix-gallery submission, so a token minted
+   * for someone else must buy nothing.
+   */
+  it('ignores a token issued to a different user', async () => {
+    const token = signProvenance({ userId: USER + 1, sourceImageIds: [7], kind: 'mint' });
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
+    ).toEqual([]);
+  });
+
+  it('treats an unreadable token as no signal rather than an error', async () => {
+    expect(
+      await unionSourceImageIds({
+        urlSourceImageIds: [9],
+        tokens: ['not-a-token', '', 'p1.a.b.c'],
+        userId: USER,
+      })
+    ).toEqual([9]);
+  });
+
+  /**
+   * The `prompt` kind, whose whole point is that it is CONDITIONAL. Every other
+   * token spends on presentation alone; this one spends only if the prompt the
+   * server validated still derives from the source's own stored prompt.
+   *
+   * The source prompt is mocked at the cache, never passed in — a test that
+   * supplied both sides would be asserting over a value the submitter controls.
+   */
+  describe('the prompt kind is conditional', () => {
+    const SOURCE_PROMPT = 'a cat wearing a blue hat, oil painting, soft light, detailed fur';
+
+    /** Measured 0.79 and 0.60 against SOURCE_PROMPT: either side of the 0.75 cutoff. */
+    const JUST_DERIVED = 'a cat wearing a red hat, oil painting, warm light, detailed fur';
+    const JUST_DRIFTED = 'a dog wearing a red scarf, oil painting, warm light, detailed fur';
+
+    const promptToken = (ids = [7]) =>
+      signProvenance({ userId: USER, sourceImageIds: ids, kind: 'prompt' })!;
+
+    const stored = (prompt: string | null, id = 7) => ({
+      [id]: { id, meta: prompt === null ? null : { prompt } },
+    });
+
+    beforeEach(() => {
+      metaFetch.mockReset();
+      metaFetch.mockResolvedValue(stored(SOURCE_PROMPT));
+    });
+
+    const submit = (prompt?: string, tokens = [promptToken()]) =>
+      unionSourceImageIds({ urlSourceImageIds: [], tokens, userId: USER, prompt });
+
+    it('spends when the submitted prompt still derives from the source', async () => {
+      expect(await submit(`${SOURCE_PROMPT}, warm tones`)).toEqual([7]);
+    });
+
+    it('does NOT spend when the prompt has drifted away from the source', async () => {
+      expect(
+        await submit('industrial machinery blueprint, technical schematic, monochrome')
+      ).toEqual([]);
+    });
+
+    /**
+     * The cutoff itself, server-side. A disjoint prompt scores 0 and is refused at
+     * any threshold, so without this pair the server could compare against a
+     * cutoff of its own and every other test here would stay green.
+     */
+    it('decides at the shared cutoff, on both sides of it', async () => {
+      expect(await submit(JUST_DERIVED)).toEqual([7]);
+      expect(await submit(JUST_DRIFTED)).toEqual([]);
+    });
+
+    /**
+     * Not a drift verdict: a workflow with no prompt has nothing to compare, and
+     * scoring the empty string would read as total drift by accident.
+     */
+    it('does not spend, or look up, when the submission carries no prompt', async () => {
+      expect(
+        await unionSourceImageIds({ urlSourceImageIds: [9], tokens: [promptToken()], userId: USER })
+      ).toEqual([9]);
+      expect(metaFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not spend when the source has no prompt', async () => {
+      metaFetch.mockResolvedValue(stored(''));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
+    });
+
+    /**
+     * A hidden prompt reaches this code as `meta: null` — the cache applies
+     * `hideMeta`. Refused rather than compared: comparing would make the free/paid
+     * answer a way to test guesses against a prompt its owner hid.
+     */
+    it('does not spend against a source whose prompt is hidden', async () => {
+      metaFetch.mockResolvedValue(stored(null));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
+    });
+
+    /** Exactly the ids the token named, in one lookup. */
+    it('looks up only the ids the token named', async () => {
+      await submit(SOURCE_PROMPT);
+
+      expect(metaFetch).toHaveBeenCalledTimes(1);
+      expect(metaFetch).toHaveBeenCalledWith([7]);
+    });
+
+    /**
+     * What spends is bounded by what the token named, not by what a lookup
+     * happened to return. A lookup that answered for a row nobody claimed must not
+     * turn that row into a verified source.
+     */
+    it('ignores rows the token did not name', async () => {
+      metaFetch.mockResolvedValue({ ...stored(SOURCE_PROMPT), ...stored(SOURCE_PROMPT, 8) });
+      expect(await submit(SOURCE_PROMPT)).toEqual([7]);
+    });
+
+    /**
+     * The audience split, same as `mint`: a click costs no generation, so this
+     * must never be spendable where `sanitizeProvenance` writes the server's own
+     * answer for an uploaded file.
+     */
+    it('is refused on the upload path', async () => {
+      const token = promptToken();
+
+      expect(verifyProvenance(token, USER)).toBeNull();
+      expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: token })).toBeNull();
+    });
+
+    /**
+     * The audience check on the drift route specifically, which the `job`-token
+     * test above cannot reach: that one passes no prompt, so it never enters this
+     * branch. Without it a `job` token — the one embedded in every public output
+     * file — would spend at submit whenever the prompt happened to match.
+     */
+    it('refuses a job token on the drift route even when the prompt matches', async () => {
+      const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+      expect(await submit(SOURCE_PROMPT, [job])).toEqual([]);
+    });
+
+    /**
+     * A matching request prompt against an unrelated STORED prompt must refuse —
+     * otherwise the comparison is happening against the request.
+     */
+    it('compares against the stored source prompt, not the request', async () => {
+      metaFetch.mockResolvedValue(stored('industrial machinery blueprint, monochrome'));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
+    });
+  });
+});
+
+/**
+ * The audience split. `sourceImageIds` gates the FREE remix-gallery submission
+ * and the `derivedFromHost` badge, and the upload path takes its token from
+ * client-supplied `meta.extra.provenance` — so a token that cost no generation
+ * must not be spendable there. These four assertions are the fix; without the
+ * `k` check every one of them inverts.
+ */
+describe('provenance kind separates the mint from a real job', () => {
+  const USER = 42;
+
+  it('refuses a mint token on the upload path', async () => {
+    const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
+
+    expect(verifyProvenance(minted, USER)).toBeNull();
+    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: minted })).toBeNull();
+  });
+
+  it('accepts a mint token on the submit path', async () => {
+    const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })
+    ).toEqual([7]);
+  });
+
+  /**
+   * The other direction, and the reason the submit path does not simply accept
+   * anything that verifies: a job token fed back in as a submit input would be
+   * re-signed with a fresh timestamp, renewing its own 30-day expiry for as long
+   * as the holder keeps submitting.
+   */
+  it('refuses a job token presented as a submit input', async () => {
+    const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [job], userId: USER })
+    ).toEqual([]);
+  });
+
+  /**
+   * Tokens minted before `k` existed are baked into output files that live for
+   * 30 days. They carry no `k` and must keep working on the path they were
+   * issued for, which is why absent means `job` rather than being rejected.
+   */
+  it('treats a token with no kind as a job token', async () => {
+    // Hand-built via `tokenIssuedAt`, NOT `signProvenance`. The point is the
+    // tokens already baked into output files, which carry no `k` at all — asking
+    // today's signer for one only re-checks whatever it emits now, so making it
+    // write `k:'job'` explicitly would leave this test green while breaking every
+    // token in the wild.
+    const legacy = tokenIssuedAt(Math.floor(Date.now() / 1000) - 60, USER, [7]);
+
+    expect(verifyProvenance(legacy, USER)).toEqual([7]);
+    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: legacy })).toEqual([7]);
   });
 });

@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { asResourceValue } from '~/shared/utils/resource.utils';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -14,6 +16,7 @@ import type { LicensingSourceRejection } from '~/server/schema/model-version.sch
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
+  allowsDifferentLicenseOnMerges,
   CacheTTL,
   constants,
   isNonCommercialBaseModel,
@@ -35,15 +38,16 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  modelVersionResourceCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  assertBaseModelAttestations,
+  assertNoUnattestedScopeEntry,
+  resolveBaseModelAttestation,
+} from '~/server/services/base-model-attestation.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -57,8 +61,6 @@ import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
-  GetModelVersionPopularityInput,
-  GetModelVersionsPopularityInput,
   ModelVersionPaidAccessInputSchema,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -72,6 +74,7 @@ import type {
   UpdateModelVersionPaidAccessInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
+import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
   imagesMetricsSearchIndex,
@@ -102,7 +105,7 @@ import {
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -122,30 +125,38 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  runClickHouseRead,
   sleep,
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  assertFileTypeChangeAllowed,
+  versionAcceptsNewTrainingData,
+} from '~/server/utils/model-file-replace';
+import {
+  isDatasetEditable,
+  versionRemovalLockedTrainingStatuses,
+} from '~/shared/constants/training.constants';
+import {
   getModelVersionEarlyAccessRefundRequirement,
   refundModelEarlyAccessPurchases,
 } from '~/server/services/model-early-access-refund.service';
-import type {
-  ModelType,
-  ModelVersionEngagementType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelUsageControl,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -157,8 +168,13 @@ import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import {
+  getBaseModelConfig,
+  getBaseModelsByGroup,
+  getEcosystemTurboSettings,
+} from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -195,6 +211,8 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
         select: {
           id: true,
           name: true,
+          minor: true,
+          sfwOnly: true,
         },
       },
     },
@@ -206,6 +224,8 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
     baseModel: v.baseModel,
     modelId: v.model.id,
     modelName: v.model.name,
+    minor: v.model.minor,
+    sfwOnly: v.model.sfwOnly,
   }));
 };
 
@@ -505,6 +525,102 @@ function toMonetizationAuditShape(
     : null;
 }
 
+// Denied and Paused are moderation decisions: an owner can neither set them nor move a version out
+// of them. Once a run has started, an owner can't move the version back to a status that takes a new
+// dataset either; only the run itself (failing, expiring) does that. Every other transition, replay
+// included, is the training wizard's to make.
+const MODERATOR_ONLY_TRAINING_STATUSES: (TrainingStatus | null)[] = [
+  TrainingStatus.Denied,
+  TrainingStatus.Paused,
+];
+function assertOwnerTrainingStatusChange(
+  stored: TrainingStatus | null,
+  next: TrainingStatus | null | undefined
+) {
+  if (next === undefined || next === stored) return;
+  if (
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(stored) ||
+    MODERATOR_ONLY_TRAINING_STATUSES.includes(next) ||
+    (!isDatasetEditable(stored) && isDatasetEditable(next))
+  )
+    throw throwBadRequestError("A version's training status can't be changed here.");
+}
+
+/** Turbo is an ecosystem opt-in: a turbo block or default turbo LoRA is refused where the ecosystem has no turbo defaults. */
+export function assertRecommendedSettingsForType(
+  settings: ModelVersionUpsertInput['settings'],
+  { modelType, baseModel }: { modelType: ModelType; baseModel?: string | null }
+) {
+  if (settings?.turbo && !TURBO_VARIANT_MODEL_TYPES.includes(modelType))
+    throw throwBadRequestError('Only LoRA versions can be turbo variants');
+  if (settings?.generation && modelType !== 'Checkpoint')
+    throw throwBadRequestError('Only checkpoint versions carry recommended generation settings');
+  const namesTurbo = !!settings?.turbo || !!settings?.generation?.turboLora;
+  if (namesTurbo && !getEcosystemTurboSettings(getBaseModelConfig(baseModel ?? '').ecosystemId))
+    throw throwBadRequestError(
+      `Turbo LoRAs are not supported for ${baseModel ?? 'this base model'}`
+    );
+}
+
+/**
+ * Recommended-resource rows only write `strength`; spreading the row's settings JSON would
+ * clobber the resource's hydrated `settings`.
+ */
+export function withPairedStrength<T extends GenerationResource>(
+  resource: T,
+  row: unknown
+): T & { strength: number } {
+  const strength = (row as { strength?: number | null } | null | undefined)?.strength;
+  return asResourceValue(resource, strength);
+}
+
+/**
+ * Only a deleted version is dropped (an unpublished one is kept); the id becomes every viewer's
+ * default, so the server re-checks it is a turbo LoRA of this ecosystem.
+ */
+async function withExistingTurboLora<T extends ModelVersionUpsertInput['settings']>(
+  settings: T,
+  baseModel: string | undefined
+): Promise<T> {
+  const id = settings?.generation?.turboLora?.id;
+  if (!id) return settings;
+  const lora = await getVersionById({
+    id,
+    select: { id: true, baseModel: true, settings: true, model: { select: { type: true } } },
+  });
+  if (!lora) return { ...settings, generation: { ...settings?.generation, turboLora: null } };
+  const sameEcosystem =
+    getBaseModelConfig(lora.baseModel).ecosystemId ===
+    getBaseModelConfig(baseModel ?? '').ecosystemId;
+  const isTurbo = !!(lora.settings as { turbo?: unknown } | null)?.turbo;
+  if (!TURBO_VARIANT_MODEL_TYPES.includes(lora.model.type) || !sameEcosystem || !isTurbo)
+    throw throwBadRequestError('The default turbo LoRA must be a turbo LoRA of this ecosystem');
+  return settings;
+}
+
+type VersionText = { name: string; trainedWords: string[] };
+
+/** The name and trained words a write would change: everything, for a version not yet stored. */
+function changedVersionText(
+  next: { name?: string | null; trainedWords?: string[] | null },
+  stored: VersionText | null
+) {
+  if (!stored) return [next.name, ...(next.trainedWords ?? [])];
+  const storedWords = new Set(stored.trainedWords);
+  return [
+    next.name !== stored.name ? next.name : undefined,
+    ...(next.trainedWords ?? []).filter((word) => !storedWords.has(word)),
+  ];
+}
+
+function sameVersionText(a: VersionText, b: VersionText) {
+  return (
+    a.name === b.name &&
+    a.trainedWords.length === b.trainedWords.length &&
+    a.trainedWords.every((word, i) => word === b.trainedWords[i])
+  );
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -514,6 +630,7 @@ export const upsertModelVersion = async ({
   paidAccess,
   donationGoal,
   rightsAffirmed,
+  baseModelAttested,
   meta: metaInput,
   tracker,
   actorUserId,
@@ -534,7 +651,31 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  if (data.description) await throwOnBlockedLinkDomain(data.description);
+  await throwOnBlockedUserContent(data.description, {
+    isModerator,
+    surface: 'modelVersion',
+  });
+
+  // Name and trained words are scanned only where they DIFFER from the stored row.
+  // `requestReviewHandler` and `declineReviewHandler` replay the stored row through here with no
+  // moderator flag, and the link half exempts nobody, so scanning the full values would make a
+  // version that trips a list impossible to decline or resubmit: the guard would block the remedy
+  // for the abuse it found. A replay changes nothing, so it scans nothing.
+  //
+  // 🔴 Do not "simplify" this to scanning `data.name` and `data.trainedWords` outright. That was
+  // tried, and it is the defect above. The transaction below re-reads the row under a lock and
+  // refuses if it moved, so a concurrent edit cannot change what this diff was taken against.
+  const storedText =
+    id && !templateId
+      ? await dbWrite.modelVersion.findUnique({
+          where: { id },
+          select: { name: true, trainedWords: true },
+        })
+      : null;
+  await throwOnBlockedUserContent(changedVersionText(data, storedText), {
+    isModerator,
+    surface: 'modelVersion',
+  });
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -556,8 +697,10 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true, type: true },
   });
+  assertRecommendedSettingsForType(settings, { modelType: model.type, baseModel: data.baseModel });
+  settings = await withExistingTurboLora(settings, data.baseModel);
 
   // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
   // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
@@ -611,7 +754,7 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
   }
 
   // Validate NSFW + restricted base model combination
@@ -641,6 +784,9 @@ export const upsertModelVersion = async ({
       );
     }
   }
+
+  // Publishing goes through modelVersion.publish, which enforces what this route would skip.
+  if (!isModerator && (!id || templateId)) data.status = ModelStatus.Draft;
 
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
@@ -687,6 +833,23 @@ export const upsertModelVersion = async ({
   });
 
   if (createsNewVersion) {
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel: data.baseModel,
+      modelType: model.type,
+    });
+    assertNoUnattestedScopeEntry({
+      after: {
+        baseModel: data.baseModel,
+        modelType: model.type,
+        status: data.status,
+        meta: { baseModelAttestation },
+      },
+      ownerId: model.userId,
+    });
+
     const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
@@ -712,8 +875,12 @@ export const upsertModelVersion = async ({
           data: {
             ...data,
             meta:
-              ((rightsAffirmation
-                ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+              ((rightsAffirmation || baseModelAttestation
+                ? {
+                    ...((metaInput as Record<string, unknown> | null) ?? {}),
+                    ...(rightsAffirmation ? { rightsAffirmation } : {}),
+                    ...(baseModelAttestation ? { baseModelAttestation } : {}),
+                  }
                 : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
             availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
               (s) => s === data?.status
@@ -775,6 +942,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
+    if (!isModerator) scanModelAndRules(version.modelId);
     return version;
   } else {
     const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -782,6 +950,7 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        trainingStatus: true,
         description: true,
         trainedWords: true,
         publishedAt: true,
@@ -799,6 +968,7 @@ export const upsertModelVersion = async ({
             id: true,
             availability: true,
             meta: true,
+            type: true,
           },
         },
         monetization: {
@@ -849,17 +1019,72 @@ export const upsertModelVersion = async ({
       );
     }
 
+    // Any other move is a publish or a takedown laundered into Draft, which modelVersion.publish then
+    // accepts. The form and the review handlers replay the stored status, which is not a change.
+    if (!isModerator && data.status !== undefined && data.status !== existingVersion.status) {
+      throw throwBadRequestError(
+        "Use the publish or unpublish action to change a version's status."
+      );
+    }
+
+    if (!isModerator) {
+      if (data.modelId !== undefined && data.modelId !== existingVersion.model.id) {
+        throw throwBadRequestError('A version cannot be moved to another model.');
+      }
+      assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
+    }
+
+    const baseModel = data.baseModel ?? existingVersion.baseModel;
+    const baseModelAttestation = resolveBaseModelAttestation({
+      actorId,
+      ownerId: model.userId,
+      attested: baseModelAttested,
+      baseModel,
+      modelType: model.type,
+      existingMeta: existingVersion.meta,
+    });
+    assertNoUnattestedScopeEntry({
+      before: {
+        baseModel: existingVersion.baseModel,
+        modelType: existingVersion.model.type,
+        publishedAt: existingVersion.publishedAt,
+      },
+      after: {
+        baseModel,
+        modelType: model.type,
+        status: data.status ?? existingVersion.status,
+        meta: baseModelAttestation ? { baseModelAttestation } : existingVersion.meta,
+      },
+      ownerId: model.userId,
+    });
+
     const mergedMeta =
-      metaInput || rightsAffirmation
+      metaInput || rightsAffirmation || baseModelAttestation
         ? {
             ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
             ...((metaInput as Record<string, unknown> | null) ?? {}),
             ...(rightsAffirmation ? { rightsAffirmation } : {}),
+            ...(baseModelAttestation ? { baseModelAttestation } : {}),
           }
         : undefined;
 
     const version = await dbWrite.$transaction(
       async (tx) => {
+        // The name and trained words were scanned as a diff against `storedText`. Lock the row and
+        // refuse if either moved since, or a concurrent edit could slip an unscanned value past.
+        const [locked] = await tx.$queryRaw<
+          { name: string; trainedWords: string[]; trainingStatus: TrainingStatus | null }[]
+        >`
+          SELECT name, "trainedWords", "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+        `;
+        if (storedText && locked && !sameVersionText(locked, storedText))
+          throw throwConflictError(
+            'This version changed while you were saving. Reload and try again.'
+          );
+        // A run can start between the read above and this lock.
+        if (!isModerator && locked)
+          assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
+
         const updated = await tx.modelVersion.update({
           where: { id },
           data: {
@@ -1007,6 +1232,14 @@ export const upsertModelVersion = async ({
         context: { modelId: version.modelId },
       });
 
+    if (
+      !isModerator &&
+      (data.name !== undefined || data.description !== undefined || data.trainedWords !== undefined)
+    )
+      scanModelAndRules(version.modelId);
+    // The publish handler reads this meta back and rewrites it; a replica read missing the new
+    // attestation would refuse the publish, or erase the record.
+    if (baseModelAttestation) await preventReplicationLag('modelVersion', version.id);
     return version;
   }
 };
@@ -1047,7 +1280,7 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
 
   let modelId: number;
   if (context) {
@@ -1075,6 +1308,8 @@ export async function applyModelVersionContentChange({
   // The public GET /api/v1/models/[id] body carries the version rows, so all of these serve the
   // pre-rewrite text until they are dropped.
   await bustModelLevelVersionCaches(modelId);
+  // With a context, the caller is upsertModelVersion, which starts its own scan.
+  if (!context) scanModelAndRules(modelId);
 
   return true;
 }
@@ -1156,7 +1391,7 @@ export const updateModelVersionPaidAccess = async ({
   if (rightsAffirmation)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
-      SET meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify({ rightsAffirmation })}::jsonb
+      SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
       WHERE id = ${id}
     `;
 
@@ -1237,6 +1472,19 @@ export const deleteVersionById = async ({
   let modelFileHashes: string[] = [];
 
   const version = await dbWrite.$transaction(async (tx) => {
+    // Locked, so a run can't enter a locked status between this check and the delete.
+    const [run] = await tx.$queryRaw<{ trainingStatus: TrainingStatus | null }[]>`
+      SELECT "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+    `;
+    if (
+      !isModerator &&
+      run?.trainingStatus &&
+      versionRemovalLockedTrainingStatuses.includes(run.trainingStatus)
+    )
+      throw throwBadRequestError(
+        "This version's training run is in progress, under review or denied, so it can't be deleted."
+      );
+
     // Snapshot URLs + hashes inside the tx — must read before the cascade nukes
     // the ModelFile / ModelFileHash rows.
     const files = await tx.modelFile.findMany({
@@ -1438,11 +1686,13 @@ export const updateModelVersionById = async ({
       // patching here callers reading `result.publishedAt` would see the
       // pre-guard value. When writeCount = 0 the guard blocked the write
       // and the original returned value is still authoritative.
-      if (writeCount > 0) {
-        updated.publishedAt = publishedAt;
-        // Native: a (re)publish materializes a pending timed gate (endsAt = publishedAt +
-        // timeframeDays); no-op when the version has no PaidAccess row.
-        await materializePaidAccessEndsAt(id, publishedAt, tx);
+      if (writeCount > 0) updated.publishedAt = publishedAt;
+      // Materialize the timed gate from the date the version carries, as in
+      // publishModelVersionsWithEarlyAccess. No-op without a PaidAccess row.
+      if (updated.publishedAt != null) {
+        await materializePaidAccessEndsAt(id, updated.publishedAt, tx, {
+          pendingOnly: writeCount === 0,
+        });
       }
     }
     return updated;
@@ -1454,12 +1704,15 @@ export const updateModelVersionById = async ({
 
 export const publishModelVersionsWithEarlyAccess = async ({
   modelVersionIds,
+  modelId,
   publishedAt,
   meta,
   tx,
   continueOnError = false,
 }: {
   modelVersionIds: number[];
+  /** Restricts the publish to versions of this model. */
+  modelId?: number;
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
@@ -1469,7 +1722,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   const dbClient = tx ?? dbWrite;
 
   const versions = await dbClient.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
+    where: { id: { in: modelVersionIds }, ...(modelId !== undefined ? { modelId } : {}) },
     select: {
       id: true,
       name: true,
@@ -1528,6 +1781,8 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // public. Allowed transitions: NULL (Draft) -> set, or future
         // (Scheduled) -> reschedule. Republish of an already-public version
         // is a no-op for this column.
+        let livePublishedAt = currentVersion.publishedAt;
+        let wrotePublishedAt = false;
         if (publishedAt !== undefined) {
           const writeCount = await dbClient.$executeRaw`
             UPDATE "ModelVersion"
@@ -1535,21 +1790,20 @@ export const publishModelVersionsWithEarlyAccess = async ({
             WHERE id = ${currentVersion.id}
             AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
           `;
-          // Native: materialize the pending timed gate (endsAt = publishedAt + timeframeDays) only when
-          // publishedAt was actually (re)set — a no-op republish leaves the already-materialized endsAt.
-          if (writeCount > 0) {
-            await materializePaidAccessEndsAt(currentVersion.id, publishedAt, dbClient);
-          }
-        } else if (currentVersion.publishedAt != null) {
-          // Caller didn't pass publishedAt (the scheduled-publishing job sets it at schedule time and
-          // only flips status here). Materialize the pending timed gate from the version's already-set
-          // publishedAt — otherwise a scheduled EA version keeps endsAt NULL and becomes a PERMANENT
-          // gate that never releases. materializePaidAccessEndsAt no-ops on permanent/tombstoned gates.
-          await materializePaidAccessEndsAt(
-            currentVersion.id,
-            currentVersion.publishedAt,
-            dbClient
-          );
+          wrotePublishedAt = writeCount > 0;
+          if (wrotePublishedAt) livePublishedAt = publishedAt;
+        }
+        // Materialize the timed gate (endsAt = publishedAt + timeframeDays) from the date the version
+        // actually carries, whether or not this call wrote it. A version can arrive here already dated
+        // in the past: the scheduled-publishing job passes no publishedAt, and "publish now" from a client
+        // whose clock runs ahead lands as a schedule seconds out, then gets published directly once that
+        // moment has passed. Materializing only on a write left those with endsAt NULL, which every read
+        // treats as a PERMANENT gate. Without a write it only fills a NULL endsAt: a set one is the date
+        // creators and buyers have seen. A write (Draft -> live, or a reschedule) moves it.
+        if (livePublishedAt != null) {
+          await materializePaidAccessEndsAt(currentVersion.id, livePublishedAt, dbClient, {
+            pendingOnly: !wrotePublishedAt,
+          });
         }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);
@@ -1618,9 +1872,12 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       baseModel: true,
+      publishedAt: true,
+      meta: true,
       model: {
         select: {
           userId: true,
+          type: true,
           name: true,
           availability: true,
           publishedAt: true,
@@ -1657,6 +1914,11 @@ export const publishModelVersionById = async ({
       'This model version cannot be published due to moderation restrictions.'
     );
   }
+
+  // `meta` is what the write below stores, so it is the record that has to carry the attestation.
+  assertBaseModelAttestations({
+    versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
+  });
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -1732,7 +1994,7 @@ export const publishModelVersionById = async ({
             THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
-          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
@@ -1776,9 +2038,12 @@ export const publishModelVersionById = async ({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+  scanEntitiesInBackground(
+    'Post',
+    posts.map((p) => p.id)
+  );
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a
@@ -1979,6 +2244,9 @@ export const unpublishModelVersionById = async ({
 
   await updateModelLastVersionAt({ id: version.model.id });
   await bustMvCache(version.id, version.model.id);
+  // Its posts are unpublished with it, and one may hold the model's .com cover.
+  const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
+  await updateModelNsfwLevels([version.model.id]);
 
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
   // version stops resolving by-hash before the edge cache TTL expires.
@@ -2015,6 +2283,8 @@ export const upsertExplorationPrompt = async ({
   index,
   prompt,
 }: UpsertExplorationPromptInput) => {
+  await throwOnBlockedUserContent([name, prompt], { surface: 'explorationPrompt' });
+
   try {
     const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
       where: { modelVersionId_name: { modelVersionId, name } },
@@ -2151,20 +2421,32 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   `;
 
   if (!clickhouse || modelVersions.length === 0) return [];
+  // Capture the narrowed (non-undefined) client so the read closure below keeps the
+  // type guard — TS doesn't propagate the `!clickhouse` narrowing into a callback.
+  const ch = clickhouse;
 
   const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
-  const generationData = await clickhouse.$query<Row>`
-    SELECT
-      modelVersionId,
-      createdDate AS createdAt,
-      SUM(count) AS generations
-    FROM orchestration.daily_resource_generation_counts
-    WHERE createdDate >= ${date}
-      AND modelVersionId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY modelVersionId, createdDate
-    ORDER BY createdAt DESC, generations DESC;
-  `;
+  // A transient ClickHouse blip here is a retryable dependency outage, not a query
+  // fault — 503 rather than 500.
+  const generationData = await runClickHouseRead(
+    () => ch.$query<Row>`
+      SELECT
+        modelVersionId,
+        createdDate AS createdAt,
+        SUM(count) AS generations
+      FROM orchestration.daily_resource_generation_counts
+      WHERE createdDate >= ${date}
+        -- A legacy import left rows dated 2079 and 2120 carrying a version's whole
+        -- all-time total. Without the upper bound they answer every window, and the
+        -- chart gets a point in the next century.
+        AND createdDate <= today()
+        AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+      GROUP BY modelVersionId, createdDate
+      ORDER BY createdAt DESC, generations DESC;
+    `,
+    { path: 'model-version-generations' }
+  );
 
   const versions = modelVersions
     .map((version) => {
@@ -2186,7 +2468,10 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   return versions;
 };
 
-const commercialUsePermissionContent = {
+// Typed so a new CommercialUse member cannot be added without a clause. Restrictions are emitted
+// by ABSENCE, so a member with no entry here imposes nothing and silently GRANTS the permission.
+// This does not catch a member added with '' -- None is the legitimate precedent for that.
+const commercialUsePermissionContent: Record<CommercialUse, string> = {
   [CommercialUse.None]: '',
   [CommercialUse.Image]: `
 <b>Image Sales: Do not sell or license images generated by the Model. The following are a few examples of what is prohibited: selling or licensing a product such as a game, book, or other work that incorporates or is based on those generated images.</b>
@@ -2202,7 +2487,10 @@ const commercialUsePermissionContent = {
 <b>Civitai Generation Services: Do not run the Model on the Civitai platform for generation (available at [${env.NEXTAUTH_URL}/generate](/generate)).</b>
 `,
   [CommercialUse.Sell]: `
-<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value.</b>
+<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This restriction does not apply to a Merge.</b>
+`,
+  [CommercialUse.SellMerge]: `
+<b>Sale of Merges: Do not sell or license a Merge in exchange for a fee or something else of value.</b>
 `,
 };
 
@@ -2224,7 +2512,7 @@ export function addAdditionalLicensePermissions(
 
 Additional Restrictions
 
-This Attachment B supplements the license to which it is attached (“License”). In addition to any restrictions set forth in the License, the following additional terms apply.  The below restrictions apply to the Model and Derivatives of the Model, even though only the Model is referenced.  “Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model. A Derivative of the Model will be understood to include Merges.
+This Attachment B supplements the license to which it is attached (“License”). In addition to any restrictions set forth in the License, the following additional terms apply.  A restriction below that references the Model applies to the Model and Derivatives of the Model, except to the extent that restriction expressly states otherwise.  A statement that a restriction does not apply to something limits only that restriction and does not permit that thing.  “Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model. A Derivative of the Model will be understood to include Merges, and a Merge will be understood to include Derivatives of a Merge.
 
 You agree to the following with respect to the Model (each a “Permission”):
 </b>
@@ -2254,9 +2542,9 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (options.allowDifferentLicense) {
+  if (allowsDifferentLicenseOnMerges(options)) {
     license += `
-<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.</b>
+<b>Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Merge.</b>
 `;
   }
 
@@ -2829,19 +3117,21 @@ export const createModelVersionPostFromTraining = async ({
 
   const uploadedImages = (
     await Promise.all(
-      imageUrls.map(async (data, index) => {
-        const image = await uploadImageFromUrl({
-          imageUrl: typeof data === 'string' ? data : data.image_url,
-        });
-
-        return image;
+      imageUrls.map(async (data) => {
+        const imageUrl = typeof data === 'string' ? data : data.image_url;
+        // '' is a failed sample's slot; uploading it throws and fails the whole publish.
+        if (!imageUrl) return undefined;
+        return uploadImageFromUrl({ imageUrl });
       })
     )
-  ).filter((x) => isDefined(x?.url));
+  ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));
 
-  // Create post:
+  // No post rather than an empty one: publishPrivateModelVersionHandler skips any version that already has a post.
+  if (!uploadedImages.length) return;
+
   const post = await createPost({
     userId: user.id,
+    isModerator: user.isModerator,
     modelVersionId,
     publishedAt: now,
   });
@@ -2865,15 +3155,6 @@ export const createModelVersionPostFromTraining = async ({
   // Returned so request handlers can emit the post-create ClickHouse event
   // (track.post) — the service-level createPost above doesn't track on its own.
   return post;
-};
-
-export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
-  const resp = await modelVersionResourceCache.fetch([id]);
-  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
-};
-
-export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
-  return await modelVersionResourceCache.fetch(ids);
 };
 
 /**
@@ -3241,26 +3522,79 @@ export const mergeVersions = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
-      // 1. Remap file types and metadata if provided
+      // 0. Lock the rows, in id order, so a run can't change status under these checks.
+      const runs = await tx.$queryRaw<
+        { id: number; name: string; status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+      >`
+        SELECT id, name, status, "trainingStatus" FROM "ModelVersion"
+        WHERE id IN (${Prisma.join([targetVersionId, ...sourceVersionIds])})
+        ORDER BY id
+        FOR UPDATE
+      `;
+      const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
+      const lockedSource = sourceRuns.find(
+        (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
+      );
+      if (lockedSource)
+        throw throwBadRequestError(
+          `Version "${lockedSource.name}" has a training run in progress, under review or denied, and can't be merged.`
+        );
+      // A trained dataset stays fixed: its run's results live in the file's metadata, so it can't
+      // move to a version that still takes a new dataset.
+      const target = runs.find((r) => r.id === targetVersionId);
+      const trainedSourceIds = sourceRuns
+        .filter((r) => !isDatasetEditable(r.trainingStatus))
+        .map((r) => r.id);
+      if (target && versionAcceptsNewTrainingData(target) && trainedSourceIds.length) {
+        const dataset = await tx.modelFile.findFirst({
+          where: { modelVersionId: { in: trainedSourceIds }, type: 'Training Data' },
+          select: { modelVersionId: true },
+        });
+        const trainedSource = dataset && sourceRuns.find((r) => r.id === dataset.modelVersionId);
+        if (trainedSource)
+          throw throwBadRequestError(
+            `Version "${trainedSource.name}" has a finished training run, so its training data can't move to a version that still accepts new training data.`
+          );
+      }
+
+      // 1. Remap file types and metadata if provided. Only files of the versions being merged, of
+      // the caller's own model, re-checked here in the transaction that writes them.
       if (fileTypeMappings?.length) {
+        const mergedVersionIds = [targetVersionId, ...sourceVersionIds];
+        const inMerge = {
+          modelVersionId: { in: mergedVersionIds },
+          modelVersion: { modelId, model: { userId } },
+        } satisfies Prisma.ModelFileWhereInput;
+        const files = await tx.modelFile.findMany({
+          where: { id: { in: fileTypeMappings.map((m) => m.fileId) }, ...inMerge },
+          select: {
+            id: true,
+            type: true,
+            metadata: true,
+            modelVersion: { select: { uploadType: true, trainingStatus: true } },
+          },
+        });
+        const fileById = new Map(files.map((f) => [f.id, f]));
+
         for (const mapping of fileTypeMappings) {
+          const file = fileById.get(mapping.fileId);
+          if (!file) throw throwBadRequestError('A file to update is not part of this merge.');
+          assertFileTypeChangeAllowed(file, mapping.type);
+
           const updateData: Record<string, unknown> = {};
           if (mapping.type) updateData.type = mapping.type;
-          if (mapping.metadata) {
-            const existing = await tx.modelFile.findUnique({
-              where: { id: mapping.fileId },
-              select: { metadata: true },
-            });
+          if (mapping.metadata)
             updateData.metadata = {
-              ...((existing?.metadata as Record<string, unknown>) ?? {}),
+              ...((file.metadata as Record<string, unknown>) ?? {}),
               ...mapping.metadata,
             };
-          }
           if (Object.keys(updateData).length > 0) {
-            await tx.modelFile.update({
-              where: { id: mapping.fileId },
+            const { count } = await tx.modelFile.updateMany({
+              where: { id: mapping.fileId, ...inMerge },
               data: updateData,
             });
+            if (count !== 1)
+              throw throwBadRequestError('A file to update is not part of this merge.');
           }
         }
       }
@@ -3498,6 +3832,7 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  scanModelAndRules(modelId);
 
   // Post-commit S3 cleanup for any stragglers the move missed.
   if (sourceFileUrls.length > 0) {

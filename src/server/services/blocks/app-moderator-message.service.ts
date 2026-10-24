@@ -182,10 +182,6 @@ async function validateMessageText(subject: string, body: string): Promise<void>
     // failure on a corrupt cache entry, a DB error in `readBlocklistRow` — is infra and
     // is RETHROWN, so the router maps it to INTERNAL_SERVER_ERROR (no raw leak) and it
     // is logged as the fault it is.
-    //
-    // ⚠️ `assertSharedTextSafe` has the byte-identical wart (its `catch {}` around the
-    // same call re-labels everything as `'link'`). This is a copied house pattern rather
-    // than a novel defect here; fixing it there is a separate change.
     if (err instanceof TRPCError && err.code === 'BAD_REQUEST') {
       throw new AppModeratorMessageError(
         'BLOCKED_LINK',

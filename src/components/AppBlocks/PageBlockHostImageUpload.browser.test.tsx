@@ -5,6 +5,7 @@ import type { BlockUploadedImageInfo } from '~/components/AppBlocks/BlockImageUp
 import type { BlockSourceImageInfo } from '~/components/AppBlocks/BlockGenerationSourceUploadModal';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
@@ -39,6 +40,13 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -53,6 +61,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -137,6 +151,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -288,6 +305,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
       if (!r) throw new Error('no reply yet');
       // EXACTLY the source projection — no imageId / nsfwLevel / contentRating.
       expect(r.payload).toEqual({ requestId, selected: source });
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', ['selected'], r.payload);
     });
     const sel = (
       replies.last('IMAGE_UPLOAD_RESULT')!.payload as { selected: Record<string, unknown> }
@@ -350,6 +368,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD (purpose branch)', () => {
       const r = replies.last('IMAGE_UPLOAD_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId });
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', [], r.payload);
     });
     replies.stop();
   });

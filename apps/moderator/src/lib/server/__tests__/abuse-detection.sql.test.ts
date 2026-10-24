@@ -48,12 +48,41 @@ const params: readonly unknown[][] = [];
 const CANNED_RUN_ID = 4242;
 let cannedRows: unknown[] = [{ id: CANNED_RUN_ID }];
 
+/**
+ * The ONE query this driver does read the SQL of: the service's capability probe, which asks
+ * `pg_attribute` which columns `abuse_detection_finding` actually has and shapes the INSERT from the
+ * answer. Everything else is still answered with `cannedRows` regardless of what it asked.
+ *
+ * 🔴 It has to be answered specifically, because it is the only query here whose RESULT changes the
+ * SQL of a later statement. Fed the generic canned row it sees no `attname`, concludes the verdict
+ * columns are absent, and compiles the pre-DDL INSERT — so the assertion that the findings insert
+ * names `group_key` failed against a service that was working correctly. Defaults to the applied
+ * schema; `pgAttributeRows` is what a case shrinks to compile the degraded shape.
+ */
+const APPLIED_COLUMNS = [
+  'id',
+  'run_id',
+  'user_id',
+  'confidence',
+  'reason',
+  'actioned',
+  'action',
+  'created_at',
+  'verdict',
+  'verdict_by',
+  'verdict_at',
+  'group_key',
+];
+let pgAttributeRows: unknown[] = APPLIED_COLUMNS.map((attname) => ({ attname }));
+
 class CannedRowDriver extends DummyDriver {
   async acquireConnection(): Promise<DatabaseConnection> {
     return {
       // Generic in `R`, matching `DatabaseConnection` — a concrete row type here does not satisfy it
       // and svelte-check rejects the whole dialect.
-      executeQuery: async <R>() => ({ rows: cannedRows as R[] }),
+      executeQuery: async <R>(compiled: { sql: string }) => ({
+        rows: (compiled.sql.includes('pg_attribute') ? pgAttributeRows : cannedRows) as R[],
+      }),
       streamQuery: async function* () {
         yield { rows: [] };
       },
@@ -93,15 +122,49 @@ beforeEach(() => {
   sql.length = 0;
   (params as unknown[][]).length = 0;
   cannedRows = [{ id: CANNED_RUN_ID }];
+  pgAttributeRows = APPLIED_COLUMNS.map((attname) => ({ attname }));
 });
 
 /** Whitespace-normalised, so a prettier reflow of the builder chain cannot fail these. */
 const lastSql = () => sql[sql.length - 1].replace(/\s+/g, ' ').trim();
 
+/**
+ * The one recorded statement containing `fragment`, with the parameters bound to it.
+ *
+ * 🔴 SELECTED BY SHAPE, NEVER BY POSITION. Three guards about the list query read
+ * `sql[sql.length - 1]`, and the moment `getAbuseRuns` grew a second statement they silently
+ * re-pointed at that one instead — asserting the reviewed-count query's text under the list query's
+ * name. They went red here only because their fragments were specific; a looser one would have gone
+ * quietly vacuous, which is the same defect with no symptom.
+ *
+ * Uniqueness is asserted rather than assumed, so a THIRD statement cannot take this one's place
+ * either — and `params` is indexed alongside `sql`, so the pair cannot come from different queries.
+ */
+function statement(fragment: string): { sql: string; params: readonly unknown[] } {
+  const hits = sql
+    .map((text, i) => ({ sql: text.replace(/\s+/g, ' ').trim(), params: params[i] ?? [] }))
+    .filter((s) => s.sql.includes(fragment));
+  expect(
+    hits.map((h) => h.sql),
+    `exactly one recorded statement should contain \`${fragment}\``
+  ).toHaveLength(1);
+  return hits[0];
+}
+
+/** Forget what has been recorded so far — for a case that drives the same call twice. */
+function forgetStatements() {
+  sql.length = 0;
+  (params as unknown[][]).length = 0;
+}
+
+/** The list query, and the reviewed-count query `getAbuseRuns` issues beside it. */
+const RUN_LIST = 'from "abuse_detection_run" as "r"';
+const RULED_COUNT = 'count("id") as "ruled"';
+
 describe('compiled SQL — column names and shape', () => {
   it('getAbuseRuns joins findings and groups by the run PK alone', async () => {
     await service.getAbuseRuns({});
-    const q = lastSql();
+    const { sql: q, params: bound } = statement(RUN_LIST);
 
     expect(q).toContain('from "abuse_detection_run" as "r"');
     expect(q).toContain('left join "abuse_detection_finding" as "f" on "f"."run_id" = "r"."id"');
@@ -115,23 +178,49 @@ describe('compiled SQL — column names and shape', () => {
     // 🔴 The bound VALUE, not just the placeholder. `$1` matches whatever was bound, so a regex over
     // the SQL text alone cannot see the predicate inverted to `false` — which would report the
     // NOT-actioned count under the "acted on" column, the one number this board exists to separate.
-    expect(params[params.length - 1]).toContain(true);
+    expect(bound).toContain(true);
   });
 
   // Sibling of the `getAbuseFindings` default the last round pinned. Unpinned, the board's list
   // silently shows a handful of runs and reads as "that is all there is".
   it('getAbuseRuns defaults to a page of 50 runs', async () => {
     await service.getAbuseRuns({});
-    expect(params[params.length - 1]).toContain(50);
+    expect(statement(RUN_LIST).params).toContain(50);
   });
 
   it('getAbuseRuns filters by detector only when one is given', async () => {
     await service.getAbuseRuns({});
-    expect(lastSql()).not.toContain('"r"."detector" =');
+    expect(statement(RUN_LIST).sql).not.toContain('"r"."detector" =');
 
+    forgetStatements();
     await service.getAbuseRuns({ detector: 'reaction-abuse' });
-    expect(lastSql()).toContain('"r"."detector" =');
-    expect(params[params.length - 1]).toContain('reaction-abuse');
+    const filtered = statement(RUN_LIST);
+    expect(filtered.sql).toContain('"r"."detector" =');
+    expect(filtered.params).toContain('reaction-abuse');
+  });
+
+  /**
+   * 🔴 THE REVIEWED COUNT IS A SECOND STATEMENT, AND THAT IS THE DEGRADATION. It is the only read
+   * behind the list page that names `verdict`, and the DDL carrying `verdict` is applied BY HAND —
+   * folded into the list query, a deployment in that window would take a `42703` on the read the
+   * whole page is, and `routes/abuse/+page.server.ts` would report a database it is reading from
+   * perfectly well as `unreachable`.
+   */
+  it('getAbuseRuns counts the ruled findings in its own statement', async () => {
+    await service.getAbuseRuns({});
+    const list = statement(RUN_LIST);
+    const ruled = statement(RULED_COUNT);
+
+    // Two different statements. One query naming `verdict` is exactly what this separation exists
+    // to avoid.
+    expect(list.sql).not.toContain('"verdict"');
+    expect(ruled.sql).toContain('from "abuse_detection_finding"');
+    expect(ruled.sql).toContain('"verdict" is not null');
+    expect(ruled.sql).toContain('group by "run_id"');
+    // 🔴 SCOPED TO THE RUNS THE LIST RETURNED. Without the `in`, a detector filter would still pay
+    // for — and could still attribute — every run in the table.
+    expect(ruled.sql).toContain('"run_id" in (');
+    expect(ruled.params).toContain(CANNED_RUN_ID);
   });
 
   it('getAbuseRun reads one row by primary key', async () => {
@@ -270,6 +359,118 @@ describe('compiled SQL — column names and shape', () => {
     const insAt = all.findIndex((s) => s.startsWith('insert into "abuse_detection_finding"'));
     expect(delAt).toBeGreaterThanOrEqual(0);
     expect(insAt).toBeGreaterThan(delAt);
+  });
+
+  it('getAbuseVerdictSummary counts ruled and unruled, scoped to the run', async () => {
+    await service.getAbuseVerdictSummary(42);
+    const q = lastSql();
+    expect(q).toContain('from "abuse_detection_finding"');
+    // 🔴 SCOPED. Without the predicate every run's page reports the WHOLE table's review backlog —
+    // a number that looks plausible, moves when work is done, and is about the wrong population.
+    expect(q).toContain('where "run_id" = $');
+    expect(params[params.length - 1]).toContain(42);
+    // Two conditional COUNTs, not `count(verdict)` and a subtraction: the pair has to be
+    // symmetrical, or one of them silently stops meaning what its alias says.
+    expect(q).toMatch(/count\(case when "verdict" is not null then "id" end\) as "ruled"/);
+    expect(q).toMatch(/count\(case when "verdict" is null then "id" end\) as "unruled"/);
+  });
+
+  it('recordAbuseVerdict reads the target scoped to BOTH the finding and the run', async () => {
+    cannedRows = [{ id: 91, group_key: null }];
+    await service.recordAbuseVerdict({
+      runId: 4,
+      findingId: 91,
+      verdict: 'tp',
+      verdictBy: 'mod-a',
+    });
+
+    const read = sql.map((s2) => s2.replace(/\s+/g, ' ')).find((s2) => s2.startsWith('select'));
+    expect(read).toBeDefined();
+    // 🔴 The run predicate is the write's authorisation boundary — the finding id arrives in a form
+    // post. A read scoped to the id alone lets a page for run 4 rule a finding on run 9.
+    expect(read).toContain('where "id" = $1 and "run_id" = $2');
+    expect(params[0]).toEqual([91, 4]);
+  });
+
+  it('an UNGROUPED ruling updates exactly the one row, still bounded by the run', async () => {
+    cannedRows = [{ id: 91, group_key: null }];
+    await service.recordAbuseVerdict({ runId: 4, findingId: 91, verdict: 'fp', verdictBy: 'm' });
+
+    const update = sql.map((s2) => s2.replace(/\s+/g, ' ')).find((s2) => s2.startsWith('update'));
+    expect(update).toContain('update "abuse_detection_finding" set');
+    // 🔴 THE PREDICATE, NOT THE PARAMETER NUMBERS. `$4`/`$5` were pinned here once, and a mutation
+    // that added ONE column to the SET clause shifted every index — so both of these cases went red
+    // for a reason that had nothing to do with the predicate they exist to guard. The bound VALUES
+    // are asserted below, which is the claim that actually matters.
+    expect(update).toMatch(/where "run_id" = \$\d+ and "id" = \$\d+/);
+    const oneParams = params[sql.findIndex((s2) => s2.replace(/\s+/g, ' ').startsWith('update'))];
+    expect(oneParams).toContain(4);
+    expect(oneParams).toContain(91);
+    // 🔴 NULL IS NEVER A MATCH VALUE. `where group_key = NULL` matches nothing in Postgres, but
+    // `where group_key is null` would rule every ungrouped finding in the run at once.
+    expect(update).not.toContain('"group_key"');
+  });
+
+  it('a GROUPED ruling updates by key AND run — never by key alone', async () => {
+    cannedRows = [{ id: 91, group_key: 'domain:ring.test' }];
+    await service.recordAbuseVerdict({ runId: 4, findingId: 91, verdict: 'tp', verdictBy: 'm' });
+
+    const update = sql.map((s2) => s2.replace(/\s+/g, ' ')).find((s2) => s2.startsWith('update'));
+    expect(update).toMatch(/where "run_id" = \$\d+ and "group_key" = \$\d+/);
+    // The id is NOT in the predicate — that is what makes it cover the cluster — and the run is,
+    // which is what stops it covering yesterday's copy of the same ring.
+    expect(update).not.toContain('"id" =');
+    const updateParams =
+      params[sql.findIndex((s2) => s2.replace(/\s+/g, ' ').startsWith('update'))];
+    expect(updateParams).toContain('domain:ring.test');
+    expect(updateParams).toContain(4);
+  });
+
+  it('🔴 a ruling writes ONLY the verdict columns — never the producer’s own record', async () => {
+    // The conflation regression in the compiled text: `actioned`/`action` are what the DETECTOR did,
+    // and overwriting them destroys the only evidence of it. Asserted on the SET clause alone, so an
+    // `actioned` appearing anywhere else in the statement cannot mask it.
+    cannedRows = [{ id: 91, group_key: null }];
+    await service.recordAbuseVerdict({ runId: 4, findingId: 91, verdict: 'tp', verdictBy: 'm' });
+
+    const update = sql
+      .map((s2) => s2.replace(/\s+/g, ' '))
+      .find((s2) => s2.startsWith('update')) as string;
+    const setClause = update.slice(update.indexOf('set'), update.indexOf('where'));
+    for (const col of ['"verdict"', '"verdict_by"', '"verdict_at"'])
+      expect(setClause).toContain(col);
+    for (const col of ['"actioned"', '"action"', '"confidence"', '"reason"', '"user_id"'])
+      expect(setClause, `a ruling must not write ${col}`).not.toContain(col);
+  });
+
+  it('does not update at all when the finding is not on this run', async () => {
+    // The read comes back empty, and nothing may be written on the strength of an absent row.
+    cannedRows = [];
+    await expect(
+      service.recordAbuseVerdict({ runId: 4, findingId: 91, verdict: 'tp', verdictBy: 'm' })
+    ).resolves.toEqual({ updated: 0, groupKey: null });
+    expect(sql).toHaveLength(1);
+  });
+
+  it('recordAbuseRun writes group_key on the findings insert', async () => {
+    await service.recordAbuseRun({
+      detector: 'bot-account-detection',
+      startedAt: '2026-08-21T11:00:00.000Z',
+      finishedAt: '2026-08-21T11:04:00.000Z',
+      findings: [
+        {
+          userId: 7,
+          confidence: 0.9,
+          reason: 'r',
+          actioned: false,
+          groupKey: 'domain:ring.test',
+        },
+      ],
+    });
+    const insert = sql
+      .map((s2) => s2.replace(/\s+/g, ' '))
+      .find((s2) => s2.startsWith('insert into "abuse_detection_finding"'));
+    expect(insert).toContain('"group_key"');
   });
 
   // The header read short-circuits on a missing row, so without a row-returning driver this second

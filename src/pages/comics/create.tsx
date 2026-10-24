@@ -314,7 +314,10 @@ function CreateComicPage() {
                 ) : coverUrl ? (
                   <div className={styles.coverPreviewWrap}>
                     <div className={styles.coverPreview}>
-                      <img src={getEdgeUrl(coverUrl, { width: 240 })} alt="Cover" />
+                      <img
+                        src={getEdgeUrl(coverUrl, { width: 240, optimized: true })}
+                        alt="Cover"
+                      />
                     </div>
                     <ActionIcon
                       variant="filled"
@@ -418,7 +421,7 @@ function CreateComicPage() {
                 {heroUrl ? (
                   <>
                     <img
-                      src={getEdgeUrl(heroUrl, { width: 600 })}
+                      src={getEdgeUrl(heroUrl, { width: 600, optimized: true })}
                       alt="Hero preview"
                       className={styles.previewHeroImage}
                       style={{ objectPosition: `center ${heroPosition}%` }}
@@ -497,7 +500,7 @@ function CreateComicPage() {
             <div className={styles.cardPreviewCover}>
               {coverUrl ? (
                 <img
-                  src={getEdgeUrl(coverUrl, { width: 300 })}
+                  src={getEdgeUrl(coverUrl, { width: 300, optimized: true })}
                   alt="Cover preview"
                   className={styles.cardPreviewCoverImage}
                 />

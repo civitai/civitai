@@ -1,4 +1,8 @@
 export const LINK_CLASS = 'text-blue-4 hover:underline';
+export const LINK_BUTTON =
+  'h-[27px] gap-1.5 border-dark-4 bg-transparent px-2.5 text-xs font-normal text-dark-0 shadow-none dark:bg-transparent [&_svg]:size-[13px] [&_svg]:text-dark-1';
+/** A secondary link beside a primary one — an external "↗" next to the row's own link. */
+export const MUTED_LINK_CLASS = 'text-dark-2 text-xs hover:underline';
 
 /**
  * Local time, its zone named, and the UTC equivalent — in the text, not a tooltip.
@@ -35,6 +39,29 @@ export const dateTime = (value: Date | string | null) => {
 
 export const num = (value: number) => value.toLocaleString();
 
+export const ordinal = (n: number): string => {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
+
+/**
+ * "1 finding" / "2 findings" — a count and the noun it counts, agreeing.
+ *
+ * Here beside `num` because a count and its noun are one piece of text, and because this app spells
+ * the same three lines out by hand in about thirty places. Two things go wrong every time it is
+ * re-typed: the count skips `num`, so a four-figure total renders `1000` next to a `1,000` on the
+ * same screen; and the ternary is written against the wrong operand often enough that `1 items` has
+ * shipped. `many` covers the nouns a bare `s` gets wrong (`entry`/`entries`) and the verbs that go
+ * with them (`is`/`are`).
+ *
+ * 🔴 ONLY FOR NOUNS THIS APP WRITES. Text that arrives from another system — a detector's `reason`,
+ * an imported note — is rendered verbatim, `item(s)` and all. Rewriting a producer's sentences makes
+ * the screen disagree with the payload it is reporting.
+ */
+export const plural = (count: number, one: string, many = `${one}s`): string =>
+  `${num(count)} ${count === 1 ? one : many}`;
+
 /**
  * Milliseconds for a UTC timestamp that may or may not carry its zone marker.
  *
@@ -65,6 +92,15 @@ export const relativeTime = (value: Date | string | null): string => {
   for (const [unit, size] of units)
     if (Math.abs(seconds) >= size) return fmt.format(Math.round(seconds / size), unit);
   return fmt.format(seconds, 'second');
+};
+
+/** "12m" / "5h" / "3d": for a badge or caption, where `relativeTime`'s phrasing is too long. */
+export const shortAge = (value: Date | string, now = Date.now()): string => {
+  const minutes = Math.max(0, Math.floor((now - new Date(value).getTime()) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 };
 
 /**

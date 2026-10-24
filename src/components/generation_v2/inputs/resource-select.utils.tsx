@@ -6,7 +6,7 @@
  */
 
 import { Group, Skeleton } from '@mantine/core';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 // =============================================================================
@@ -20,13 +20,26 @@ export type ResourceData = GenerationResource & { air: string };
  * Value type for resource select inputs - stores the full GenerationResource.
  * Input schema accepts just an id (number) and the component hydrates to full resource.
  */
-export type ResourceSelectValue = GenerationResource;
+export type ResourceSelectValue = GenerationResourceValue;
 
 /**
  * Partial resource value that can be passed to the input.
- * This matches what DataGraph validation schema outputs.
+ * This matches what the resource field's output schema produces.
  */
-export type PartialResourceValue = Partial<GenerationResource> & { id: number };
+/**
+ * Pre-hydration values (localStorage, graph defaults, remix payloads) carry as
+ * little as an id — nested objects may themselves be partial and `model.type`
+ * is a plain string on the wire. The picker hydrates by id when fields are
+ * missing, so the prop type reflects that.
+ */
+export type PartialResourceValue = Partial<
+  Omit<GenerationResourceValue, 'model' | 'epochDetails' | 'settings'>
+> & {
+  id: number;
+  settings?: Partial<GenerationResource['settings']>;
+  model?: { type?: string } & Partial<Omit<GenerationResource['model'], 'type'>>;
+  epochDetails?: Partial<NonNullable<GenerationResource['epochDetails']>>;
+};
 
 // =============================================================================
 // Hydration Helpers
@@ -35,9 +48,9 @@ export type PartialResourceValue = Partial<GenerationResource> & { id: number };
 /**
  * Helper to check if a value needs hydration.
  * A value needs hydration if it's missing essential fields like model or name.
- * This can happen when the value came from URL params, minimal input, or DataGraph defaults.
+ * This can happen when the value came from URL params, minimal input, or a field default.
  *
- * DataGraph defaults only include { id, baseModel, model: { type } } - no name fields.
+ * A field default only includes { id, baseModel, model: { type } } - no name fields.
  */
 export function needsHydration(value: PartialResourceValue | undefined): boolean {
   if (!value) return false;

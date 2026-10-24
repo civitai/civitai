@@ -3,10 +3,13 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { resolveMetaHref } from '~/components/Meta/canonical';
+import { ogImageUrl } from '~/components/Meta/og-image-url';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { create } from 'zustand';
 import { env } from '~/env/client';
+import { serializeJsonLd } from '@civitai/shared/json-ld';
 
 // Meta stacking context - only the topmost (latest mounted) Meta renders its tags.
 // When a dialog mounts its own Meta, it automatically suppresses the page's Meta.
@@ -47,12 +50,20 @@ type MetaBaseProps<TImage> = {
   title?: string;
   description?: string;
   schema?: object;
+  /** Emitted as its own JSON-LD block, so `Gated`'s paywall augmentation of
+   *  `schema` can't reach in and attach entity properties to the crumb list. */
+  breadcrumb?: object;
   images?: TImage | TImage[] | null;
-  imageUrl?: string;
   ogEndpoint?: string;
   keywords?: string | string[];
   ogType?: 'website' | 'article' | 'profile' | 'video.other';
-};
+} & MetaImageUrlProps;
+
+// og:image and twitter:image are read by crawlers and link unfurlers that never see the page's
+// rating gate, so a raw image URL carries its rating and is emitted only when safe-rated.
+type MetaImageUrlProps =
+  | { imageUrl?: never; imageNsfwLevel?: never }
+  | { imageUrl: string; imageNsfwLevel: number };
 
 export type MetaProps<TImage> = MetaBaseProps<TImage> &
   (
@@ -64,11 +75,13 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   title,
   description,
   schema,
+  breadcrumb,
   deIndex,
   canonical,
   alternate,
   images,
   imageUrl,
+  imageNsfwLevel,
   ogEndpoint,
   keywords,
   ogType = 'website',
@@ -79,8 +92,10 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
   const _fallbackImageUrl = _image
     ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps })
-    : imageUrl;
-  const _ogImageUrl = ogEndpoint ? `${env.NEXT_PUBLIC_BASE_URL}${ogEndpoint}` : _fallbackImageUrl;
+    : Number.isInteger(imageNsfwLevel) && getIsSafeBrowsingLevel(imageNsfwLevel as number)
+    ? imageUrl
+    : undefined;
+  const _ogImageUrl = ogEndpoint ? ogImageUrl(ogEndpoint) : _fallbackImageUrl;
   const { query } = useBrowserRouter();
   const hasDialogParam = !!(query as Record<string, unknown>)?.dialog;
   const { canIndex } = useAppContext();
@@ -126,13 +141,24 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
       {(deIndex || !canIndex || hasDialogParam) && (
         <meta name="robots" content="noindex,nofollow" />
       )}
-      {canonical && <link rel="canonical" href={`${env.NEXT_PUBLIC_BASE_URL}${canonical}`} />}
-      {alternate && <link rel="alternate" href={`${env.NEXT_PUBLIC_BASE_URL}${alternate}`} />}
+      {canonical && (
+        <link rel="canonical" href={resolveMetaHref(canonical, env.NEXT_PUBLIC_BASE_URL ?? '')} />
+      )}
+      {alternate && (
+        <link rel="alternate" href={resolveMetaHref(alternate, env.NEXT_PUBLIC_BASE_URL ?? '')} />
+      )}
       {schema && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+          dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
           key="product-schema"
+        />
+      )}
+      {breadcrumb && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumb) }}
+          key="breadcrumb-schema"
         />
       )}
     </Head>

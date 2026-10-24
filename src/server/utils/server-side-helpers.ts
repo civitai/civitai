@@ -1,5 +1,10 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
-import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
+import type {
+  GetServerSidePropsContext,
+  GetServerSidePropsResult,
+  NextApiRequest,
+  Redirect,
+} from 'next';
 import type { Session } from '~/types/session';
 import { jsonSafeSession } from '~/server/utils/session-props';
 import { Tracker } from '~/server/clickhouse/client';
@@ -15,10 +20,13 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestCredential } from '~/server/auth/request-credential';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 
 export const getServerProxySSGHelpers = async (
-  ctx: GetServerSidePropsContext,
+  // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
+  ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
   session: Session | null,
   features: FeatureAccess
 ) => {
@@ -36,9 +44,7 @@ export const getServerProxySSGHelpers = async (
       req: ctx.req as any,
       domain,
       signal: new AbortController().signal,
-      tokenScope: TokenScope.Full,
-      apiKeyId: undefined,
-      subject: undefined,
+      ...getRequestCredential(ctx.req),
     },
     // Phase 2 of the superjson → devalue migration: SSR runs server-side, so its
     // dehydrate WRITE goes through the env-gated server writer (`unionTransformer`
@@ -48,10 +54,52 @@ export const getServerProxySSGHelpers = async (
     // either format through the union READ. SSR HTML and the JS chunks it
     // references are the same content-hashed deploy, so dehydrate/hydrate is
     // inherently version-matched. See src/shared/utils/trpc-union-transformer.ts.
+    //
+    // Deliberately NOT the per-request client check the /api/trpc route uses
+    // (src/server/trpc/response-write-format.ts): a page navigation carries no
+    // `x-client` headers, and the only reader of this state is the same-deploy
+    // bundle (a stale tab's `/_next/data` fetch is a buildId mismatch, which Next
+    // turns into a full reload), so the client check would only switch SSR to
+    // superjson without protecting anyone.
     transformer: unionTransformer,
   });
   return ssg;
 };
+
+type SsgHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
+
+/**
+ * `adsGated` from a resolver's declared rating. `.red` is exempt from the rating check — it serves
+ * direct ads, no GAM auction, no policy center.
+ */
+export function resolveAdsGated(
+  result: { gating?: AdGatingDeclaration; suppressAds?: boolean },
+  features: FeatureAccess
+) {
+  return (
+    !!result.suppressAds ||
+    (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating))
+  );
+}
+
+/**
+ * The `trpcState` a page hands the client.
+ *
+ * Success-only: an errored prefetch would put a TRPCError instance in the dehydrated state, and
+ * the devalue write (TRPC_WRITE_DEVALUE) throws on non-POJOs — turning one failed prefetch into a
+ * page-wide SSR 500. Dropping errored queries lets the client refetch instead.
+ *
+ * Seed the serialize-attribution ctx (kill-switch-independent — this is the once-per-render SSR
+ * path, not the hot tRPC batch path) with the route so a devalue-write fallback during dehydrate
+ * attributes to it (`ssr:dehydrate:<route>`) instead of `unknown`.
+ */
+export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
+  return runWithSerializeCtxAlways({ path: ssrDehydrateSerializePath(url), type: 'ssr' }, () =>
+    ssg.dehydrate({
+      shouldDehydrateQuery: (query) => query.state.status === 'success',
+    })
+  );
+}
 
 export function createServerSideProps<P>({
   resolver,
@@ -64,19 +112,31 @@ export function createServerSideProps<P>({
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
+    // `_app` seeds `req.session` from its own request, which carries this request's headers but not
+    // its URL. With an Authorization header the seed holds that token's user but not its
+    // credential, so it resolves here, which records the credential on `req.context`.
+    const presentsHeader = !!context.req.headers.authorization;
     const session =
-      ((context.req as any)['session'] as Session | null) ??
-      (useSession || requireModerator || !isClient ? await getServerAuthSession(context) : null);
+      (presentsHeader ? null : ((context.req as any)['session'] as Session | null)) ??
+      (useSession || requireModerator || !isClient || presentsHeader
+        ? await getServerAuthSession(context)
+        : null);
 
-    // Page-level moderator gate (replaces the edge route-guard — the thin hub civ-token can't resolve the full
-    // user in the edge runtime). Anon → login; authed-non-moderator → home (login can't grant the permission
-    // and would loop back here). Runs on SSR AND client-nav data fetches.
-    if (requireModerator && !session?.user?.isModerator) {
+    // Page-level moderator gate. Anon with no token → login; any other refusal →
+    // home (login can't change the outcome and would loop back here). Runs on SSR AND client-nav
+    // data fetches.
+    if (
+      requireModerator &&
+      (!session?.user?.isModerator || !isFullScopeSession(context.req as NextApiRequest))
+    ) {
       return {
         redirect: {
-          destination: session?.user
-            ? '/'
-            : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
+          destination:
+            session?.user ||
+            presentsHeader ||
+            requestCarriesQueryToken(context.req as NextApiRequest)
+              ? '/'
+              : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
           permanent: false,
         },
       };
@@ -106,36 +166,13 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
-    // policy center.
-    const adsGated =
-      !!result.suppressAds ||
-      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
+    const adsGated = resolveAdsGated(result, features);
 
     return {
       props: {
         ...(props ?? {}),
         adsGated,
-        // Success-only: an errored prefetch would put a TRPCError instance in the
-        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
-        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
-        // errored queries lets the client refetch instead.
-        //
-        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
-        // once-per-render SSR path, not the hot tRPC batch path) with the page
-        // route so a devalue-write fallback during dehydrate attributes to the
-        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
-        ...(ssg
-          ? {
-              trpcState: runWithSerializeCtxAlways(
-                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
-                () =>
-                  ssg.dehydrate({
-                    shouldDehydrateQuery: (query) => query.state.status === 'success',
-                  })
-              ),
-            }
-          : {}),
+        ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
         session: jsonSafeSession(session),
       } as NonNullable<P>,
     };
@@ -163,8 +200,8 @@ type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
   useSession?: boolean;
   prefetch?: 'always' | 'once';
-  /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
-   *  redirects non-moderators before the resolver runs. */
+  /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
+   *  Authorization header. Redirects everyone else before the resolver runs. */
   requireModerator?: boolean;
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {

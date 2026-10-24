@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
+import {
+  CREATOR_ANNOUNCEMENT_CONTENT_MAX,
+  CREATOR_ANNOUNCEMENT_MAX_ACTIONS,
+} from '~/server/schema/announcement.schema';
+import { LINK_BUTTONS_MAX as CREATOR_STUDIO_LINK_BUTTONS_MAX } from '../../../../apps/creator-studio/src/lib/announcements';
+import type * as BlocklistService from '~/server/services/blocklist.service';
 
 // The property under test is that a creator write cannot reach a sitewide surface, and it
 // is enforced structurally rather than by a check: the creator schema has no `metadata.type`
@@ -12,7 +17,15 @@ vi.mock('~/server/services/cover-image.service', () => ({
   resolveCoverImageId: vi.fn(async () => 555),
 }));
 vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
-vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/user.service', () => ({
+  amIBlockedByUser: vi.fn(async () => false),
+  getProfilePicturesForUsers: vi.fn(async () => ({})),
+  getCosmeticsForUsers: vi.fn(async () => ({})),
+}));
 // The real host list comes from SERVER_DOMAIN_* env, which the test env does not set — an
 // empty list would make every link "not ours" and the assertions below vacuous.
 vi.mock('~/server/utils/server-domain', () => ({
@@ -41,7 +54,13 @@ import {
   MIN_ANNOUNCEMENT_DURATION_MS,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 
 const AUTHOR = 101;
 
@@ -194,8 +213,10 @@ describe('the allowance gates a notifying announcement and not a profile-only on
     // concurrent creates cannot both pass on the same stale count.
     tx.announcementSpend.count.mockResolvedValue(1);
 
+    // Matches the date half of the refusal, which is the part the test is about — the creator is
+    // told WHEN it comes back, not merely that it is gone.
     await expect(upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR })).rejects.toThrow(
-      /Next available/
+      /Next one/
     );
     expect(dbMock.dbWrite.announcement.create).not.toHaveBeenCalled();
   });
@@ -334,6 +355,55 @@ describe('the followed feed', () => {
     const last = await getFollowedAnnouncements({ userId: AUTHOR, limit: 2 });
     expect(last.items).toHaveLength(2);
     expect(last.nextCursor).toBeUndefined();
+  });
+
+  // The author's picture and cosmetics are not columns on `User`, so no `select` can reach
+  // them; they come from the caches instead. A byline that is only a username is what a
+  // reader has to tell apart from an official Civitai announcement, which is the point.
+  //
+  // TWO authors, and the caches hold an entry for only ONE of them. One author would let
+  // three separate bugs through: dropping the id dedupe, keying every row off the first
+  // author's identity, and dropping the null-author filter. The undecorated author is also
+  // this test's own negative control — an author the caches know nothing about must render
+  // as a plain name, never a half-built bar or a crash.
+  it('attaches each author their own identity, and degrades for one the caches do not know', async () => {
+    const OTHER = AUTHOR + 1;
+    vi.mocked(getProfilePicturesForUsers).mockResolvedValue({ [AUTHOR]: { id: 7 } } as never);
+    vi.mocked(getCosmeticsForUsers).mockResolvedValue({ [AUTHOR]: [{ cosmeticId: 3 }] } as never);
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+      { id: 2, metadata: {}, cover: null, user: { id: OTHER, username: 'other' } },
+      { id: 3, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toMatchObject({
+      username: 'author',
+      profilePicture: { id: 7 },
+      cosmetics: [{ cosmeticId: 3 }],
+    });
+    expect(page.items[1].user).toMatchObject({
+      username: 'other',
+      profilePicture: null,
+      cosmetics: [],
+    });
+    expect(page.items[2].user).toMatchObject({ username: 'author', profilePicture: { id: 7 } });
+
+    // Deduped: the repeated author is asked for once, and the order is the first-seen order.
+    expect(vi.mocked(getProfilePicturesForUsers).mock.calls[0][0]).toEqual([AUTHOR, OTHER]);
+  });
+
+  it('asks the caches nothing when no row has an author', async () => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: null },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toBeNull();
+    expect(getProfilePicturesForUsers).not.toHaveBeenCalled();
+    expect(getCosmeticsForUsers).not.toHaveBeenCalled();
   });
 
   it('skips the cursor row itself so a page never repeats its predecessor', async () => {
@@ -494,6 +564,26 @@ describe('an omitted field means leave it alone', () => {
     const data = (tx.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> })
       .data;
     expect(data.disabled).toBe(false);
+  });
+});
+
+describe('the profile query deliberately does NOT fetch author identity', () => {
+  // The profile carousel renders no byline (`CreatorAnnouncement`'s `withAuthor` defaults
+  // off), so hydrating there is two cache fan-outs and several KB per row for fields nothing
+  // reads — and every row on that surface shares one author, so it is duplicated too.
+  //
+  // 🔴 If you are here because you added a byline to the profile, the fix is to flip
+  // `hydrate` to true in `getCreatorAnnouncements`, NOT to delete this test.
+  it('returns the identity fields empty without asking the caches', async () => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR });
+
+    expect(rows[0].user).toMatchObject({ profilePicture: null, cosmetics: [] });
+    expect(getProfilePicturesForUsers).not.toHaveBeenCalled();
+    expect(getCosmeticsForUsers).not.toHaveBeenCalled();
   });
 });
 
@@ -755,5 +845,226 @@ describe('the write path actually applies the guards', () => {
     ).data;
     expect(data.startsAt).toEqual(roundTripped);
     expect(data.startsAt.getTime()).toBeLessThan(Date.now() - 60_000);
+  });
+});
+
+describe('link buttons: up to three, more than one for members only', () => {
+  const button = (n: number) => ({ link: `/models/${n}`, linkText: `Button ${n}` });
+  const buttons = (count: number) => Array.from({ length: count }, (_, i) => button(i + 1));
+
+  const writtenActions = () =>
+    (
+      dbMock.dbWrite.announcement.create.mock.calls[0][0] as {
+        data: { metadata: { actions?: { link: string; linkText: string }[] } };
+      }
+    ).data.metadata.actions;
+
+  const asStored = (count: number) => ({
+    id: 9,
+    coverId: null,
+    profileOnly: true,
+    startsAt: null,
+    content: validInput.content,
+    metadata: { actions: buttons(count).map((b) => ({ type: 'button', ...b })) },
+  });
+
+  it('lets a member save three buttons, in order', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      profileOnly: true,
+      actions: buttons(3),
+      isMember: true,
+      userId: AUTHOR,
+    });
+
+    expect(writtenActions()).toEqual(buttons(3).map((b) => ({ type: 'button', ...b })));
+  });
+
+  it('refuses a second button from a non-member and writes nothing', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      upsertCreatorAnnouncement({
+        ...validInput,
+        profileOnly: true,
+        actions: buttons(2),
+        isMember: false,
+        userId: AUTHOR,
+      })
+    ).rejects.toThrow('More than one link button is a membership feature.');
+    expect(dbMock.dbWrite.announcement.create).not.toHaveBeenCalled();
+  });
+
+  // The cover is minted as an `Image` row before the write; refusing after that leaves an orphan.
+  it('refuses before minting the cover image', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      upsertCreatorAnnouncement({
+        ...validInput,
+        profileOnly: true,
+        actions: buttons(2),
+        coverImage: { url: 'cover-key' } as never,
+        isMember: false,
+        userId: AUTHOR,
+      })
+    ).rejects.toThrow('More than one link button is a membership feature.');
+    expect(resolveCoverImageId).not.toHaveBeenCalled();
+  });
+
+  // Fail closed: a caller that forgets to pass membership must land on the single-button side.
+  it('treats a caller that does not say as a non-member', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      upsertCreatorAnnouncement({
+        ...validInput,
+        profileOnly: true,
+        actions: buttons(2),
+        userId: AUTHOR,
+      })
+    ).rejects.toThrow('More than one link button is a membership feature.');
+  });
+
+  it('still gives a non-member their one button', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      profileOnly: true,
+      actions: buttons(1),
+      isMember: false,
+      userId: AUTHOR,
+    });
+
+    expect(writtenActions()).toEqual([{ type: 'button', ...button(1) }]);
+  });
+
+  // Creator Studio restates the cap to decide when to stop offering "Add button". Lowered here alone,
+  // it would offer a button this schema then refuses with a 400.
+  it('matches the cap Creator Studio offers', () => {
+    expect(CREATOR_STUDIO_LINK_BUTTONS_MAX).toBe(CREATOR_ANNOUNCEMENT_MAX_ACTIONS);
+  });
+
+  it('refuses a fourth button at the schema, for anyone, members included', () => {
+    const parse = (count: number) =>
+      upsertCreatorAnnouncementSchema.safeParse({ ...validInput, actions: buttons(count) }).success;
+
+    expect(parse(3)).toBe(true);
+    expect(parse(4)).toBe(false);
+  });
+
+  // Creator Studio sends both on every save; `action` is only for a main app that predates `actions`.
+  it('saves `actions` and ignores `action` when a client sends both', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+    const parsed = upsertCreatorAnnouncementSchema.parse({
+      ...validInput,
+      action: button(9),
+      actions: buttons(3),
+    });
+
+    await upsertCreatorAnnouncement({
+      ...parsed,
+      profileOnly: true,
+      isMember: true,
+      userId: AUTHOR,
+    });
+
+    expect(writtenActions()).toEqual(buttons(3).map((b) => ({ type: 'button', ...b })));
+  });
+
+  it('still accepts the single `action` an older client sends', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+    const parsed = upsertCreatorAnnouncementSchema.parse({ ...validInput, action: button(1) });
+
+    await upsertCreatorAnnouncement({ ...parsed, profileOnly: true, userId: AUTHOR });
+
+    expect(writtenActions()).toEqual([{ type: 'button', ...button(1) }]);
+  });
+
+  it('runs every button through the domain rewrite and the blocklist, not just the first', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+
+    await upsertCreatorAnnouncement({
+      ...validInput,
+      profileOnly: true,
+      actions: [button(1), { link: 'https://civitai-dev.blue/models/3', linkText: 'Third' }],
+      isMember: true,
+      userId: AUTHOR,
+    });
+
+    expect(writtenActions()?.[1].link).toBe('/models/3');
+    expect(vi.mocked(throwOnBlockedUserContent).mock.calls[0][0]).toEqual(
+      expect.arrayContaining(['Third', 'https://civitai-dev.blue/models/3'])
+    );
+  });
+
+  // Justin's call (2026-10-03): a lapsed member keeps the buttons they already have and can edit
+  // the announcement, but can never add one. Do not tighten this into "trim to one before saving".
+  describe('a lapsed member is grandfathered, not locked out', () => {
+    const updatedActions = () =>
+      (
+        dbMock.dbWrite.announcement.update.mock.calls[0][0] as {
+          data: { metadata: { actions?: unknown[] } };
+        }
+      ).data.metadata.actions;
+
+    it('can save an announcement with the three buttons it already has', async () => {
+      dbMock.dbRead.announcement.findFirst.mockResolvedValue(asStored(3) as never);
+
+      await upsertCreatorAnnouncement({
+        ...validInput,
+        id: 9,
+        profileOnly: true,
+        actions: buttons(3),
+        isMember: false,
+        userId: AUTHOR,
+      });
+
+      expect(updatedActions()).toHaveLength(3);
+      // The previous count is read off `metadata`; the mock returns it whether or not the query
+      // asks, so without this a dropped select reads as "no buttons before" only in production.
+      expect(
+        (
+          dbMock.dbRead.announcement.findFirst.mock.calls[0][0] as {
+            select: { metadata?: boolean };
+          }
+        ).select.metadata
+      ).toBe(true);
+    });
+
+    // Metadata is rebuilt on every save rather than merged, which is the only thing that lets a
+    // creator take their buttons off.
+    it('clears every stored button when a save sends none', async () => {
+      dbMock.dbRead.announcement.findFirst.mockResolvedValue(asStored(2) as never);
+
+      await upsertCreatorAnnouncement({
+        ...validInput,
+        id: 9,
+        profileOnly: true,
+        isMember: false,
+        userId: AUTHOR,
+      });
+
+      expect(updatedActions()).toBeUndefined();
+    });
+
+    it('cannot add a button beyond what the row already has', async () => {
+      dbMock.dbRead.announcement.findFirst.mockResolvedValue(asStored(2) as never);
+
+      await expect(
+        upsertCreatorAnnouncement({
+          ...validInput,
+          id: 9,
+          profileOnly: true,
+          actions: buttons(3),
+          isMember: false,
+          userId: AUTHOR,
+        })
+      ).rejects.toThrow('More than one link button is a membership feature.');
+      expect(dbMock.dbWrite.announcement.update).not.toHaveBeenCalled();
+    });
   });
 });

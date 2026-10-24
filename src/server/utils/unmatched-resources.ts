@@ -11,7 +11,10 @@ export type MetaResource = { type?: string; name?: string; hash?: string };
 
 // meta.hashes is user-writable and get_image_resources() surfaces every value in it, including
 // 'false', whitespace and truncated non-hex junk.
-const HASH_SHAPE = /^[0-9a-f]{8,}$/;
+// The 0x prefix is a real hash, not junk: A1111/Forge write left(sshs_model_hash, 12) verbatim, so
+// two of the twelve characters are the prefix. Requiring pure hex drops those before the caller
+// sees them, and the uploader is told nothing about the resource that failed to attach.
+const HASH_SHAPE = /^(0x)?[0-9a-f]{8,}$/;
 
 // get_image_resources() strips only lora:/embed:/hypernet:, so lycoris:/checkpoint:/model: arrive intact.
 const NAME_PREFIX = /^(lora|lycoris|embed|hypernet|model|checkpoint):/i;

@@ -172,7 +172,6 @@ export function Home() {
 
                       <ImagesInfinite
                         showAds
-                        showFeedbackPrompt
                         disableStoreFilters
                         filters={{
                           period: MetricTimeframe.Week,

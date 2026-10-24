@@ -15,6 +15,7 @@ const { envBox } = vi.hoisted(() => ({
     LOGGING: '',
     MEILI_CALL_CONCURRENCY: 50,
     SIGNALS_CALL_CONCURRENCY: 30,
+    SIGNALS_TOKEN_CALL_CONCURRENCY: 30,
     S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
     S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   } as Record<string, unknown>,
@@ -36,7 +37,10 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/buzz.service', () => ({}));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/donation-goal.service', () => ({ checkDonationGoalComplete: vi.fn() }));

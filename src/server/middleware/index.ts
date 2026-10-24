@@ -4,9 +4,11 @@ import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
+import { nextDataSkipMiddleware } from '~/server/middleware/next-data-skip.middleware';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
 import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
+import { syncAccountNoindexMiddleware } from '~/server/middleware/sync-account-noindex.middleware';
 
 // NOTE: order matters! Region blocking, then restriction redirect. botDetectionMiddleware is last because it
 // returns `NextResponse.next({ request })` to inject a request header for downstream handlers — the runner
@@ -19,7 +21,10 @@ const middlewares: Middleware[] = [
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,
   routeGuardsMiddleware,
+  // Terminal for data requests: must follow every middleware that may redirect or block one.
+  nextDataSkipMiddleware,
   apiCacheMiddleware,
+  syncAccountNoindexMiddleware,
   botDetectionMiddleware,
 ];
 

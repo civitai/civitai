@@ -70,6 +70,15 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   // Every flag on. The index selector is hidden here, so nothing branches on a specific one.
   return { ...actual, useFeatureFlags: () => new Proxy({}, { get: () => true }) };
 });
+// The harness has no tRPC client or session, and the search scope reads both.
+vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, BrowsingSettingsAddonsProvider: (props: any) => props.children };
+});
+vi.mock('~/hooks/useCurrentUser', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, useCurrentUser: () => null };
+});
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
   useApplyHiddenPreferences: ({ data }: { data: unknown[] }) => ({ items: data }),
 }));

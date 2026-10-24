@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Group, Stack, Stepper, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Group, Stack, Text, Title } from '@mantine/core';
 import {
   Availability,
   ModelUploadType,
@@ -26,6 +26,7 @@ import { isNumber } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { WizardStepper } from '~/components/Stepper/WizardStepper';
 import { useWizardStepSave } from './useWizardStepSave';
 
 const MAX_STEPS = 3;
@@ -71,17 +72,15 @@ const CreateSteps = ({
     useWizardStepSave(navigateToStep);
 
   return (
-    <Stepper
+    <WizardStepper
       active={activeIndex}
       onStepClick={(idx) => {
         const urlStep = skipFiles && idx >= 1 ? idx + 2 : idx + 1;
         handleStepSelect(urlStep, step);
       }}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
-      <Stepper.Step label={editing ? 'Edit version' : 'Add version'}>
+      <WizardStepper.Step label={editing ? 'Edit version' : 'Add version'}>
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{editing ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
@@ -103,16 +102,21 @@ const CreateSteps = ({
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
-                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
+                <Button
+                  type="submit"
+                  loading={loading}
+                  disabled={!canSave}
+                  onClick={clearPendingStep}
+                >
                   Next
                 </Button>
               </Group>
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
       {!skipFiles && (
-        <Stepper.Step
+        <WizardStepper.Step
           label="Upload files"
           loading={uploading > 0}
           color={error + aborted > 0 ? 'red' : undefined}
@@ -122,9 +126,9 @@ const CreateSteps = ({
             <Files />
             <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
           </div>
-        </Stepper.Step>
+        </WizardStepper.Step>
       )}
-      <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+      <WizardStepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {modelVersion && modelData && (
           <PostUpsertForm2
             postId={postId}
@@ -132,8 +136,8 @@ const CreateSteps = ({
             modelId={modelData.id}
           />
         )}
-      </Stepper.Step>
-    </Stepper>
+      </WizardStepper.Step>
+    </WizardStepper>
   );
 };
 
@@ -190,15 +194,13 @@ const TrainSteps = ({
     useWizardStepSave(navigateToStep);
 
   return (
-    <Stepper
+    <WizardStepper
       active={step - 1}
       onStepClick={(idx) => handleStepSelect(idx + 1, step)}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Select File */}
-      <Stepper.Step
+      <WizardStepper.Step
         label="Select Model File"
         loading={
           modelVersion.trainingStatus === TrainingStatus.Pending ||
@@ -223,10 +225,10 @@ const TrainSteps = ({
           </Title>
           <TrainingSelectFile model={modelData} modelVersion={modelVersion} onNextClick={goNext} />
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 2: Version Info */}
-      <Stepper.Step label="Edit version">
+      <WizardStepper.Step label="Edit version">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm
@@ -260,11 +262,11 @@ const TrainSteps = ({
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 3: Post Info - Not required for private models. */}
       {(!isPrivateModel || step === 3) && (
-        <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+        <WizardStepper.Step label={postId ? 'Edit post' : 'Create a post'}>
           {modelVersion && modelData && (
             <PostUpsertForm2
               postId={postId}
@@ -272,9 +274,9 @@ const TrainSteps = ({
               modelId={modelData.id}
             />
           )}
-        </Stepper.Step>
+        </WizardStepper.Step>
       )}
-    </Stepper>
+    </WizardStepper>
   );
 };
 
@@ -347,9 +349,7 @@ export function ModelVersionWizard({ data, previousBaseModel }: Props) {
         <Link
           legacyBehavior
           href={
-            modelData?.id
-              ? getModelUrl({ modelId: modelData.id, modelName: modelData.name })
-              : '#'
+            modelData?.id ? getModelUrl({ modelId: modelData.id, modelName: modelData.name }) : '#'
           }
           passHref
         >

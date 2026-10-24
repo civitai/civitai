@@ -27,13 +27,49 @@ const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mj
 // daemon, which is why the verdict below had no test: there was no way to stand a fake one up
 // beside it. Imported on the queue path only, for the reason given above QUEUE.
 const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
+// The daemon's client, shared with cli.mjs. Imported on the queue path only, for the reason above.
+const HTTP_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-http.mjs');
 let DAEMON = null;
+let daemonFetch = null;
 // Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
 // answered by starting a second, unqueued suite — see the note where this is set.
 let accepted = false;
+/** Read by a caller of `runQueued` deciding what a later failure may do. */
+export const queueAccepted = () => accepted;
 const POLL_MS = 2000;
 
+/**
+ * Exit after flushing pending writes.
+ *
+ * process.exit() terminates immediately without waiting for buffered stdout/stderr writes to
+ * complete. When running through a pipe-backed capture (exec background), the last lines of output
+ * are lost — both the exit code and the log then agree on "green" over a red run. Drain both
+ * streams before exiting so the capture file is complete when the process manager fires its
+ * completion notification.
+ */
+function exitAfterDrain(code) {
+  let pending = 2;
+  const done = () => {
+    if (--pending === 0) process.exit(code);
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  // If the callbacks never fire (e.g. the streams are in an error state), exit anyway after
+  // a short safety net rather than hang.
+  setTimeout(() => process.exit(code), 500).unref();
+}
+
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * `pnpm run test:unit:run -- --max-workers=4` hands this script a literal leading `--`. Passed on,
+ * it reaches vitest after `run --project unit*`, where it ends option parsing: every flag after it
+ * is silently ignored and the suite runs at the default worker count. Only a LEADING one is pnpm's;
+ * a `--` further in was put there by the caller and is left alone.
+ */
+export function forwardedArgs(argv) {
+  return argv[0] === '--' ? argv.slice(1) : argv;
+}
 
 export function queueDecision(args, env) {
   if (env.CI) return { queue: false, why: 'CI runs the suite directly' };
@@ -68,12 +104,13 @@ function runDirect(args) {
   });
 }
 
+function daemonRequest(path, { method = 'GET', body } = {}) {
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  return daemonFetch(`${DAEMON}${path}`, { method, headers, body });
+}
+
 async function post(path, body) {
-  const res = await fetch(`${DAEMON}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const res = await daemonRequest(path, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`daemon returned ${res.status}`);
   return res.json();
 }
@@ -99,7 +136,15 @@ function warnIfLogsDropped(state) {
   );
 }
 
-async function runQueued(args) {
+/**
+ * Exported so `scripts/typecheck.mjs` can queue through the SAME client rather than a copy of it.
+ * Everything below — the accepted flag, the 404-means-restarted rule, the drain before exit — was
+ * learned the hard way on this path, and a second client would have to relearn each of them.
+ *
+ * `fallback` is what an unusable queue degrades to. It is only ever called BEFORE the daemon has
+ * accepted the run; after acceptance a failure exits 2 instead, for the reason given at `accepted`.
+ */
+export async function runQueued(args, { kind = 'unit', fallback = runDirect } = {}) {
   // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
@@ -112,22 +157,23 @@ async function runQueued(args) {
   try {
     const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
     DAEMON = resolveDaemonUrl();
+    ({ daemonFetch } = await import(pathToFileURL(HTTP_MODULE).href));
   } catch (err) {
     console.error(`Test queue address unusable (${err.message}); running directly.`);
-    return runDirect(args);
+    return fallback(args);
   }
 
   let run;
   try {
-    run = await post('/test-runs', { worktree: repoRoot, args });
+    run = await post('/test-runs', { worktree: repoRoot, args, kind });
   } catch {
     await ensureDaemon();
     try {
-      run = await post('/test-runs', { worktree: repoRoot, args });
+      run = await post('/test-runs', { worktree: repoRoot, args, kind });
     } catch (err) {
       // Never leave a caller unable to run tests because the queue is unavailable.
       console.error(`Test queue unreachable (${err.message}); running directly.`);
-      return runDirect(args);
+      return fallback(args);
     }
   }
 
@@ -147,14 +193,16 @@ async function runQueued(args) {
   if (run.status === 'queued') {
     console.error(
       run.paused
-        ? `Queued at position ${run.position}. The queue is PAUSED (concurrency 0) — nothing starts until it is raised.`
+        ? `Queued at position ${run.position}. Its ${
+            run.pausedBy ?? 'lane'
+          } is PAUSED (limit 0) — nothing starts until \`${run.resumeCommand ?? 'test config 1'}\`.`
         : `Queued at position ${run.position} of ${run.queueLength} (${run.running}/${run.concurrency} running).`
     );
   }
 
   let lastLog = -1;
   for (;;) {
-    const res = await fetch(`${DAEMON}/test-runs/${run.id}`);
+    const res = await daemonRequest(`/test-runs/${run.id}`);
     if (res.status === 404) {
       console.error(
         `The daemon forgot run ${run.id} — it was most likely restarted. Re-run this command.`
@@ -167,7 +215,7 @@ async function runQueued(args) {
     }
     const state = await res.json();
 
-    const logs = await fetch(`${DAEMON}/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
+    const logs = await daemonRequest(`/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
       r.json()
     );
     for (const entry of logs.logs ?? []) {
@@ -183,7 +231,7 @@ async function runQueued(args) {
       // here. The copy that used to live on this line read `state.exitCode || 1`, which passes a
       // signal-killed run's recorded -1 straight through: `process.exit(-1)` gives the shell 255,
       // the exact number `exitCodeFor` exists to avoid, and `[ $? -eq 1 ]` misreads it.
-      process.exit(exitCodeFor(state));
+      exitAfterDrain(exitCodeFor(state));
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
@@ -193,9 +241,15 @@ if (
   import.meta.url === `file://${process.argv[1]}` ||
   process.argv[1] === fileURLToPath(import.meta.url)
 ) {
-  const args = process.argv.slice(2);
+  const args = forwardedArgs(process.argv.slice(2));
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
+  if (
+    decision.queue &&
+    existsSync(CLI) &&
+    existsSync(QUEUE) &&
+    existsSync(PORT_MODULE) &&
+    existsSync(HTTP_MODULE)
+  ) {
     // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
     // rejection that kills the process with no tests run.
     //

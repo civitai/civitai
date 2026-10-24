@@ -55,8 +55,11 @@ import handler from '~/pages/api/download/[...key]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
+// Default to a key under the authed user's own `<type>/<userId>/` prefix so the branch tests below
+// pass the ownership gate (added below) and still reach the delivery worker. The
+// gate itself is covered by its own describe block at the end.
 function createMocks({
-  key = ['images', '127209598'],
+  key = ['model', '42', 'file.safetensors'],
   headers = {},
   remoteAddress,
 }: {
@@ -131,21 +134,26 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       url: 'https://cdn.example.com/signed-url',
       urlExpiryDate: new Date(),
     });
-    const { req, res } = createMocks({ key: ['modelVersion', '123', 'file.safetensors'] });
+    // Own-prefix key for the authed user (id 42) so it passes the ownership gate and the redirect
+    // path is what we assert; the gate is covered in its own describe block below.
+    const { req, res } = createMocks({ key: ['model', '42', 'file.safetensors'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('modelVersion/123/file.safetensors');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/file.safetensors');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed-url');
     expect(res._getStatusCode()).toBe(200); // status() never called on the redirect path
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    // The route now emits one info-level audit log per request; a client-fault must still never
+    // ERROR-log to Axiom (an unresolvable key is expected).
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('unresolvable key (delivery worker 404) → clean 404, does NOT throw / 500', async () => {
     // The dominant dp-prod 500: `/api/download/images/127209598` → key
     // "images/127209598" → worker 404. Pre-fix this threw an unguarded 500.
     mockGetDownloadUrl.mockRejectedValue(new MockDeliveryWorkerError(404, 'Not Found'));
-    const { req, res } = createMocks({ key: ['images', '127209598'] });
+    // Own-prefix key so it passes the ownership gate and the worker's own 404 is what we assert.
+    const { req, res } = createMocks({ key: ['model', '42', 'missing.safetensors'] });
 
     await expect(handler(req, res)).resolves.toBe(res); // resolves (no throw)
     expect(res._getStatusCode()).toBe(404);
@@ -153,7 +161,9 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getRedirect()).toBeUndefined();
     expect(res._getHeader('retry-after')).toBeUndefined();
     // Client-fault: MUST NOT error-log to Axiom (an unresolvable key is expected).
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    // The route now emits one info-level audit log per request; a client-fault must still never
+    // ERROR-log to Axiom (an unresolvable key is expected).
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('delivery worker 410 (gone) → 404', async () => {
@@ -163,7 +173,9 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    // The route now emits one info-level audit log per request; a client-fault must still never
+    // ERROR-log to Axiom (an unresolvable key is expected).
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it('delivery worker 400 (malformed key) → 400', async () => {
@@ -175,7 +187,9 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ error: 'Invalid download key' });
     // Client-fault: no Axiom error log.
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    // The route now emits one info-level audit log per request; a client-fault must still never
+    // ERROR-log to Axiom (an unresolvable key is expected).
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
   it.each([500, 502, 503, 504])(
@@ -189,8 +203,8 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       expect(res._getStatusCode()).not.toBe(404);
       expect(res._getJSONData()).toEqual({ error: 'Download temporarily unavailable' });
       expect(res._getHeader('retry-after')).toBe('2');
-      // Server-fault: error-logged to Axiom with the stable name + classified status.
-      expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+      // Server-fault: error-logged to Axiom with the stable name + classified status. (One info
+      // audit log also fires per request now, so assert the error log by shape, not call count.)
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'error',
@@ -304,5 +318,84 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     expect(res._getRedirect()).toBe('/login?returnUrl=/api/download/modelVersion/5/a.bin');
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Ownership scope: a signed-in caller may resolve only keys under their own `<type>/<userId>/`
+ * prefix (buildUploadKey), plus moderators. Any other key is 404, so the response does not confirm
+ * whether the object exists and the delivery worker is never asked to resolve it.
+ */
+describe('/api/download/[...key] — ownership scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({ value: '' });
+    mockGetDownloadUrl.mockResolvedValue({
+      url: 'https://cdn.example.com/signed',
+      urlExpiryDate: new Date(),
+    });
+  });
+
+  it("resolves the caller's own-prefix key", async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key: ['model', '42', 'mine.safetensors'] });
+
+    await handler(req, res);
+
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/mine.safetensors');
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
+  });
+
+  it.each([
+    ["another user's upload key", ['model', '99', 'other-user.safetensors']],
+    ['a version-prefixed key', ['modelVersion', '123', 'other-user.safetensors']],
+  ])('refuses %s with 404 and never resolves it', async (_label, key) => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a .. traversal segment past the owned prefix',
+      ['model', '42', '..', '..', 'model', '99', 'f.safetensors'],
+    ],
+    [
+      'an encoded separator inside a segment',
+      ['model', '42', '..%2f..%2fmodel%2f99%2ff.safetensors'],
+    ],
+  ])('refuses %s with 404, even though segment 1 is the caller', async (_label, key) => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    const { req, res } = createMocks({ key });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a .. traversal even for a moderator', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    const { req, res } = createMocks({ key: ['model', '42', '..', 'secrets', 'f.bin'] });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a moderator resolves any key', async () => {
+    // Without this arm a mutant that refused everyone but the key-owner would pass the cases above.
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
+    const { req, res } = createMocks({ key: ['model', '99', 'any.safetensors'] });
+
+    await handler(req, res);
+
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/99/any.safetensors');
   });
 });

@@ -43,6 +43,8 @@ const headline = (entry: CosmeticShopItemHistoryEntry) => {
       return 'Edited by the creator';
     case 'takedown':
       return 'Taken down';
+    case 'refunded':
+      return 'Buyers refunded';
     default:
       return (entry.action && actionLabels[entry.action]) ?? 'Reviewed';
   }

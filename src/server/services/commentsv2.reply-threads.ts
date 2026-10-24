@@ -1,7 +1,9 @@
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '~/server/common/enums';
 
-export type ReplyThread = {
+type ThreadComment = Pick<CommentV2Model, 'id' | 'threadId' | 'pinnedAt' | 'reactionCount'>;
+
+export type ReplyThread<C extends ThreadComment = CommentV2Model> = {
   id: number;
   commentId: number;
   locked: boolean;
@@ -9,8 +11,7 @@ export type ReplyThread = {
   depth: number;
   /** What the viewer can actually be shown — excludes ToS-flagged replies for non-moderators. */
   commentCount: number;
-  hiddenCount: number;
-  comments: CommentV2Model[];
+  comments: C[];
   nextCursor?: number;
 };
 
@@ -72,14 +73,14 @@ export function getChildlessCommentIds({
   completedDepth,
 }: {
   pageCommentIds: number[];
-  threads: ReplyThread[];
+  threads: ReplyThread<ThreadComment>[];
   rows: ReplyThreadRow[];
   completedDepth: number;
 }): number[] {
   if (completedDepth < 1) return [];
 
   const hasReplies = new Set(rows.map((row) => row.commentId));
-  const byDepth = new Map<number, ReplyThread[]>();
+  const byDepth = new Map<number, ReplyThread<ThreadComment>[]>();
   for (const thread of threads) {
     const bucket = byDepth.get(thread.depth);
     if (bucket) bucket.push(thread);
@@ -102,7 +103,7 @@ export function getChildlessCommentIds({
 }
 
 function compareBySort(sort: ThreadSort) {
-  return (a: CommentV2Model, b: CommentV2Model) => {
+  return (a: ThreadComment, b: ThreadComment) => {
     if (sort === ThreadSort.Newest) return b.id - a.id;
     if (sort === ThreadSort.MostReactions) {
       const diff = (b.reactionCount ?? 0) - (a.reactionCount ?? 0);
@@ -117,22 +118,20 @@ function compareBySort(sort: ThreadSort) {
  * match what `getCommentsInfinite` would have returned for each thread on its own — pinned
  * first, then `limit` comments in `sort` order, and a cursor when more remain.
  */
-export function groupReplyThreads({
+export function groupReplyThreads<C extends ThreadComment>({
   threads,
   comments,
-  hiddenCounts,
   commentCounts,
   sort,
   limit,
 }: {
   threads: ReplyThreadRow[];
-  comments: CommentV2Model[];
-  hiddenCounts: Record<number, number>;
+  comments: C[];
   commentCounts: Record<number, number>;
   sort: ThreadSort;
   limit: number;
-}): ReplyThread[] {
-  const byThread = new Map<number, CommentV2Model[]>();
+}): ReplyThread<C>[] {
+  const byThread = new Map<number, C[]>();
   for (const comment of comments) {
     const bucket = byThread.get(comment.threadId);
     if (bucket) bucket.push(comment);
@@ -155,7 +154,6 @@ export function groupReplyThreads({
       locked: thread.locked,
       depth: thread.depth,
       commentCount: commentCounts[thread.id] ?? 0,
-      hiddenCount: hiddenCounts[thread.id] ?? 0,
       comments: [...pinned, ...page],
       nextCursor: page.length === limit ? page[page.length - 1].id : undefined,
     };

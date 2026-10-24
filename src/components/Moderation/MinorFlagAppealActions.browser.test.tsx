@@ -11,8 +11,12 @@ const row = (overrides: Partial<MinorFlagAppealActionRow> = {}): MinorFlagAppeal
   modelId: 2186217,
   modelName: 'Some Checkpoint',
   minor: true,
+  poi: false,
   prevNsfw: null,
   prevGalleryLevel: null,
+  flagSource: 'auto',
+  flagConfirmedFrom: null,
+  textScanFlags: null,
   ...overrides,
 });
 
@@ -38,5 +42,28 @@ describe('MinorFlagAppealActions', () => {
 
     await expect.element(page.getByRole('button', { name: 'Keep flagged' })).toBeEnabled();
     await expect.element(page.getByRole('button', { name: 'Unflag' })).toBeEnabled();
+  });
+
+  test('offers a split decision only while both flags are open', async () => {
+    const verdict = { at: 'x', workflowId: 'wf-1', reason: 'r', textHash: 'h' };
+    renderWithProviders(
+      <MinorFlagAppealActions
+        row={row({ minor: true, poi: true, textScanFlags: { poi: verdict, minor: verdict } })}
+        onResolve={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Split' })).toBeVisible();
+  });
+
+  test('can uphold a poi-only flag', async () => {
+    const verdict = { at: 'x', workflowId: 'wf-1', reason: 'r', textHash: 'h' };
+    renderWithProviders(
+      <MinorFlagAppealActions
+        row={row({ minor: false, poi: true, flagSource: null, textScanFlags: { poi: verdict } })}
+        onResolve={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: 'Keep flagged' })).toBeEnabled();
+    expect(page.getByRole('button', { name: 'Split' }).elements()).toHaveLength(0);
   });
 });

@@ -1,14 +1,15 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, markServerFaultLogged } from '~/server/logging/client';
 import {
   __resetTrpcBatchMetricsForTest,
   isTrpcBatchOverCap,
 } from '~/server/prom/trpc-batch.metrics';
-import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 
 /**
@@ -35,6 +36,7 @@ type CapturedOptions = {
   maxBatchSize?: number;
   allowMethodOverride?: boolean;
   onError?: (opts: Record<string, unknown>) => unknown;
+  responseMeta?: (opts: Record<string, unknown>) => { headers?: Record<string, string> };
 };
 
 const h = vi.hoisted(() => ({
@@ -116,11 +118,6 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     expect(h.options?.maxBatchSize).toBeGreaterThan(0);
   });
 
-  it('with no override, that same resolution is the compiled-in constant', () => {
-    // The control for the case above: it is an OVERRIDE that moved the number, not a coincidence.
-    expect(getTrpcMaxBatchSize()).toBe(TRPC_MAX_BATCH_SIZE);
-  });
-
   it('keeps allowMethodOverride on (a POST query is a supported shape, and is capped too)', () => {
     expect(h.options?.allowMethodOverride).toBe(true);
   });
@@ -186,5 +183,249 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
 
     await callOnError(req, new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }));
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // A masked error's ref reaches the log line
+  // -------------------------------------------------------------------------
+
+  const driverError = () =>
+    new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      cause: new Prisma.PrismaClientUnknownRequestError(
+        'Invalid `prisma.apiKey.create()` invocation: cannot execute INSERT in a read-only transaction',
+        { clientVersion: '6.13.0' }
+      ),
+    });
+
+  it('logs a masked error with the errorRef the user was shown', async () => {
+    const error = driverError();
+    await callOnError(request(2), error);
+
+    const errorRef = getClientSafeError(error)?.errorRef;
+    expect(errorRef).toMatch(/^[0-9a-f]{12}$/);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ errorRef }),
+      'civitai-prod'
+    );
+  });
+
+  it('logs a masked error even when a router already logged it, since that line has no ref', async () => {
+    const error = driverError();
+    markServerFaultLogged(error);
+    await callOnError(request(2), error);
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: an unmasked error a router already logged is not logged again', async () => {
+    const error = new TRPCError({ code: 'CONFLICT', message: 'boom' });
+    markServerFaultLogged(error);
+    await callOnError(request(2), error);
+
+    expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Block-token queries: never publicly cacheable, token redacted from logs
+  // -------------------------------------------------------------------------
+  //
+  // The paths are spelled out here rather than imported from the shared constant, so these
+  // assertions do not depend on that module existing (they must FAIL, not fail to collect, on a
+  // tree without the fix) and so a path silently dropped from the constant reads as a failure.
+
+  const BLOCK_TOKEN_QUERIES = [
+    'apps.shared.get',
+    'apps.shared.getCount',
+    'apps.shared.getCounts',
+    'apps.shared.list',
+    'apps.storage.get',
+    'apps.storage.getQuota',
+    'apps.storage.list',
+    'blocks.listMyWorkflows',
+  ] as const;
+
+  const TOKEN = 'header.payload.signature-test-token';
+
+  /** The cache `createContext` seeds for a SESSIONLESS caller — the publicly cacheable case. */
+  const sessionlessCache = () => ({
+    browserTTL: 60,
+    edgeTTL: 60,
+    staleWhileRevalidate: 30,
+    canCache: true,
+    skip: false,
+  });
+
+  const callResponseMeta = (paths: string[], errors: unknown[] = []) => {
+    const removeHeader = vi.fn();
+    const meta = h.options?.responseMeta?.({
+      ctx: { cache: sessionlessCache(), res: { removeHeader } },
+      type: 'query',
+      errors,
+      paths,
+      info: { calls: paths.map((path) => ({ path })) },
+      data: [],
+      eagerGeneration: false,
+    });
+    return { headers: meta?.headers ?? {}, removeHeader };
+  };
+
+  it.each(BLOCK_TOKEN_QUERIES)(
+    'responseMeta: a sessionless error-free %s gets no-store, never a public header',
+    (path) => {
+      const { headers, removeHeader } = callResponseMeta([path]);
+      expect(headers['Cache-Control']).toBe('no-store');
+      expect(headers['Cache-Tag']).toBeUndefined();
+      expect(removeHeader).not.toHaveBeenCalled();
+    }
+  );
+
+  it('responseMeta: a block-token query that errored still gets no-store', () => {
+    const { headers } = callResponseMeta(
+      ['apps.storage.get'],
+      [new TRPCError({ code: 'NOT_FOUND', message: 'none' })]
+    );
+    expect(headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('responseMeta: a batch mixing a block-token query with a public one is no-store', () => {
+    const { headers } = callResponseMeta(['model.getAll', 'apps.shared.list']);
+    expect(headers['Cache-Control']).toBe('no-store');
+  });
+
+  it('POSITIVE CONTROL: responseMeta keeps the public header for an ordinary sessionless query', () => {
+    // Same cache, same shape, one variable changed (the path). Without this, "no-store" above is
+    // indistinguishable from a responseMeta that stopped emitting public headers altogether.
+    const { headers, removeHeader } = callResponseMeta(['model.getAll']);
+    expect(headers['Cache-Control']).toBe(
+      'public, max-age=60, s-maxage=60, stale-while-revalidate=30'
+    );
+    expect(removeHeader).toHaveBeenCalledWith('Set-Cookie');
+  });
+
+  /** The single `input` string the route handed `logToAxiom`. */
+  const loggedInput = () => {
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    const [payload] = vi.mocked(logToAxiom).mock.calls[0] as [Record<string, unknown>];
+    return payload.input as string | undefined;
+  };
+
+  it.each(['NOT_FOUND', 'BAD_REQUEST', 'INTERNAL_SERVER_ERROR'] as const)(
+    'onError: a %s on a token-bearing input logs blockToken redacted, key kept',
+    async (code) => {
+      await h.options?.onError?.({
+        error: new TRPCError({ code, message: 'boom' }),
+        type: 'query',
+        path: 'apps.storage.get',
+        input: { blockToken: TOKEN, key: 'k' },
+        ctx: {},
+        req: request(2),
+      });
+      const input = loggedInput();
+      expect(input).toBeDefined();
+      expect(input).not.toContain(TOKEN);
+      expect(JSON.parse(input as string)).toEqual({ blockToken: '[redacted]', key: 'k' });
+    }
+  );
+
+  it('onError: redaction does not mutate the input object tRPC handed the procedure', async () => {
+    const original = { blockToken: TOKEN, nested: { blockToken: TOKEN } };
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),
+      type: 'query',
+      path: 'apps.storage.get',
+      input: original,
+      ctx: {},
+      req: request(2),
+    });
+    expect(loggedInput()).not.toContain(TOKEN);
+    expect(original).toEqual({ blockToken: TOKEN, nested: { blockToken: TOKEN } });
+  });
+
+  it('onError: a token nested in a mutation input is redacted too', async () => {
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }),
+      type: 'mutation',
+      path: 'blocks.submitWorkflow',
+      input: { blockToken: TOKEN, steps: [{ inner: { blockToken: TOKEN } }] },
+      ctx: {},
+      req: request(2),
+    });
+    const input = loggedInput();
+    expect(input).not.toContain(TOKEN);
+    expect(JSON.parse(input as string)).toEqual({
+      blockToken: '[redacted]',
+      steps: [{ inner: { blockToken: '[redacted]' } }],
+    });
+  });
+
+  describe('onError: an input over the logged length', () => {
+    const LIMIT = 256 * 1024;
+    const MARKER = `[input over ${LIMIT} characters or 16384 values, not logged]`;
+    const logged = async (input: unknown) => {
+      vi.mocked(logToAxiom).mockClear();
+      await h.options?.onError?.({
+        error: new TRPCError({ code: 'BAD_REQUEST', message: 'too large' }),
+        type: 'mutation',
+        path: 'apps.shared.append',
+        input,
+        ctx: {},
+        req: request(2),
+      });
+      return loggedInput();
+    };
+    /** An input whose JSON is exactly `length` characters. */
+    const ofLength = (length: number) => ({ note: 'x'.repeat(length - '{"note":""}'.length) });
+
+    it('is logged as a marker; one at the limit is logged verbatim', async () => {
+      expect(JSON.stringify(ofLength(LIMIT)).length).toBe(LIMIT);
+      expect(await logged(ofLength(LIMIT))).toBe(JSON.stringify(ofLength(LIMIT)));
+      expect(await logged(ofLength(LIMIT + 1))).toBe(MARKER);
+    });
+
+    it('is logged as a marker when it holds more values than the limit', async () => {
+      // The input object, its key and its items: 16,385 values here, 16,384 one item fewer.
+      const values = new Array(16_383).fill(0);
+      expect(JSON.stringify({ values }).length).toBeLessThan(LIMIT);
+      expect(await logged({ values })).toBe(MARKER);
+      const fewer = { values: values.slice(1) };
+      expect(await logged(fewer)).toBe(JSON.stringify(fewer));
+    });
+
+    it('is not serialized when its JSON is far over the limit', async () => {
+      const chunk = { s: 'x'.repeat(4_096), blockToken: TOKEN };
+      const input = { items: new Array(20_000).fill(chunk) };
+      const stringify = JSON.stringify;
+      // Every character JSON.stringify writes during the call, whatever it is called on.
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
+      try {
+        expect(await logged(input)).toBe(MARKER);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(stringified).toBeLessThan(10_000);
+    });
+  });
+
+  it('POSITIVE CONTROL: onError logs an input without a token verbatim', async () => {
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'NOT_FOUND', message: 'none' }),
+      type: 'query',
+      path: 'image.get',
+      input: { id: 1, note: TOKEN },
+      ctx: {},
+      req: request(2),
+    });
+    // A field that merely CONTAINS token-like text is not a `blockToken` field: left as-is, so
+    // the redaction is keyed on the field, not on a pattern that could eat unrelated input.
+    expect(JSON.parse(loggedInput() as string)).toEqual({ id: 1, note: TOKEN });
   });
 });

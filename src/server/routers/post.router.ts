@@ -1,6 +1,4 @@
-import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { imageSchema } from '~/server/schema/image.schema';
 import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -22,12 +20,22 @@ import {
   updatePostImageHandler,
 } from './../controllers/post.controller';
 import { applyUserPreferences, rateLimit } from './../middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   addPostTagSchema,
   addResourceToPostImageInput,
   createPostWithImagesSchema,
   getPostTagsSchema,
+  getImageMoveTargetsSchema,
+  moveImagesToPostSchema,
+  getScheduledPostsSchema,
+  plannerPostIdSchema,
+  plannerPublishNowSchema,
+  plannerRescheduleSchema,
+  plannerShiftSchema,
+  plannerUnscheduleSchema,
+  postAddImageInput,
   postCreateSchema,
   postRateLimits,
   postsQuerySchema,
@@ -35,14 +43,27 @@ import {
   removePostTagSchema,
   removeResourceFromPostImageInput,
   reorderPostImagesSchema,
+  scheduleBatchSchema,
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
+  validateBatchScheduleSchema,
 } from './../schema/post.schema';
-import { addPostImage, getPostEditDetail } from './../services/post.service';
-import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
+import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
+import { getImageMoveTargets, moveImagesToPost } from './../services/post-image-move.service';
+import {
+  getPlannerPostDetail,
+  getScheduledPosts,
+  reschedulePlannerPost,
+  shiftPlannerPosts,
+  unschedulePlannerPosts,
+} from './../services/post-planner.service';
+import { scheduleBatch, validateBatchSchedule } from './../services/post-batch.service';
+import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { STORYLINE_SUBMIT_RATE_LIMIT } from '~/shared/utils/storyline-placement';
+import type { PostUpdateInput } from '~/server/schema/post.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -105,6 +126,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ ctx, input }) => getPostEditDetail({ ...input, user: ctx.user })),
+  getImageIds: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(({ ctx, input }) => getPostImageIds({ ...input, user: ctx.user })),
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
@@ -119,6 +144,19 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postUpdateSchema)
     .use(isOwnerOrModerator)
+    // A publish that submits a drafted continuation counts against the submit quota. Every one
+    // carries `expectedPrice`: without it the price check refuses the submission.
+    .use(
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        (input: PostUpdateInput) => input.expectedPrice !== undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
+    )
     .mutation(updatePostHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaDelete })
@@ -127,18 +165,7 @@ export const postRouter = router({
     .mutation(deletePostHandler),
   addImage: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
-    .input(
-      imageSchema.extend({
-        postId: z.number(),
-        /**
-         * The generation this upload claims to be an output of. Only ever used to
-         * look up provenance the server itself signed, against a workflow the
-         * session user owns — see remix-provenance.ts. Never stored, and kept off
-         * the shared `imageSchema` so it can't ride into a Prisma create.
-         */
-        generationWorkflowId: z.string().optional(),
-      })
-    )
+    .input(postAddImageInput)
     .mutation(({ ctx, input }) => addPostImage({ ...input, user: ctx.user })),
   updateImage: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
@@ -160,6 +187,14 @@ export const postRouter = router({
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)
     .mutation(reorderPostImagesHandler),
+  getImageMoveTargets: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getImageMoveTargetsSchema)
+    .query(({ ctx, input }) => getImageMoveTargets({ ...input, userId: ctx.user.id })),
+  moveImages: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(moveImagesToPostSchema)
+    .mutation(({ ctx, input }) => moveImagesToPost({ ...input, userId: ctx.user.id })),
   getTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getPostTagsSchema)
@@ -188,6 +223,65 @@ export const postRouter = router({
     .input(updatePostCollectionTagIdInput)
     .use(isOwnerOrModerator)
     .mutation(updatePostCollectionTagIdHandler),
+  getScheduled: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getScheduledPostsSchema)
+    .use(isFlagProtected('postPlanner'))
+    .query(({ ctx, input }) => getScheduledPosts({ ...input, user: ctx.user })),
+  getPlannerDetail: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(plannerPostIdSchema)
+    .use(isFlagProtected('postPlanner'))
+    .query(({ ctx, input }) => getPlannerPostDetail({ ...input, user: ctx.user })),
+  reschedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerRescheduleSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) =>
+      reschedulePlannerPost({
+        id: input.id,
+        target: input.publishedAt,
+        expectedScope: input.expectedScope,
+        ctx,
+      })
+    ),
+  publishNow: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerPublishNowSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) =>
+      reschedulePlannerPost({
+        id: input.id,
+        target: 'now',
+        expectedScope: input.expectedScope,
+        ctx,
+      })
+    ),
+  unschedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerUnscheduleSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) => unschedulePlannerPosts({ ...input, user: ctx.user })),
+  shiftSchedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerShiftSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) => shiftPlannerPosts({ ...input, user: ctx.user })),
+  validateBatchSchedule: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(validateBatchScheduleSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .query(({ ctx, input }) => validateBatchSchedule({ input, user: ctx.user })),
+  scheduleBatch: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(scheduleBatchSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 30, period: CacheTTL.hour }))
+    .mutation(({ ctx, input }) => scheduleBatch({ input, ctx })),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {

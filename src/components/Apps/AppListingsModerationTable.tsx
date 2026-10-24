@@ -17,12 +17,15 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
+import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
+  actionOpensVisibility,
   actionRequiresReason,
   effectiveModerationStatus,
   isDestructiveListingModAction,
@@ -165,6 +168,10 @@ export function AppListingsModerationTable({
   // `MessageAppOwnerModal`), and keeping the two apart means a lifecycle action can
   // never render the message form's gate, or vice versa.
   const [messageRow, setMessageRow] = useState<ModerationListingRow | null>(null);
+  // Kept apart from `pendingAction` for the same reason `messageRow` is: this modal has its
+  // own input shape (a level + a reason), so sharing the lifecycle-action slot would mean
+  // one state holding two unrelated payloads.
+  const [visibilityRow, setVisibilityRow] = useState<ModerationListingRow | null>(null);
 
   // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
   // onChange handler (batched with the filter state change in the same React event) so
@@ -307,12 +314,24 @@ export function AppListingsModerationTable({
     // so an action absent from it answers `false` to BOTH and reaches nothing; while
     // `actionRequiresReason` was written as a negation, a new union member defaulted to
     // `true` and landed here regardless of how carefully this branch was written.
+    // 🔴 THE FOURTH ROUTE. It is a separate modal because this act needs a LEVEL as well as
+    // a reason, and the shared reason-gated modal has exactly one free-text field. Placed
+    // before the reason branch for no functional reason — the route table makes the two
+    // mutually exclusive — but reading top-to-bottom in table order.
+    if (actionOpensVisibility(action)) {
+      setVisibilityRow(row);
+      return;
+    }
     if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
   const renderTable = (groups: SubmissionGroup<ModerationListingRow>[]) => (
     <Card withBorder p={0}>
       <Table verticalSpacing="md" horizontalSpacing="md">
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/review`
+            hosts this table and no longer caps its body, so the slack has to have
+            somewhere deliberate to go: the App cell (slug + kind + status chips). */}
+        <AppsTableColgroup columns={APPS_MOD_LISTINGS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
             <SortableTh label="App" column="app" sort={sort ?? NEUTRAL_SORT} onSort={onSort} />
@@ -345,10 +364,41 @@ export function AppListingsModerationTable({
                       <Badge size="xs" color={statusChip.color} variant="light">
                         {statusChip.label}
                       </Badge>
+                      {/* 🔴 THE ONLY MODERATOR SURFACE THAT SHOWS THE BETA DECLARATION.
+                          `betaMessage` is author-controlled PUBLIC copy that no moderator
+                          reviews before it goes live — beta is a TRIVIAL patch field, so it
+                          never enters the review queue, and the mod review preview only
+                          renders listings that are already IN review. Without this the DTO
+                          carried the fields and nothing branched on them, so the feature's
+                          only claimed human mitigation did not exist. The delist / takedown
+                          actions in this same table are the remedy. */}
+                      {row.isBeta && (
+                        <Badge
+                          size="xs"
+                          color="violet"
+                          variant="light"
+                          data-testid="apps-listing-mod-beta"
+                        >
+                          Beta
+                        </Badge>
+                      )}
                     </Group>
                     {row.name && (
                       <Text size="xs" c="dimmed">
                         {row.name}
+                      </Text>
+                    )}
+                    {/* Rendered as PLAIN TEXT, like every other consumer of this string —
+                        never markdown, never innerHTML. Only shown when the flag is on,
+                        matching the projection, so a stale note cannot surface here either. */}
+                    {row.isBeta && row.betaMessage && (
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        fs="italic"
+                        data-testid="apps-listing-mod-beta-message"
+                      >
+                        “{row.betaMessage}”
                       </Text>
                     )}
                   </Table.Td>
@@ -552,6 +602,21 @@ export function AppListingsModerationTable({
       <MessageAppOwnerModal
         listing={messageRow ? { appListingId: messageRow.id, slug: messageRow.slug } : null}
         onClose={() => setMessageRow(null)}
+      />
+
+      {/*
+        The fourth route's modal. `invalidate` rather than a narrower refetch, matching the
+        lifecycle modal: a level change moves which rows a cohort sees, so the table's own
+        paging is reset the same way a hide/relist resets it.
+      */}
+      <ModListingVisibilityModal
+        target={
+          visibilityRow
+            ? { id: visibilityRow.id, slug: visibilityRow.slug, status: visibilityRow.status }
+            : null
+        }
+        onClose={() => setVisibilityRow(null)}
+        onDone={invalidate}
       />
     </Stack>
   );

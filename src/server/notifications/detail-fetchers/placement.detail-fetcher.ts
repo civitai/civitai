@@ -1,5 +1,6 @@
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import { storylineNotifications } from '~/server/notifications/storyline.notifications';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 
@@ -14,7 +15,7 @@ const counterpartyId = (details: Record<string, unknown>) =>
   (details.placerId ?? details.ownerId) as number | undefined;
 
 export const placementDetailFetcher = createDetailFetcher({
-  types: [...Object.keys(placementNotifications)],
+  types: [...Object.keys(placementNotifications), ...Object.keys(storylineNotifications)],
   fetcher: async (notifications, { db }) => {
     const userIds = [
       ...new Set(notifications.map((n) => counterpartyId(n.details)).filter(isDefined)),

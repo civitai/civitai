@@ -52,4 +52,25 @@ export const actions: Actions = {
     }
     return { step: 'done' as const };
   },
+
+  // Step 2 (alternative) — refuse the device, so it reports the refusal instead of polling until the
+  // code expires.
+  deny: async ({ request, fetch }) => {
+    const data = await request.formData();
+    const userCode = String(data.get('user_code') ?? '').trim();
+
+    const res = await fetch('/api/auth/oauth/device-deny', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ user_code: userCode }),
+    });
+    if (!res.ok) {
+      return fail(400, {
+        step: 'enter' as const,
+        error: 'Could not deny that code — it may have expired.',
+        userCode,
+      });
+    }
+    return { step: 'denied' as const };
+  },
 };

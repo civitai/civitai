@@ -4,6 +4,7 @@ import {
   PostgresAdapter,
   PostgresIntrospector,
   PostgresQueryCompiler,
+  type CompiledQuery,
   type DatabaseConnection,
 } from 'kysely';
 
@@ -27,14 +28,35 @@ import {
  *
  * The driver ignores the SQL and answers every query with the same `rows`, so the count a chain sees is
  * fixed here and never by the query's own LIMIT.
+ *
+ * 🔴 **Pass `params` when the VALUE bound to a predicate is the thing under test.** The SQL text alone
+ * cannot see it: `where('ur.type','=',x)` compiles to `"ur"."type" = $1` for every `x`, so a mutant that
+ * ignores its argument and hardcodes a literal emits byte-identical SQL and survives an assertion over
+ * `sql`. `params[i]` holds the parameters of `sql[i]`.
+ *
+ * `rows` may be a function of the compiled SQL, for a chain whose later statements depend on what an
+ * earlier one returned (a lock that finds the row, then a lookup that finds nothing).
+ *
+ * `params` is a MUTABLE `unknown[][]` and says so. Being written is the parameter's whole purpose, and
+ * a `readonly` annotation that has to be cast away at the one place it is used is a contract the code
+ * contradicts — it reads as a promise to callers that this function does not touch their array.
  */
-export function capturingDb(sql: string[], rows: unknown[] = []): Kysely<never> {
+export function capturingDb(
+  sql: string[],
+  rows: unknown[] | ((sql: string) => unknown[]) = [],
+  params?: unknown[][]
+): Kysely<never> {
   class CannedRowDriver extends DummyDriver {
     async acquireConnection(): Promise<DatabaseConnection> {
       return {
         // Generic in `R` to satisfy `DatabaseConnection`; a concrete row type here makes svelte-check
         // reject the whole dialect.
-        executeQuery: async <R>() => ({ rows: rows as R[] }),
+        // A write reports the canned rows as the rows it touched, so a chain that refuses on a zero
+        // count keeps going exactly as far as it would against a matching row.
+        executeQuery: async <R>(compiled: CompiledQuery) => {
+          const answer = typeof rows === 'function' ? rows(compiled.sql) : rows;
+          return { rows: answer as R[], numAffectedRows: BigInt(answer.length) };
+        },
         streamQuery: async function* () {
           yield { rows: [] };
         },
@@ -50,7 +72,10 @@ export function capturingDb(sql: string[], rows: unknown[] = []): Kysely<never> 
       createQueryCompiler: () => new PostgresQueryCompiler(),
     },
     log: (e) => {
-      if (e.level === 'query') sql.push(e.query.sql);
+      if (e.level !== 'query') return;
+      sql.push(e.query.sql);
+      // Pushed in the same branch so the two arrays stay index-aligned by construction.
+      params?.push([...e.query.parameters]);
     },
   });
 }

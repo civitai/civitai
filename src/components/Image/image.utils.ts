@@ -4,7 +4,7 @@ import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -16,6 +16,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { jumpToMonthParam } from '~/shared/utils/jump-to-month';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -23,6 +24,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { isViewer, isViewerUsername } from '~/utils/is-viewer';
 
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
@@ -64,6 +66,7 @@ export const imagesQueryParamSchema = z
     fromPlatform: booleanString(),
     hidden: booleanString(),
     includeBaseModel: booleanString(),
+    jumpTo: jumpToMonthParam,
     limit: numericString(),
     modelId: numericString(),
     modelVersionId: numericString(),
@@ -124,6 +127,50 @@ export const imagesQueryParamSchema = z
 export const ownContentPickerFilters = (userId: number | undefined) =>
   ({ userId, publishedOnly: true } as const);
 
+/**
+ * Read `imagesQueryParamSchema` off a router query WITHOUT throwing.
+ *
+ * 🔴 This must never become a bare `.parse`. `postId` (and every other
+ * `numericString` key) rejects anything `Number()` turns into NaN, so a single
+ * junk param made the whole schema throw — and a throw in a page's render is a
+ * 500, not a degraded page. `/images/[imageId]?postId=null` returned 500 on prod
+ * for exactly that reason: the `image-reaction-milestone` notification
+ * interpolated a null `postId` into the literal string `null`, and 25,135 images
+ * on prod have a null `postId` (article covers, mainly).
+ *
+ * The emitter is fixed too, and that fix IS retroactive for in-app notifications:
+ * the URL is not stored, it is recomputed at render by `getNotificationMessage`
+ * from the stored `details` JSON, so old rows re-render with the corrected link.
+ * The read side still has to survive junk on its own, because a URL already copied
+ * out of the app — shared, bookmarked, crawled, or baked into an email by the
+ * external notifications service — is beyond the emitter's reach, and because
+ * `?postId=abc` from any source hits the same throw.
+ *
+ * Dropping the whole filter object is consistent with `useZodRouteParams`, which
+ * has always done this same `safeParse`-then-`{}` over this same schema and query.
+ * Note what that costs: zod object parsing is all-or-nothing, so one junk key
+ * discards the valid ones beside it. That is a known coarse edge, not a claim that
+ * per-key recovery would be wrong.
+ *
+ * The optional `schema` is for `ImageDetailModal`, which parses a variant
+ * (`.omit({ tags: true })`) off the SAME `useBrowserRouter` query. `removeEmpty`
+ * there drops null *values*, not the string `'null'`, so the junk reaches the
+ * parse either way — the modal is the next thing a user touches after landing on
+ * one of these links, and it threw for the same reason the page did.
+ */
+export function parseImageQueryParams(query: Record<string, unknown>): ImagesQueryParamSchema;
+export function parseImageQueryParams<TSchema extends z.ZodObject>(
+  query: Record<string, unknown>,
+  schema: TSchema
+): Partial<z.infer<TSchema>>;
+export function parseImageQueryParams(
+  query: Record<string, unknown>,
+  schema: z.ZodObject = imagesQueryParamSchema
+) {
+  const result = schema.safeParse(query);
+  return result.success ? result.data : {};
+}
+
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 // The media-type scope a feed falls back to when its filters are cleared.
@@ -161,56 +208,11 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
-/** A page that reported no backend. Both branches name themselves now, so this can
- * only be an index page that returned nothing: the end of a feed, or a blocked-tag
- * query zeroed at page one. Never a DB page, which reports 'db'. */
-export const FEED_SOURCE_NONE = 'none';
-
-/** Which backend served each loaded page, as emitted by the server. */
-export function getFeedSources(pages: unknown[] | undefined): string[] {
-  return (pages ?? []).map(
-    (page) => (page as { source?: string } | undefined)?.source ?? FEED_SOURCE_NONE
-  );
-}
-
-/**
- * The backend currently serving the feed.
- *
- * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
- * pass accumulates zero documents — so the answer is the LAST page's backend,
- * not whether any page was BitDex. Only genuinely sourceless pages are skipped:
- * an empty terminal page is what scrolling to the end looks like and must not
- * retract a notice the whole scroll earned, while a DB page names itself 'db'
- * and DOES answer, because that is the flag going off mid-session.
- */
-export function resolveFeedSource(sources: string[]): string | undefined {
-  for (let i = sources.length - 1; i >= 0; i--) {
-    if (sources[i] !== FEED_SOURCE_NONE) return sources[i];
-  }
-  return undefined;
-}
-
-export type FeedSnapshot = ReturnType<typeof buildFeedSnapshot>;
-
-/**
- * The pages and the filters that fetched them, built together. Assembling these
- * from separate reads pairs new filters with old pages under keepPreviousData,
- * describing a feed that never existed.
- */
-export function buildFeedSnapshot(
-  pages: unknown[] | undefined,
-  filters: { sort?: unknown; period?: unknown; browsingLevel?: number },
-  browsingLevel: number
+export function isViewingOwnImages(
+  currentUser: { id: number; username?: string | null } | null | undefined,
+  filters: { username?: string; userId?: number }
 ) {
-  const sources = getFeedSources(pages);
-  return {
-    sources,
-    source: resolveFeedSource(sources),
-    pagesLoaded: pages?.length ?? 0,
-    sort: String(filters.sort ?? ''),
-    period: String(filters.period ?? ''),
-    browsingLevel: filters.browsingLevel ?? browsingLevel,
-  };
+  return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
 }
 
 export const useQueryImages = (
@@ -228,13 +230,7 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
-  // `undefined === undefined` for anonymous users, which treats them as the owner.
-  const isOwnImages =
-    !!currentUser &&
-    ((!!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-      filters.userId === currentUser.id);
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
@@ -267,19 +263,6 @@ export const useQueryImages = (
       ...withPlaceholderData(queryOptions),
     }
   );
-
-  // A ref, not useMemo: pairing the filters with the pages they fetched is
-  // correctness here, and useMemo is a hint React may discard — a recompute on
-  // the transition render would read the NEW filters against the OLD data and
-  // reproduce exactly the mismatch this exists to prevent.
-  const snapshotRef = useRef<{ data: typeof data; snapshot: FeedSnapshot } | null>(null);
-  if (!snapshotRef.current || snapshotRef.current.data !== data) {
-    snapshotRef.current = {
-      data,
-      snapshot: buildFeedSnapshot(data?.pages, filters, contextBrowsingLevel),
-    };
-  }
-  const feedSnapshot = snapshotRef.current.snapshot;
 
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {
@@ -315,7 +298,6 @@ export const useQueryImages = (
   return {
     data,
     flatData,
-    feedSnapshot,
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,

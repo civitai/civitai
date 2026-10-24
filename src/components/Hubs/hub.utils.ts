@@ -1,7 +1,6 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
-import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
-import { hubLimits } from '~/server/schema/user-hub.schema';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { hubLimits, hubSourceKey, hubTagGroupKey } from '~/server/schema/user-hub.schema';
+import { Availability, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
@@ -21,6 +20,10 @@ export function useInvalidateHub() {
       // filter costs a refetch of those and removes a key/id mismatch that would
       // silently invalidate nothing.
       utils.userHub.getById.invalidate(),
+      // Unfiltered for the same reason: a source write changes one target's state, and
+      // the caller holds the hub rather than the target. Without this the "add to hub"
+      // boxes keep the state they were rendered with.
+      utils.userHub.sourceState.invalidate(),
       utils.image.getInfinite.invalidate({ hubId }),
     ]);
   };
@@ -37,6 +40,92 @@ export function useInvalidateHub() {
 export function hubUrl(hub: { key: string; name: string }) {
   const slug = slugit(hub.name);
   return slug ? `/hubs/${hub.key}/${slug}` : `/hubs/${hub.key}`;
+}
+
+/**
+ * Where /hubs sends someone who owns more than one: the hub they last opened.
+ *
+ * A cookie rather than a stored setting, because this is a navigation convenience,
+ * not a preference — it costs no write per hub view, and `/hubs` can read it in SSR
+ * with no query at all. Per browser is the right grain for "where I was"; a new
+ * device simply gets the page instead.
+ *
+ * The value is a hub KEY, and it is only ever trusted after being matched against
+ * the hubs the viewer actually owns — a stale key is a hub that was deleted, or one
+ * someone else's cookie named.
+ */
+export const LAST_HUB_COOKIE = 'hub-last-viewed';
+
+const sourceKindLabels: Record<string, string> = {
+  User: 'Creator',
+  Model: 'Model',
+  ModelVersion: 'Version',
+  Collection: 'Collection',
+  Tag: 'Tag',
+};
+
+/**
+ * A colour per kind. Picker rows and the chips below them mix creators, models and
+ * tags, so the kind is what a row is read for — one neutral badge makes them all look
+ * alike.
+ */
+export const kindColor: Record<string, string> = {
+  User: 'blue',
+  Model: 'green',
+  ModelVersion: 'teal',
+  Collection: 'orange',
+  Tag: 'yellow',
+};
+
+/** What a source is called in front of a person: "Creator", not `User`. */
+export function hubSourceKindLabel(type: string) {
+  return sourceKindLabels[type] ?? 'Source';
+}
+
+const sourceNouns: Record<string, [string, string]> = {
+  User: ['creator', 'creators'],
+  Model: ['model', 'models'],
+  ModelVersion: ['version', 'versions'],
+  Collection: ['collection', 'collections'],
+  Tag: ['tag', 'tags'],
+};
+
+/**
+ * What a hub holds, for a card that shows no sources: "12 creators, 4 models". The
+ * counts come from the server already narrowed to what fills the feed — a switched-off
+ * source contributes nothing, and the keep-out list is never published as a number
+ * beside the things a hub collects.
+ */
+export function describeHubSources(counts: Partial<Record<string, number>>) {
+  const parts = Object.entries(counts)
+    .filter((entry): entry is [string, number] => !!entry[1])
+    .sort(([, a], [, b]) => b - a)
+    .map(([type, count]) => {
+      const [singular, plural] = sourceNouns[type] ?? ['source', 'sources'];
+      return `${count} ${count === 1 ? singular : plural}`;
+    });
+
+  return parts.length ? parts.join(', ') : 'Nothing in it yet';
+}
+
+/**
+ * A `getById` row's sources as the editor takes them. The row `id` is dropped: it
+ * addresses the STORED row, and the list the modal saves replaces those rows
+ * wholesale — carrying it back would name rows the write has already deleted.
+ */
+export function toEditorSources(
+  sources: {
+    id: number;
+    type: HubSourceValue['type'];
+    targetId: number;
+    alias: string | null;
+    enabled: boolean;
+    exclude: boolean;
+    index: number;
+    groupKey: number | null;
+  }[]
+): HubSourceValue[] {
+  return sources.map(({ id: _id, ...source }) => source);
 }
 
 /**
@@ -88,6 +177,8 @@ export function buildDuplicateHubInput(hub: {
     targetId: number;
     alias?: string | null;
     enabled: boolean;
+    exclude?: boolean;
+    groupKey?: number | null;
   }[];
 }) {
   return {
@@ -99,42 +190,208 @@ export function buildDuplicateHubInput(hub: {
     forcedBrowsingLevel: hub.forcedBrowsingLevel ?? 0,
     // Fields picked one by one rather than spread: `getById` rows carry a row `id`,
     // and passing one through would address the ORIGINAL's source rows.
-    sources: hub.sources
-      .filter((source) => source.enabled)
-      .slice(0, hubLimits.sourcesPerHub)
-      .map((source, index) => ({
-        type: source.type,
-        targetId: source.targetId,
-        alias: source.alias ?? null,
-        enabled: true,
-        index,
-      })),
+    // Sliced per kind, because the two caps are separate: one `slice` over the
+    // combined list would let a long source list swallow the copier's exclusions,
+    // which is the half that keeps content OUT.
+    sources: [
+      ...hub.sources
+        .filter((source) => source.enabled && !source.exclude)
+        .slice(0, hubLimits.sourcesPerHub),
+      ...hub.sources
+        .filter((source) => source.enabled && source.exclude)
+        .slice(0, hubLimits.exclusionsPerHub),
+    ].map((source, index) => ({
+      type: source.type,
+      targetId: source.targetId,
+      alias: source.alias ?? null,
+      enabled: true,
+      exclude: !!source.exclude,
+      index,
+      // Carried, not renumbered: the keys only have to be distinct within the copy,
+      // and dropping them would silently un-group every AND-set the original had.
+      groupKey: source.groupKey ?? null,
+    })),
   };
 }
 
-// The rail and the sub-nav popover both render the panel from a `getById` row, so
-// the one mapping between them lives here.
-export function toPanelHub(hub: {
-  id: number;
-  name: string;
-  forcedBrowsingLevel: number;
-  availability: Availability;
-  isOwner: boolean;
-  sources: {
-    id: number;
-    type: HubPanelHub['sources'][number]['type'];
-    targetId: number;
-    alias: string | null;
-    enabled: boolean;
-    index: number;
-  }[];
-}): HubPanelHub {
-  return {
-    id: hub.id,
-    name: hub.name,
-    forcedBrowsingLevel: hub.forcedBrowsingLevel,
-    availability: hub.availability,
-    isOwner: hub.isOwner,
-    sources: hub.sources.map(({ id: _id, ...source }) => source),
-  };
+export type HubSourceGroup = { key: string; sources: HubSourceValue[] };
+
+/**
+ * The source list as the cards that render it: tag sources sharing a `groupKey` become
+ * ONE card whose tags are ANDed, everything else stays one card per source.
+ *
+ * Mirrors `groupTagIds` in user-hub.service.ts, which states the same rule over DB
+ * rows: tags only, keyed by `hubTagGroupKey`, first-appearance order, a null key
+ * meaning a group of one.
+ *
+ * They are separate for a MECHANICAL reason, not a taste one: this module imports
+ * `trpc` (for `useInvalidateHub`), so it is client-only and no server module can ever
+ * import from it. The part that genuinely must not diverge is the KEY, and that lives
+ * in `user-hub.schema.ts`, which both sides already import. Do not answer a future
+ * "why isn't this shared?" with anything else — a reason a reader can disprove invites
+ * the refactor it is trying to forestall.
+ */
+export function groupHubSources(value: HubSourceValue[]): HubSourceGroup[] {
+  const groups: HubSourceGroup[] = [];
+  const byKey = new Map<string, HubSourceGroup>();
+  for (const source of value) {
+    if (source.type !== UserHubSourceType.Tag || source.groupKey == null) {
+      groups.push({ key: hubSourceKey(source), sources: [source] });
+      continue;
+    }
+    // Prefixed, because these keys share a list with `hubSourceKey` values above.
+    const key = `tag-${hubTagGroupKey({ ...source, groupKey: source.groupKey })}`;
+    const held = byKey.get(key);
+    if (held) {
+      held.sources.push(source);
+      continue;
+    }
+    const group = { key, sources: [source] };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
+}
+
+/**
+ * The lowest key no source is using, over the WHOLE list rather than one polarity —
+ * an include group and an exclude group can then never be handed the same number,
+ * even though the resolver keeps them apart anyway.
+ *
+ * Lowest-free rather than max-plus-one so the key is bounded by the number of rows a
+ * hub may hold. `userHubSourceSchema` caps `groupKey` at that bound, and max-plus-one
+ * can climb past it across enough edits — which would refuse a save the owner has no
+ * way to fix, for a key that only has to be locally distinct.
+ */
+export function nextHubGroupKey(value: { groupKey?: number | null }[]) {
+  const used = new Set(value.map((source) => source.groupKey).filter((key) => key != null));
+  let key = 0;
+  while (used.has(key)) key += 1;
+  return key;
+}
+
+/**
+ * The group's membership set. Exported because the picker's `isAdded` asks the same
+ * question the transforms below do, and membership is NOT row identity forever — the
+ * whole point of `groupKey` is that it is a separate axis. Two copies would part the
+ * day anyone makes it key-aware, and the picker would then grey out a tag the
+ * transform would happily move, with no error path.
+ */
+export const groupMemberKeys = (group: HubSourceGroup) => new Set(group.sources.map(hubSourceKey));
+
+/**
+ * The row a hub already holds for this target, if any. One spelling, because the
+ * caller decides refuse-vs-proceed from it and `addTagToHubGroup` decides
+ * move-vs-append from it, on the same click — and a pair that disagrees mutates a row
+ * the caller believed it had refused.
+ */
+export function findHubSource(
+  value: HubSourceValue[],
+  target: { type: UserHubSourceType; targetId: number }
+) {
+  const key = hubSourceKey(target);
+  return value.find((source) => hubSourceKey(source) === key);
+}
+
+/**
+ * 🔴 The two halves of a group mean OPPOSITE things, and these two strings are the only
+ * place in the product that says so. Grouping tags you WANT narrows the feed; grouping
+ * tags you want GONE removes LESS, because `NOT (x AND y)` keeps an image carrying only
+ * x. Justin approved the asymmetry on 2026-09-17 — if the copy changes, keep it.
+ *
+ * The `+` tooltip is where BOTH sides are stated, because it is the only copy that
+ * renders on both. Here rather than in the components so the pin in `hub-groups.test.ts`
+ * does not drag a Mantine import graph into a pure unit test.
+ */
+export const groupAddHint = (exclude?: boolean) =>
+  exclude ? 'Only block when another tag matches too' : 'Require another tag';
+
+/**
+ * The rule line under a group's chips. EXCLUDE ONLY — Justin cut the include-side line
+ * after seeing it rendered, on the grounds that a row of chips reads as "all of these"
+ * unaided. There is deliberately no include counterpart here: a string nothing renders
+ * is a string a test would pin for nothing.
+ */
+export const excludeGroupRule = 'Only block when all of these match';
+
+/**
+ * Put a tag into a group, minting the group's key on the click that creates it.
+ *
+ * A tag the hub ALREADY holds on this side of `exclude` is MOVED in rather than added
+ * again: the row's unique `(hubId, type, targetId)` means there is only ever one of
+ * it, so re-adding is impossible and refusing left the owner with no way to group two
+ * tags they already had. A move spends no cap, because it adds no row — the CALLER
+ * owns the cap check, since only it can tell the user why an add was refused.
+ *
+ * 🔴 A CROSS-POLARITY target returns `value` untouched. The caller refuses it too and
+ * shows the message; this is the half that has a test. Without it, deleting the
+ * caller's one-line check moves a kept-out tag into an include group — and because the
+ * move branch does not rewrite `exclude`, the row keeps `exclude: true` while taking
+ * the include group's key, landing it in the server's exclude bucket and merging it
+ * into an unrelated AND-set. `NOT (a AND b)` removes strictly less than `NOT a OR
+ * NOT b`, so an exclusion the owner set quietly stops excluding.
+ */
+export function addTagToHubGroup(
+  value: HubSourceValue[],
+  group: HubSourceGroup,
+  item: { targetId: number; alias: string }
+): HubSourceValue[] {
+  const first = group.sources[0];
+  const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
+  const held = findHubSource(value, target);
+  if (held && !!held.exclude !== !!first.exclude) return value;
+
+  const groupKey = first.groupKey ?? nextHubGroupKey(value);
+  const members = groupMemberKeys(group);
+  const targetKey = hubSourceKey(target);
+
+  const next = value.map((source) => {
+    const key = hubSourceKey(source);
+    // A MOVED row inherits `enabled` so the group stays switchable as one unit. It
+    // keeps its own `exclude`, `alias` and `index`, which the refusal above is what
+    // makes safe.
+    if (key === targetKey) return { ...source, groupKey, enabled: first.enabled };
+    return members.has(key) ? { ...source, groupKey } : source;
+  });
+  if (held) return next;
+
+  return [
+    ...next,
+    {
+      ...target,
+      alias: item.alias.trim().slice(0, hubLimits.aliasLength),
+      // Both inherited from the group, not defaulted. `exclude` is the sharp one: a
+      // default would land a tag added to a KEPT-OUT group on the include side, so a
+      // click meaning "block more" would surface content instead. `enabled` keeps the
+      // card from reading as off while one member still filters.
+      enabled: first.enabled,
+      exclude: !!first.exclude,
+      index: value.length,
+      groupKey,
+    },
+  ];
+}
+
+/**
+ * Remove one tag from the hub, leaving the rest of its group intact.
+ *
+ * It DELETES the row rather than clearing `groupKey`. That was tried the other way —
+ * ungrouping, so a tag pulled into a group could be pulled back out without losing it
+ * — and Justin called it weird on sight (2026-09-18): a ✕ on a chip reads as "get rid
+ * of this", and leaving the tag behind as a new card looks like the click did
+ * something else. The label says "from this hub" so the control and the copy agree.
+ *
+ * The cost, accepted knowingly: moving a tag the hub already had into a group has no
+ * one-click undo — you re-add it. Revisit by adding a separate ungroup affordance, not
+ * by overloading this one again.
+ */
+export function removeHubTag(value: HubSourceValue[], targetId: number) {
+  const targetKey = hubSourceKey({ type: UserHubSourceType.Tag, targetId });
+  return value.filter((source) => hubSourceKey(source) !== targetKey);
+}
+
+/** Drop every member of a group. What the card's trash button means. */
+export function removeHubGroup(value: HubSourceValue[], group: HubSourceGroup) {
+  const members = groupMemberKeys(group);
+  return value.filter((source) => !members.has(hubSourceKey(source)));
 }

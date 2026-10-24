@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
@@ -16,6 +18,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -55,7 +58,6 @@ import {
 } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
-import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -63,15 +65,18 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
-import {
-  bustFeaturedModelsCache,
-  getModelsWithImagesAndModelVersions,
-} from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import {
+  collectionBecameVisible,
+  shouldScanCollection,
+} from '~/server/services/text-scan/actions/collection';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -79,13 +84,18 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  nsfwBrowsingLevelsFlag,
+  parseBitwiseBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   DETAIL_BACKED_REASONS,
   resolveRejectionCopy,
 } from '~/shared/constants/collection-rejection.constants';
 import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  ArticleStatus,
   ChallengeSource,
   CollectionContributorPermission,
   CollectionInviteStatus,
@@ -94,20 +104,31 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  EntityType,
   HomeBlockType,
   ImageIngestionStatus,
+  JobQueueType,
   MetricTimeframe,
+  ModelModifier,
   ModelStatus,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const modelService = () => import('~/server/services/model.service');
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -706,10 +727,138 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   };
 };
 
-export const getPendingReviewCount = (collectionId: number) =>
-  dbRead.collectionItem.count({
-    where: { collectionId, status: CollectionItemStatus.REVIEW },
-  });
+/**
+ * Whether a collection item's target would survive the review queue's hydration, as SQL over a
+ * `CollectionItem` aliased `ci`. Shared by the queue's `forReview` read and both pending counts, so
+ * a badge cannot count items the queue never shows.
+ *
+ * `getCollectionItemsByCollectionId` hydrates REVIEW rows through the feed services as a moderator
+ * at the request's `browsingLevel`, and drops every row whose target does not come back. The review
+ * page asks for every level, which the domain cap holds to PG/PG-13 on the SFW site, so `levels` is
+ * that ceiling: a badge on civitai.com must not count mature items only civitai.red can show. Each branch mirrors the clauses that decide that:
+ * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
+ *   Archived); `getModelsWithImagesAndModelVersions` drops TakenDown.
+ * - Image: `getAllImages` with `pending` keeps any image on an existing post, unrated ones included,
+ *   minus the license-restricted base model clause.
+ * - Post: `getPostsInfinite` without a `username` shows a moderator published posts only.
+ * - Article: `getArticles` requires Published with a publish date.
+ * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
+ *
+ * No browsing level has the Blocked bit: a Blocked-only target never hydrates, so it must not be counted either. Only images keep nsfwLevel 0 (`pending`).
+ * The CASE order is hydration's: a row with two target columns is judged by the first one only.
+ *
+ * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
+ * images, a post with no images). Those cost a join per row and are rare states; the queue can
+ * still show slightly fewer items than the count for them.
+ */
+const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
+  WHEN ci."modelId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "ModelMetric" rv_mm
+    WHERE rv_mm."modelId" = ci."modelId"
+      AND rv_mm."status" = ${ModelStatus.Published}::"ModelStatus"
+      AND (rv_mm."nsfwLevel" & ${levels}) != 0
+      AND (rv_mm."mode" IS NULL OR rv_mm."mode" NOT IN (
+        ${ModelModifier.Archived}::"ModelModifier", ${ModelModifier.TakenDown}::"ModelModifier"
+      ))
+  )
+  WHEN ci."postId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Post" rv_p
+    WHERE rv_p.id = ci."postId"
+      AND rv_p."publishedAt" <= now()
+      AND (rv_p."nsfwLevel" & ${levels}) != 0
+  )
+  WHEN ci."imageId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Image" rv_i
+    JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
+    WHERE rv_i.id = ci."imageId"
+      AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
+      AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
+  )
+  WHEN ci."articleId" IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM "Article" rv_a
+    WHERE rv_a.id = ci."articleId"
+      AND rv_a."status" = ${ArticleStatus.Published}::"ArticleStatus"
+      AND rv_a."publishedAt" IS NOT NULL
+      AND (rv_a."nsfwLevel" & ${levels}) != 0
+  )
+  ELSE false
+END)`;
+
+/** `levels`: what the requesting domain can serve, `domainServableLevels(ctx)`. */
+export async function getPendingReviewCount(collectionId: number, levels: number) {
+  const [row] = await dbRead.$queryRaw<{ pending: number }[]>`
+    SELECT count(*)::int AS pending
+    FROM "CollectionItem" ci
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus"
+      AND ${reviewQueueVisibleTargetSql(levels)}
+  `;
+  return Number(row?.pending ?? 0);
+}
+
+/**
+ * How many submissions are waiting on this user, per collection, for the badge on the user menu's
+ * My Collections entry and on each row of the collections sidebar.
+ *
+ * One grouped query rather than one per collection: `getPendingReviewCount` answers for a single
+ * collection, and this runs for every signed-in user on every session (it rides on
+ * `user.checkNotifications` — see the handler). Calling that one in a loop would be a round trip
+ * per owned collection, and the median user owns two while the largest owns 757.
+ *
+ * Deliberately unfiltered by `CollectionMode`. Contest collections are 96% of everything pending
+ * on prod and are reviewed through the same `/collections/[id]/review` page, so a mode filter here
+ * would blank the badge for nearly every queue that exists.
+ *
+ * `MANAGE` is the same permission the `Review N` button on the collection page is gated on, so the
+ * badge can never point at a queue the viewer cannot open. Note that `MANAGE` is nearly universal
+ * in `CollectionContributor` (1.8M rows) because creating a collection writes a self-row; only 135
+ * rows across 66 users are non-owner. The contributor branch is small; the owner branch does the
+ * work.
+ *
+ * Prod covers the `(collectionId, status)` filter with `CollectionItem_collectionId_status_covered`
+ * (`(collectionId, status, createdAt DESC) INCLUDE (...)`), both equality columns in the Index
+ * Cond. `reviewQueueVisibleTargetSql` then adds a primary-key lookup or two per pending row, so
+ * cost grows with pending rows, not collection size.
+ * That index is NOT in `schema.full.prisma`, so an environment built from the schema alone does
+ * not have it and this query will be slower there. That is known, not a regression.
+ *
+ * Not cached: it runs once per page load (`checkNotifications` is `staleTime: Infinity`) and on
+ * explicit invalidation after a review action, never on a poll.
+ */
+export async function getPendingCollectionReviewCounts({
+  userId,
+  levels,
+}: {
+  userId: number;
+  /** What the requesting domain can serve, `domainServableLevels(ctx)`. */
+  levels: number;
+}) {
+  const rows = await dbRead.$queryRaw<{ collectionId: number; pending: number }[]>`
+    SELECT ci."collectionId", count(*)::int AS pending
+    FROM "CollectionItem" ci
+    WHERE ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus"
+      AND ci."collectionId" IN (
+        SELECT c."id" FROM "Collection" c WHERE c."userId" = ${userId}
+        UNION
+        SELECT cc."collectionId" FROM "CollectionContributor" cc
+         WHERE cc."userId" = ${userId}
+           AND ${CollectionContributorPermission.MANAGE}::"CollectionContributorPermission"
+               = ANY(cc."permissions")
+      )
+      AND ${reviewQueueVisibleTargetSql(levels)}
+    GROUP BY ci."collectionId"
+  `;
+
+  const byCollection: Record<number, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    const pending = Number(row.pending);
+    byCollection[Number(row.collectionId)] = pending;
+    total += pending;
+  }
+
+  return { total, byCollection };
+}
 
 // Archiving keeps the collection readable but drops it out of the "Save to collection" picker
 // and blocks new entries; unarchiving clears the timestamp. Scoped to the owner (moderators
@@ -748,6 +897,7 @@ const inputToCollectionType = {
   articleId: CollectionType.Article,
   imageId: CollectionType.Image,
   postId: CollectionType.Post,
+  model3dId: CollectionType.Model3D,
 } as const;
 
 /**
@@ -826,6 +976,65 @@ async function applyCollectionAutoTag(
   }
 }
 
+type SubmissionNotifyCollection = { id: number; name: string; userId: number };
+
+// Callers have already committed the item write, so nothing here may throw: an error for a submit
+// that succeeded gets retried, and double-submits.
+async function notifyCollectionSubmissionReceived({
+  collections,
+  submitterId,
+}: {
+  collections: SubmissionNotifyCollection[];
+  submitterId: number;
+}) {
+  if (collections.length === 0) return;
+  const collectionIds = collections.map((c) => c.id);
+
+  try {
+    const [managers, judges] = await Promise.all([
+      dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: collectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      }),
+      // Every challenge entry collection is owned by a judge's user account
+      // (resolveChallengeCollectionOwnerId), so without this each entry notifies the judge.
+      dbRead.challengeJudge.findMany({ select: { userId: true } }),
+    ]);
+    const judgeUserIds = new Set(judges.map((j) => j.userId));
+
+    await Promise.all(
+      collections.map((collection) => {
+        const recipients = uniq([
+          collection.userId,
+          ...managers.filter((m) => m.collectionId === collection.id).map((m) => m.userId),
+        ]).filter((id) => id !== submitterId && !judgeUserIds.has(id));
+        if (recipients.length === 0) return;
+
+        return createNotification({
+          userIds: recipients,
+          type: 'collection-submission-received',
+          category: NotificationCategory.Update,
+          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          details: { collectionId: collection.id, collectionName: collection.name },
+        });
+      })
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-submission-notify-failed',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      collectionIds,
+    }).catch(() => {
+      // swallow — best-effort logging must never break the submit it is observing
+    });
+  }
+}
+
 export const saveItemInCollections = async ({
   input: {
     collections: upsertCollectionItems,
@@ -866,6 +1075,11 @@ export const saveItemInCollections = async ({
     if (filteredCollections.length !== upsertCollectionItems.length) {
       throw throwBadRequestError('Collection type mismatch');
     }
+  }
+
+  // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
+  if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
+    throw throwBadRequestError('3D models cannot be entered into contest collections');
   }
 
   // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
@@ -996,10 +1210,18 @@ export const saveItemInCollections = async ({
           followCollectionIds.push(collectionId);
         }
 
+        const status = submissionStatus(permission);
+        // The review queue (getAllCollectionItems) has no Model3D variant, so a pending entry could never be actioned.
+        if (itemKey === 'model3dId' && status === CollectionItemStatus.REVIEW) {
+          throw throwBadRequestError(
+            '3D models cannot be submitted to collections that review entries'
+          );
+        }
+
         return {
           addedById: userId,
           collectionId,
-          status: submissionStatus(permission),
+          status,
           [itemKey]: input[itemKey],
           tagId,
         };
@@ -1054,7 +1276,7 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
-    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // The "Add to Collection" modal is the other door into removal, and a delete through it
     // would let the job re-add the image the removal was meant to stop.
     const autoFeatureUserId = await getAutoFeatureUserId();
     const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
@@ -1124,54 +1346,17 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
   const reviewCollectionIds = uniq(
-    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+    data
+      .filter((d) => d.status === CollectionItemStatus.REVIEW)
+      .map((d) => d.collectionId)
+      .filter((id) => !unwrittenCollectionIds.has(id))
   );
-  if (reviewCollectionIds.length > 0) {
-    try {
-      const managers = await dbRead.collectionContributor.findMany({
-        where: {
-          collectionId: { in: reviewCollectionIds },
-          permissions: { has: CollectionContributorPermission.MANAGE },
-        },
-        select: { collectionId: true, userId: true },
-      });
-
-      await Promise.all(
-        reviewCollectionIds.map((collectionId) => {
-          const collection = collections.find((c) => c.id === collectionId);
-          if (!collection) return;
-
-          const recipients = uniq([
-            collection.userId,
-            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
-          ]).filter((id) => id !== userId);
-          if (recipients.length === 0) return;
-
-          return createNotification({
-            userIds: recipients,
-            type: 'collection-submission-received',
-            category: NotificationCategory.Update,
-            key: `collection-submission-received:${collectionId}:${uuid()}`,
-            details: { collectionId, collectionName: collection.name },
-          });
-        })
-      );
-    } catch (error) {
-      // The item write above already committed — a failure resolving recipients or notifying
-      // them must not fail the submit itself, or the caller sees an error for an action that
-      // actually succeeded and is likely to retry and double-submit.
-      logToAxiom({
-        type: 'error',
-        name: 'collection-submission-notify-failed',
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        collectionIds: reviewCollectionIds,
-      }).catch(() => {
-        // swallow — best-effort logging must never break the submit it is observing
-      });
-    }
-  }
+  await notifyCollectionSubmissionReceived({
+    collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),
+    submitterId: userId,
+  });
 
   // The feed index carries collection membership for hubs, and nothing about a
   // CollectionItem write reaches it on its own. Covers both directions: the
@@ -1187,7 +1372,7 @@ export const saveItemInCollections = async ({
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
-    await bustFeaturedModelsCache();
+    await (await modelService()).bustFeaturedModelsCache();
     const versions = await dbRead.modelVersion.findMany({
       where: { id: input.modelId },
       select: { id: true },
@@ -1216,6 +1401,18 @@ export const saveItemInCollections = async ({
   return data.length > 0 ? 'added' : removedCount > 0 ? 'removed' : null;
 };
 
+function withStoredModeratorMetadata(
+  sent: CollectionMetadataSchema | undefined,
+  stored: CollectionMetadataSchema | null | undefined
+): CollectionMetadataSchema {
+  const next = { ...sent };
+  if (stored?.autoTagId === undefined) delete next.autoTagId;
+  else next.autoTagId = stored.autoTagId;
+  if (stored?.forcedBrowsingLevel === undefined) delete next.forcedBrowsingLevel;
+  else next.forcedBrowsingLevel = stored.forcedBrowsingLevel;
+  return next;
+}
+
 export const upsertCollection = async ({
   input,
 }: {
@@ -1240,6 +1437,15 @@ export const upsertCollection = async ({
     ...collectionItem
   } = input;
 
+  // `collectionItem.note` is NOT dead. `upsertCollectionInput` merges `collectionItemSchema`, so
+  // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
+  // A grep for `note:` in a write position does not find it, because it is spread — this check was
+  // deleted once on that evidence and had to be restored.
+  await throwOnBlockedUserContent(
+    [name, description, collectionItem.note, ...(await newTagNames(tags?.map((tag) => tag.name)))],
+    { isModerator, surface: 'collection' }
+  );
+
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image
   // ownership). In a collection anyone can create and manage, that would let a user
@@ -1250,21 +1456,11 @@ export const upsertCollection = async ({
   // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
   // hit Save without touching (or knowing about) the field. Pin it to the stored value
   // instead: their save becomes a no-op on this field rather than a wall.
-  if (!isModerator && metadata) {
-    const storedAutoTagId = id
-      ? (
-          (
-            await dbRead.collection.findUnique({
-              where: { id },
-              select: { metadata: true },
-            })
-          )?.metadata as CollectionMetadataSchema | null
-        )?.autoTagId
-      : undefined;
-
-    if (storedAutoTagId === undefined) delete metadata.autoTagId;
-    else metadata.autoTagId = storedAutoTagId;
-  }
+  // `forcedBrowsingLevel` is pinned the same way: it decides the collection's rating ahead of its
+  // items and any moderator rating, so only moderators (or system writers) set it. Both are carried
+  // over even when `metadata` is not sent, since the write replaces the whole blob.
+  const pinnedMetadata = (stored: CollectionMetadataSchema | null | undefined) =>
+    isModerator ? metadata ?? {} : withStoredModeratorMetadata(metadata, stored);
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -1281,10 +1477,13 @@ export const upsertCollection = async ({
       where: { id },
       select: {
         id: true,
+        name: true,
+        description: true,
         read: true,
         write: true,
+        availability: true,
         mode: true,
-        createdAt: true,
+        metadata: true,
         image: { select: { id: true } },
       },
     });
@@ -1335,8 +1534,11 @@ export const upsertCollection = async ({
           id: true,
           mode: true,
           image: { select: { id: true, url: true, ingestion: true, type: true } },
+          name: true,
+          description: true,
           read: true,
           write: true,
+          availability: true,
           userId: true,
         },
         where: { id },
@@ -1347,7 +1549,9 @@ export const upsertCollection = async ({
           read: nextRead,
           write: nextWrite,
           mode: nextMode,
-          metadata: (metadata ?? {}) as Prisma.JsonObject,
+          metadata: pinnedMetadata(
+            currentCollection.metadata as CollectionMetadataSchema | null
+          ) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
             : image !== undefined
@@ -1357,11 +1561,12 @@ export const upsertCollection = async ({
                   connectOrCreate: {
                     where: { id: image.id ?? -1 },
                     create: {
-                      ...image,
+                      ...pickClientImageColumns(image),
                       meta:
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined
                         ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
+                      metadata: stripBlockProvenanceMetadata(image.metadata),
                       userId,
                       resources: undefined,
                       id: undefined,
@@ -1401,20 +1606,63 @@ export const upsertCollection = async ({
     await userCollectionCountCache.refresh(updated.userId);
 
     if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
-      // Set publishedAt for all post belonging to this collection if changing privacy to public
-      await dbWrite.$queryRaw`
-        UPDATE "Post" SET
-          "publishedAt" = COALESCE(DATE("metadata"->>'prevPublishedAt'), ${currentCollection.createdAt}, NOW()),
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
-        WHERE "collectionId" = ${updated.id}
+      // Only restores posts the collection itself hid: the `unpublishedByCollection` marker, or a
+      // bare `prevPublishedAt` (what this hide wrote before the marker existed). Every other
+      // unpublish stamps one of the excluded keys and is undone by its own republish path. A
+      // collection-hidden post cannot be unpublished again (every unpublish skips posts that are
+      // already down), so an action taken while it was hidden lands only on the owner, the images,
+      // a hold, or the post's model or version; any of those keeps the post down.
+      // One statement, so a failed lookup restores nothing.
+      await dbWrite.$executeRaw`
+        WITH reported AS (
+          SELECT "userId"::bigint AS id FROM "CsamReport" WHERE "userId" IS NOT NULL
+          UNION
+          SELECT ("details"->>'secondaryUserId')::bigint FROM "CsamReport"
+          WHERE "details"->>'secondaryUserId' ~ '^[0-9]{1,18}$'
+        )
+        UPDATE "Post" p SET
+          "publishedAt" = (p."metadata"->>'prevPublishedAt')::timestamp,
+          "metadata" = p."metadata" - 'prevPublishedAt' - 'unpublishedByCollection'
+        WHERE p."collectionId" = ${updated.id}
+          AND p."publishedAt" IS NULL
+          AND p."metadata"->>'prevPublishedAt' IS NOT NULL
+          AND (
+            p."metadata"->>'unpublishedByCollection' = ${String(updated.id)}
+            OR NOT p."metadata" ? 'unpublishedByCollection'
+          )
+          AND NOT p."metadata" ?| array['unpublishedAt', 'unpublishedBy', 'unpublishedReason', 'repairStampAt']
+          AND NOT EXISTS (
+            SELECT 1 FROM "User" u WHERE u.id = p."userId" AND u."bannedAt" IS NOT NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" i
+            WHERE i."postId" = p.id AND (i.ingestion = 'Blocked' OR i."needsReview" = 'csam')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "TextScanHold" h
+            WHERE h."entityType" = 'Post' AND h."entityId" = p.id AND h.status = 'Confirmed'
+          )
+          AND NOT EXISTS (SELECT 1 FROM reported r WHERE r.id = p."userId")
+          AND (
+            p."modelVersionId" IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = p."modelVersionId" AND mv.status = 'Published' AND m.status = 'Published'
+            )
+          )
       `;
     } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
-      // otherwise set publishedAt to null when no mode is setup.
-      await dbWrite.$queryRaw`
+      // otherwise set publishedAt to null when no mode is setup. Already-unpublished posts are
+      // left alone so their own stamps survive.
+      await dbWrite.$executeRaw`
         UPDATE "Post" SET
           "publishedAt" = NULL,
-          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', to_jsonb("publishedAt"))
-        WHERE "collectionId" = ${updated.id}
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object(
+            'prevPublishedAt', "publishedAt",
+            'unpublishedByCollection', ${updated.id}::int
+          )
+        WHERE "collectionId" = ${updated.id} AND "publishedAt" IS NOT NULL
       `;
     }
 
@@ -1468,6 +1716,28 @@ export const upsertCollection = async ({
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
+    // Recomputes skip hidden collections, so anything that changed while it was hidden (a verdict
+    // landing, a moderator rating, an item) only reaches nsfwLevel here; the scan may skip as
+    // unchanged. Queued rather than inline: the recompute can time out on a huge collection.
+    if (collectionBecameVisible(currentCollection, updated))
+      await enqueueJobs([
+        {
+          entityType: EntityType.Collection,
+          entityId: updated.id,
+          type: JobQueueType.UpdateNsfwLevel,
+        },
+      ]).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'collection-nsfw-recompute-enqueue-failed',
+          message: error instanceof Error ? error.message : String(error),
+          collectionId: updated.id,
+        }).catch(() => null)
+      );
+
+    if (shouldScanCollection(currentCollection, updated))
+      scanEntityInBackground({ entityType: 'Collection', entityId: updated.id });
+
     // nb: doing this will delete a user's own image
     // if (currentCollection.image && !input.image) {
     //   const isOwner = await isImageOwner({
@@ -1489,13 +1759,21 @@ export const upsertCollection = async ({
     throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
+  // The initial item below is written directly, skipping saveItemInCollections' contest refusal.
+  if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
+    throw throwBadRequestError('3D model collections cannot be contests');
+  }
+
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: {
       id: true,
       image: { select: { id: true, url: true } },
+      name: true,
+      description: true,
       read: true,
       write: true,
+      availability: true,
       userId: true,
       mode: true,
     },
@@ -1508,7 +1786,7 @@ export const upsertCollection = async ({
       userId,
       type,
       mode,
-      metadata: (metadata ?? {}) as Prisma.JsonObject,
+      metadata: pinnedMetadata(undefined) as Prisma.JsonObject,
       contributors: {
         create: {
           userId,
@@ -1539,6 +1817,9 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+
+  if (shouldScanCollection(null, collection))
+    scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
 
   // Route subsequent reads to primary while the replica catches up so the
   // post-create redirect to /collections/[id] doesn't 404 on a fresh row.
@@ -1646,10 +1927,17 @@ export const AI_REVIEW_SYSTEM_USER_ID = -1;
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  imagesAsPublicCatalog = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  /**
+   * Read image items the way the public image catalog (`runImageSearch`) does: with no
+   * viewer, so no owner or moderator carve-outs, and with the poi/minor exclusion. The
+   * collection permission check above still uses `user`.
+   */
+  imagesAsPublicCatalog?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1801,6 +2089,15 @@ export const getCollectionItemsByCollectionId = async ({
       collection.type === CollectionType.Image && !forReview
         ? Prisma.sql`AND i."ingestion" = 'Scanned'`
         : Prisma.sql``;
+    // Hydration would drop these rows anyway; filtering here keeps a page of dead rows from
+    // rendering as an empty queue, and keeps the queue reading the same predicate as the counts.
+    // The level is the request's, already held to the domain cap; masked so a client-sent Blocked
+    // bit cannot let Blocked targets through.
+    const reviewVisibleCondition = forReview
+      ? Prisma.sql`AND ${reviewQueueVisibleTargetSql(
+          (input.browsingLevel ?? allBrowsingLevelsFlag) & allBrowsingLevelsFlag
+        )}`
+      : Prisma.sql``;
 
     // Cursor condition for compound ordering (createdAt, id)
     const cursorCondition = parsedCursor.id
@@ -1861,6 +2158,7 @@ export const getCollectionItemsByCollectionId = async ({
         ${tagCondition}
         ${awaitingHumanCondition}
         ${imageIngestionCondition}
+        ${reviewVisibleCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
       LIMIT ${limit + 1}
@@ -1922,7 +2220,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const models =
     modelIds.length > 0
-      ? await getModelsWithImagesAndModelVersions({
+      ? await (
+          await modelService()
+        ).getModelsWithImagesAndModelVersions({
           user,
           input: {
             limit: modelIds.length,
@@ -1942,7 +2242,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const articles =
     articleIds.length > 0
-      ? await getArticles({
+      ? await (
+          await articleService()
+        ).getArticles({
           limit: articleIds.length,
           period: MetricTimeframe.AllTime,
           periodMode: 'stats',
@@ -1967,7 +2269,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ImageSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          user,
+          user: imagesAsPublicCatalog ? undefined : user,
+          ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
@@ -2063,34 +2366,24 @@ export const getCollectionItemsByCollectionId = async ({
 // Who authored the entity itself. `removeCollectionItem` lets an author pull their own work out of
 // any collection, so the flag below has to account for them or the action is authorized on the
 // server and missing from the UI.
-async function getEntityOwnerId({
+async function getCollectionItemOwnerId({
   modelId,
   imageId,
   articleId,
   postId,
+  model3dId,
 }: {
   modelId?: number;
   imageId?: number;
   articleId?: number;
   postId?: number;
+  model3dId?: number;
 }): Promise<number | null> {
-  const select = { userId: true };
-  if (modelId) {
-    const model = await dbRead.model.findUnique({ where: { id: modelId }, select });
-    return model?.userId ?? null;
-  }
-  if (imageId) {
-    const image = await dbRead.image.findUnique({ where: { id: imageId }, select });
-    return image?.userId ?? null;
-  }
-  if (postId) {
-    const post = await dbRead.post.findUnique({ where: { id: postId }, select });
-    return post?.userId ?? null;
-  }
-  if (articleId) {
-    const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
-    return article?.userId ?? null;
-  }
+  if (modelId) return getEntityOwnerId('Model', modelId);
+  if (imageId) return getEntityOwnerId('Image', imageId);
+  if (postId) return getEntityOwnerId('Post', postId);
+  if (articleId) return getEntityOwnerId('Article', articleId);
+  if (model3dId) return getEntityOwnerId('Model3D', model3dId);
   return null;
 }
 
@@ -2099,7 +2392,8 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId, excludeArchived } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId, excludeArchived } =
+    input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2115,7 +2409,13 @@ export const getUserCollectionItemsByItem = async ({
 
   if (userCollections.length === 0) return [];
 
-  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId });
+  const entityOwnerId = await getCollectionItemOwnerId({
+    modelId,
+    imageId,
+    articleId,
+    postId,
+    model3dId,
+  });
   const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({
@@ -2134,7 +2434,7 @@ export const getUserCollectionItemsByItem = async ({
       collectionId: {
         in: userCollections.map((c) => c.id),
       },
-      OR: [{ modelId }, { imageId }, { postId }, { articleId }],
+      OR: [{ modelId }, { imageId }, { postId }, { articleId }, { model3dId }],
     },
   });
 
@@ -2175,6 +2475,8 @@ export const deleteCollectionById = async ({
   if (collection.mode === CollectionMode.Bookmark) {
     throw throwBadRequestError('You cannot delete a bookmark collection');
   }
+
+  await detachPostsFromCollection(id);
 
   const res = await dbWrite.collection.delete({ where: { id } });
 
@@ -2552,24 +2854,78 @@ export const updateCollectionItemsStatus = async ({
   return collection;
 };
 
+/**
+ * Accepted-item counts per collection.
+ *
+ * `browsingLevel` is OPTIONAL and defaults to today's behaviour — omit it and the
+ * emitted SQL is the unclamped query this function has always run (only the table
+ * alias is new), so every existing caller is unaffected. Supply it and the result
+ * is the CLAMPED count: how many items a viewer at that maturity ceiling can
+ * actually see.
+ *
+ * 🔴 THE CLAMPED FORM IS EXACT AND EXPENSIVE — CHECK THE POPULATION BEFORE USING
+ * IT. Unclamped, this is an Index Only Scan on the covering (collectionId, status)
+ * index with no heap access; the clamp's join to "Image" forfeits that index and
+ * becomes a nested loop over every accepted item. Measured on a production-scale
+ * replica: 85 ms unclamped vs 2829 ms clamped over one App Blocks discovery
+ * over-fetch window (97 collections, 298,469 accepted items). Its one production
+ * caller is `mode=mine` of the blocks collections endpoint, whose population is
+ * the subject's own already-sliced collections — bounded, and nothing like the
+ * popularity-sorted discovery window. Public discovery deliberately does NOT use
+ * it; it samples instead (`getCollectionPlayableSample`).
+ *
+ * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId` OR
+ * `model3dId`, so model / post / article / 3D model collections are counted here
+ * too. `nsfwLevel` lives on `Image`, so an INNER `JOIN "Image"` would silently
+ * return 0 for every one of those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * escape: a non-image item has no image maturity to test and is kept
+ * unconditionally.
+ *
+ * An item whose `imageId` points at a row that no longer exists yields a NULL
+ * `nsfwLevel`, and both halves of the bitwise test are NULL → the item is NOT
+ * counted. That is deliberate and fail-closed: an image we cannot rate is one we
+ * cannot promise is playable, and it matches `getFallbackCoverImages`, whose
+ * inner join drops the same row.
+ *
+ * The maturity test itself is BITWISE (`nsfwLevel & browsingLevel != 0`, plus
+ * unrated 0) — the identical authority the images service, the collection detail
+ * path and `getFallbackCoverImages` use. A `<=` would be wrong: level 29 is a
+ * mixed bucket that intersects a SFW ceiling.
+ */
 export function getCollectionItemCount({
   collectionIds: ids,
   status,
+  browsingLevel,
 }: {
   collectionIds: number[];
   status?: CollectionItemStatus;
+  browsingLevel?: number;
 }) {
   if (ids.length === 0) return [] as { id: number; count: number }[];
 
-  const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
-  if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
+  const where = [Prisma.sql`ci."collectionId" IN (${Prisma.join(ids)})`];
+  if (status) where.push(Prisma.sql`ci."status" = ${status}::"CollectionItemStatus"`);
+  // `!= null`, NOT truthiness: a ceiling of 0 is a real (if degenerate) ceiling
+  // that permits only unrated items, and `if (browsingLevel)` would silently read
+  // it as "no clamp" — i.e. return the FULL count for the most restrictive viewer.
+  if (browsingLevel != null)
+    where.push(
+      Prisma.sql`(ci."imageId" IS NULL OR (i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`
+    );
+
+  // Joined only when clamping, so the unclamped plan every existing caller relies
+  // on is untouched.
+  const join =
+    browsingLevel != null ? Prisma.sql`LEFT JOIN "Image" i ON i."id" = ci."imageId"` : Prisma.empty;
 
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
-    SELECT "collectionId" as "id", COUNT(*) as "count"
-    FROM "CollectionItem"
+    SELECT ci."collectionId" as "id", COUNT(*) as "count"
+    FROM "CollectionItem" ci
+    ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND ("imageId" IS NOT NULL OR "modelId" IS NOT NULL OR "postId" IS NOT NULL OR "articleId" IS NOT NULL)
-    GROUP BY "collectionId"
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL OR ci."model3dId" IS NOT NULL)
+    GROUP BY ci."collectionId"
   `;
 }
 
@@ -2585,6 +2941,10 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
     GROUP BY "collectionId"
   `;
 }
+
+// Every challenge lookup behind an entry gate reads a missing row as "no rule applies", so it must
+// not come from a replica that can lag the challenge's creation or a status change.
+const challengeGateDb = dbWrite;
 
 // Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
 // Idempotent per (challenge, image) — see chargeEntryFees. No-op for empty input or collections
@@ -2610,7 +2970,7 @@ const chargeContestEntryFeesForCollection = async ({
   // returning every image as paid — so behavior is unchanged for the caller, which still commits
   // when unpaidImageIds is empty). System/Mod (daily) + community-contest collections have no
   // source=User row → null → undefined (unchanged, no metric).
-  const feeChallenge = await dbRead.challenge.findFirst({
+  const feeChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: 'User', status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
   });
@@ -2680,7 +3040,7 @@ export const validateContestCollectionEntry = async ({
   // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
   // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
   // community-contest collections have no such row, so this is null for them.
-  const userChallenge = await dbRead.challenge.findFirst({
+  const userChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: ChallengeSource.User },
     select: { id: true, createdById: true, status: true },
   });
@@ -2696,7 +3056,7 @@ export const validateContestCollectionEntry = async ({
   // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
   // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
-    const ownChallenge = await dbRead.challenge.findFirst({
+    const ownChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, createdById: userId },
       select: { id: true },
     });
@@ -2711,6 +3071,8 @@ export const validateContestCollectionEntry = async ({
     const blocked = await amIBlockedByUser({
       userId,
       targetUserId: userChallenge.createdById ?? undefined,
+      // An entry is a write: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) throw throwBadRequestError('This challenge is not available.');
   }
@@ -2721,14 +3083,20 @@ export const validateContestCollectionEntry = async ({
   // challenge collections (target has a linked Challenge) so community contests are
   // unaffected. Scoped to genuine re-adds: an image still present as an entry is excluded,
   // so editing a post that re-saves its images doesn't fail.
-  if (imageIds.length > 0 && !isModerator) {
+  const isChallengeCollection =
+    imageIds.length > 0 &&
+    !isModerator &&
+    !!(await challengeGateDb.challenge.findFirst({
+      where: { collectionId },
+      select: { id: true },
+    }));
+  if (isChallengeCollection) {
     const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
       SELECT DISTINCT th."imageId"
       FROM "Thread" th
       JOIN "CommentV2" cm ON cm."threadId" = th.id
       JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
       WHERE th."imageId" IN (${Prisma.join(imageIds)})
-        AND EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."collectionId" = ${collectionId})
         AND NOT EXISTS (
           SELECT 1 FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
@@ -2958,7 +3326,7 @@ export const validateContestCollectionEntry = async ({
   // existing participants may keep adding entries up to maxEntriesPerUser. Checked before any
   // charge so a capped-out user is never charged.
   if (!isModerator) {
-    const cappedChallenge = await dbRead.challenge.findFirst({
+    const cappedChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', maxParticipants: { not: null } },
       select: { maxParticipants: true },
     });
@@ -2985,7 +3353,7 @@ export const validateContestCollectionEntry = async ({
   // promotion, after the fee already ran, and entry fees are never refunded (see
   // challenge-funding.ts) — so an off-resource submission was charged then silently rejected.
   if (imageIds.length > 0 && !isModerator) {
-    const resourceChallenge = await dbRead.challenge.findFirst({
+    const resourceChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', modelVersionIds: { isEmpty: false } },
       select: { modelVersionIds: true },
     });
@@ -3333,6 +3701,14 @@ export const bulkSaveItems = async ({
   // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
   await applyCollectionAutoTag(metadata, savedImageIds);
 
+  // After the entry-fee block, so an entry rolled back for non-payment is never announced.
+  if (count > 0 && status === CollectionItemStatus.REVIEW) {
+    await notifyCollectionSubmissionReceived({
+      collections: [collection],
+      submitterId: userId,
+    });
+  }
+
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
@@ -3457,9 +3833,27 @@ export const getCollectionCoverImages = async ({
               AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
-    ), articleItemImage as MATERIALIZED (
-        SELECT a.id, a.cover image FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target)
+    ), articleItemImage AS MATERIALIZED (
+        SELECT
+          a.id,
+          ${imageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT
+          m3.id,
+          ${imageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
     )
     SELECT
         target."collectionId" id,
@@ -3467,9 +3861,11 @@ export const getCollectionCoverImages = async ({
           (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
           NULL
         ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
     FROM target
   `
       : [];
@@ -3551,6 +3947,8 @@ export const removeCollectionItem = async ({
       ? 'Image'
       : permissions.collectionType === CollectionType.Post
       ? 'Post'
+      : permissions.collectionType === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
@@ -3650,6 +4048,8 @@ export async function checkUserOwnsCollectionAndItem({
       ? 'Image'
       : collection.type === CollectionType.Post
       ? 'Post'
+      : collection.type === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
@@ -3782,10 +4182,20 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (!nsfwLevel) throw throwBadRequestError();
 
-  await dbWrite.image.update({
-    where: { id: collectionItem.imageId as number },
-    data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
+  // A rating must not lift a block, so a Blocked image is never written.
+  const { count } = await dbWrite.image.updateMany({
+    where: {
+      id: collectionItem.imageId as number,
+      ingestion: { not: ImageIngestionStatus.Blocked },
+    },
+    data: {
+      nsfwLevel,
+      scannedAt: new Date(),
+      ingestion: ImageIngestionStatus.Scanned,
+      blockedFor: null,
+    },
   });
+  if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
 
   await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },

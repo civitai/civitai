@@ -307,13 +307,15 @@ export const BM = {
   ecosystemId: ECO.NewEcosystem,
   defaults: {
     engine: 'engineName',      // Orchestrator engine identifier (required for video models)
-    modelLocked: true,         // Optional: true for video models (user can't change base)
+    // Optional: true for video models (user can't change base). Also holds community checkpoints on
+    // this ecosystem to the LIVE coverage rule — see the `add-generation-support` skill.
+    modelLocked: true,
     model: { id: BM.NewModel },// Optional: default checkpoint model
   },
 },
 ```
 
-**Note**: Generation parameters like sampler, steps, CFG, and resolution are configured in data-graph workflow configs, not in ecosystem settings.
+**Note**: Generation parameters like sampler, steps, CFG, and resolution are configured in the graph's field defs and `src/shared/generation/config/workflows.ts`, not in ecosystem settings.
 
 **Common engines**:
 - `'wan'` - WanVideo models
@@ -596,7 +598,7 @@ ecosystemSettings: [
     },
   },
 ]
-// Note: Resolution, sampler, steps, CFG are configured in data-graph workflow configs
+// Note: Resolution, sampler, steps, CFG are configured in the graph's field defs
 
 // 9. No cross-ecosystem rules
 ```

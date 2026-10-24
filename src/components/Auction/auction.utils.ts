@@ -8,7 +8,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { miscModelTypes } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import nsfwWords from '~/utils/metadata/lists/words-nsfw-soft.json';
+import { nsfwWordsSoft as nsfwWords } from '@civitai/mod-utils/prompt-audit/lists';
 
 // export const modelsToAddToCollection = 3;
 export const miscAuctionName = 'Misc';

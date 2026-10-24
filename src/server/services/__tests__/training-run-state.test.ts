@@ -25,7 +25,10 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', async (importOriginal) =
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
+import {
+  getTrainingRunState,
+  resolveTrainingRun,
+} from '~/server/services/orchestrator/training/training-state';
 
 // Declared on dbWrite alone. The canonical mock keeps dbRead and dbWrite distinct, so this also
 // pins that the service reads through the write connection — the TOASTed-metadata workaround.
@@ -59,9 +62,11 @@ function dbVersion({
   files?: unknown[];
 } = {}) {
   return {
+    id: 1,
     trainingStatus,
+    trainingDetails: { baseModel: 'pony' },
     meta,
-    model: { userId: OWNER },
+    model: { userId: OWNER, name: 'My Model' },
     files: files ?? [
       {
         id: FILE_ID,
@@ -114,6 +119,40 @@ describe('getTrainingRunState', () => {
     expect(state.trainingResults?.epochs).toEqual([
       { epochNumber: 2, modelUrl: 'live-e2', modelSize: 20, sampleImages: [] },
     ]);
+  });
+
+  // The download endpoints resolve an epoch by the number this screen shows, so the live list has
+  // to carry the same numbering the stored copy does.
+  it("numbers a continuation's live epochs past the source run", async () => {
+    mockFindFirst.mockResolvedValue(
+      dbVersion({ trainingResults: { ...storedResults, epochOffset: 10, epochs: [] } })
+    );
+    mockGetWorkflow.mockResolvedValue(
+      liveWorkflow([{ epochNumber: 1, blobUrl: 'live-e1', blobSize: 10 }])
+    );
+
+    const state = await getTrainingRunState({
+      modelVersionId: 1,
+      userId: OWNER,
+      isModerator: false,
+      ctx,
+    });
+
+    expect(state.trainingResults?.epochs.map((e) => e.epochNumber)).toEqual([11]);
+  });
+
+  it('returns the parts a download names its files from', async () => {
+    mockFindFirst.mockResolvedValue(dbVersion());
+    mockGetWorkflow.mockResolvedValue(liveWorkflow([]));
+
+    const { run } = await resolveTrainingRun({
+      modelVersionId: 1,
+      userId: OWNER,
+      isModerator: false,
+      ctx,
+    });
+
+    expect(run).toEqual({ modelName: 'My Model', versionId: 1, architecture: 'pony' });
   });
 
   it('falls back to the stored copy when the workflow is past retention', async () => {

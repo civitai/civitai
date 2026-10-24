@@ -264,14 +264,22 @@ separately everywhere else too.
 
 `manage` holders also get a **Review N** button to `/collections/[id]/review`, from
 `pendingReviewCount` on `collection.getById`. The count is computed only for `manage` holders, and
-it is an exact `count` with **no cap and no mode exclusion** — resist adding either.
+it is an exact `count` with **no cap and no mode exclusion** — resist adding either. It counts only
+items the review queue can show: the count, the sidebar badge and the queue share one predicate
+(`reviewQueueVisibleTargetSql`), so a target the queue cannot hydrate (unpublished, archived,
+Blocked-only) is not counted. The predicate's comment lists the few hydration drops it does not
+mirror. It takes the level cap the queue is held to (`requestServableLevels`), so on civitai.com,
+or in a restricted region, the counts skip mature items the queue cannot show. On civitai.com
+outside a restricted region, `getById` also returns `redPendingReviewCount`, the items only
+civitai.red can show, and the empty .com queue links to the same review page there.
 
-The reason that is safe is not in `schema.full.prisma`. That file declares only
-`@@index([collectionId], type: Hash)` on `CollectionItem`, which would make a status-filtered count
-walk the whole collection. Production actually carries
+The reason that is safe is not in `schema.full.prisma`. The only `CollectionItem` index that file
+declares that a status-filtered count could use is `@@index([collectionId], type: Hash)`, which
+would make the count walk the whole collection. Production actually carries
 `CollectionItem_collectionId_status_covered` — a btree on `(collectionId, status, createdAt DESC)`
-— so the count is an index-only scan: measured at **0.5 ms / 4 buffers** on a 190k-item collection
-and **0.8 ms / 73 buffers** for a real 466-row review backlog. This is the same
+— so the status filter never walks the whole collection: measured at **0.5 ms / 4 buffers** on a
+190k-item collection and **0.8 ms / 73 buffers** for a real 466-row review backlog. Those numbers
+predate the visibility predicate, which adds a primary-key lookup or two per pending row. This is the same
 schema-diverges-from-production trap as the DB triggers; check `pg_indexes` before sizing a query
 off the Prisma schema.
 

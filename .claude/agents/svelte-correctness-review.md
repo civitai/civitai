@@ -1,6 +1,7 @@
 ---
 name: svelte-correctness-review
 description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for correctness — logic, data shape, authorization scope, and failure paths. Use before calling a segment done, alongside svelte-idiom-review and svelte-abstraction-review.
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 

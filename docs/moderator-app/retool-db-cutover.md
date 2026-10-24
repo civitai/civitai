@@ -58,7 +58,8 @@ Below each table's watermark the two databases are **byte-identical** — verifi
 `md5(string_agg(row::text ORDER BY id))` on both sides, not just counts. So no row was edited in Retool
 after the snapshot, and none was deleted. The delta is purely appended rows.
 
-The one exception is `UserNotes`, and it is not an edit.
+The one exception is `UserNotes`, and it is not an edit. (`ModelNotes` has since joined it as a table
+the app writes — see its section below.)
 
 ## The collision has already happened
 
@@ -178,13 +179,25 @@ from only.
 
 Migrate it. It is in the pipeline.
 
-Nothing in the app reads it, so it is tempting to drop — but
-the data was exported *into* Retool rather than produced by it, no Retool app writes it, and subtask
-`868kn8aa0` asks for these notes surfaced on model pages with add/edit-own. Dropping 935 rows to save
-copying 935 rows would only mean sourcing them again later.
+It read as droppable for a long time because nothing in the app read it — the data was exported *into*
+Retool rather than produced by it, and no Retool app wrote it. Model Lookup's Moderator notes panel
+(`868mb8h0y`) now both reads and writes it, so this app is its only writer.
 
 It needs no type work: `ModelNotes` is introspected like every other table, with the live columns
 `id, modelId, createdBy, createdAt, content`, all `NOT NULL` except `id`'s default.
+
+⚠️ **This app now spends `ModelNotes` ids locally, so the sequence can collide with Retool's** — the
+same way `UserNotes` ids 56342/56343 did on 2026-08-07. The re-id block in `03-merge.sql` (step 3) is
+hardcoded to `UserNotes` and decides "two records, not two versions" on a differing `userId`, which
+`ModelNotes` has no equivalent of. A collision here therefore lands in `cutover.conflict_review` and
+**fails step 4 for a human**, rather than being remapped. That is the safe outcome, not a bug — but it
+means the longer this page runs before the merge, the more likely the cutover stops for review.
+
+Measured 2026-09-29, and the reason the edit-own rule reaches the imported rows: 938 rows, 928 models,
+nine distinct `createdBy` values — all Retool display names. Two of them (`Temporarium`, `Valstrix`)
+exactly equal the Civitai username of an account that is a moderator today, covering **127 rows**;
+`logan`, `ellie` and `richard` differ only in case, and Postgres `=` is case-sensitive, so they do not
+match.
 
 ## `ReToolActions` vs `ModActivity` — handover decision #9
 

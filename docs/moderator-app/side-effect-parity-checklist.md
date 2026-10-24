@@ -25,6 +25,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `deleteImagesByIds` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
 | 7 | Model3D thumbnail nsfwLevel rollup dropped | `setLevel` (ratings/downleveled) | COSMETIC (rare `postId==null` edge) | ✅ **DONE** — folded into `updateImageNsfwLevel` (#5) |
 | 8 | Restore **dispute auto-resolve** dropped | article restore | COSMETIC (narrow race) | ⏳ Deferred for review — unblocked (no Flipt), but auto-**lowers** nsfwLevel; port under supervision |
+| 9 | App Store **listing rating re-derive** not mirrored (re-rating an image used as a live listing's icon, cover or screenshot) | `setLevel` (ratings/downleveled) | DEGRADED | ⏳ Open — main runs `reDeriveListingRatingsForModeratedImage` after the image-level write; the spoke leaves the listing rating and its `rating-change` history untouched. Needs a call: delegate to main (like KoNO finalize) or port |
 
 Details for each are in the buckets below (search the gap name).
 
@@ -157,10 +158,20 @@ New gaps found:
   sessions" primitive) rather than porting the session/strike machinery into the spoke.
   The `generation-restrictions` "flag as suspicious" sysRedis write (see Bucket B) lands with this surface.
 
+## `/ratings` — rating disputes for every rated entity (text-scan plan 05)
+
+| Side effect | Status |
+|---|---|
+| Search-index sync for article / bounty / model | **equivalent** — existing `syncSearchIndex` |
+| Connected-entity `nsfwLevel` cascade | **equivalent** — `JobQueue(UpdateNsfwLevel)`, run by the main app's cron |
+| Model caches after an `nsfw` flip (`bustMvCache`: resource data, public model response, access, images) | **equivalent** — `/api/v1/model-versions/bust-cache`, first 500 versions |
+| ClickHouse resolved events for non-Article types | **deferred, COSMETIC** — no table exists for them |
+| Challenge raise (void/refund escalation) | **not offered** — moderator levels are lower-only |
+
 ## Already at full parity (no action)
 
 Reports set-status + reporter reward · cosmetics grant · blocklists · scanner verdict upsert · image
-block/accept/appeal · article rating-review resolve.
+block/accept/appeal · rating-review resolve (`/ratings`).
 
 ## Infra availability (what unblocks what)
 

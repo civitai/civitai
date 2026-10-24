@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // Focused test for src/pages/api/v1/model-versions/by-hash/[hash].ts.
-// Kept in src/server/__tests__ (NOT under src/pages) per CLAUDE.md.
+// Kept in src/server/__tests__ (NOT under src/pages) per .claude/rules/testing.md.
 
 const { mockResDetails } = vi.hoisted(() => ({
   mockResDetails: vi.fn().mockResolvedValue(undefined),
@@ -66,6 +66,11 @@ describe('by-hash/[hash] endpoint', () => {
     const { promise } = runRequest({ hash: HASH });
     await promise;
 
-    expect(mockResDetails).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+    expect(mockResDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      null,
+      expect.any(Function)
+    );
   });
 });

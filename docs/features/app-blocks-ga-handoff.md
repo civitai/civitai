@@ -70,9 +70,18 @@ migrations to hand-apply.**
 - ✅ **per-user buzz cap** (#2530).
 
 **STILL OPEN before GA:**
-- **Money — do NOT wire payouts** until rate-card sign-off + `internalAppOwnerUserIds` is
-  populated. `mintPayoutForOwner` is a deliberate stub; keep it inert until then. The per-user
-  buzz cap (#2530) was the spend-side prerequisite and is now in place.
+- **Money — the PURCHASE rev-share still pays nobody, and do NOT wire it** until rate-card
+  sign-off + `internalAppOwnerUserIds` is populated. There is no payout rail to keep inert any
+  more: `mintPayoutForOwner` (a stub with no production caller) and the write-free
+  `bulk-payout-block-attributions` cron have both been removed, so a purchase-rail payout is
+  something to BUILD rather than to enable. The per-user buzz cap (#2530) was the spend-side
+  prerequisite and is now in place.
+  - ⚠️ **A DIFFERENT money rail IS live, so "no payouts" is not a statement about the product.**
+    The additive, author-set, viewer-paid per-generation author fee
+    (`src/server/services/blocks/author-fee-charge.service.ts`) charges viewers and settles to
+    app owners daily via the `settle-block-author-fees` job, behind
+    `app-blocks-author-fee-enabled`. It went live 2026-09-25. This bullet is about the
+    purchase rev-share only.
 
 ---
 

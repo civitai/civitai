@@ -30,11 +30,8 @@ import { describe, expect, it } from 'vitest';
  *     asserts the item comes back `disabled` + reading "Reported" (browser project).
  *   - `__tests__/appListingReportView.test.ts` — the pure `reportTriggerState` rule.
  *
- * 🔴 AND THE SCOPE THAT MATTERS IN CI: the browser `component` suite is REPORT-ONLY
- * (it always exits 0, is not a required check, and is not published at all when the
- * preview deploy fails). This unit-project ledger BLOCKS. So in CI the live path's
- * wiring is pinned structurally, by this file, and behaviourally only by a suite that
- * cannot fail a build.
+ * 🔴 AND THE SCOPE THAT MATTERS IN CI: the live path's wiring is pinned structurally, by
+ * this file, and behaviourally by the browser suite (`Component tests`).
  *
  * 🔴 KNOWN LIMITS, stated rather than implied:
  *   1. Detection is per-FILE and syntactic. A site that mounts the modal through an
@@ -52,11 +49,17 @@ const SRC = path.resolve(__dirname, '../../..');
 const MODAL_MODULE = 'components/Apps/ReportListingModal.tsx';
 
 /**
- * Every PRODUCTION site that mounts `ReportListingModal`. One today: the listing
- * detail body, which is the live store surface. Adding a second report surface means
- * adding it here — that is the point, not an inconvenience.
+ * Every PRODUCTION site that mounts `ReportListingModal`. One today: the SHARED `⋮`
+ * overflow menu, which both live store surfaces (the card and the listing detail body)
+ * render. Adding a second report surface means adding it here — that is the point, not
+ * an inconvenience.
+ *
+ * 🔴 IT USED TO BE `AppListingDetailBody.tsx`. The menu was extracted so the card could
+ * render it too, and the modal moved with it. That the ledger had to be edited at all is
+ * the ledger working: an extraction that silently dropped the wiring would have shown up
+ * here as a SHRINK.
  */
-const MODAL_MOUNT_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
+const MODAL_MOUNT_SITES = ['components/Apps/AppListingActionsMenu.tsx'] as const;
 
 /**
  * Every PRODUCTION site that renders the report TRIGGER, identified by the stable
@@ -64,7 +67,7 @@ const MODAL_MOUNT_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
  * a rename shows up here as a SHRINK, not as a silent hole.
  */
 const TRIGGER_TEST_ID = 'apps-listing-report-action';
-const TRIGGER_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
+const TRIGGER_SITES = ['components/Apps/AppListingActionsMenu.tsx'] as const;
 
 type MountSite = { file: string; onReportedWired: boolean };
 type TriggerSite = { file: string; disabledFromState: boolean; labelFromState: boolean };

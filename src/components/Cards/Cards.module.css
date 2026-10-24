@@ -125,12 +125,54 @@
 }
 
 /* Reactions */
-.reactions {
-  border-radius: var(--mantine-radius-sm);
+/* The backing the creator pill shares with the reactions bar, so the two rows match. */
+.reactions,
+.creatorPill {
   background-color: rgba(0, 0, 0, 0.31);
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.reactions {
+  border-radius: var(--mantine-radius-sm);
   height: 28px;
   padding-right: 3px;
+}
+
+/* Grows out from under the avatar: the negative margin tucks the pill's left end behind it,
+   and the left padding puts the name 8px from the avatar's edge. */
+.creatorPill {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  margin-left: -20px;
+  padding: 0 12px 0 20px;
+  border-radius: 9999px;
+
+  /* A long unbroken username has to wrap for the line clamp to ellipsize it. */
+  & > * {
+    overflow-wrap: anywhere;
+  }
+
+  /* No avatar before it, so nothing to tuck under. */
+  &:first-child {
+    margin-left: 0;
+    padding-left: 12px;
+  }
+}
+
+/* A nameplate's gradient is clipped to the glyphs, so text-shadow can't reach it: a tight dark edge
+   plus a small offset keeps mid-tone plates readable on bright images without a heavier pill.
+   The name's own shadow (UserAvatarSimple.module.scss) is replaced; the extra class beats its
+   dark-scheme rule. */
+.creatorPill.creatorPillPlate > [class] {
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.45));
+}
+
+.creatorAvatar {
+  z-index: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.5));
 }
 
 /* Stat chip */

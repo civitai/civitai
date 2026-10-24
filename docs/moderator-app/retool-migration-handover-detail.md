@@ -63,9 +63,15 @@ A new page has **no `AppPageAccess` rows**, so only `moderator:admin` can reach 
 the boxes. Three pages need granting before mods can review them:
 
 - [ ] `/retool/article-lookup`
-- [ ] `/retool/user-reports`
+- [x] ~~`/retool/post-reports`~~ — moved to `/reports/post` (2026-10-15), under the Reports section's
+      shared grant. Nothing to grant; ruling needs only the queue. Acting needs the `image.moderate` and
+      `user.strike` action grants (2026-10-16), and mute, ban and profile text still need `/users`.
+- [x] ~~`/retool/user-reports`~~ — moved to `/reports/user` (2026-10-14), under the Reports section's
+      shared grant. Nothing to grant; ruling needs only the queue. Acting needs the `image.moderate` and
+      `user.strike` action grants (2026-10-16), and mute, ban and profile text still need `/users`.
 - [ ] `/retool/bulk-image-manager` — **grant this one narrowly.** Reaching it is gated on the page, but
-      every action on it is additionally gated on `/users`, and it removes images in bulk across
+      every action on it is additionally gated on the `image.moderate` action grant (`user.strike` to
+      notify or strike owners), and it removes images in bulk across
       accounts that the moderator never looked up. Treat it as an enforcement page, not a lookup one.
 - [ ] `/retool/front-page-audit` — this grant also controls the rating buttons and the tag votes, not
       just reaching the page. Without it the sweep renders read-only.
@@ -170,7 +176,8 @@ and builds; that is all that is established. Before any of it is trusted in prod
 ## 4. Known-open, decided or deferred
 
 - **`aiNsfwLevel` / `aiModel` exist in production but not in `schema.full.prisma`.**
-  `src/pages/api/webhooks/image-scan-result.ts` writes both, and Front Page Audit reads `aiNsfwLevel`
+  nothing in this repo writes them any more (the only writer was the legacy scanner branch of
+  `image-scan-result.ts`, removed), and Front Page Audit reads `aiNsfwLevel`
   through raw `sql` because it cannot be selected as a typed column. It is the scanner's own rating, and
   disagreement with `nsfwLevel` is the strongest signal that a row needs a human — so it is worth
   having. Either add both to the schema and regenerate, or accept the raw read as permanent.

@@ -3,14 +3,15 @@
   import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { OnboardingStep, hasOnboardingStep } from '$lib/onboarding';
   import { PROFILE_FIELDS } from './enforcement-options';
-  import { getBrowsingLevelLabel } from '@civitai/shared';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import ProfileContent from '$lib/components/ProfileContent.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
@@ -40,37 +41,15 @@
   // neither shows up in the four other panels that share this page.
   let clearing = $state(false);
 
+  // Scopes the `for`/`id` pairs on the clear-profile-text checkboxes to this instance.
+  const uid = $props.id();
+
   // `reload` on both: the bio and the identity row come from `load`, so unlike the client-fetched
   // panels this one does need the page data back after a write.
   const clearForm = new FormState({
     reload: true,
     onSuccess: () => (clearing = false),
   });
-
-  const profileText = $derived(
-    [
-      ['Bio', profile?.bio],
-      ['Profile message', profile?.message],
-      ['Location', profile?.location],
-    ].filter((entry): entry is [string, string] => !!entry[1]?.trim())
-  );
-
-  // Retool's "Look at PFP" / "Look at Cover Image". Shown here rather than linked, because the
-  // alternative is loading the profile of an account you may be about to act on.
-  const media = $derived(
-    [
-      identity.profilePictureUrl
-        ? {
-            label: 'Avatar',
-            url: identity.profilePictureUrl,
-            type: identity.profilePictureType,
-            nsfwLevel: identity.profilePictureNsfwLevel,
-          }
-        : null,
-      profile?.coverImage ? { label: 'Cover', ...profile.coverImage } : null,
-      profile?.sfwCoverImage ? { label: 'Cover (SFW)', ...profile.sfwCoverImage } : null,
-    ].filter((m): m is NonNullable<typeof m> => m !== null)
-  );
 
   const profileUrl = $derived(
     identity.username ? userUrl(civitaiUrl, identity.username) : null
@@ -266,42 +245,8 @@
     <ErrorAlert class="mt-4" message={clearForm.error} />
   {/if}
 
-  {#if media.length}
-    <div class="mt-4 border-t border-dark-4 pt-4">
-      <h4 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Profile media</h4>
-      <div class="flex flex-wrap gap-4">
-        {#each media as m (m.label)}
-          <figure class="w-40">
-            <EdgeMedia
-              src={m.url}
-              type={m.type === 'video' ? 'video' : 'image'}
-              width={320}
-              alt="{m.label} for {identity.username ?? identity.id}"
-              class="h-32 w-40 rounded-md border border-dark-4 object-cover"
-            />
-            <figcaption class="mt-1 flex items-baseline gap-2 text-xs text-dark-2">
-              {m.label}
-              <Badge variant={(m.nsfwLevel ?? 0) >= 8 ? 'destructive' : 'secondary'}>
-                {getBrowsingLevelLabel(m.nsfwLevel)}
-              </Badge>
-            </figcaption>
-          </figure>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  {#if profileText.length}
-    <div class="mt-4 border-t border-dark-4 pt-4">
-      <dl class="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
-        {#each profileText as [label, value] (label)}
-          <div>
-            <dt class="text-xs tracking-wide text-dark-2 uppercase">{label}</dt>
-            <dd class="whitespace-pre-wrap text-dark-0">{value}</dd>
-          </div>
-        {/each}
-      </dl>
-
+  <ProfileContent {identity} {profile}>
+    {#snippet textActions()}
       <!-- The moderation case is a bio used as an ad or abuse surface: the text has to come off the
            site without banning the account over it. -->
       {#if canAct && !clearing}
@@ -312,21 +257,41 @@
         <form method="POST" action="?/clearProfileText" use:enhance={clearForm.enhance} class="mt-3">
           <input type="hidden" name="userId" value={identity.id} />
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <!-- Uncontrolled, exactly as the raw inputs were: nothing here reads the ticks, the
+                 primitive's hidden input carries `fields` and the action reads `form.getAll('fields')`.
+                 Same shape as the `contents` group in
+                 `apps/moderator/src/routes/audit/training-data/[versionId]/CsamReportForm.svelte`. -->
             {#each PROFILE_FIELDS as [field, label] (field)}
-              <label class="flex items-center gap-1.5 text-xs text-dark-2">
-                <input type="checkbox" name="fields" value={field} class="accent-blue-500" />
-                {label}
-              </label>
+              <div class="flex items-center gap-1.5" data-touch-target>
+                <Checkbox id="clear-profile-{field}-{uid}" name="fields" value={field} />
+                <Label for="clear-profile-{field}-{uid}" class="text-xs leading-snug font-normal text-dark-2">
+                  {label}
+                </Label>
+              </div>
             {/each}
-            <Button type="submit" size="sm" variant="destructive" disabled={clearForm.submitting}>Clear</Button>
-            <Button type="button" size="sm" variant="outline" onclick={() => (clearing = false)}>
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              disabled={clearForm.submitting}
+              data-touch-target
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onclick={() => (clearing = false)}
+              data-touch-target
+            >
               Cancel
             </Button>
           </div>
         </form>
       {/if}
-    </div>
-  {/if}
+    {/snippet}
+  </ProfileContent>
 
   {#if identity.banReason || identity.banDetails}
     <div class="mt-4 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm">

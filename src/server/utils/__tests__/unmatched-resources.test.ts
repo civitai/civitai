@@ -56,11 +56,37 @@ describe('deriveUnmatchedResources', () => {
       detected({ name: 'manual1', hash: 'abc' }),
       detected({ name: 'manual1', hash: 'b166b8' }),
       detected({ name: 'nothash', hash: 'zzzzzzzzzz' }),
+      detected({ name: 'stub', hash: '0x' }),
+      detected({ name: 'shortprefixed', hash: '0xb166b8' }),
       detected({ name: 'real', hash: 'b166b8931f32' }),
     ]);
 
     expect(result).toHaveLength(1);
     expect(result[0].hash).toBe('b166b8931f32');
+  });
+
+  // A LoCon/LyCORIS resource whose trainer wrote a 0x-prefixed sshs_model_hash. These match no
+  // stored hash, so the only thing the uploader can be given is the warning — and a pure-hex
+  // HASH_SHAPE drops the row instead, leaving the resource to vanish with nothing said.
+  it('reports a 0x-prefixed hash as unmatched rather than discarding it as junk', () => {
+    const result = deriveUnmatchedResources(
+      [detected({ name: 'lycoris:BorutoS18OutroStyle_anibase_v1', hash: '0x7875fed548' })],
+      [
+        {
+          type: 'lycoris',
+          name: 'BorutoS18OutroStyle_anibase_v1.safetensors',
+          hash: '0X7875FED548',
+        },
+      ]
+    );
+
+    expect(result).toStrictEqual([
+      {
+        type: 'lycoris',
+        name: 'BorutoS18OutroStyle_anibase_v1',
+        hash: '0x7875fed548',
+      },
+    ]);
   });
 
   it('excludes hashless detections', () => {

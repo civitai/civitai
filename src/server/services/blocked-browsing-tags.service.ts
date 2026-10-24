@@ -6,6 +6,7 @@ import type { ResolvedBrowsingSettingsAddons } from '~/shared/constants/browsing
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import { isViewerUsername } from '~/utils/is-viewer';
 
 type AddonTarget = {
   excludedTagIds?: number[];
@@ -46,11 +47,7 @@ function applyAddonExclusions(
 
   const isOwnScoped =
     !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    !!(
-      viewer.username &&
-      input.username &&
-      input.username.toLowerCase() === viewer.username.toLowerCase()
-    );
+    isViewerUsername(viewer, input.username);
   if (!isOwnScoped && resolved.excludedTagIds.length) {
     input.excludedTagIds = [
       ...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds]),

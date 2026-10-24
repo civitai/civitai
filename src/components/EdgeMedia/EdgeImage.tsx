@@ -12,17 +12,23 @@ export type EdgeImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
   options: Omit<EdgeUrlProps, 'src'>;
   /** Database image ID — included in drag data so drop targets can look up metadata server-side */
   imageId?: number;
+  /** Also serve a variant sized for a 2x display. See `useEdgeUrl`. */
+  hiDpi?: boolean;
 };
 
 export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
   (
-    { className, fadeIn, src, options, style, onLoad, onError, imageId, ...props },
+    { className, fadeIn, src, options, style, onLoad, onError, imageId, hiDpi, ...props },
     forwardedRef
   ) => {
     // const ref = useRef<HTMLImageElement>(null);
     // TODO - determine how we can animate cosmetics
     const { anim, ...rest } = options ?? {};
-    const { url } = useEdgeUrl(src, anim !== false ? rest : { ...rest, anim: false });
+    const { url, srcSet } = useEdgeUrl(
+      src,
+      anim !== false ? rest : { ...rest, anim: false },
+      hiDpi
+    );
 
     // useImperativeHandle(forwardedRef, () => ref.current as HTMLImageElement);
 
@@ -47,6 +53,7 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         onLoad={handleLoad}
         onError={handleError}
         src={url}
+        srcSet={srcSet}
         style={{ maxWidth: options?.width ? options.width : undefined, ...style }}
         onDragStart={(e) => {
           setMediaDragData(e.dataTransfer, { url, mediaId: imageId || undefined, type: 'image' });

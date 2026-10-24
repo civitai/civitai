@@ -1,8 +1,15 @@
 import type { ButtonProps, GroupProps } from '@mantine/core';
-import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
+import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { IconBolt, IconHeart, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconHeart,
+  IconMoodSmile,
+  IconPhoto,
+  IconPlus,
+  IconAlertTriangle,
+} from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import {
   InteractiveTipBuzzButton,
@@ -12,6 +19,7 @@ import {
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -33,6 +41,12 @@ export type ReactionMetrics = {
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
+  /**
+   * The counts in `metrics` are placeholders, not measurements — the metric read
+   * produced no row for this entity. One flag rather than per-count nulls because
+   * the read resolves an entity's counts together or not at all.
+   */
+  metricsUnknown?: boolean;
   readonly?: boolean;
 };
 
@@ -81,6 +95,7 @@ export function PostReactions({
 export function Reactions({
   reactions,
   metrics,
+  metricsUnknown: metricsUnknownFromServer,
   entityType,
   entityId,
   readonly,
@@ -105,6 +120,8 @@ export function Reactions({
     getInitialValueInEffect: true,
   });
   const { buttonStyling, hideReactions } = useReactionSettingsContext();
+  const features = useFeatureFlags();
+  const metricsUnknown = !!metricsUnknownFromServer && !!features.reactionCountsUnknown;
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
@@ -133,6 +150,10 @@ export function Reactions({
       }
     }
   } else hasAllReactions = false;
+
+  // Unknown counts have to survive the readonly early-return below, which exists to
+  // drop entities nobody reacted to. Absent counts are not that.
+  if (metricsUnknown) hasReactions = true;
 
   const supportsBuzzTipping = !disableBuzzTip && ['image'].includes(entityType);
 
@@ -170,6 +191,7 @@ export function Reactions({
         <ReactionsList
           reactions={reactions}
           metrics={metrics}
+          metricsUnknown={metricsUnknown}
           entityType={entityType}
           entityId={entityId}
           noEmpty={!(initialShowAll ?? showAll)}
@@ -182,6 +204,7 @@ export function Reactions({
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
+            countUnknown={metricsUnknown}
             entityType={entityType}
             entityId={entityId}
             hideLoginPopover
@@ -207,6 +230,7 @@ function getReactionCount(key: ReviewReactions, metrics: ReactionMetrics) {
 function ReactionsList({
   reactions,
   metrics = {},
+  metricsUnknown,
   entityType,
   entityId,
   available = availableReactions[entityType],
@@ -223,6 +247,12 @@ function ReactionsList({
   abbreviate?: boolean;
 }) {
   const currentUser = useCurrentUser();
+
+  // On a card (`noEmpty`) every badge would be hidden as a zero, so the row would be
+  // empty and the outage invisible. One placeholder stands in for the whole list —
+  // the counts are unresolved together, so there is nothing per-reaction to say.
+  if (metricsUnknown && noEmpty) return <UnknownCountsBadge />;
+
   return (
     <>
       {keys
@@ -247,6 +277,7 @@ function ReactionsList({
               reaction={reaction}
               userReaction={userReaction}
               count={count}
+              countUnknown={metricsUnknown}
               entityType={entityType}
               entityId={entityId}
               readonly={!currentUser || currentUser.muted || readonly}
@@ -261,9 +292,32 @@ function ReactionsList({
   );
 }
 
+function UnknownCountsBadge() {
+  return (
+    <Tooltip label="We couldn't load reaction counts right now. Try again in a moment." withArrow>
+      <Badge
+        size="md"
+        radius="xs"
+        color="gray"
+        variant="light"
+        className="px-1 py-2"
+        classNames={{ label: 'flex gap-1 items-center flex-nowrap normal-case' }}
+        styles={{ root: { paddingBlock: 0 } }}
+        aria-label="Reaction counts unavailable"
+      >
+        <IconAlertTriangle size={14} />
+        <Text inherit lh={1}>
+          Couldn&apos;t load
+        </Text>
+      </Badge>
+    </Tooltip>
+  );
+}
+
 function ReactionBadge({
   hasReacted,
   count,
+  countUnknown,
   reaction,
   canClick,
   abbreviate,
@@ -272,6 +326,7 @@ function ReactionBadge({
 }: {
   hasReacted: boolean;
   count: number;
+  countUnknown?: boolean;
   reaction: ReviewReactions;
   canClick: boolean;
   abbreviate?: boolean;
@@ -300,7 +355,11 @@ function ReactionBadge({
       </Text>{' '}
       {!hideReactionCount && (
         <Text inherit lh={1}>
-          <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
+          {countUnknown ? (
+            '–'
+          ) : (
+            <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
+          )}
         </Text>
       )}
     </Button>
@@ -309,6 +368,7 @@ function ReactionBadge({
 
 function BuzzTippingBadge({
   tippedAmountCount,
+  countUnknown,
   entityId,
   entityType,
   toUserId,
@@ -316,6 +376,7 @@ function BuzzTippingBadge({
   ...props
 }: {
   tippedAmountCount: number;
+  countUnknown?: boolean;
   toUserId: number;
   entityType: string;
   entityId: number;
@@ -347,7 +408,11 @@ function BuzzTippingBadge({
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit lh={1}>
-        <AnimatedCount value={tippedAmountCount + tippedAmount} resetKey={entityId} />
+        {countUnknown ? (
+          '–'
+        ) : (
+          <AnimatedCount value={tippedAmountCount + tippedAmount} resetKey={entityId} />
+        )}
       </Text>
     </Badge>
   );

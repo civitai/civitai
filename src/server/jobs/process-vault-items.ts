@@ -116,10 +116,7 @@ export const getEligibleVaultItemsQuery = () => {
             // equals: Prisma.AnyNull` matches rows where the key is ABSENT inside
             // a non-null `meta` blob (SQL `jsonb #> path IS NULL`), so never-leased
             // items AND legacy items predating this field stay eligible — they are
-            // NOT stranded out of the backlog. This is the same pattern a prod
-            // billing job relies on: process-subscriptions-requiring-renewal.ts
-            // uses `metadata: { path: ['renewalEmailSent'], equals: Prisma.AnyNull }`
-            // to select rows whose renewal-email key is absent. Do NOT "simplify"
+            // NOT stranded out of the backlog. Do NOT "simplify"
             // this to an explicit-null-only check on a Prisma upgrade — that would
             // silently exclude every absent-key row and freeze the backlog.
             {

@@ -35,8 +35,11 @@
     type MonetizationLimits,
   } from '$lib/monetization/fee';
   import {
+    EARLY_ACCESS_NOT_COUNTED,
+    PRICING_SLOT_EXPLAINER,
     capMediaType,
     formatPricingAllowance,
+    feeAllowanceBoostNote,
     pricingAllowanceState,
     pricingFloorMessage,
     type CapTier,
@@ -44,6 +47,7 @@
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
   import CapUpsell from '$lib/components/CapUpsell.svelte';
+  import PricingSlotHistory from '$lib/components/PricingSlotHistory.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
@@ -130,6 +134,9 @@
     pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.pricingLimit })
   );
   const permAtCap = $derived(allowance.atLimit);
+  const feeAllowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.feePricingLimit })
+  );
   const eaAtCap = $derived(
     data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
   );
@@ -262,8 +269,13 @@
       ? Infinity
       : Math.max(0, data.caps.pricingLimit - data.caps.pricingUsed)
   );
+  const remainingFeeSlots = $derived(
+    data.caps.feePricingLimit === null
+      ? Infinity
+      : Math.max(0, data.caps.feePricingLimit - data.caps.pricingUsed)
+  );
   // A version that already carries a price spends nothing when re-priced — mirrors the server's
-  // unpricedVersionIds, so editing stays possible even with the month's allowance used up.
+  // unpricedVersionIds. The server can still refuse a boosted licensed version a permanent gate.
   const alreadyPricedIds = $derived(
     new Set(
       view.models
@@ -345,6 +357,9 @@
     return [...byKey.values()].sort((a, b) => a.cap - b.cap);
   });
 
+  const POI_BLOCKED_HINT =
+    "Flagged as depicting a real person — a new licensing fee or access price will be refused. If that's wrong, contact support to have the flag reviewed.";
+
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
     else selected.add(id);
@@ -405,6 +420,8 @@
   let editing = $state<CreatorModelVersion | null>(null);
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
+  // Same for the POI flag, which is model-level.
+  let editingPoi = $state(false);
   // The edited version's base model decides the media axis of every cap in the drawer.
   // One object per edited version — max, offered denominators and the suggestion all come from it, so
   // they cannot disagree with each other or with what the server enforces.
@@ -426,8 +443,9 @@
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
-  function openEditor(version: CreatorModelVersion, modelType: string) {
+  function openEditor(version: CreatorModelVersion, modelType: string, poi: boolean) {
     editingType = modelType;
+    editingPoi = poi;
     feeAffirmed = false;
     // Denominator from the seed rule, amount from the version alone: an unset fee opens on the
     // suggestion's denominator with nothing priced until the creator types.
@@ -498,9 +516,22 @@
           to monetize
         </span>
       {:else}
-        <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
+        <span
+          class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={PRICING_SLOT_EXPLAINER}
+        >
           {formatPricingAllowance(allowance)}
         </span>
+        <span class="text-dark-2" title={PRICING_SLOT_EXPLAINER}>
+          · licensing fees and permanent paid access
+        </span>
+        {#if data.caps.feeBoost > 0 && data.caps.feePricingLimit !== null}
+          <span class="font-medium text-white" data-testid="fee-allowance-boost">
+            · {feeAllowance.used} of {feeAllowance.limit} for licensing fees ({feeAllowanceBoostNote(
+              data.caps.feeBoost
+            )})
+          </span>
+        {/if}
         {#if !allowance.unlimited}
           <CapUpsell
             used={allowance.used}
@@ -517,14 +548,29 @@
         <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span
         >
       {:else}
-        <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
+        <span
+          class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={EARLY_ACCESS_NOT_COUNTED}
+        >
           {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
             ? ' · limit reached'
             : ''}
         </span>
-        <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
+        <span class="text-dark-2" title={EARLY_ACCESS_NOT_COUNTED}>
+          · up to {data.caps.maxEarlyAccessDays} days · a separate limit
+        </span>
       {/if}
     </span>
+    <!-- Two meters side by side get read as one budget — say what each counts where they meet. -->
+    {#if permAtCap && data.caps.pricingFloor.eligible}
+      <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
+      {#if data.caps.feeBoost > 0 && !feeAllowance.atLimit}
+        <p class="w-full text-white">
+          You can still add {feeAllowance.remaining} more licensing fees this month with your extra
+          slots. They don't cover permanent paid access.
+        </p>
+      {/if}
+    {/if}
     <details class="w-full">
       <summary
         class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
@@ -533,6 +579,17 @@
         Monetization limits · {data.caps.tier}
       </summary>
       <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
+    </details>
+    <details class="w-full">
+      <summary
+        class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
+        data-testid="pricing-slots-toggle"
+      >
+        What used your pricing slots
+      </summary>
+      <div class="mt-3">
+        <PricingSlotHistory slots={data.caps.pricingSlots} />
+      </div>
     </details>
   </div>
 {/if}
@@ -728,6 +785,7 @@
   needsAffirmation={selectionNeedsAffirmation}
   pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
   pricingSlotsRemaining={remainingPricingSlots}
+  feeSlotsRemaining={remainingFeeSlots}
 />
 
 <!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every
@@ -783,6 +841,15 @@
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
               {/if}
               <Badge variant="secondary">{model.type}</Badge>
+              {#if model.poi}
+                <Badge
+                  variant="outline"
+                  class="border-yellow-5/30 bg-yellow-5/10 text-yellow-5"
+                  title={POI_BLOCKED_HINT}
+                >
+                  Real person
+                </Badge>
+              {/if}
               <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
                 {model.status}
               </Badge>
@@ -822,7 +889,7 @@
                       />
                       <button
                         type="button"
-                        onclick={() => openEditor(version, model.type)}
+                        onclick={() => openEditor(version, model.type, model.poi)}
                         class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
                       >
                         <span class="flex min-w-0 items-center gap-2 sm:flex-1">
@@ -919,6 +986,13 @@
       </SheetHeader>
 
       <div class="flex flex-col gap-6 p-5">
+        {#if editingPoi}
+          <p class="rounded-md border border-yellow-5/30 bg-yellow-5/10 p-3 text-xs text-yellow-5">
+            This model is flagged as depicting a real person, so it can't carry a licensing fee or a
+            paid-access price. Clearing an existing fee still works. If the flag is wrong, contact
+            support to have it reviewed.
+          </p>
+        {/if}
         <!-- Licensing fee -->
         <section class="flex flex-col gap-3">
           <div class="flex items-center justify-between">

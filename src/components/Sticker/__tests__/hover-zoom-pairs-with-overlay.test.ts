@@ -5,10 +5,10 @@ import { resolve } from 'node:path';
 /**
  * The card's hover zoom and the sticker overlay move together, or stickers drift.
  *
- * A placed sticker sits on an overlay that is a SIBLING of the card's link — it
- * has to paint above the media and must not join the click target — so it does
- * not inherit the transform the media gets on hover. The two are kept in step by
- * one rule listing both. Retune the media's zoom alone and every sticker slides
+ * A placed sticker sits on an overlay outside the media element — it has to paint
+ * above the media and must not join the link's click target — so it does not
+ * inherit the transform the media gets on hover. The two are kept in step by one
+ * rule listing both. Retune the media's zoom alone and every sticker slides
  * off its spot for as long as the pointer is on the card.
  *
  * 🔴 WHY THIS IS A SOURCE SCAN AND NOT A RENDER. `:hover` is not a state a
@@ -35,9 +35,14 @@ const STYLESHEET = resolve(
 
 const source = () => readFileSync(STYLESHEET, 'utf-8');
 
-/** The `&:hover { … }` block inside `.linkOrClick`, braces balanced. */
+/** The card body's `&:hover { … }` block, braces balanced. */
 const hoverBlock = (css: string) => {
-  const start = css.indexOf('&:hover');
+  // Anchored on the card-body selector, not on the FIRST `&:hover` in the file. Any unrelated hover
+  // rule added above it would otherwise retarget every assertion here at the wrong block, and they
+  // would redden pointing at the sticker pairing.
+  const anchor = css.indexOf(':global([data-card-hover])');
+  if (anchor < 0) return null;
+  const start = css.indexOf('&:hover', anchor);
   if (start < 0) return null;
 
   let depth = 0;
@@ -66,6 +71,26 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     expect(block).toContain('.image');
     expect(block).toContain('[data-sticker-overlay]');
 
+    // The block's own text is identical whether it hangs off the card body or off
+    // the link, so finding it proves nothing about which. Hanging it off the link
+    // is the bug: the header is a SIBLING of the link, so a header chip that takes
+    // pointer events drops the link's hover and the picture falls back mid-hover.
+    // Anchored at column 0: reading only the text before `&:hover` accepts the block being NESTED
+    // inside something else (`.linkOrClick { :global([data-card-hover]) { … } }`), which selects
+    // nothing at all, because the attribute is on the card root — an ancestor of the link.
+    const anchored = source().slice(
+      0,
+      source().indexOf('&:hover', source().indexOf(':global([data-card-hover])'))
+    );
+    expect(anchored).toMatch(/^:global\(\[data-card-hover\]\)\s*\{\s*$/m);
+
+    // Under the card body the overlay is nested inside, so any combinator at all — `~`, `+`, `>`
+    // — selects nothing and every placed sticker drifts.
+    expect(block).toMatch(/[\r\n]\s*:global\(\[data-sticker-overlay\]\)\s*\{/);
+    // The positive form alone accepts a line-BROKEN combinator: `& ~` then the selector on
+    // the next line matches it, and still selects nothing.
+    expect(block).not.toMatch(/[~+>]\s*:global\(\[data-sticker-overlay\]\)/);
+
     const transforms = transformsIn(block ?? '');
 
     // Two rules, one value. A retune that touches only the media leaves two
@@ -74,14 +99,33 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     expect(new Set(transforms).size).toBe(1);
   });
 
+  test('the attribute the hover rule hangs off is actually stamped on the card', () => {
+    const template = readFileSync(
+      resolve(__dirname, '..', '..', 'CardTemplates', 'AspectRatioCard.tsx'),
+      'utf-8'
+    );
+    // The selector and the attribute live in two files and are coupled by nothing but this name,
+    // so deleting the attribute leaves a stylesheet that still reads correctly and a hover zoom
+    // that is dead on every card in the app.
+    //
+    // Tied to the opening tag, not to the file: a bare substring matches the name in a comment, or
+    // on the WRONG element, or `data-card-hoverable`. Pinned to the tag carrying `styles.content`
+    // because relocating it to the header div kills the zoom app-wide, and both a substring check
+    // and a bare `<div data-card-hover` stay green through that.
+    expect(template).toMatch(/<div(?=[^>]*\bdata-card-hover\b)[^>]*styles\.content/);
+    expect(source()).toContain('[data-card-hover]');
+  });
+
   test('the media height is pinned, so the two keep a common centre', () => {
-    expect(source()).toMatch(/height:\s*100%\s*!important/);
+    expect(source()).toMatch(/\.image\s*\{[^}]*height:\s*100%\s*!important/);
   });
 
   test('the overlay transitions with the media rather than snapping', () => {
     const css = source();
 
-    const mediaTransition = /transition:\s*transform\s+400ms\s+ease/.test(css);
+    // Scoped to `.image`'s own block: unscoped, the overlay's rule below satisfies
+    // it, and the two booleans stop being independent.
+    const mediaTransition = /\.image\s*\{[^}]*transition:\s*transform\s+400ms\s+ease/.test(css);
     const overlayTransition =
       /:global\(\[data-sticker-overlay\]\)\s*\{[^}]*transition:\s*transform\s+400ms\s+ease/.test(
         css

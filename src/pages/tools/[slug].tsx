@@ -70,7 +70,6 @@ function ToolFeedPage() {
           <Stack gap="xs">
             <IsClient>
               <ImagesInfinite
-                showFeedbackPrompt
                 filters={{
                   period,
                   sort,

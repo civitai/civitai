@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-08-26
+lastmod: 2026-10-22
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.red](https://civitai.red), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -49,7 +49,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.7 **Subscription Service.** You may be able to subscribe to certain channels or subscription-based plans offered by Creators or by us through the Service, with automatically recurring payments for periodic charges (“Subscription Service”). The “Subscription Billing Date” is the date when you purchase your first subscription to the Subscription Service. The Subscription Service will begin on the Subscription Billing Date and continue for the subscription period that you select (such period, the “Initial Subscription Period”), and will automatically renew for successive periods of the same duration as the Initial Subscription Period (the Initial Subscription Period and each such renewal period, each a “Subscription Period”) unless you cancel the Subscription Service, or the Creator or we terminate it. If you activate a Subscription Service, then you authorize Civitai or the Payment Processor to periodically charge, on a going-forward basis and until cancellation of the Subscription Service, all accrued sums (in Buzz or in another currency) on or before the payment due date. Your Account will be charged automatically on the Subscription Billing Date and thereafter on the renewal date of your Subscription Service for all applicable fees and taxes for the next Subscription Period. You must cancel your Subscription Service before it renews in order to avoid billing of the next periodic Subscription Fee to your account. Civitai or Payment Processor will bill the periodic Subscription Fee to the payment method associated with your Account or that you otherwise provide to us. You may cancel the Subscription Service by following the instructions in your Account or contacting us at support@civitai.com. YOUR CANCELLATION MUST BE RECEIVED BEFORE THE RENEWAL DATE IN ORDER TO AVOID CHARGE FOR THE NEXT SUBSCRIPTION PERIOD.
 
-- 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Civitai reserves the right to delete your account and any information or User Content (defined below) associated with your Account without any liability to you.
+- 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If a renewal Subscription Fee cannot be collected, your Subscription will end and fee-based features of the Service will stop. We will not delete your account or User Content because a renewal payment failed.
 
 6. **Licenses**
 
@@ -111,54 +111,52 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - (c) Illegal or violent activities, including:
 
-  - Depictions of incest, including sexual activity between immediate or close biological family members.
+  - Depictions of incest, including sexual activity between immediate or close biological family members. This applies to human and humanoid characters, including humanized versions of non-human characters.
   - Child abuse, exploitation, or endangerment.
+  - Violence against minors, or content that places minors (including characters who appear to be under 18) in a violent context where harm to a minor is shown or implied, such as a child who appears abused or injured, or weapons in a school or other setting associated with minors with an apparent intent to harm. Ordinary depictions of children at play, sports, or minor accidental injuries are not prohibited by this item.
   - Rape, sexual violence, or domestic abuse.
   - Depictions of human death, brutal violence, or graphic injuries.
   - Bestiality.
 
-- (d) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+- (d) The following, when depicted in sexual activity or in a context that insinuates or portrays sexual intent:
 
   - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
   - Vomit.
+  - Flatulence.
 
-- (e) Content depicting sexual activity while in a mind-altered state, including;
-
-  - Being drunk, drugged, under hypnosis, or mind control.
-
-- (f) The depiction of the following bodily excretions and related content, regardless of context;
+- (e) The depiction of the following bodily excretions and related content, regardless of context;
 
   - Urine.
-  - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
+  - Feces (scat, coprophagia, object or lifeform being ejected from an anus, etc.)
   - Menstruation.
   - Smegma.
   - Diapers.
 
-- (g) Self-harm, body image disorders, or promotion of dangerous behavior:
+- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
 
   - Cutting, mutilation, or suicide themes.
   - Depictions of anorexia, bulimia, or other disordered eating.
 
-- (h) Content that promotes hate, harm, or extremist ideologies, including:
+- (g) Content that promotes hate, harm, or extremist ideologies, including:
 
   - Hate speech or imagery targeting groups or individuals.
   - Extremist propaganda or incitement to violence.
 
-- (i) Misleading or impersonated content:
+- (h) Misleading or impersonated content:
 
   - Falsely labeled content claiming to be from another creator.
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (j) Nudity-manipulating tools or AI workflows:
+- (i) Nudity-manipulating tools or AI workflows:
   - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
 
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
 
 In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
 
-- (k) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
+- (j) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
 
   - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 

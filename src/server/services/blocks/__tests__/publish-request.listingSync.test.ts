@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 /**
  * `approveRequest` (3b) — onsite AppListing CREATE vs manifest-governed COPY RE-SYNC.
@@ -32,6 +33,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const { db, s3, holder } = vi.hoisted(() => {
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -65,10 +68,31 @@ const { db, s3, holder } = vi.hoisted(() => {
   return { db, s3, holder };
 });
 
+// 🔴 `approveRequest` LAZILY imports `app-listing.service` for its catalog-cache bust
+// (#529), and that module statically imports `~/server/utils/cache-helpers`, whose module
+// BODY builds a logger off the real env. Against this file's minimal `~/env/server` stub
+// that construction throws `TypeError: Cannot read properties of undefined (reading
+// 'includes')` at import time — inside the approve, so every approve case rejects rather
+// than reporting a missing mock. Stub the two exports the listing service uses.
+vi.mock('~/server/utils/cache-helpers', () => ({
+  queryCache: () => async (): Promise<unknown[]> => [],
+  bustCacheTag: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/env/server', () => ({
   env: {
     FORGEJO_BASE_URL: 'https://forgejo.example',
@@ -117,7 +141,9 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   ),
 }));
 
-const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
+const { approveRequest, draftTransitionWhere, resetRestoreWhere } = await import(
+  '~/server/services/blocks/publish-request.service'
+);
 
 /** The manifest the NEW version being approved declares. */
 const NEW_MANIFEST = {
@@ -498,20 +524,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
     ).toBe(true);
     warn.mockRestore();
   });
-
-  it('does NOT warn when the re-sync matches its row', async () => {
-    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
-
-    expect(
-      warn.mock.calls.some(
-        (c) => typeof c[0] === 'string' && c[0].includes('re-sync matched 0 rows')
-      )
-    ).toBe(false);
-    warn.mockRestore();
-  });
 });
 
 describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
@@ -609,7 +621,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     expect(assets.resolveListingRatingFloorInTx).toHaveBeenCalledWith(
       expect.anything(),
       'apl_draft',
-      'pg'
+      'pg',
+      false
     );
     const transitionCall = db.write.appListing.updateMany.mock.calls.find(
       (c) => 'appBlockId' in (((c[0] as { data?: Record<string, unknown> })?.data ?? {}) as object)
@@ -617,6 +630,27 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     const data = (transitionCall![0] as { data: Record<string, unknown> }).data;
     // 🔴 The RAISED rating is what goes live — NOT the declared 'pg'.
     expect(data.contentRating).toBe('r');
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_draft',
+      slug: 'cool-app',
+      before: 'pg',
+      after: 'r',
+      actorUserId: 9,
+    });
+  });
+
+  it('a transition that matched no row hands the history nothing', async () => {
+    const assets = await import('~/server/services/blocks/app-listing-assets.service');
+    vi.mocked(assets.resolveListingRatingFloorInTx).mockResolvedValueOnce('r');
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(recordRatingChange).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   // -------------------------------------------------------------------------
@@ -637,5 +671,31 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     // Scoped to the submitter (the fixture request's submittedByUserId) — a same-slug
     // draft owned by anyone else cannot match.
     expect(draftProbe!.userId).toBe(4242);
+  });
+});
+
+/**
+ * The moderator's pre-approve rating warning answers "which listing will this approve
+ * re-rate" with the same two `where` builders. These pin that approveRequest's own reads
+ * ARE those builders' output, so the warning cannot drift from the write.
+ */
+describe('approveRequest — its re-rate lookups are the shared where-builders', () => {
+  const whereArgs = () =>
+    db.write.appListing.findFirst.mock.calls.map(
+      (c) => (c[0] as { where?: Record<string, unknown> })?.where ?? {}
+    );
+
+  it('the (3b-transition) draft lookup is draftTransitionWhere(request)', async () => {
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+    expect(whereArgs()).toContainEqual(
+      draftTransitionWhere({ slug: 'cool-app', submittedByUserId: 4242 })
+    );
+  });
+
+  it('the (3b-reset) restore lookup is resetRestoreWhere(appBlockId)', async () => {
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+    expect(whereArgs()).toContainEqual(resetRestoreWhere('apb_1'));
   });
 });

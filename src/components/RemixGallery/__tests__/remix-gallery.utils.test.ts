@@ -9,13 +9,13 @@ import {
   freeRefusalOutcome,
   freeSubmissionOffer,
   galleryDialogImages,
-  paidSubmissionOpen,
   remixGalleryModerating,
   remixSubmitPickerFilters,
   submissionMethod,
   trimToWholeRows,
 } from '~/components/RemixGallery/remix-gallery.utils';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { paidSubmissionOpen } from '~/shared/utils/remix-gallery';
 
 describe('what a refused free submission is told', () => {
   const stillOffered = {

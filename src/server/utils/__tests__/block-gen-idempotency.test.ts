@@ -42,6 +42,8 @@ import {
   ORCHESTRATOR_EXTERNAL_ID_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeConfirmedStepBlockExternalId,
+  composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
   releaseGenIdempotency,
@@ -185,9 +187,7 @@ describe('charset + externalId guards (audit 🟢)', () => {
     expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(worst)).toBe(true);
     expect(worst.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
     // The other two synthetic shapes are strictly shorter, so they cannot beat it.
-    expect(composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64))).toHaveLength(
-      119
-    );
+    expect(composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64))).toHaveLength(119);
     expect(composeBlockExternalId(`pubreq_${'0'.repeat(26)}`, 'k'.repeat(64))).toHaveLength(102);
   });
 
@@ -261,5 +261,52 @@ describe('mintServerBlockExternalId (audit 🔴-1)', () => {
     expect(client.startsWith('blk')).toBe(true);
     const minted = new Set(Array.from({ length: 50 }, () => mintServerBlockExternalId()));
     expect(minted.has(client)).toBe(false);
+  });
+});
+
+describe('composeTrainingBlockExternalId', () => {
+  it('namespaces a run key under `blt`, disjoint from client and minted ids', () => {
+    const key = 'a'.repeat(64);
+    expect(composeTrainingBlockExternalId(key)).toBe(`blt${key}`);
+  });
+
+  it.each([
+    ['not hex', 'z'.repeat(64)],
+    ['too short', 'a'.repeat(63)],
+    ['too long', 'a'.repeat(65)],
+    ['prefixed', `-${'a'.repeat(64)}`],
+    ['upper-case', 'A'.repeat(64)],
+  ])('refuses a run key that is %s', (_l, key) => {
+    expect(() => composeTrainingBlockExternalId(key)).toThrow('sha256 hex digest');
+  });
+});
+
+describe('composeConfirmedStepBlockExternalId', () => {
+  it('derives the id from the QUOTE: `blc` + the quote id’s 32 hex chars', () => {
+    const hex = '0123456789abcdef0123456789abcdef';
+    const id = composeConfirmedStepBlockExternalId(`sq_${hex}`);
+    expect(id).toBe(`blc${hex}`);
+    expect(id).toMatch(ORCHESTRATOR_EXTERNAL_ID_REGEX);
+    expect(id.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+    // Disjoint from the training, client and minted namespaces at index 2.
+    expect(id.slice(0, 3)).not.toBe(composeTrainingBlockExternalId('b'.repeat(64)).slice(0, 3));
+    expect(id.slice(0, 3)).not.toBe(mintServerBlockExternalId().slice(0, 3));
+  });
+
+  it('two quotes give two ids', () => {
+    expect(composeConfirmedStepBlockExternalId(`sq_${'a'.repeat(32)}`)).not.toBe(
+      composeConfirmedStepBlockExternalId(`sq_${'b'.repeat(32)}`)
+    );
+  });
+
+  it.each([
+    ['a training quote id', `tq_${'a'.repeat(32)}`],
+    ['a short id', `sq_${'a'.repeat(31)}`],
+    ['a non-hex id', `sq_${'z'.repeat(32)}`],
+    ['a run key', 'a'.repeat(64)],
+  ])('refuses %s', (_l, quoteId) => {
+    expect(() => composeConfirmedStepBlockExternalId(quoteId)).toThrow(
+      'confirmed step externalId: quoteId must be an sq_ quote id'
+    );
   });
 });

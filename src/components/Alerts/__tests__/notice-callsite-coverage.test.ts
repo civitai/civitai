@@ -92,13 +92,17 @@ const CALL_SITE_LEDGER: Record<string, string[]> = {
   'components/Modals/BuyBuzzModal.tsx': ['earnBlueBuzzRewards'],
   'components/RemixGallery/RemixGalleryExplainer.tsx': ['remixGalleryExplainer'],
   'components/Referrals/ReferralDashboard.tsx': ['referralKickback', 'referralLiteOnboarding'],
+  'components/CreatorJourney/FirstPublishCard.tsx': [
+    'firstArticlePublished',
+    'firstModelPublished',
+  ],
   'components/Referrals/ReferralDashboardFull.tsx': [
     'referralHowItWorks',
     'referralKickback',
     'referralTokenShop',
   ],
   // Guarded by feature-notice.characterization.browser.test.tsx
-  'components/Alerts/NavTidyNotice.tsx': ['navTidy'],
+  'components/Alerts/NavCustomizeNotice.tsx': ['navCustomize'],
   'components/Alerts/YellowBuzzMigrationNotice.tsx': ['yellowBuzzMigration'],
   'components/Buzz/CryptoDeposit/OnrampGuidance.tsx': ['cryptoOnrampGuidance'],
 };
@@ -111,7 +115,7 @@ describe('feature-notice call-site ledger', () => {
     // and a scan wired to nothing returns `{}` — which would make an emptied
     // ledger pass and a "no new call sites" claim vacuous.
     expect(Object.keys(actual).length).toBeGreaterThan(0);
-    expect(actual['components/Alerts/NavTidyNotice.tsx']).toContain('navTidy');
+    expect(actual['components/Alerts/NavCustomizeNotice.tsx']).toContain('navCustomize');
   });
 
   test('every file referencing FEATURE_NOTICES is a known, guarded call site', () => {
@@ -176,7 +180,7 @@ describe('feature-notice audience ledger', () => {
 
   // 🔴 Hand-typed, like CALL_SITE_LEDGER above. Deriving this from the registry
   // would make it agree with a notice that silently loses its audience.
-  const TARGETED_KEYS = ['remixGalleryExplainer'];
+  const TARGETED_KEYS = ['firstArticlePublished', 'firstModelPublished', 'remixGalleryExplainer'];
 
   /** Files that must read the hook's audience answer, derived from the ledger. */
   const filesReferencing = (key: string) =>
@@ -205,7 +209,7 @@ describe('feature-notice audience ledger', () => {
     // field and a file that legitimately does not. Without the second half a
     // detector wired to `true` would pass.
     expect(readsAudience('components/RemixGallery/RemixGalleryExplainer.tsx')).toBe(true);
-    expect(readsAudience('components/Alerts/NavTidyNotice.tsx')).toBe(false);
+    expect(readsAudience('components/Alerts/NavCustomizeNotice.tsx')).toBe(false);
   });
 
   test('every call site of a TARGETED notice reads isInAudience', () => {

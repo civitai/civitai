@@ -328,7 +328,8 @@ CREATE TYPE public."CommercialUse" AS ENUM (
     'Image',
     'Rent',
     'Sell',
-    'RentCivit'
+    'RentCivit',
+    'SellMerge'
 );
 
 
@@ -5441,7 +5442,7 @@ CREATE TABLE public."Model" (
     unlisted boolean DEFAULT false NOT NULL,
     "gallerySettings" jsonb DEFAULT '{"tags": [], "users": [], "images": []}'::jsonb NOT NULL,
     availability public."Availability" DEFAULT 'Public'::public."Availability" NOT NULL,
-    "allowCommercialUse" public."CommercialUse"[] DEFAULT ARRAY['Image'::public."CommercialUse", 'RentCivit'::public."CommercialUse", 'Rent'::public."CommercialUse", 'Sell'::public."CommercialUse"] NOT NULL,
+    "allowCommercialUse" public."CommercialUse"[] DEFAULT ARRAY['Image'::public."CommercialUse", 'RentCivit'::public."CommercialUse", 'Rent'::public."CommercialUse", 'Sell'::public."CommercialUse", 'SellMerge'::public."CommercialUse"] NOT NULL,
     "nsfwLevel" integer DEFAULT 0 NOT NULL,
     "lockedProperties" text[] DEFAULT ARRAY[]::text[],
     minor boolean DEFAULT false NOT NULL,

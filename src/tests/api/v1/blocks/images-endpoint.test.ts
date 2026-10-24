@@ -1,11 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 
 import {
   sfwBrowsingLevelsFlag,
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
  * Endpoint-wiring security tests for /api/v1/blocks/images (the sibling of
@@ -332,4 +335,162 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
     expect(headers['Retry-After']).toBeUndefined();
   });
+
+  // `runImageSearch` rejects a malformed feed-offset cursor this way; the route must keep the 400.
+  it('[invariant] keeps a BAD_REQUEST from the search (invalid feed cursor) as a 400', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunImageSearch.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid cursor: out of range "-5"' })
+    );
+
+    const res = await invoke({ cursor: '-5' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid cursor: out of range "-5"', code: 'BAD_REQUEST' });
+  });
+});
+
+// ── Batch by id (`?ids=`) — civitai/civitai-app-starters#429 ────────────────
+//
+// The block route gets the same one-round-trip batch lookup as the public one:
+// this is the endpoint the retired `GET_IMAGES_BY_IDS` bridge message becomes,
+// and a block's results grid is the shape that needs it.
+//
+// The load-bearing claim here is `blocks-ids-clamp`: `ids` is a FILTER and never
+// a maturity bypass. It cannot be, structurally — `browsingLevel` is resolved
+// from the token before the search is called and reaches `getAllImages` as its
+// own independent SQL clause — but "structurally impossible" is what a guard is
+// for, since the whole reason this route exists is that the public one's
+// maturity surface was not acceptable for blocks.
+describe('/api/v1/blocks/images — ?ids= batch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('forwards a comma-delimited batch to the search input', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const res = await invoke({ ids: '11,22,33' });
+
+    expect(res.statusCode).toBe(200);
+    const [input] = mockRunImageSearch.mock.calls[0];
+    expect(input.data.ids).toEqual([11, 22, 33]);
+  });
+
+  it('blocks-ids-clamp: a GREEN token naming ids is still served at the SFW ceiling', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag, domain: 'green' });
+    // Every lever a caller could reach for, together: named ids AND both
+    // maturity knobs the schema refuses to declare.
+    await invoke({ ids: '11,22,33', nsfw: 'true', browsingLevel: '31' });
+
+    const [input, ctx] = mockRunImageSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel & (4 | 8 | 16)).toBe(0);
+    // The ids survive; the maturity knobs do not become readable alongside them.
+    expect(input.data.ids).toEqual([11, 22, 33]);
+    expect(input.data).not.toHaveProperty('nsfw');
+    expect(input.data).not.toHaveProperty('browsingLevel');
+  });
+
+  it('blocks-ids-clamp: a restricted region still narrows a RED token that names ids', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
+    await invoke({ ids: '11,22,33' });
+
+    const [, ctx] = mockRunImageSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it(`rejects more than ${IMAGE_IDS_BATCH_MAX} ids with 400, before the search`, async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const many = Array.from({ length: IMAGE_IDS_BATCH_MAX + 1 }, (_, i) => i + 1);
+    const res = await invoke({ ids: many.join(',') });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it(`accepts exactly ${IMAGE_IDS_BATCH_MAX} ids`, async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const many = Array.from({ length: IMAGE_IDS_BATCH_MAX }, (_, i) => i + 1);
+    const res = await invoke({ ids: many.join(',') });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunImageSearch.mock.calls[0][0].data.ids).toEqual(many);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['non-numeric', 'abc'],
+    ['zero', '0'],
+    ['negative', '-5'],
+  ])('rejects a %s ids param with 400', async (_label, raw) => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const res = await invoke({ ids: raw });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('still counts against the per-token catalog rate limit', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockCheckRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 6 });
+    const res = await invoke({ ids: '11,22,33' });
+
+    expect(res.statusCode).toBe(429);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/v1/blocks/images — reactTicket (app reactions provenance)', () => {
+  const SECRET = 'images-endpoint-secret';
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+    regionBox.restricted = false;
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockRunImageSearch.mockResolvedValue({
+      items: [{ id: 501 }, { id: 502 }],
+      nextCursor: undefined,
+    });
+  });
+
+  it('attaches a ticket per item that verifies for exactly (that image, this app, this viewer)', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'user:42', appBlockId: 'apb_test' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    const items = res.body.items as Array<{ id: number; reactTicket?: string }>;
+    expect(items.map((i) => i.id)).toEqual([501, 502]);
+    for (const item of items) {
+      const subject = {
+        entityType: 'image' as const,
+        entityId: item.id,
+        appBlockId: 'apb_test',
+        sub: 'user:42',
+      };
+      expect(verifyReactTicket(item.reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+      // Bound to the image: the other item's id does not verify with this ticket.
+      expect(
+        verifyReactTicket(
+          item.reactTicket,
+          { ...subject, entityId: item.id === 501 ? 502 : 501 },
+          { secret: SECRET }
+        ).ok
+      ).toBe(false);
+    }
+  });
+
+  it('attaches NO ticket for an anonymous token', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'anon' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    for (const item of res.body.items) expect(item).not.toHaveProperty('reactTicket');
+  });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

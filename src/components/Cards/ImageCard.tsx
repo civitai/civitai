@@ -7,7 +7,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
-import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
@@ -29,6 +29,8 @@ export function ImageCard({ data }: Props) {
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
       cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
+      eventDecoration={data.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Image', entityId: data.id }}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
@@ -56,13 +58,21 @@ export function ImageCard({ data }: Props) {
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
           {safe && <RemixedCardFlyout imageId={data.id} />}
-          <UserAvatarSimple {...data.user} />
+          <UserAvatarSimple
+            {...data.user}
+            classNames={{
+              avatar: cardClasses.creatorAvatar,
+              namePill: cardClasses.creatorPill,
+              namePillPlate: cardClasses.creatorPillPlate,
+            }}
+          />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
               className={cardClasses.reactions}
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
+              metricsUnknown={data.stats?.statsUnknown}
               metrics={{
                 likeCount: data.stats?.likeCountAllTime,
                 dislikeCount: data.stats?.dislikeCountAllTime,

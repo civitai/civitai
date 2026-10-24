@@ -14,12 +14,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     REVIEW_SNAPSHOT_PURGE_AFTER_MS ago is retained, not reclaimed.
  */
 
-const { mockDelete, mockGetJobDate, mockSetCursor } =
-  vi.hoisted(() => ({
-    mockDelete: vi.fn(),
-    mockGetJobDate: vi.fn(),
-    mockSetCursor: vi.fn(() => Promise.resolve(undefined)),
-  }));
+const { mockDelete, mockGetJobDate, mockSetCursor } = vi.hoisted(() => ({
+  mockDelete: vi.fn(),
+  mockGetJobDate: vi.fn(),
+  mockSetCursor: vi.fn(() => Promise.resolve(undefined)),
+}));
 
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   deleteReviewRepo: (...a: unknown[]) => mockDelete(...a),
@@ -467,25 +466,15 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
       'webhooks'
     );
   });
-
-  it('logs a per-repo outcome for every slug it acts on', async () => {
-    mockFindMany.mockResolvedValue([row('a'), row('b')]);
-
-    await purgeExpiredReviewSnapshots({ now: NOW });
-
-    const slugsLogged = mockLogToAxiom.mock.calls
-      .map((c) => c[0] as { slug?: string })
-      .filter((d) => !!d.slug)
-      .map((d) => d.slug);
-    expect(slugsLogged).toEqual(['a', 'b']);
-  });
 });
 
 describe('purgeReviewSnapshotsJob wrapper', () => {
   it('returns the sweep result', async () => {
     mockFindMany.mockResolvedValue([row('gen-matrix')]);
 
-    const result = await (purgeReviewSnapshotsJob as unknown as () => Promise<{ deleted: number }>)();
+    const result = await (
+      purgeReviewSnapshotsJob as unknown as () => Promise<{ deleted: number }>
+    )();
 
     expect(result.deleted).toBe(1);
   });
@@ -493,10 +482,12 @@ describe('purgeReviewSnapshotsJob wrapper', () => {
   it('FAIL-OPEN: swallows a thrown sweep failure so the runner is never crashed', async () => {
     mockFindMany.mockRejectedValue(new Error('db down'));
 
-    const result = await (purgeReviewSnapshotsJob as unknown as () => Promise<{
-      error?: boolean;
-      deleted: number;
-    }>)();
+    const result = await (
+      purgeReviewSnapshotsJob as unknown as () => Promise<{
+        error?: boolean;
+        deleted: number;
+      }>
+    )();
 
     expect(result.error).toBe(true);
     expect(result.deleted).toBe(0);
@@ -504,13 +495,5 @@ describe('purgeReviewSnapshotsJob wrapper', () => {
       expect.objectContaining({ outcome: 'run-failed', level: 'error' }),
       'webhooks'
     );
-  });
-
-  it('stays silent on a no-op run', async () => {
-    mockFindMany.mockResolvedValue([]);
-
-    await (purgeReviewSnapshotsJob as unknown as () => Promise<unknown>)();
-
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });

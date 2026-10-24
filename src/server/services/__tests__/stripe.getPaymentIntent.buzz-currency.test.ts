@@ -68,6 +68,12 @@ function overrideLogs() {
   );
 }
 
+function mismatchLogs() {
+  return (loggingMock.logToAxiom.mock.calls as [{ name?: string }][]).filter(
+    ([payload]) => payload?.name === 'buzz-purchase-amount-mismatch'
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockPaymentIntentsCreate.mockResolvedValue({
@@ -116,5 +122,82 @@ describe('getPaymentIntent — buzz purchase currency', () => {
     await purchase({ domain: 'green', buzzType: 'green' });
 
     expect(overrideLogs()).toHaveLength(0);
+  });
+});
+
+describe('getPaymentIntent — amount-tamper guard is a 4xx, not a 500', () => {
+  it('rejects a buzzAmount that is not 10x unitAmount with BAD_REQUEST', async () => {
+    // The guard is correct and unchanged; what changed is its TYPE. It threw a bare `Error`,
+    // which `getTRPCErrorFromUnknown` maps to INTERNAL_SERVER_ERROR — so rejected input on
+    // this route answered with a 500, the same class of defect as the fractional amount that
+    // Stripe rejected. This is an exposed authenticated procedure.
+    //
+    // ⚠️ A mismatched pair is NOT only reachable by hand: `buzzPriceMetadataSchema.buzzAmount`
+    // is independent of `unitAmount`, so a buzz Price carrying bonus Buzz WOULD trip this from
+    // an ordinary package click. LATENT, not active — no such Price exists today (all five
+    // live buzz Prices carry empty metadata, checked 2026-09-19). That is why the log it emits
+    // is named `-mismatch` rather than `-tamper` — see `stripe.service.ts`, which carries the
+    // same qualifier.
+    await expect(
+      getPaymentIntent({
+        unitAmount: UNIT_AMOUNT,
+        currency: 'USD' as never,
+        recaptchaToken: 'token',
+        setupFuturePayment: true,
+        metadata: {
+          type: 'buzzPurchase',
+          buzzAmount: UNIT_AMOUNT * 20, // not 10x — the tampered pair
+          unitAmount: UNIT_AMOUNT,
+          userId: USER.id,
+        },
+        user: USER,
+        customerId: CUSTOMER_ID,
+        domain: 'green',
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+  });
+
+  it('logs the rejection, because the 4xx demotion removed its only counter', async () => {
+    // Demoting this guard 500 -> 400 took its metric with it: `recordTrpcError` increments
+    // `civitai_app_http_errors_total` only for `status >= 500` (measured live — that counter
+    // carries 500 and 503 series and NO 4xx), and a 4xx is tagged `type:'info'`, outside the
+    // error stream. The log below is therefore the ONLY remaining signal that this guard fired.
+    // Deleting it left the whole suite green until this test existed.
+    await expect(
+      getPaymentIntent({
+        unitAmount: UNIT_AMOUNT,
+        currency: 'USD' as never,
+        recaptchaToken: 'token',
+        setupFuturePayment: true,
+        metadata: {
+          type: 'buzzPurchase',
+          buzzAmount: UNIT_AMOUNT * 20,
+          unitAmount: UNIT_AMOUNT,
+          userId: USER.id,
+        },
+        user: USER,
+        customerId: CUSTOMER_ID,
+        domain: 'green',
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mismatchLogs()).toHaveLength(1);
+    expect(mismatchLogs()[0][0]).toMatchObject({
+      type: 'warning',
+      userId: USER.id,
+      submittedUnitAmount: UNIT_AMOUNT,
+      submittedBuzzAmount: UNIT_AMOUNT * 20,
+      expectedUnitAmount: UNIT_AMOUNT * 2,
+    });
+  });
+
+  it('stays quiet on a well-formed pair', async () => {
+    // Negative control: without this, an implementation that logged unconditionally would satisfy
+    // the assertion above while telling you nothing about whether the guard fired.
+    await purchase({ domain: 'green' });
+
+    expect(mismatchLogs()).toHaveLength(0);
   });
 });

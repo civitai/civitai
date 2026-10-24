@@ -7,6 +7,7 @@ import { createSysRedis } from '../client';
 // stubbing `withTypeMapping` — construction alone triggers the poisoning mutation, which is the
 // whole point. Everything else (withTypeMapping, commandOptions, RESP_TYPES) is the REAL module,
 // so the node-redis-level tests in this file are unaffected (they never call `.connect()`).
+const built = vi.hoisted(() => ({ sentinels: [] as unknown[] }));
 vi.mock('redis', async (importOriginal) => {
   const actual = await importOriginal<typeof import('redis')>();
   const noConnect = <T>(client: T): T => {
@@ -15,8 +16,11 @@ vi.mock('redis', async (importOriginal) => {
   };
   return {
     ...actual,
-    createSentinel: (opts: Parameters<typeof actual.createSentinel>[0]) =>
-      noConnect(actual.createSentinel(opts)),
+    createSentinel: (opts: Parameters<typeof actual.createSentinel>[0]) => {
+      const s = noConnect(actual.createSentinel(opts));
+      built.sentinels.push(s);
+      return s;
+    },
     createCluster: (opts: Parameters<typeof actual.createCluster>[0]) =>
       noConnect(actual.createCluster(opts)),
     createClient: (opts: Parameters<typeof actual.createClient>[0]) =>
@@ -33,22 +37,25 @@ vi.mock('redis', async (importOriginal) => {
  *
  * It holds for the single-node (`RedisClient`) and cluster (`RedisCluster`) paths — both
  * `_commandOptionsProxy` implementations set a proxy-LOCAL `_commandOptions` and never touch
- * the base client. But `RedisSentinel._commandOptionsProxy` (sentinel/index.js:220-228) writes
- * `proxy._self.#commandOptions = { …, typeMapping: … }`, and `_self` IS the shared base sentinel
- * client. So on the Sentinel path (prod sysRedis) a SINGLE `withTypeMapping` call permanently
- * rewrites the base client's DEFAULT command options → every plain `sMembers`/`get`/`hGet`/…
- * returns Buffers, breaking session revocation / feature flags / New Order.
+ * the base client. In 5.8.3, `RedisSentinel._commandOptionsProxy` (sentinel/index.js:220-228)
+ * wrote `proxy._self.#commandOptions = { …, typeMapping: … }`, and `_self` IS the shared base
+ * sentinel client. So on the Sentinel path (prod sysRedis) a SINGLE `withTypeMapping` call
+ * permanently rewrote the base client's DEFAULT command options → every plain `sMembers`/`get`/
+ * `hGet`/… returned Buffers, breaking session revocation / feature flags / New Order.
  *
  * The fix (client.ts `getClient`) gives the Sentinel buffer client its OWN dedicated base
  * connection so the mutation lands on a private base, leaving the shared serving client clean.
+ * @redis/client 6.3.0 fixed the defect upstream (its `_commandOptionsProxy` sets a proxy-local
+ * `_commandOptions`, sentinel/index.js:269-273), which the first test below pins; the dedicated
+ * base is kept and the factory guard at the bottom still covers it.
  *
  * These tests exercise the exact node-redis construction boundary the fix relies on WITHOUT
  * opening a socket: `createSentinel`/`createCluster`/`createClient` construct clients but only
  * `.connect()` opens TCP, and `withTypeMapping` mutates command options purely client-side. So
  * the whole file is hermetic and CI-safe (no live Sentinel required).
  *
- * `commandOptions` is the public getter that reflects a client's default command options
- * (returns `_self.#commandOptions` for sentinel/single; cluster exposes `_commandOptions`).
+ * `commandOptions` is the public getter that reflects a sentinel client's default command options
+ * (`_self.#commandOptions`); the single-node and cluster clients expose `_commandOptions` instead.
  */
 
 const BUFFER_MAPPING = { [RESP_TYPES.BLOB_STRING]: Buffer } as const;
@@ -59,19 +66,17 @@ const makeSentinel = () =>
     sentinelRootNodes: [{ host: '127.0.0.1', port: 26379 }],
   });
 
-describe('sentinel withTypeMapping poisoning (node-redis v5.8.3)', () => {
-  it('ROOT CAUSE: deriving the buffer client from the SHARED sentinel base poisons the base', () => {
-    // This is the defect the fix avoids — asserted so a node-redis upgrade that fixes it upstream
-    // surfaces here (this expectation would flip) rather than silently.
+describe('sentinel withTypeMapping poisoning (node-redis v5.8.3, fixed upstream in 6.x)', () => {
+  it('UPSTREAM: deriving the buffer client from a sentinel base no longer poisons the base', () => {
+    // 5.8.3 mutated the base here (this test asserted the mutation, so that a node-redis upgrade
+    // fixing it would surface). On 6.3.0 the mapping lands on the derived client only.
     const base = makeSentinel();
     expect(base.commandOptions?.typeMapping).toBeUndefined();
 
-    // The old code path: `client.withTypeMapping(...)` on the serving base.
-    base.withTypeMapping(BUFFER_MAPPING);
+    const derived = base.withTypeMapping(BUFFER_MAPPING);
 
-    // BUG: the base's own default command options were mutated in place — every plain read on
-    // `base` would now decode as a Buffer.
-    expect(base.commandOptions?.typeMapping).toBe(BUFFER_MAPPING);
+    expect(base.commandOptions?.typeMapping).toBeUndefined();
+    expect(derived.commandOptions?.typeMapping).toBe(BUFFER_MAPPING);
   });
 
   it('FIX: a DEDICATED sentinel base for the buffer client leaves the serving base untouched', () => {
@@ -80,13 +85,12 @@ describe('sentinel withTypeMapping poisoning (node-redis v5.8.3)', () => {
     const servingBase = makeSentinel();
     const bufferBase = makeSentinel();
 
-    bufferBase.withTypeMapping(BUFFER_MAPPING);
+    const bufferClient = bufferBase.withTypeMapping(BUFFER_MAPPING);
 
     // The serving client's command options are never mutated → plain reads still decode to strings.
     expect(servingBase.commandOptions?.typeMapping).toBeUndefined();
-    // The dedicated buffer base is the only one that carries the Buffer mapping (harmless — it is
-    // only ever used in Buffer mode).
-    expect(bufferBase.commandOptions?.typeMapping).toBe(BUFFER_MAPPING);
+    // Only the buffer client carries the Buffer mapping.
+    expect(bufferClient.commandOptions?.typeMapping).toBe(BUFFER_MAPPING);
     // They are distinct client instances (no shared `_self`).
     expect(servingBase).not.toBe(bufferBase);
   });
@@ -109,20 +113,26 @@ describe('sentinel withTypeMapping poisoning (node-redis v5.8.3)', () => {
 
   it('SCOPING: the single-node (dev) client is NOT affected either', () => {
     const single = createClient({ url: 'redis://127.0.0.1:6379' });
-    expect(single.commandOptions?.typeMapping).toBeUndefined();
+    // RedisClient has no `commandOptions` getter (5.8.3 or 6.3.0): its defaults live in the public
+    // `_commandOptions` field, which is what a command reads.
+    const singleOpts = (c: unknown) =>
+      (c as { _commandOptions?: { typeMapping?: unknown } })._commandOptions;
+    expect(singleOpts(single)?.typeMapping).toBeUndefined();
 
-    single.withTypeMapping(BUFFER_MAPPING);
+    const derived = single.withTypeMapping(BUFFER_MAPPING);
 
-    expect(single.commandOptions?.typeMapping).toBeUndefined();
+    expect(singleOpts(single)?.typeMapping).toBeUndefined();
+    expect(singleOpts(derived)?.typeMapping).toBe(BUFFER_MAPPING); // the probe can see a mapping
   });
 });
 
 /**
  * The REAL guard: drives `getClient` via the exported `createSysRedis` factory (the entry the app
- * uses to build the sysRedis client). Unlike the node-redis-level tests above — which prove the
- * defect but would still pass if someone reverted the fix — this test goes RED if `getClient`
- * regresses to deriving the buffer client from the shared serving client, because the serving
- * client itself would be poisoned.
+ * uses to build the sysRedis client). Unlike the node-redis-level tests above — which would still
+ * pass if someone reverted the fix — this checks the fix in `getClient` itself: the Buffer-mode
+ * client gets its own Sentinel base, and the serving client carries no Buffer mapping. On 5.8.3 a
+ * shared derivation also poisoned the serving client; on 6.3.0 it no longer can, so the base
+ * count is what still goes red when the dedicated base is dropped.
  *
  * Hermetic: the `vi.mock('redis')` above neutralizes `.connect()`, and `getClient` builds the
  * `.packed` (buffer) client synchronously during construction — so by the time the factory
@@ -139,6 +149,7 @@ describe('getClient sysRedis factory — Sentinel poisoning regression guard', (
   });
 
   it('SENTINEL: the serving client is NOT poisoned after the .packed buffer client is built', () => {
+    built.sentinels.length = 0;
     const sysRedis = createSysRedis({
       sysSentinels: '127.0.0.1:26379',
       sysSentinelName: 'sysmaster',
@@ -147,6 +158,9 @@ describe('getClient sysRedis factory — Sentinel poisoning regression guard', (
 
     // `.packed` was built during construction (via getClient) — the buffer client exists.
     expect(sysRedis.packed).toBeDefined();
+    // Two Sentinel bases: the serving one returned here and the dedicated Buffer-mode one.
+    expect(built.sentinels).toHaveLength(2);
+    expect(built.sentinels[0]).toBe(sysRedis);
 
     // THE INVARIANT the bug violated: the serving client carries NO BLOB_STRING→Buffer mapping in
     // its default command options, so a plain `get`/`sMembers`/`hGet`/… decodes to a STRING (not a
@@ -164,8 +178,10 @@ describe('getClient sysRedis factory — Sentinel poisoning regression guard', (
     const sysRedis = createSysRedis({ log: () => undefined });
     expect(sysRedis.packed).toBeDefined();
 
-    const commandOptions = (sysRedis as unknown as { commandOptions?: { typeMapping?: unknown } })
-      .commandOptions;
+    // A single client's defaults are `_commandOptions` (no `commandOptions` getter on RedisClient).
+    const commandOptions = (sysRedis as unknown as { _commandOptions?: { typeMapping?: unknown } })
+      ._commandOptions;
+    expect(commandOptions).toBeDefined();
     expect(commandOptions?.typeMapping).toBeUndefined();
   });
 });

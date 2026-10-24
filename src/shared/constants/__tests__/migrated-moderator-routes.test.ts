@@ -47,3 +47,18 @@ describe('isMigratedModeratorHref ignores query and hash', () => {
     expect(resolveMigratedRoute('image-tags')).toBe('images/tags');
   });
 });
+
+describe('Model Flags redirects', () => {
+  it('sends each old tab path to its own page', () => {
+    expect(resolveMigratedRoute('minor-hash-matches')).toBe(
+      'models/flags/needs-review?source=hash'
+    );
+    expect(resolveMigratedRoute('minor-hash-matches/appeals')).toBe('models/flags/appeals');
+    expect(resolveMigratedRoute('minor-hash-matches/auto')).toBe('models/flags/auto?source=hash');
+  });
+
+  it('marks the nav links that now leave the app', () => {
+    expect(isMigratedModeratorHref('/moderator/minor-hash-matches')).toBe(true);
+    expect(isMigratedModeratorHref('/moderator/minor-hash-matches/appeals')).toBe(true);
+  });
+});

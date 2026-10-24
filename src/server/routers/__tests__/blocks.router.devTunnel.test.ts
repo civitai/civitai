@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * APP DEV TUNNEL — router authz matrix for startDevTunnel / stopDevTunnel /
- * devTunnelStatus (appDeveloperProcedure + enforceAppBlocksFlag + the
+ * devTunnelStatus / devTunnelDnsReady (appDeveloperProcedure + enforceAppBlocksFlag + the
  * `app-blocks-dev-tunnel` kill-switch + ownership):
  *
  *   - non-author (plain non-mod, no cohort) → FORBIDDEN (author capability off).
@@ -19,7 +19,9 @@ const {
   mockStop,
   mockStopForUserBlock,
   mockGetActive,
+  mockDnsReadiness,
 } = vi.hoisted(() => ({
+  mockDnsReadiness: vi.fn(),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsDevTunnelEnabled: vi.fn(async () => true),
   mockResolveDev: vi.fn(),
@@ -50,6 +52,9 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   stopDevTunnel: mockStop,
   stopDevTunnelForUserBlock: mockStopForUserBlock,
   getActiveDevTunnel: mockGetActive,
+}));
+vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
+  getDevTunnelDnsReadiness: mockDnsReadiness,
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
@@ -180,6 +185,15 @@ describe('startDevTunnel — authz matrix', () => {
     // ownership resolve was scoped to the caller
     expect(mockResolveDev).toHaveBeenCalledWith('my-app', 100, { db: 'write' });
   });
+
+  it('passes the CLI-declared manifest auth through to the session', async () => {
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await caller.startDevTunnel({ ...input, declaredAuth: 'oauth' });
+    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({ declaredAuth: 'oauth' }));
+    await expect(
+      caller.startDevTunnel({ ...input, declaredAuth: 'basic' as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
 });
 
 describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {
@@ -286,8 +300,44 @@ describe('stopDevTunnel / devTunnelStatus', () => {
   });
 });
 
+describe('devTunnelDnsReady', () => {
+  it("answers for the caller's own tunnel, keyed by their user id and the blockId", async () => {
+    mockDnsReadiness.mockResolvedValue({ active: true, ready: false });
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    expect(await caller.devTunnelDnsReady({ blockId: 'my-app' })).toEqual({
+      active: true,
+      ready: false,
+    });
+    expect(mockDnsReadiness).toHaveBeenCalledExactlyOnceWith(100, 'my-app');
+  });
+
+  it('accepts no hostname: an extra `host` input never reaches the check', async () => {
+    mockDnsReadiness.mockResolvedValue({ active: false });
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await caller.devTunnelDnsReady({ blockId: 'my-app', host: 'example.org' } as never);
+    expect(mockDnsReadiness).toHaveBeenCalledExactlyOnceWith(100, 'my-app');
+  });
+
+  it('flag OFF → FORBIDDEN before any check', async () => {
+    mockIsDevTunnelEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await expect(caller.devTunnelDnsReady({ blockId: 'my-app' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDnsReadiness).not.toHaveBeenCalled();
+  });
+
+  it('non-author → FORBIDDEN before any check', async () => {
+    const caller = blocksRouter.createCaller(authedCtx(100, false) as never);
+    await expect(caller.devTunnelDnsReady({ blockId: 'my-app' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockDnsReadiness).not.toHaveBeenCalled();
+  });
+});
+
 /**
- * OAuth token-scope gate on the 3 dev-tunnel procs. enforceTokenScope (trpc.ts)
+ * OAuth token-scope gate on the dev-tunnel procs. enforceTokenScope (trpc.ts)
  * runs in the publicProcedure base chain, BEFORE the appDeveloperProcedure author
  * gate, so a token lacking AppBlocksDevTunnel is rejected at the scope gate with a
  * message mentioning "scope" (distinguishing it from the author-capability
@@ -397,6 +447,27 @@ describe('dev-tunnel procs — AppBlocksDevTunnel scope gate', () => {
         message: expect.stringContaining('scope'),
       });
       expect(mockGetActive).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('devTunnelDnsReady', () => {
+    it.each([
+      ['Full personal key', FULL],
+      ['new CLI OAuth token (with DevTunnel bit)', NEW_CLI],
+    ])('%s passes the scope gate', async (_label, scope) => {
+      mockDnsReadiness.mockResolvedValue({ active: false });
+      const caller = blocksRouter.createCaller(tokenCtx(100, scope) as never);
+      expect(await caller.devTunnelDnsReady({ blockId: 'my-app' })).toEqual({ active: false });
+      expect(mockDnsReadiness).toHaveBeenCalledExactlyOnceWith(100, 'my-app');
+    });
+
+    it('old CLI OAuth token (no DevTunnel bit) → FORBIDDEN at the scope gate', async () => {
+      const caller = blocksRouter.createCaller(tokenCtx(100, OLD_CLI) as never);
+      await expect(caller.devTunnelDnsReady({ blockId: 'my-app' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: expect.stringContaining('scope'),
+      });
+      expect(mockDnsReadiness).not.toHaveBeenCalled();
     });
   });
 });

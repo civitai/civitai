@@ -231,7 +231,7 @@ function ProjectCard({ project }: { project: ProjectItem }) {
           </div>
         ) : imageUrl ? (
           <img
-            src={getEdgeUrl(imageUrl, { width: 450 })}
+            src={getEdgeUrl(imageUrl, { width: 450, optimized: true })}
             alt={project.name}
             className="h-full w-full object-cover"
           />

@@ -3,7 +3,12 @@ import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
+import {
+  hostDeclineFeePercentRefusal,
+  PLACEMENT_SURFACES,
+  placementSurfaces,
+} from '~/shared/utils/placement';
+import { isPromotionSurface } from '~/shared/utils/promotion';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
   STICKER_COMMENT_MAX_LENGTH,
@@ -13,6 +18,7 @@ import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
+  STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
 
 export const placementSurfaceSchema = z.enum(
@@ -94,6 +100,9 @@ export const placementSpaceSchema = z
     // bound is a sanity limit on what may reach the column at all, well above the
     // highest cap the table can produce.
     freeSlots: z.number().int().min(0).max(1_000).nullable().optional(),
+    // `undefined` keeps, `null` returns to the surface default. The range is the
+    // surface's own, checked below; the service checks it again.
+    declineFeePercent: z.number().int().nullable().optional(),
     // Surface-owned. Bounded here so a client cannot store a max size outside the
     // global limits; the reader clamps too, since the column is editable by hand.
     // Each surface reads only its own keys, so the union is carried rather than
@@ -102,6 +111,9 @@ export const placementSpaceSchema = z
       .object({
         maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
         contentRule: z.enum(['atOrBelow', 'any']),
+        // At least one: switching every type off is the mode's "No stickers", and
+        // a second way to say it would leave two states that mean the same thing.
+        mediaTypes: z.array(z.enum(STICKER_MEDIA_TYPES)).min(1),
       })
       .partial()
       .optional(),
@@ -126,11 +138,30 @@ export const placementSpaceSchema = z
             ? 'Remix gallery submissions always need review'
             : 'That is not a mode this surface accepts',
       });
+
+    if (input.declineFeePercent !== undefined) {
+      const refusal = hostDeclineFeePercentRefusal(input.surface, input.declineFeePercent);
+      if (refusal)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['declineFeePercent'],
+          message: refusal,
+        });
+    }
+
+    // A promotion's space is set on the host's account only; a row on one image
+    // or post would never be read, so an owner saving it would see no effect.
+    if (isPromotionSurface(input.surface) && input.entityType !== 'user')
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entityType'],
+        message: 'Promotion prices are set on your account',
+      });
   });
 
 export const getPlacementSpaceSchema = z.object({
   surface: placementSurfaceSchema,
-  targetType: z.enum(['image']),
+  targetType: z.enum(['image', 'model']),
   targetId: z.number().int().positive(),
 });
 
@@ -328,6 +359,16 @@ export const getPendingRemixGallerySubmissionsSchema = z.object({
   cursor: placementQueueCursorSchema,
 });
 
+/**
+ * One of your own images, asking which galleries its provenance points at. The
+ * hosts are resolved server-side from `sourceImageIds`; the caller cannot name
+ * them, which is what keeps the free gate meaningful.
+ */
+export const getRemixSourcesForImageSchema = z.object({
+  imageId: z.number().int().positive(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
 /** Same marking rule as the owner queue: the submitter's own band, not a filter. */
 export const getMyRemixGallerySubmissionsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
@@ -341,4 +382,47 @@ export const getPendingStickerPlacementsSchema = z.object({
 /** Same marking rule as the owner queue: the placer's own band, not a filter. */
 export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+const storylineSpaceModeSchema = z.enum(['off', 'review']);
+
+export const storylineIdSchema = z.object({ storylineId: z.number().int().positive() });
+
+/**
+ * `price`: `undefined` keeps, `null` inherits the creator's default, a number
+ * sets it. Zero is a real price here; the creator's score/tier cap is applied
+ * at read.
+ */
+export const setStorylineSpaceSchema = z.object({
+  storylineId: z.number().int().positive(),
+  mode: storylineSpaceModeSchema,
+  price: z.number().int().min(0).nullable().optional(),
+});
+
+export const storylineContinuePriceSchema = z.object({
+  parentPostId: z.number().int().positive(),
+});
+
+export const storylineContinuationCursorSchema = z.object({
+  cursor: z.string().nullish(),
+});
+
+export const actOnStorylineContinuationSchema = z.object({
+  placementId: z.number().int().positive(),
+  action: z.enum(['approve', 'decline']),
+});
+
+/**
+ * 🔴 `expectedPrice` is required, unlike the remix gallery's. A storyline is
+ * free by default, so without it an owner who starts charging while someone
+ * is deciding would charge a contributor who was shown "free".
+ */
+export const submitStorylineContinuationSchema = z.object({
+  parentPostId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+  expectedPrice: z.number().int().min(0),
+});
+
+export const storylinePlacementIdSchema = z.object({
+  placementId: z.number().int().positive(),
 });

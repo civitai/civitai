@@ -1,28 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
+import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 // Lives here, not beside the route: Next treats every file under src/pages as a route and
 // `next build` runs a route-type validator over it, so a test there fails the build in a
 // step nothing else catches.
 
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
   AuthedEndpoint: (handler: unknown) => handler,
+}));
+
+const getWorkflow = vi.fn();
+vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
+  ...(await importOriginal<typeof Workflows>()),
+  getWorkflow: (...args: unknown[]) => getWorkflow(...args),
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorToken>()),
+  getOrchestratorToken: async () => 'token',
 }));
 
 import { dbMock } from '~/__tests__/mocks';
 import handler from '~/pages/api/download/training/[modelVersionId]';
 
-const findUnique = dbMock.dbRead.modelVersion.findUnique;
+const findFirst = dbMock.dbWrite.modelVersion.findFirst;
 
 const OWNER = { id: 10, isModerator: false };
 const EPOCH_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/MODEL3.safetensors?sig=abc';
 
 const givenModelVersion = (trainingDetails: unknown) =>
-  findUnique.mockResolvedValue({
+  findFirst.mockResolvedValue({
     id: 1284593,
+    trainingStatus: 'InReview',
     trainingDetails,
+    meta: null,
     model: { id: 7, userId: OWNER.id, name: 'esadribicstyle' },
     files: [
       {
+        id: 5,
+        type: 'Training Data',
         metadata: {
           trainingResults: {
             version: 2,
@@ -106,12 +124,16 @@ describe('training epoch download filename', () => {
   });
 
   it('refuses an epoch URL outside the orchestrator hosts', async () => {
-    findUnique.mockResolvedValue({
+    findFirst.mockResolvedValue({
       id: 1284593,
+      trainingStatus: 'InReview',
       trainingDetails: { baseModel: 'krea2' },
+      meta: null,
       model: { id: 7, userId: OWNER.id, name: 'esadribicstyle' },
       files: [
         {
+          id: 5,
+          type: 'Training Data',
           metadata: {
             trainingResults: {
               version: 2,
@@ -125,6 +147,60 @@ describe('training epoch download filename', () => {
     const res = await call();
 
     expect(res.statusCode).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // The Review page lists the live workflow's epochs, so an epoch it offers must resolve even
+  // when the stored copy has not caught up to it yet.
+  it('serves an epoch the live workflow has but the stored copy is missing', async () => {
+    findFirst.mockResolvedValue({
+      id: 1284593,
+      trainingStatus: 'Processing',
+      trainingDetails: { baseModel: 'krea2' },
+      meta: null,
+      model: { id: 7, userId: OWNER.id, name: 'esadribicstyle' },
+      files: [
+        {
+          id: 5,
+          type: 'Training Data',
+          metadata: { trainingResults: { version: 2, workflowId: 'wf-1', epochs: [] } },
+        },
+      ],
+    });
+    getWorkflow.mockResolvedValue({
+      id: 'wf-1',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageResourceTraining',
+          metadata: { modelFileId: 5 },
+          output: { epochs: [{ epochNumber: 3, blobUrl: EPOCH_URL }] },
+        },
+      ],
+    });
+
+    const res = await call();
+
+    expect(fetch).toHaveBeenCalledWith(EPOCH_URL, expect.anything());
+    expect(res.headers['Content-Disposition']).toContain('_epoch_3.safetensors');
+  });
+
+  it('refuses another user', async () => {
+    givenModelVersion({ baseModel: 'krea2' });
+
+    const res = await (
+      handler as unknown as (
+        r: unknown,
+        s: unknown,
+        u: unknown
+      ) => Promise<ReturnType<typeof makeRes>>
+    )(
+      { query: { modelVersionId: '1284593', epochNumber: '3' }, on: vi.fn(), off: vi.fn() },
+      makeRes(),
+      { id: 99, isModerator: false }
+    );
+
+    expect(res.statusCode).toBe(401);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,13 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
+import { isPublicArticle } from '~/server/services/text-scan/public-content';
+import {
+  submitTextModerationOrScan,
+  TEXT_SCAN_ENTITY_NOT_PUBLIC,
+} from '~/server/services/text-scan/route';
+import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { removeTags } from '~/utils/string-helpers';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
@@ -25,14 +32,27 @@ export const articleModerationAdapter: ModerationAdapter = {
     );
   },
 
-  submit: ({ entityId, content }) =>
-    submitTextModeration({
+  submit: async ({ entityId, content }) => {
+    // The scan's own profile gate never reaches the XGuard leg the off and shadow modes run.
+    const article = await dbWrite.article.findUnique({
+      where: { id: entityId },
+      select: { status: true, scheduledAt: true },
+    });
+    if (article && !isPublicArticle(article)) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
+    return submitTextModerationOrScan({
       entityType: 'Article',
       entityId,
-      content,
-      labels: ['nsfw'],
-      priority: 'low',
-    }),
+      fromRetry: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId,
+          content,
+          labels: ['nsfw'],
+          priority: 'low',
+        }),
+    });
+  },
 
   applyResult: async ({ entityId, blocked, triggeredLabels }) => {
     // Text moderation now only returns whether the article content is NSFW or
@@ -78,4 +98,11 @@ export const articleModerationAdapter: ModerationAdapter = {
   applyFailure: async ({ entityId }) => {
     await recomputeArticleIngestion(entityId);
   },
+
+  // Rating before ingestion: ingestion publishes a Processing article, which must not go
+  // live at its pre-verdict level.
+  applyTextScan: withCsamHold('Article', async (args) => {
+    await applyRatingFloor('Article', args);
+    await recomputeArticleIngestion(args.entityId);
+  }),
 };

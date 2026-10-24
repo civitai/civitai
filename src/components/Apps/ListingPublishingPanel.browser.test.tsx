@@ -6,6 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
 import {
   EDITOR_ACTIONS,
+  listingPublishingActions,
   OWNER_ACTIONS_BY_STATE,
   sortPublishingActions,
 } from '~/components/Apps/listingPublishingActions';
@@ -15,7 +16,7 @@ import { showSuccessNotification } from '~/utils/notifications';
  * THE OWNER PUBLISHING LEDGER, now on the authoring page's **Publishing** tab.
  *
  * 🔴 WHY THIS FILE EXISTS, AND WHY IT IS NOT JUST "TESTS FOR THE FIX". PR #4154 consolidated
- * `/apps/my-submissions` into `/apps/mine`. `MySubmissionsList` — the only surface carrying
+ * `/apps/my-submissions` into `/apps/mine`. `MySubmissionsList` (since deleted) — the only surface carrying
  * the owner Unpublish/Republish controls — was orphaned by that merge, and the new page body
  * contained zero occurrences of `unpublish`. The gap was DISCLOSED in the implementing PR and
  * recorded as a noted omission rather than as a functional regression, and then THREE audit
@@ -124,6 +125,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       get republishOwnListing() {
         return mutationStub('republishOwnListing', mocks.republishPending);
       },
+      // 🔴 SAME MOUNT-TIME GAP AS THE MODERATION TABLE'S. This panel renders
+      // `ListingVisibilityModal`, which calls
+      // `trpc.appListings.setListingVisibility.useMutation(...)`. Unmocked, that throws
+      // during mount and takes EVERY test in this file with it — the controls ledger
+      // included, which is the panel's own evidence. Its `onSuccess` takes no argument
+      // and it invalidates only `getAuthoringContext` + `listMine`, both already in the
+      // `useUtils` mock above, so the shared stub is the right shape.
+      setListingVisibility: mutationStub('setListingVisibility'),
       listMyListingModerationEvents: {
         useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
       },
@@ -207,26 +216,40 @@ beforeEach(() => {
 });
 
 describe('the ledger — the SET of publishing controls the panel offers, per state', () => {
-  test('a LIVE (approved) listing offers exactly Unpublish', async () => {
+  test('a LIVE (approved) listing offers exactly Unpublish + the level control', async () => {
     renderWithProviders(<ListingPublishingPanel {...LIVE_ONSITE} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
     // 🔴 SET EQUALITY, not `toContain`. `toContain('unpublish')` would pass with Republish
     // wrongly rendered beside it, and would pass with three more controls added silently.
-    expect(renderedActions()).toEqual(sortPublishingActions(OWNER_ACTIONS_BY_STATE.live));
-    // The literal, restated independently of the table — a mutant that empties
-    // `OWNER_ACTIONS_BY_STATE.live` would otherwise make the assertion above trivially true.
-    expect(renderedActions()).toEqual(['unpublish']);
+    //
+    // 🔴 COMPARED AGAINST `listingPublishingActions`, NOT `OWNER_ACTIONS_BY_STATE`, AND THE
+    // CHANGE IS DELIBERATE RATHER THAN A LOOSENING. That table is now only HALF the ledger:
+    // the takedown pair is keyed on role+state, the level control on status, and the two are
+    // COMPOSED. Comparing against the table alone would have been wrong in the dangerous
+    // direction — it declares `['unpublish']` here, so the growth arm would fire on a
+    // correctly-rendered panel and the honest fix would look like deleting the assertion.
+    expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(LIVE_ONSITE)));
+    // The literal, restated independently of the derivation — a mutant that empties either
+    // half would otherwise make the assertion above trivially true.
+    expect(renderedActions()).toEqual(['unpublish', 'visibility']);
+    // The table's own half, still pinned, so "composed" cannot quietly become "ignored".
+    expect(OWNER_ACTIONS_BY_STATE.live).toEqual(['unpublish']);
   });
 
   test('an OWNER-UNPUBLISHED listing offers exactly Republish, and says "unpublished"', async () => {
     renderWithProviders(<ListingPublishingPanel {...OWNER_HIDDEN} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
+    // 🔴 UNCHANGED BY THE LEVEL CONTROL, AND THAT IS ITSELF THE ASSERTION: a `removed`
+    // listing is not level-eligible, so `visibility` must NOT appear here. This case and
+    // `mod-removed` below are the two that separate "the level control renders when
+    // eligible" from "the level control always renders".
     expect(renderedActions()).toEqual(
-      sortPublishingActions(OWNER_ACTIONS_BY_STATE['owner-hidden'])
+      sortPublishingActions(listingPublishingActions(OWNER_HIDDEN))
     );
     expect(renderedActions()).toEqual(['republish']);
+    expect(page.getByTestId('apps-publishing-visibility').query()).toBeNull();
 
     // 🔴 THE BADGE IS PART OF THE AFFORDANCE. `status` reads `removed` for this listing and
     // for a moderator takedown alike; the badge is what tells the author which one happened,
@@ -246,8 +269,10 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
     renderWithProviders(<ListingPublishingPanel {...MOD_REMOVED} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
-    expect(renderedActions()).toEqual(sortPublishingActions(OWNER_ACTIONS_BY_STATE['mod-removed']));
+    expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(MOD_REMOVED)));
     expect(renderedActions()).toEqual([]);
+    // Not level-eligible either — the empty set here must stay genuinely empty.
+    expect(page.getByTestId('apps-publishing-visibility').query()).toBeNull();
 
     // 🔴 THE LOAD-BEARING ABSENCE. `republishOwnListing` refuses a listing whose last event is
     // a moderator action — "This listing was removed by a moderator and cannot be restored by
@@ -266,12 +291,19 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
       .toHaveTextContent('removed by a moderator');
   });
 
-  test('a never-approved (draft) listing offers nothing, and says there is nothing to take down', async () => {
+  test('a never-approved (draft) listing offers ONLY the level control, and says there is nothing to take down', async () => {
     renderWithProviders(<ListingPublishingPanel {...INACTIVE_DRAFT} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
-    expect(renderedActions()).toEqual(sortPublishingActions(OWNER_ACTIONS_BY_STATE.inactive));
-    expect(renderedActions()).toEqual([]);
+    // 🔴 THE CASE THAT PROVES THE TWO HALVES ARE KEYED DIFFERENTLY. `inactive` declares NO
+    // takedown control, yet a draft IS level-eligible — so this is the one state where the
+    // composed set is non-empty while the table's entry is empty. A state-keyed
+    // implementation of `visibility` could not produce this row.
+    expect(renderedActions()).toEqual(
+      sortPublishingActions(listingPublishingActions(INACTIVE_DRAFT))
+    );
+    expect(renderedActions()).toEqual(['visibility']);
+    expect(OWNER_ACTIONS_BY_STATE.inactive).toEqual([]);
     expect(page.getByTestId('apps-publishing-unpublish').query()).toBeNull();
     // The positive control for THIS empty entry — and a DIFFERENT element from the
     // mod-removed one, so neither case can pass on the other's explanation.
@@ -279,16 +311,26 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
     expect(page.getByTestId('apps-publishing-mod-removed').query()).toBeNull();
   });
 
-  test('🔴 a seated COLLABORATOR gets NO control on a LIVE app — a seat is not ownership', async () => {
+  test('🔴 a seated COLLABORATOR gets NO TAKEDOWN control on a LIVE app — a seat is not ownership', async () => {
     renderWithProviders(<ListingPublishingPanel {...SEAT_LIVE} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
     // Same status as LIVE_ONSITE, different role — so this case isolates the ROLE branch, the
     // one `editorTabsFor` newly depends on. `editorTabsFor` does not offer an editor this tab
     // at all; this is the panel-level half of the same refusal, for a panel mounted directly.
-    expect(renderedActions()).toEqual(sortPublishingActions(EDITOR_ACTIONS));
+    //
+    // 🔴 NARROWED FROM "NO control" TO "no TAKEDOWN control", MEASURED FROM THE SERVER GATE.
+    // `setListingVisibilityAsOwner` refuses only a caller with NO role, so an accepted
+    // collaborator may set the level; asserting `[]` here would have encoded a refusal the
+    // server does not make and would have hidden a real capability from a seat.
+    expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(SEAT_LIVE)));
+    // ⚠️ THIS ASSERTED `['visibility']` FOR ONE REVISION, pinning a configuration the product
+    // cannot reach: `editorTabsFor` withholds this tab from an editor, so the panel is never
+    // mounted for a seat at all. The level proc would admit them; the tab does not.
     expect(renderedActions()).toEqual([]);
+    expect(EDITOR_ACTIONS).toEqual([]);
     expect(page.getByTestId('apps-publishing-unpublish').query()).toBeNull();
+    expect(page.getByTestId('apps-publishing-republish').query()).toBeNull();
     await expect
       .element(page.getByTestId('apps-publishing-not-live'))
       .toHaveTextContent(/only the app owner/i);
@@ -310,7 +352,7 @@ describe('🔴 what the ledger can and cannot see — measured, not assumed', ()
     // first run of this case.)
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
     const before = renderedActions();
-    expect(before).toEqual(['unpublish']);
+    expect(before).toEqual(['unpublish', 'visibility']);
 
     await userEvent.click(page.getByTestId('apps-publishing-unpublish'));
     // Positive control: the modal really is open, so an unchanged set below is a fact about

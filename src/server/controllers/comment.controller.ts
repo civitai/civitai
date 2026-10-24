@@ -11,7 +11,10 @@ import type {
   GetAllCommentsSchema,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
+import {
+  commentDetailSelect,
+  getAllCommentsWithCachedUserSelect,
+} from '~/server/selectors/comment.selector';
 import {
   createOrUpdateComment,
   deleteCommentById,
@@ -25,11 +28,15 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { maskHiddenReactors } from '~/server/services/reaction-privacy.service';
 import {
   getBlockCheckOwnerIdsForModelComment,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsAndProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -53,7 +60,7 @@ export const getCommentsInfiniteHandler = async ({
   const comments = await getComments({
     input: { ...input, limit },
     user,
-    select: getAllCommentsSelect,
+    select: getAllCommentsWithCachedUserSelect,
   });
 
   let nextCursor: number | undefined;
@@ -64,7 +71,7 @@ export const getCommentsInfiniteHandler = async ({
 
   // Pinned comments surface at the top of the first page only.
   const pinnedComments = !input.cursor
-    ? await getPinnedComments({ input, user, select: getAllCommentsSelect })
+    ? await getPinnedComments({ input, user, select: getAllCommentsWithCachedUserSelect })
     : [];
 
   const allComments = [...pinnedComments, ...comments];
@@ -80,11 +87,19 @@ export const getCommentsInfiniteHandler = async ({
     GROUP BY c."parentId"
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
+  const [userCosmetics] = await Promise.all([
+    getCosmeticsAndProfilePicturesForUsers(allComments.map((c) => c.user.id)),
+    maskHiddenReactors(
+      allComments.map((c) => c.reactions),
+      user
+    ),
+  ]);
 
   return {
     nextCursor,
     comments: allComments.map((c) => ({
       ...c,
+      user: { ...c.user, ...userCosmetics(c.user.id) },
       _count: { comments: countsMap[c.id] ?? 0 },
     })),
   };
@@ -92,11 +107,14 @@ export const getCommentsInfiniteHandler = async ({
 
 export const getCommentReactionsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetCommentReactionsSchema;
+  ctx: Context;
 }) => {
   try {
     const reactions = await getCommentReactions(input);
+    await maskHiddenReactors([reactions], ctx.user);
 
     return reactions;
   } catch (error) {
@@ -266,6 +284,10 @@ export const getCommentHandler = async ({ input, ctx }: { input: GetByIdInput; c
       if (blocked) throw throwNotFoundError();
     }
 
+    await maskHiddenReactors(
+      [comment.reactions, ...comment.comments.map((c) => c.reactions)],
+      ctx.user
+    );
     return comment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -293,6 +315,10 @@ export const getCommentCommentsHandler = async ({
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
+    await maskHiddenReactors(
+      comment.comments.map((c) => c.reactions),
+      ctx.user
+    );
     return comment.comments;
   } catch (error) {
     throw throwDbError(error);
@@ -322,7 +348,13 @@ export const getCommentCommentsCountHandler = async ({
   }
 };
 
-export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
+export const toggleLockHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   const { id } = input;
 
   try {
@@ -340,6 +372,7 @@ export const toggleLockHandler = async ({ input }: { input: GetByIdInput }) => {
       },
     });
 
+    await maskHiddenReactors([updatedComment.reactions], ctx.user);
     return updatedComment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -367,6 +400,7 @@ export const setTosViolationHandler = async ({
       id: updatedComment.id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(

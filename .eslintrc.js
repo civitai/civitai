@@ -6,6 +6,8 @@
 // from eslintrc makes @eslint/eslintrc reject it and then crash formatting the
 // error ("Converting circular structure to JSON"), so lint silently never runs.
 // Enforced by the `eslint-config-next: "15"` entry in package.json `pnpm.overrides`.
+const noDirectPgPool = require('./eslint-no-direct-pg-pool.cjs');
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -194,6 +196,43 @@ module.exports = {
       },
     ],
 
+    // The SIBLING of the rule above, one level down: that one guards the MODULE's
+    // export surface (does the factory spread `importOriginal`), this one guards
+    // the `trpc` CLIENT's procedure surface inside the object the factory
+    // returns. A mock can be perfect by the first and broken by the second —
+    // #4147 was exactly that, which is why #4178 says the existing rule "has no
+    // view" of it. Deliberately a separate rule rather than an extension: the
+    // `modules` option above is generic across five modules while this check
+    // knows about `trpc` and `makeTrpcProxy` specifically, the two remedies are
+    // different ("spread the original" vs "call makeTrpcProxy"), and one disable
+    // comment must not switch off both guards. Reasoning in full at the rule.
+    //
+    // 'error', matching its siblings and for the same reason spelled out below:
+    // at 'warn' it would gate nothing, because the only BLOCKING ESLint step in
+    // .github/workflows/lint.yml ("ESLint (added files)") runs without
+    // --max-warnings — and a brand-new component test is exactly the authoring
+    // path this rule exists to close.
+    //
+    // Blast radius on the existing tree: 201 files report (census of all 220
+    // `vi.mock('~/utils/trpc', <inline factory>)` calls in `src/`; the other 19
+    // are 8 `new Proxy`, 7 `makeTrpcProxy`, and 4 that override no `trpc` key).
+    // 🔴 That cannot become a permanently-red gate, and the reason is the lint
+    // LANE's shape rather than this rule's severity: the blocking step lints
+    // `--diff-filter=A` paths only, and the modified-file step is
+    // `continue-on-error: true`. Nothing lints the full repo in CI — not in
+    // GitHub Actions (the eslint job is the only ESLint lane and is
+    // `pull_request`-only, diff-vs-base) and not in the in-cluster Tekton
+    // pr-check pipeline, which runs no ESLint at all. So a legacy file annotates
+    // when touched and blocks nothing; a newly ADDED file is blocked. The 201 are
+    // deliberately NOT migrated — migration is a one-line change per file,
+    // taken opportunistically when someone touches one. `pnpm lint` locally does
+    // cover all of `src/` and will show them.
+    'local-rules/no-hand-enumerated-trpc-mock': 'error',
+
+    // `new Pool` / `new pg.Pool` outside @civitai/db. Reasoning in eslint-no-direct-pg-pool.cjs;
+    // the allowlist is the override below.
+    ...noDirectPgPool,
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 
@@ -278,6 +317,56 @@ module.exports = {
       },
     },
     {
+      // 🔴 THE `/apps/*` CHROME MUST NOT BRANCH A RENDER ON A VIEWPORT/CONTAINER HOOK.
+      // The rail/drawer swap is a CSS media query on purpose, so React never learns the
+      // breakpoint was crossed and the server markup matches the first client paint.
+      // These hooks have no server answer — `useContainerSmallerThan` in particular
+      // returns FALSE while `inlineSize === 0`, which is what the server always sees —
+      // so branching on one reintroduces the hydration mismatch this surface has already
+      // paid for once.
+      //
+      // SCOPE: deliberately narrow. `useIsMobile` alone appears in 83 files across the
+      // repo and most of those are legitimate client-only surfaces, so this is NOT a
+      // repo-wide ban; it is switched on for the chrome that is server-rendered and
+      // hydration-sensitive. Widen the glob when another surface earns it.
+      //
+      // Replaces a 250-line hand-rolled source scanner that applied to ONE file and was
+      // bypassable in five consecutive audit rounds — see the rule header in
+      // eslint-local-rules.js.
+      files: [
+        'src/components/Apps/AppsPageLayout.tsx',
+        'src/components/Apps/AppsRailNav.tsx',
+        'src/components/Apps/useAppsNavSections.ts',
+        'src/components/Apps/appsRailState.tsx',
+        // The App Blocks missing-permissions backstop. Its narrow/wide swap is a
+        // CONTAINER QUERY on purpose and must stay one.
+        //
+        // ⚠️ IT EARNS THE GLOB FOR THE FLASH, NOT FOR HYDRATION, AND THE DISTINCTION IS
+        // WHY THIS COMMENT IS LONGER THAN THE ENTRY. This surface is NOT server-rendered:
+        // `BlockSlot` loads the chain through `dynamic(..., { ssr: false })`, and the
+        // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
+        // hydration-divergence argument the block comment above makes for the `/apps`
+        // chrome genuinely does not reach it, and anyone who checks will find that out.
+        // What DOES reach it is a pair of reasons, and they are NOT the same reason for
+        // all four hooks — an earlier draft said "the four hooks this rule names are
+        // exactly the ones that would [flash]", and that was false:
+        //   · CONTAINER hooks flash. `useContainerQuery` returns false while
+        //     `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare
+        //     `useIsMobile()` routes to it — so each renders the wrong shape for a frame
+        //     and then restructures the bar under a viewer already reading it.
+        //   · `useMediaQuery` imported from `@mantine/hooks` flashes too (its default is
+        //     `getInitialValueInEffect: true`), but THIS REPO'S WRAPPER DOES NOT — it
+        //     passes `false` and reads `matchMedia` synchronously on first render, and
+        //     with no SSR pass here that read IS the first paint. It is banned for the
+        //     other reason, stated at length on the component: a VIEWPORT query answers
+        //     the wrong question for a ~320px sidebar on a desktop.
+        'src/components/AppBlocks/BlockConsentNotice.tsx',
+      ],
+      rules: {
+        'local-rules/no-ssr-divergent-media-query': 'error',
+      },
+    },
+    {
       // Browser-mode component tests must not use an http(s) URL as an image
       // source. Nothing serves it to the test browser, so the <img> fires a real
       // `error` event a few ms after mount and the component's own onError
@@ -340,6 +429,24 @@ module.exports = {
       files: ['**/*.test.ts', '**/*.test.tsx', '**/__tests__/**/*.ts', '**/__tests__/**/*.tsx'],
       rules: {
         'local-rules/no-unbounded-paging-fake': 'error',
+      },
+    },
+    {
+      // Where a direct pg Pool is allowed (see eslint-no-direct-pg-pool.cjs). Tests and scripts are
+      // short-lived. apps/auth builds its own standalone pool and must attach the same listeners
+      // itself; it does not yet (#5657 adds them), so that pool is still unguarded.
+      // apps/assistant-runner builds every pool in pg-pool.ts, which attaches them.
+      files: [
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/__tests__/**',
+        'scripts/**',
+        'apps/*/scripts/**',
+        'apps/auth/src/lib/server/db/db.ts',
+        'apps/assistant-runner/src/pg-pool.ts',
+      ],
+      rules: {
+        'no-restricted-syntax': 'off',
       },
     },
   ],

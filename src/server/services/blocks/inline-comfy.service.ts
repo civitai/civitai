@@ -26,7 +26,7 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
 // Anything the workflow references that isn't listed here will fail at load time
 // inside ComfyUI" — while `CustomComfyInput.workflow` is "Forwarded opaquely to
 // the worker; the orchestrator does not inspect or validate node contents"
-// (both from the generated `@civitai/client` types). So the untrusted
+// (both from the generated `@civitai/orchestration-client` types). So the untrusted
 // entitlement surface is that array, and it does not need graph parsing.
 //
 // 🔴 THAT CLAIM IS TRUSTED BUT NOT DEPENDED ON. It comes from a doc comment on a
@@ -40,7 +40,7 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
 // nodes (e.g. urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0)"
 // — and production rejects exactly that, telling you to send a
 // `comfy:nodepacklayer` AIR instead. The contradiction sits INSIDE ONE GENERATED
-// FILE: `@civitai/client@0.2.0-beta.84`'s `types.gen.d.ts` carries that claim at
+// FILE: `@civitai/orchestration-client@0.2.0-beta.84`'s `types.gen.d.ts` carries that claim at
 // `CustomComfyInput.resources` and its refutation ~500 lines earlier at
 // `ComfyNodepackSnapshotResult.layerAir` — "Consumers declare THIS on a
 // customComfy step's `resources` (not the bare pack URN)". A generated docstring
@@ -393,10 +393,10 @@ type ParsedInlineAir = {
  * are lowercased after extraction, `id`/`version` keep their case (a
  * huggingface id is case-sensitive, e.g. `black-forest-labs/FLUX.1-dev`).
  *
- * 🔴 WHY THIS IS NOT `Air.parseSafe` FROM `@civitai/client`, EVEN THOUGH THAT
+ * 🔴 WHY THIS IS NOT `Air.parseSafe` FROM `@civitai/orchestration-client`, EVEN THOUGH THAT
  * EXISTS AND `shared/utils/air.ts` WRAPS IT. That parser is a LENIENT READER for
  * input we already trust; this is a GATE over input we do not. Measured against
- * `@civitai/client` 0.2.0-beta.84 by running it, its regex
+ * `@civitai/orchestration-client` 0.2.0-beta.84 by running it, its regex
  * (`^(?:urn:)?(?:air:)?(?:(?<ecosystem>…):)?(?:(?<type>…):)?(?<source>…):(?<id>…)…`)
  * has three properties that each fail OPEN here:
  *
@@ -505,7 +505,7 @@ function parseInlineAir(raw: string): ParsedInlineAir {
  */
 export async function assertViewerEntitledToInlineResources(opts: {
   airs: string[];
-  user: { id: number; isModerator: boolean };
+  user: { id: number; isModerator: boolean; tier?: string };
 }): Promise<void> {
   const parsed = opts.airs.map(parseInlineAir);
 
@@ -524,7 +524,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
   if (versionIds.length === 0) return;
 
   const resources = await getResourceData(versionIds, {
-    user: { id: opts.user.id, isModerator: opts.user.isModerator },
+    user: { id: opts.user.id, isModerator: opts.user.isModerator, tier: opts.user.tier },
     generation: true,
   });
   const byId = new Map(resources.map((r) => [r.id, r]));

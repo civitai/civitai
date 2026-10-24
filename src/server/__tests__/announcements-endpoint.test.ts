@@ -94,6 +94,30 @@ describe('the spoke door is not cheaper than the onsite one', () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  // The arm above cannot tell stamp-gating from unverified-gating, because its fixture carries both.
+  // Relaxing the spoke to `!user.emailVerified` would refuse the 7.1M accounts the column was never
+  // populated for, and every assertion in this file would still pass except by accident: OK_USER
+  // happens to omit `emailVerified`, so the omission is what holds the invariant. This names it.
+  it('serves a legacy account that is unverified but was never stamped', async () => {
+    const res = await call(
+      { method: 'POST', body: validBody },
+      { ...OK_USER, emailVerified: null, meta: {} }
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(upsert).toHaveBeenCalled();
+  });
+
+  it('refuses a creator the email gate would refuse onsite', async () => {
+    const res = await call(
+      { method: 'POST', body: validBody },
+      { ...OK_USER, emailVerified: null, meta: { emailVerificationRequired: true } }
+    );
+
+    expect(res.statusCode).toBe(500);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it('refuses when the feature flag is off, so the spoke cannot outrun the rollout', async () => {
     features.mockReturnValue({ creatorAnnouncements: false });
 
@@ -122,6 +146,28 @@ describe('request handling', () => {
     const arg = upsert.mock.calls[0][0] as { userId: number; isModerator: boolean };
     expect(arg.userId).toBe(7);
     expect(arg.isModerator).toBe(false);
+  });
+
+  // The service gates the second and third link button on this flag, so it must come from the
+  // session's tier — a body field claiming membership is how a free account would get three.
+  it('derives membership from the session tier, never from the body', async () => {
+    const isMemberFor = async (user: Record<string, unknown>) => {
+      upsert.mockClear();
+      await call({ method: 'POST', body: { ...validBody, isMember: true } }, user);
+      return (upsert.mock.calls[0][0] as { isMember: boolean }).isMember;
+    };
+
+    expect(await isMemberFor({ ...OK_USER, tier: 'bronze' })).toBe(true);
+    expect(await isMemberFor({ ...OK_USER, tier: 'free' })).toBe(false);
+    expect(await isMemberFor({ ...OK_USER, tier: 'gold', memberInBadState: true })).toBe(false);
+    expect(await isMemberFor(OK_USER)).toBe(false);
+  });
+
+  it('forwards every link button to the service', async () => {
+    const actions = [1, 2, 3].map((n) => ({ link: `/models/${n}`, linkText: `Button ${n}` }));
+    await call({ method: 'POST', body: { ...validBody, actions } }, { ...OK_USER, tier: 'gold' });
+
+    expect((upsert.mock.calls[0][0] as { actions: unknown }).actions).toEqual(actions);
   });
 
   it('rejects an invalid body with 400 rather than handing it to the service', async () => {

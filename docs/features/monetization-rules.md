@@ -93,16 +93,37 @@ publish-restricted.
 
 | Limit                     | Source                              | Applies to                    |
 | ------------------------- | ----------------------------------- | ----------------------------- |
-| Eligibility (score ≥ 10k)  | **Creator score** (`models` score)  | A new fee or a new gate       |
+| Eligibility (score ≥ 10k)  | **Creator score** (`scores.total`)  | A new fee or a new gate       |
 | New prices per month      | **Membership tier**                 | A new fee or a permanent gate |
 | Licensing fee ceiling     | Flat 100/generation × media type    | Fees                          |
 | Paid access price ceiling | — none                              | —                             |
 | Window length (days)      | **Creator score**                   | Timed                         |
 | Concurrent windows        | **Creator score**                   | Timed                         |
 
+**Every "creator score" in this table is `User.meta.scores.total`** — the figure the account Profile pane
+displays under that name. Monetization and the early-access ladder both compared against the
+per-category `scores.models` until 2026-09-04; 45,216 accounts were above the displayed floor and
+below the enforced one, and had no way to see why. **Any gate that says "creator score" to the user**
+reads it through `creatorScoreFromMeta` (`src/shared/utils/creator-score.ts`) rather than reaching
+into `meta.scores` directly. (The rate-limit checks in `src/server/schema/{comment,reaction,post}.schema.ts`
+still inline `scores.total`; they gate posting frequency, not money, and are not covered by this rule.)
+
 Every creator gets the same fee ceiling — `maxLicensingFeeCeiling`, 100 per generation and 500 on a
 video model. Paid access has no ceiling at all. What a tier buys is **allowance**:
 `monthlyPricingAllowance` — free 3, bronze 10, silver 25, gold unlimited.
+
+**Until 2026-11-01T00:00Z, granted creators may set more licensing fees than their tier allows.**
+`pricingLimitFor` adds a per-creator boost (`feeAllowanceBoost`, at most `FEE_ALLOWANCE_BOOST_MAX`,
+read from a system-Redis hash loaded by `src/pages/api/testing/fee-allowance-boost.ts`) to the tier
+allowance for a write that adds only a fee. A write adding a permanent gate is held to the tier
+allowance, so a gate gets no boost in either app. Adding a gate to a version that already carries a fee
+spends no slot, so while a creator holds a boost it is refused when the version's slot was spent this
+month and their month's slots exceed the tier allowance (`gateConversionExceedsAllowance`) — otherwise a
+boost-funded fee slot could become a gate. A fee from an earlier month converts freely.
+Nothing records which slots the boost paid for, so once the window closes those versions follow the
+ordinary rule: an already-priced version takes a gate without spending a slot.
+Boosted fees spend ordinary slots, and the boost ends by the date check in `feeAllowanceBoost`, not by
+deleting the grant list.
 
 **A lapse cannot change any price, but it lowers the allowance immediately.** `getCapTier` reads live
 subscription state at write time, and `incomplete`/`past_due`/`unpaid` all count as lapsed, so a
@@ -121,9 +142,10 @@ it lapsed in, which would fix the involuntary case (a failed card is the most co
 Gold is **unlimited**, so "held it at any point this month" would mean unlimited pricing for that month
 off one payment. Left as-is deliberately; revisit with that cost in view.
 
-**Membership tier does not unlock early access.** The ladder reads `User.meta.scores.models` and starts at
-40,000, so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
-for this reason. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
+**Membership tier does not unlock early access.** The ladder reads the creator score
+(`scores.total`), so simulating a tier will never reach it — the studio has a separate
+moderator-only score simulator for this reason. Its entry rung is 10,000, matching the pricing
+floor. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
 itself confers the top rung (30 days, 30 concurrent) at any score.
 
 The fee ceiling blocks **raises only** (`raisesOverCap`): a stored price above it stays chargeable, so a
@@ -192,6 +214,26 @@ counting against their allowance.
 **Moderators are not exempt** from either the floor or the allowance. That is the one creator-score gate
 in the codebase they do not bypass: the floor is a statement about who may sell, not a permission level.
 They remain exempt from the fee ceiling.
+
+#### R3c. What the creator is told, and what they can look at
+
+The counter and the allowance refusal say **priced**, not "monetized", and name what is counted:
+`PRICING_SLOT_EXPLAINER` and `EARLY_ACCESS_NOT_COUNTED` in `@civitai/buzz` are the one wording, shared by
+both apps, and the refusal names the tier it refuses on (`capTierLabel`). "Monetized" was read as covering
+Early Access — the two meters sit side by side, so creators added them together and asked why 25 + 20 wasn't
+45, then hit the cap on an Early Access publish that had spent no slot at all (CU 868m1baec). The count was
+already shown in both editors; what arrived only on save was the *explanation*, so both apps now carry the
+explainer where the price is set. `pricingFloorMessage` deliberately keeps "monetize" — the floor is about
+who may sell at all, not about what the counter counts, and a test pins that split.
+
+`listPricingSlots` (both apps) answers *what spent them*: the owner's slots newest first, split on the
+calendar month the allowance counts, with the model version and its prices. Read behind
+`modelVersion.getPricingSlots` in the main app and loaded with the models page in Creator Studio.
+
+⚠️ **The amounts are the version's price NOW, not the price at spend time.** `PricingSlot` stores
+`{ entityType, entityId, ownerId, createdAt }` and nothing else, one row per entity — current state, not an
+audit log. A true history (priced, released, re-priced, and the amount each time) needs an append-only
+ledger or `amount` + `releasedAt` columns; neither exists.
 
 **Enforced**: `assertMonetizationWrite` (`src/server/services/paid-access.service.ts`), called by tRPC
 `modelVersion.upsert` and the REST early-access endpoint, and mirrored for Creator Studio's direct-SQL
@@ -299,8 +341,8 @@ affirmation check on that path is owner-scoped, matching `resolveRightsAffirmati
 
 Four rules have **two implementations each**, because Creator Studio's fee and gate writes are direct
 SQL that never reaches the service layer: the fee ceiling (`assertMonetizationWrite` vs the spoke's
-`licensing-fee.ts`), the eligibility floor and the allowance (`pricing-slot.service.ts` vs the spoke's
-`pricing-slot.ts`), and slot release — `versionHasTransacted`/`releasePricingSlot` against
+`licensing-fee.ts`), the eligibility floor and the allowance, fee boost included (`pricing-slot.service.ts` vs the
+spoke's `pricing-slot.ts`), and slot release — `versionHasTransacted`/`releasePricingSlot` against
 `releasableVersionIds`/`releasePricingSlots`, each with its own ClickHouse query over
 `orchestration.resourceCompensations`. Keep each pair in step — a divergence makes the spoke a way
 around whichever rule it drops, which is the same failure the POI guard has already had here.

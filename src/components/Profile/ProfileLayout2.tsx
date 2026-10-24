@@ -21,19 +21,28 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { usePathname } from 'next/navigation';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { profileSchemaImageUrl } from '~/components/Meta/safe-schema-image';
+import { ogImageUrl } from '~/components/Meta/og-image-url';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
-import { isBlobUrl } from '~/utils/type-guards';
+import {
+  milestoneOgEndpoint,
+  parseMilestoneShareToken,
+} from '~/shared/constants/creator-journey.constants';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { username } = router.query as { username: string };
+  const milestone = parseMilestoneShareToken(router.query.milestone);
 
   const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username });
+  const { data: milestoneShareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
+    { userId: user?.id ?? 0, milestone: milestone ?? 'spark' },
+    { enabled: !!user && !!milestone }
+  );
   const blockedByThem = !!(user && 'blockedByThem' in user && user.blockedByThem);
   const { data: overview } = trpc.userProfile.overview.useQuery(
     { username },
@@ -82,12 +91,38 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   }, [user, overview, pathname]);
   // const { classes } = useStyles();
 
-  const userMetaImage =
-    user?.profilePicture && !isBlobUrl(user.profilePicture.url)
-      ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
-      : user?.image && user.image.startsWith('http')
-      ? user.image
-      : undefined;
+  // What this creator actually has, biggest two kinds first — a profile with only images should
+  // not advertise models.
+  const metaDescription = useMemo(() => {
+    if (!user?.username) return undefined;
+    const counts: [number, string][] = [
+      [overview?.modelCount ?? 0, 'AI models'],
+      [overview?.imageCount ?? 0, 'images'],
+      [overview?.videoCount ?? 0, 'videos'],
+      [overview?.articleCount ?? 0, 'articles'],
+      [overview?.comicCount ?? 0, 'comics'],
+    ];
+    const has = counts
+      .filter(([count]) => count > 0)
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, 2)
+      .map(([count, noun]) => `${abbreviateNumber(count)} ${noun}`);
+
+    if (!has.length)
+      return `Browse ${user.username}'s AI models, images and articles on Civitai. Download or generate online.`;
+
+    const followers = user.stats?.followerCountAllTime ?? 0;
+    const following = followers > 0 ? `, followed by ${abbreviateNumber(followers)} people` : '';
+    return `${user.username} on Civitai: ${has.join(
+      ' and '
+    )}${following}. Download or generate online.`;
+  }, [user?.username, user?.stats?.followerCountAllTime, overview]);
+
+  const userMetaImage = profileSchemaImageUrl(user?.profilePicture);
+  const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
+  // A shared milestone link previews its card. Telegram takes the JSON-LD page image over og:image
+  // (the profile link previewed the avatar there), so the schema names the card as well.
+  const pageImage = ogEndpoint ? ogImageUrl(ogEndpoint) : userMetaImage;
   const metaSchema =
     user && user.username
       ? {
@@ -97,12 +132,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           description: `Learn more about ${user.username} on Civitai.`,
           primaryImageOfPage: {
             '@type': 'ImageObject',
-            contentUrl: userMetaImage,
+            contentUrl: pageImage,
           },
           mainEntity: {
             '@type': 'Person',
             name: user.username,
-            image: userMetaImage,
+            image: pageImage,
             url: `${env.NEXT_PUBLIC_BASE_URL as string}/user/${username}`,
             interactionStatistic: stats
               ? [
@@ -132,12 +167,9 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       {user && user.username && stats && !blockedByThem ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
-          description={`Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
-            stats.followerCountAllTime
-          )}, Total Likes Received: ${abbreviateNumber(
-            stats.thumbsUpCountAllTime
-          )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
+          description={metaDescription}
           images={user.profilePicture}
+          ogEndpoint={ogEndpoint}
           canonical={pathname}
           schema={metaSchema}
           deIndex={deIndex}

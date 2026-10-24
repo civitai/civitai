@@ -20,7 +20,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const serverDomains = useServerDomains();
   const syncAccount = useSyncAccount();
 
-  const enabled = !!currentUser && features.isGreen && features.buzz;
+  const enabled = !!currentUser && !!features.isGreen && !!features.buzz;
   const ready = useFeatureFlagsReady();
   // Shares the `getBuzzAccount` cache with the global buzz display (signal-kept
   // live) — no need to force a refetch here.
@@ -29,7 +29,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
     FEATURE_NOTICES.yellowBuzzMigration,
     // `useFeatureNotice` ANDs in "is signed in" itself, so pass only the extra
     // conditions.
-    { enabled: features.isGreen && features.buzz }
+    { enabled: !!features.isGreen && !!features.buzz }
   );
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;

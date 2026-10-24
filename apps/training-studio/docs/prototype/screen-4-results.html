@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Training Results - Civitai Mockup</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* Core layout */
+    .page-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* Header styles */
+    .header-section {
+      background: #25262b;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 32px;
+      border: 1px solid #373a40;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .model-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .model-name {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-success {
+      background: rgba(64, 192, 87, 0.15);
+      color: #40c057;
+    }
+
+    .badge-base-model {
+      background: rgba(120, 82, 255, 0.15);
+      color: #c0a9e9;
+    }
+
+    .header-stats {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #909296;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .buzz-icon {
+      color: #f5a623;
+      font-size: 18px;
+    }
+
+    /* Main content grid */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+
+    @media (max-width: 1200px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Epoch picker section */
+    .epoch-section {
+      background: #25262b;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid #373a40;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .epoch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .epoch-card {
+      background: #2c2e33;
+      border: 2px solid #373a40;
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 200ms ease;
+      position: relative;
+    }
+
+    .epoch-card:hover {
+      border-color: #495057;
+      transform: translateY(-2px);
+    }
+
+    .epoch-card.selected {
+      border-color: #1971c2;
+      background: rgba(25, 113, 194, 0.1);
+    }
+
+    .epoch-card.recommended::before {
+      content: '⭐';
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 18px;
+    }
+
+    .epoch-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .epoch-number {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .selected-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #1971c2;
+      color: #fff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    /* Thumbnail grid (2x2) */
+    .thumbnail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .thumbnail {
+      aspect-ratio: 1;
+      background: linear-gradient(135deg, #40c057 0%, #1971c2 100%);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .thumbnail img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .epoch-loss {
+      font-size: 11px;
+      color: #909296;
+    }
+
+    /* Sample prompt strip */
+    .prompt-strip {
+      background: #2c2e33;
+      border: 1px solid #373a40;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 16px;
+    }
+
+    .prompt-label {
+      font-size: 11px;
+      color: #909296;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .prompts {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .prompt-item {
+      font-size: 12px;
+      color: #c1c2c5;
+      line-height: 1.4;
+      padding: 6px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    .regen-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: #1971c2;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 150ms ease;
+    }
+
+    .regen-btn:hover {
+      background: #1565b0;
+    }
+
+    /* Decision panel */
+    .decision-panel {
+      background: #25262b;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid #373a40;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .decision-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+
+    .decision-subtitle {
+      font-size: 11px;
+      color: #909296;
+      margin-bottom: 16px;
+    }
+
+    .decision-option {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 150ms ease;
+      border: 1px solid transparent;
+    }
+
+    .decision-option.primary {
+      background: #1971c2;
+      color: #fff;
+    }
+
+    .decision-option.primary:hover {
+      background: #1565b0;
+      transform: translateY(-1px);
+    }
+
+    .decision-option.secondary {
+      background: #2c2e33;
+      color: #c1c2c5;
+      border-color: #373a40;
+    }
+
+    .decision-option.secondary:hover {
+      border-color: #495057;
+      background: #313338;
+    }
+
+    .decision-option.tertiary {
+      background: transparent;
+      color: #c1c2c5;
+      border-color: #495057;
+    }
+
+    .decision-option.tertiary:hover {
+      border-color: #748694;
+      background: rgba(73, 80, 87, 0.1);
+    }
+
+    .decision-option-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .decision-option-desc {
+      font-size: 11px;
+      opacity: 0.85;
+      line-height: 1.3;
+    }
+
+    .decision-option-icon {
+      font-size: 18px;
+      margin-bottom: 4px;
+    }
+
+    /* Footer note */
+    .footer-note {
+      background: rgba(25, 113, 194, 0.08);
+      border: 1px solid rgba(25, 113, 194, 0.2);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 12px;
+      color: #909296;
+      text-align: center;
+      margin-top: 24px;
+    }
+
+    .footer-note-highlight {
+      color: #1971c2;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-container">
+    <!-- Header Section -->
+    <div class="header-section">
+      <div class="header-top">
+        <div class="model-title">
+          <span class="model-name">my_character</span>
+          <span class="badge badge-success">
+            <i class="ti ti-check"></i>
+            Training complete
+          </span>
+          <span class="badge badge-base-model">
+            <i class="ti ti-sparkles"></i>
+            Flux
+          </span>
+        </div>
+      </div>
+
+      <div class="header-stats">
+        <div class="stat">
+          <span class="stat-label">Total Cost</span>
+          <span class="stat-value">
+            <span class="buzz-icon">⚡</span>
+            1,250 Buzz
+          </span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Training Time</span>
+          <span class="stat-value">45 min 32 sec</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Epochs Trained</span>
+          <span class="stat-value">12</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Content Grid: Epochs + Decision Panel -->
+    <div class="content-grid">
+      <!-- Left: Epoch Picker -->
+      <div>
+        <div class="epoch-section">
+          <h2 class="section-title">
+            <i class="ti ti-chart-line"></i>
+            Pick your best epoch
+          </h2>
+
+          <div class="epoch-grid">
+            <!-- Epoch 4 -->
+            <div class="epoch-card">
+              <div class="epoch-header">
+                <span class="epoch-number">Epoch 4</span>
+              </div>
+              <div class="thumbnail-grid">
+                <div class="thumbnail" style="background: linear-gradient(135deg, #fa5252 0%, #7950f2 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #ff922b 0%, #fab005 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #1971c2 0%, #40c057 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #748694 0%, #495057 100%);"></div>
+              </div>
+              <div class="epoch-loss">Loss: 0.324</div>
+            </div>
+
+            <!-- Epoch 8 (Selected & Recommended) -->
+            <div class="epoch-card selected recommended">
+              <div class="epoch-header">
+                <span class="epoch-number">Epoch 8</span>
+                <span class="selected-badge">
+                  <i class="ti ti-check"></i>
+                  Selected
+                </span>
+              </div>
+              <div class="thumbnail-grid">
+                <div class="thumbnail" style="background: linear-gradient(135deg, #40c057 0%, #1971c2 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #228be6 0%, #5c7cfa 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #12b886 0%, #40c057 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #f5a623 0%, #fab005 100%);"></div>
+              </div>
+              <div class="epoch-loss">Loss: 0.198</div>
+            </div>
+
+            <!-- Epoch 12 -->
+            <div class="epoch-card">
+              <div class="epoch-header">
+                <span class="epoch-number">Epoch 12</span>
+              </div>
+              <div class="thumbnail-grid">
+                <div class="thumbnail" style="background: linear-gradient(135deg, #7950f2 0%, #fa5252 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #40c057 0%, #fab005 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #1971c2 0%, #12b886 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #ff922b 0%, #fa5252 100%);"></div>
+              </div>
+              <div class="epoch-loss">Loss: 0.267</div>
+            </div>
+
+            <!-- Epoch 2 -->
+            <div class="epoch-card">
+              <div class="epoch-header">
+                <span class="epoch-number">Epoch 2</span>
+              </div>
+              <div class="thumbnail-grid">
+                <div class="thumbnail" style="background: linear-gradient(135deg, #495057 0%, #748694 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #1971c2 0%, #228be6 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #fa5252 0%, #ff922b 100%);"></div>
+                <div class="thumbnail" style="background: linear-gradient(135deg, #12b886 0%, #40c057 100%);"></div>
+              </div>
+              <div class="epoch-loss">Loss: 0.521</div>
+            </div>
+          </div>
+
+          <!-- Sample Prompt Strip -->
+          <div class="prompt-strip">
+            <div class="prompt-label">Generation Prompts Used</div>
+            <div class="prompts">
+              <div class="prompt-item">A professional portrait of a woman with curly red hair, soft lighting, studio background</div>
+              <div class="prompt-item">A close-up of a man wearing sunglasses, dramatic lighting, high detail</div>
+              <div class="prompt-item">A full-body shot of a person in casual clothing, outdoor setting, natural lighting</div>
+            </div>
+            <button class="regen-btn">
+              <i class="ti ti-refresh"></i>
+              Generate More Samples
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Decision Panel -->
+      <div class="decision-panel">
+        <div>
+          <div class="decision-title">What next?</div>
+          <div class="decision-subtitle">Choose what to do with your trained model</div>
+        </div>
+
+        <!-- Primary: Publish -->
+        <button class="decision-option primary">
+          <div class="decision-option-icon">
+            <i class="ti ti-world"></i>
+          </div>
+          <div class="decision-option-title">Publish as a model</div>
+          <div class="decision-option-desc">Create a public model page others can use and download</div>
+        </button>
+
+        <!-- Secondary: Save/Download -->
+        <button class="decision-option secondary">
+          <div class="decision-option-icon">
+            <i class="ti ti-download"></i>
+          </div>
+          <div class="decision-option-title">Download weights</div>
+          <div class="decision-option-desc">Keep it private or download the .safetensors file</div>
+        </button>
+
+        <!-- Tertiary: Train Further -->
+        <button class="decision-option tertiary">
+          <div class="decision-option-icon">
+            <i class="ti ti-trending-up"></i>
+          </div>
+          <div class="decision-option-title">Train further</div>
+          <div class="decision-option-desc">Continue training from Epoch 8</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Footer Note -->
+    <div class="footer-note">
+      Your trained weights are <span class="footer-note-highlight">already saved</span> — publishing is optional. You can decide later what to do with them.
+    </div>
+  </div>
+</body>
+</html>

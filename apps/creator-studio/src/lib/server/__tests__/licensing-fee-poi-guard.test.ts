@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { maxLicensingFeeCeiling } from '@civitai/buzz';
 import type { Membership } from '../membership';
 
@@ -12,11 +12,30 @@ const state = vi.hoisted(() => ({
   released: [] as number[][],
   releaseFilters: [] as string[],
   slotsUsed: 0,
-  modelsScore: 50_000,
+  creatorScore: 50_000,
   // modelVersionId -> the last licenseFee charge ClickHouse reports for it.
   charges: {} as Record<number, string>,
   chargeQueries: [] as string[],
   clickhouseDown: false,
+  // The stored fee-allowance boost grant for the creator (null = none).
+  boostGrant: null as string | null,
+  boostKeys: [] as string[],
+  boostDown: false,
+  boostHangs: false,
+  anySlotSpentThisMonth: true,
+  replicaSlotsUsed: null as number | null,
+  slotSpentThisMonthFilters: [] as [string, string, unknown][],
+}));
+
+vi.mock('$lib/server/redis', () => ({
+  getSysRedis: () => ({
+    hGet: async (key: string, field: string) => {
+      state.boostKeys.push(`${key}:${field}`);
+      if (state.boostDown) throw new Error('sysRedis down');
+      if (state.boostHangs) return new Promise(() => undefined);
+      return state.boostGrant;
+    },
+  }),
 }));
 
 vi.mock('$lib/server/clickhouse', () => ({
@@ -44,7 +63,7 @@ vi.mock('$lib/server/db', () => {
       },
     });
 
-  const selectFrom = (table: string) => {
+  const selectFrom = (table: string, primary: boolean) => {
     if (table.startsWith('ModelVersion'))
       return chain({
         // Three reads hit this table with different aliases — ownedVersions selects `currentFee`,
@@ -64,10 +83,36 @@ vi.mock('$lib/server/db', () => {
       });
     if (table === 'User')
       return chain({
-        executeTakeFirst: async () => ({ meta: { scores: { models: state.modelsScore } } }),
+        executeTakeFirst: async () => ({
+          // `models` is deliberately high and unequal: with a single-key fixture the spoke's
+          // getTotalScore and its aggregate getCreatorScore return the same number, and swapping
+          // the gate between them stays green. This is what makes that swap visible.
+          meta: { scores: { total: state.creatorScore, models: 50_000 } },
+        }),
       });
     if (table === 'PricingSlot')
-      return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
+      return chain({
+        select: (selection: unknown) => {
+          if (selection !== 'entityId')
+            return chain({
+              executeTakeFirst: async () => ({
+                count: String(
+                  primary ? state.slotsUsed : (state.replicaSlotsUsed ?? state.slotsUsed)
+                ),
+              }),
+            });
+          // The replica has not seen this month's slots: the conversion check must ask the primary.
+          const spent: Record<string, unknown> = {
+            executeTakeFirst: async () =>
+              primary && state.anySlotSpentThisMonth ? { entityId: 1 } : undefined,
+          };
+          spent.where = (column: string, op: string, value: unknown) => {
+            state.slotSpentThisMonthFilters.push([column, op, value]);
+            return chain(spent);
+          };
+          return chain(spent);
+        },
+      });
     throw new Error(`unstubbed table in select: ${table}`);
   };
 
@@ -107,16 +152,21 @@ vi.mock('$lib/server/db', () => {
   };
 
   const db = {
-    selectFrom,
+    selectFrom: (table: string) => selectFrom(table, true),
     updateTable: () => chain(update),
     insertInto,
     deleteFrom,
     transaction: () => ({ execute: async (cb: (trx: unknown) => unknown) => cb(db) }),
   };
-  return { dbRead: db, dbWrite: db };
+  return {
+    dbRead: { ...db, selectFrom: (table: string) => selectFrom(table, false) },
+    dbWrite: db,
+  };
 });
 
 const { setLicensingFee, bulkSetLicensingFee } = await import('../monetization/licensing-fee');
+const { assertGatePricingAllowed, versionPriceState } =
+  await import('../monetization/pricing-slot');
 
 const GOLD: Membership = { tier: 'gold', isMember: true, isCreatorProgramMember: true };
 
@@ -125,6 +175,8 @@ const MAX_IMAGE_FEE = maxLicensingFeeCeiling('image');
 // `gated` stands in for a permanent PaidAccess row on the version (null = none).
 const version = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 1,
+  modelName: 'Test Model',
+  versionName: 'v1.0',
   baseModel: 'SDXL 1.0',
   modelType: 'Checkpoint',
   currentFee: null,
@@ -144,7 +196,14 @@ beforeEach(() => {
   state.chargeQueries = [];
   state.clickhouseDown = false;
   state.slotsUsed = 0;
-  state.modelsScore = 50_000;
+  state.creatorScore = 50_000;
+  state.boostGrant = null;
+  state.boostKeys = [];
+  state.boostDown = false;
+  state.boostHangs = false;
+  state.anySlotSpentThisMonth = true;
+  state.replicaSlotsUsed = null;
+  state.slotSpentThisMonthFilters = [];
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -389,6 +448,43 @@ describe('licensing fee POI guard', () => {
     expect(state.written).toEqual([]);
   });
 
+  // The refusal named nothing, so the offender was unfindable in a multi-page selection (868m15nnc).
+  it('names the blocking versions in the bulk refusal', async () => {
+    state.rows = [
+      version(),
+      version({ id: 2, poi: true, modelName: 'Face LoRA', versionName: 'v2' }),
+    ];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2], 1, true);
+
+    expect(result).toMatchObject({ error: expect.stringContaining('Face LoRA — v2') });
+    expect((result as { error: string }).error).not.toContain('Test Model');
+  });
+
+  it('truncates a name too long to read in a toast', async () => {
+    state.rows = [version({ poi: true, modelName: 'M'.repeat(200) })];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('…');
+    expect(error.length).toBeLessThan(200);
+  });
+
+  // Naming every offender in a 4,700-version selection is its own unreadable wall.
+  it('names the first few and counts the rest', async () => {
+    state.rows = Array.from({ length: 8 }, (_, i) =>
+      version({ id: i + 1, poi: true, modelName: `M${i + 1}` })
+    );
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2, 3, 4, 5, 6, 7, 8], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('M5 — v1.0');
+    expect(error).not.toContain('M6');
+    expect(error).toContain('and 3 more');
+  });
+
   it('allows the same bulk fee when no selected version is POI', async () => {
     state.rows = [version(), version({ id: 2 })];
 
@@ -405,7 +501,7 @@ describe('licensing fee POI guard', () => {
 describe('eligibility floor and monthly allowance', () => {
   it('refuses a first fee from a creator below the score floor, and writes nothing', async () => {
     state.rows = [version()];
-    state.modelsScore = 9_999;
+    state.creatorScore = 9_999;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);
 
@@ -414,9 +510,34 @@ describe('eligibility floor and monthly allowance', () => {
     expect(state.slots).toEqual([]);
   });
 
+  // User.meta is JSON, so a string-typed score is possible. getTotalScore reads it strictly for this
+  // reason: coercing it here would allow a row the main app refuses, at the same money gate on the
+  // same account. Nothing else in the spoke exercises that strictness.
+  it('refuses a string score rather than coercing it, matching the main app', async () => {
+    state.rows = [version()];
+    state.creatorScore = '999999' as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  // The other direction the fixture could not previously see: `total` absent entirely must not fall
+  // back to another key.
+  it('refuses when the total score is missing altogether', async () => {
+    state.rows = [version()];
+    state.creatorScore = undefined as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
   it('lets a below-floor creator change a fee they already charge', async () => {
     state.rows = [version({ currentFee: 2 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
 
     const result = await setLicensingFee(7, GOLD, 1, 5, true);
 
@@ -428,7 +549,7 @@ describe('eligibility floor and monthly allowance', () => {
   // Already sells through a permanent gate, so it is exempt from both rules.
   it('treats a version with a permanent gate and no fee as already priced', async () => {
     state.rows = [version({ gated: 1 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
     state.slotsUsed = 3;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);
@@ -468,5 +589,219 @@ describe('eligibility floor and monthly allowance', () => {
 
     expect(result).toMatchObject({ ok: true, updated: 2 });
     expect(state.slots).toEqual([]);
+  });
+});
+
+describe('licensing-fee allowance boost', () => {
+  const FREE: Membership = { tier: null, isMember: false, isCreatorProgramMember: false };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+    state.boostGrant = '100';
+    state.slotsUsed = 3;
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('lets a granted creator set a fee past the tier allowance', async () => {
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toEqual({ ok: true });
+    expect(state.boostKeys).toEqual(['system:pricing:fee-allowance-boost:7']);
+  });
+
+  it('counts a bulk fee against the tier allowance plus the boost', async () => {
+    state.rows = [version(), version({ id: 2 })];
+    state.slotsUsed = 101;
+    await expect(bulkSetLicensingFee(7, FREE, [1, 2], 1, true)).resolves.toMatchObject({
+      ok: true,
+    });
+
+    state.rows = [version(), version({ id: 2 })];
+    state.written = [];
+    state.slotsUsed = 102;
+    const result = await bulkSetLicensingFee(7, FREE, [1, 2], 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  it('gives a creator with no grant only the tier allowance', async () => {
+    state.boostGrant = null;
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('ends on its own at the start of November', async () => {
+    vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.boostKeys).toEqual([]);
+  });
+
+  const gate = async (rows: ReturnType<typeof version>[], membership: Membership = FREE) => {
+    state.rows = rows;
+    const priceState = await versionPriceState(
+      7,
+      rows.map((r) => r.id)
+    );
+    return assertGatePricingAllowed(7, membership, priceState);
+  };
+  const licensed = () => version({ currentFee: 10 });
+
+  it('splits the versions a gate write touches by what they already carry', async () => {
+    state.rows = [
+      version({ id: 1 }),
+      version({ id: 2, currentFee: 10 }),
+      version({ id: 3, currentFee: 10, gated: 3 }),
+      version({ id: 4, gated: 4 }),
+    ];
+
+    await expect(versionPriceState(7, [1, 2, 3, 4])).resolves.toEqual({
+      unpriced: [1],
+      feeOnly: [2],
+    });
+  });
+
+  it('does not widen permanent paid access', async () => {
+    const result = await gate([version()]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('refuses a gate on a licensed version once boost-funded slots are in use', async () => {
+    state.slotsUsed = 4;
+    state.replicaSlotsUsed = 0;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(result.ok ? '' : result.error).toContain('licensing fees only');
+    expect(state.slotSpentThisMonthFilters).toEqual([
+      ['entityType', '=', 'ModelVersion'],
+      ['entityId', 'in', [1]],
+      ['createdAt', '>=', new Date('2026-10-01T00:00:00Z')],
+    ]);
+  });
+
+  // A lapsed member keeps their tier string but is held to free; this row is what tells the two apart.
+  it.each([
+    ['a silver member', { tier: 'silver', isMember: true, isCreatorProgramMember: true }, true],
+    ['a free creator', FREE, false],
+    [
+      'a lapsed gold member',
+      { tier: 'gold', isMember: false, isCreatorProgramMember: true },
+      false,
+    ],
+  ] as [string, Membership, boolean][])(
+    'applies the conversion rule to the tier %s is held to',
+    async (_, membership, allowed) => {
+      state.slotsUsed = 4;
+
+      const result = await gate([licensed()], membership);
+
+      expect(result.ok).toBe(allowed);
+    }
+  );
+
+  it('leaves a gate on a licensed version free within the tier allowance', async () => {
+    const result = await gate([licensed()]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves a gate free on a version licensed in an earlier month', async () => {
+    state.slotsUsed = 50;
+    state.anySlotSpentThisMonth = false;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves re-saving versions that already have their gate free', async () => {
+    state.slotsUsed = 50;
+
+    const result = await gate([
+      version({ currentFee: 10, gated: 1 }),
+      version({ id: 2, gated: 2 }),
+    ]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('refuses a gate on a licensed version over the tier when the grant list cannot be read', async () => {
+    state.boostDown = true;
+    state.slotsUsed = 4;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('refuses a gate on a licensed version over the tier when the grant-list read hangs', async () => {
+    state.boostHangs = true;
+    state.slotsUsed = 4;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  }, 3000);
+
+  it.each([
+    ['without a grant', null],
+    ['with a grant', '100'],
+  ])(
+    'charges the new versions in a selection that also holds a licensed one, %s',
+    async (_, grant) => {
+      state.boostGrant = grant;
+      state.slotsUsed = 3;
+
+      const result = await gate([version({ id: 1 }), version({ id: 2, currentFee: 10 })]);
+
+      expect(result).toMatchObject({ ok: false, status: 403 });
+    }
+  );
+
+  it('charges every new version in a mixed selection, not just the first', async () => {
+    state.slotsUsed = 1;
+
+    const result = await gate([
+      version({ id: 1 }),
+      version({ id: 2 }),
+      version({ id: 3 }),
+      version({ id: 4, currentFee: 10 }),
+    ]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('does not charge the licensed versions in a mixed selection', async () => {
+    state.slotsUsed = 1;
+
+    const result = await gate([
+      version({ id: 1 }),
+      version({ id: 2 }),
+      version({ id: 3, currentFee: 10 }),
+    ]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves a gate on a licensed version free for a creator with no grant', async () => {
+    state.boostGrant = null;
+    state.slotsUsed = 50;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toEqual({ ok: true });
   });
 });

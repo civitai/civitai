@@ -1,8 +1,10 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import AllowanceNotice from './AllowanceNotice.svelte';
   import AnnouncementComposer from './AnnouncementComposer.svelte';
   import AnnouncementList from './AnnouncementList.svelte';
+  import AllowanceNotice from './AllowanceNotice.svelte';
+  import AnnouncementMetricsNotice from './AnnouncementMetricsNotice.svelte';
+  import AudienceStats from './AudienceStats.svelte';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import type { ActionData, PageData } from './$types';
 
@@ -48,13 +50,22 @@
     {/if}
   </div>
 
-  <AllowanceNotice allowance={data.allowance} error={data.allowanceError} />
+  <AudienceStats
+    metrics={data.metrics}
+    allowance={data.allowance}
+    allowanceError={data.allowanceError}
+  />
+
+  <AllowanceNotice allowance={data.allowance} />
+
+  <AnnouncementMetricsNotice unavailable={data.metrics === null} />
 
   {#if open}
     {#key editingId ?? 'new'}
       <AnnouncementComposer
         announcement={editing}
         allowance={data.allowance}
+        isMember={data.canAddLinkButtons}
         error={form?.scope === 'save' && form.subject === editingId ? (form.error ?? null) : null}
         onDone={close}
       />
@@ -63,6 +74,7 @@
 
   <AnnouncementList
     announcements={data.announcements}
+    metrics={data.metrics}
     deleteError={form?.scope === 'delete'
       ? { id: form.subject ?? null, message: form.error ?? '' }
       : null}

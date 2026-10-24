@@ -51,7 +51,8 @@ function makeDb() {
         h.calls.deletes.push(args);
         return qb;
       };
-      qb.executeTakeFirst = () => Promise.resolve(h.deleteResults.shift() ?? { numDeletedRows: 0n });
+      qb.executeTakeFirst = () =>
+        Promise.resolve(h.deleteResults.shift() ?? { numDeletedRows: 0n });
       qb.execute = () => Promise.resolve([]);
       return qb;
     },
@@ -113,7 +114,10 @@ const authorizeBody = { response_type: 'code', code_challenge: 'x' };
 describe('oauthModel.getClient — origin enforcement (parity)', () => {
   it('returns enriched Client and stashes record on Request when origin matches', async () => {
     h.selectResults.push(baseClient);
-    const request: any = { headers: { origin: 'https://app.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://app.example.com' },
+      body: tokenExchangeBody,
+    };
 
     const client = await oauthModel.getClient('pub-1', null, request);
 
@@ -126,7 +130,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 
   it('throws OriginNotAllowedError when public client Origin is not allowlisted', async () => {
     h.selectResults.push(baseClient);
-    const request: any = { headers: { origin: 'https://evil.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://evil.example.com' },
+      body: tokenExchangeBody,
+    };
     await expect(oauthModel.getClient('pub-1', null, request)).rejects.toBeInstanceOf(
       OriginNotAllowedError
     );
@@ -141,7 +148,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 
   it('throws OriginNotAllowedError when a browser sends an Origin not on the allowlist (empty allowlist)', async () => {
     h.selectResults.push({ ...baseClient, allowedOrigins: [] });
-    const request: any = { headers: { origin: 'https://random.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://random.example.com' },
+      body: tokenExchangeBody,
+    };
     await expect(oauthModel.getClient('pub-1', null, request)).rejects.toBeInstanceOf(
       OriginNotAllowedError
     );
@@ -154,7 +164,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
       secret: 'hash:s3cret',
       allowedOrigins: [],
     });
-    const request: any = { headers: { origin: 'https://random.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://random.example.com' },
+      body: tokenExchangeBody,
+    };
     const client = await oauthModel.getClient('conf-1', 's3cret', request);
     expect(client).toMatchObject({ isConfidential: true });
   });
@@ -227,6 +240,71 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
   });
 });
 
+describe('oauthModel — client_credentials (the client acting as itself)', () => {
+  const UserRead = 1;
+  const AIServicesWrite = 1 << 15;
+  const Catalog = 1 << 28;
+  const ceiling = { allowedScopes: UserRead | AIServicesWrite | Catalog } as any;
+  const ccClient = {
+    userId: 9,
+    grants: ['authorization_code', 'client_credentials'],
+    isConfidential: true,
+    secret: 'hash:s',
+  };
+
+  it('resolves the owner of a confidential client holding a secret, marked as client_credentials', async () => {
+    h.selectResults.push(ccClient);
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toEqual({
+      id: 9,
+      viaClientCredentials: true,
+    });
+  });
+
+  it('refuses a public client and a confidential client without a stored secret', async () => {
+    h.selectResults.push({ ...ccClient, isConfidential: false, secret: null });
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toBe(false);
+    h.selectResults.push({ ...ccClient, secret: null });
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toBe(false);
+  });
+
+  it('validateScope: the marked user gets only the client_credentials cap', async () => {
+    const cc = { id: 9, viaClientCredentials: true } as any;
+    expect(await oauthModel.validateScope(cc, ceiling, [String(Catalog)])).toEqual([
+      String(Catalog | UserRead),
+    ]);
+    expect(await oauthModel.validateScope(cc, ceiling, [String(AIServicesWrite)])).toBe(false);
+  });
+
+  it('validateScope: any other user never gets the catalog bit', async () => {
+    expect(await oauthModel.validateScope({ id: 9 } as any, ceiling, [String(Catalog)])).toBe(
+      false
+    );
+    expect(
+      await oauthModel.validateScope({ id: 9 } as any, ceiling, [String(AIServicesWrite)])
+    ).toEqual([String(AIServicesWrite | UserRead)]);
+  });
+
+  it('saveToken: a client_credentials token is access-only; any other grant gets a pair', async () => {
+    const cc = await oauthModel.saveToken(
+      { scope: [String(Catalog)] } as any,
+      { id: 'c' } as any,
+      { id: 9, viaClientCredentials: true } as any
+    );
+    expect(cc.refreshToken).toBeUndefined();
+    expect(h.calls.inserts).toHaveLength(1);
+    expect(h.calls.inserts[0]).toMatchObject({ type: 'Access', userId: 9 });
+
+    h.calls.inserts.length = 0;
+    const pair = await oauthModel.saveToken(
+      { scope: ['1'] } as any,
+      { id: 'c' } as any,
+      { id: 9 } as any
+    );
+    expect(pair.refreshToken).toEqual(expect.any(String));
+    expect(h.calls.inserts.map((i: any) => i.type)).toEqual(['Access', 'Refresh']);
+  });
+});
+
 describe('oauthModel.verifyScope (parity)', () => {
   it('passes when the token carries the required bit', async () => {
     expect(await oauthModel.verifyScope({ scope: ['3'] } as any, '1')).toBe(true);
@@ -271,7 +349,7 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
       codeChallenge: 'chal',
       codeChallengeMethod: 'S256',
       expiresAt: new Date(Date.now() + 600_000),
-    }) as any;
+    } as any);
 
   it('throws when redis is unavailable — an un-storable code must NOT be issued', async () => {
     h.state.redis = null;

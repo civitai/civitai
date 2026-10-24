@@ -3,6 +3,7 @@ import {
   IconArrowLeft,
   IconCoin,
   IconHistory,
+  IconMessage2,
   IconPhoto,
   IconRocket,
   IconSettings,
@@ -13,6 +14,7 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppCollaboratorsPanel } from '~/components/Apps/AppCollaboratorsPanel';
+import { AppFeedbackInboxPanel } from '~/components/Apps/AppFeedbackInboxPanel';
 import { AppEarningsPanel } from '~/components/Apps/AppEarningsPanel';
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import {
@@ -23,6 +25,7 @@ import {
 } from '~/components/Apps/appListingEditorTabs';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
+import { ListingForkSetting } from '~/components/Apps/ListingForkSetting';
 import { ListingHistoryPanel } from '~/components/Apps/ListingHistoryPanel';
 import { ListingPublishingPanel } from '~/components/Apps/ListingPublishingPanel';
 import { AppsListingDetailsEditor } from '~/components/Apps/AppsSubmitEditView';
@@ -93,6 +96,7 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   collaborators: IconUsers,
   publishing: IconRocket,
   history: IconHistory,
+  feedback: IconMessage2,
 };
 
 /**
@@ -142,12 +146,25 @@ export default function AppListingEditPage() {
     { enabled: !!features.appBlocks && !!appListingId, retry: false }
   );
   const context = data as AuthoringContext | undefined;
+  // Whether the Feedback tab exists at all: only once the listing has a row its owner may see.
+  // Fetched beside the context rather than folded into it, so the authoring context stays free
+  // of the Feedback table; same seat authz as the inbox list. Awaited before the tab set is
+  // derived so a `?tab=feedback` deep link resolves on the first render instead of mounting the
+  // default panel first. An error (no access, or the column not migrated here) hides the tab.
+  // `gcTime: 0`: the global `staleTime: Infinity` would otherwise let a `false` cached on an earlier
+  // visit survive the first report arriving, so the `/apps/build` "N new feedback" badge (fetched
+  // fresh) would link here and `?tab=feedback` would fall back. Dropping the entry on unmount makes
+  // every visit wait for a fresh answer, exactly like the first load; the query is one EXISTS.
+  const feedbackPresence = trpc.appFeedback.hasAnyForListing.useQuery(
+    { appListingId },
+    { enabled: !!features.appBlocks && !!appListingId, retry: false, gcTime: 0 }
+  );
 
   if (!features.appBlocks) return <NotFound />;
   // FORBIDDEN (no role) / NOT_FOUND both settle to NotFound (retry:false).
   if (error) return <NotFound />;
 
-  if (isLoading || !context) {
+  if (isLoading || !context || feedbackPresence.isLoading) {
     return (
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Center py="xl">
@@ -162,7 +179,8 @@ export default function AppListingEditPage() {
     appBlockId: context.appBlockId,
     role: context.role,
     // 🔴 THE SECURITY INPUT. A non-authorable listing (`removed`/`rejected`) collapses the
-    // set to at most Publishing + History — no Details, and above all no Collaborators.
+    // set to at most Publishing + History (+ Feedback once it has rows) — no Details, and above
+    // all no Collaborators.
     // See `editorTabsFor`; the page must never hardcode a tab past this derivation.
     status: context.status,
     // 🔴 THE SECOND HALF OF THAT INPUT, and without it `status` cannot answer the question.
@@ -174,6 +192,7 @@ export default function AppListingEditPage() {
     // actual verb. Same field the Publishing tab already branches on, two panels down.
     lastModerationAction: context.lastModerationAction,
     capabilities: context.capabilities,
+    hasFeedback: feedbackPresence.data?.hasAny === true,
   });
   const tab = resolveEditorTab(router.query.tab, tabs);
 
@@ -188,21 +207,26 @@ export default function AppListingEditPage() {
       {/*
         🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. The `getServerSideProps` above
         gates on `appBlocks` ALONE,
-        with no author requirement, while `AppsSubNav` hides itself entirely below TWO
-        qualifying tabs. Only "Marketplace" is unconditional; every other tab needs an
-        author capability, an install, an approved app, a pending invite or reviewer
-        status. So a viewer granted `app-blocks-enabled` in Flipt who is not a moderator,
-        not an author, and holds none of those — a seated collaborator on someone else's
-        listing is the realistic shape — reaches this page, qualifies for one tab, and
-        gets an EMPTY chrome band: the `Stack gap="xl"` above the body and nothing else.
+        with no author requirement, while the `/apps` rail (`useAppsNavSections`) hides itself below TWO
+        qualifying tabs. NOTHING is unconditional — "Marketplace" is store-gated too, so every entry needs an
+        author capability, an install, an approved app, a pending invite, reviewer status,
+        or `canAccessAppsBuild` (the consolidated "Build" entry; the old "Build apps"
+        row and its `resolveGetStartedAccess` gate are both retired). So a viewer granted `app-blocks-enabled` in Flipt who
+        is not a moderator, not an author, and holds none of those — a seated collaborator
+        on someone else's listing is the realistic shape — reaches this page, qualifies for
+        one tab, and gets an EMPTY chrome band: the `Stack gap="xl"` above the body and
+        nothing else.
 
         Not a live defect (pre-GA the flag resolves for mods, who are authors), and not a
         correctness problem when it does happen — it is 32px of dead space, not a broken
         page. Recorded because the trigger is a RUNTIME Flipt toggle rather than a deploy:
         `appBlocks` is `{ availability: ['mod'], fliptKey: 'app-blocks-enabled' }` and
         `getFeatureFlags` returns the Flipt answer before it evaluates `availability`, so
-        this widens with no code change and no PR. See the fuller note in
-        `src/pages/apps/get-started.tsx`.
+        this widens with no code change and no PR.
+
+        The fuller note this used to point at lived on `/apps/get-started`, which the
+        `/apps/build` consolidation DELETES. It was not relocated, so there is no longer a
+        fuller note to read — this paragraph is now the whole of it.
       */}
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Stack gap="lg">
@@ -210,7 +234,7 @@ export default function AppListingEditPage() {
             component="button"
             type="button"
             size="sm"
-            onClick={() => goBackOrFallback(router, '/apps/mine')}
+            onClick={() => goBackOrFallback(router, '/apps/build')}
             data-testid="apps-edit-back"
           >
             <Group gap={4}>
@@ -238,7 +262,19 @@ export default function AppListingEditPage() {
 
             {tabs.includes('details') ? (
               <Tabs.Panel value="details" pt="md" data-testid="apps-edit-panel-details">
-                <AppsListingDetailsEditor listingId={context.appListingId} />
+                <Stack gap="md">
+                  {/* FORKING — on-site only (an off-site app has no source here to fork), and
+                      it gates itself on the `app-blocks-fork` rollout flag. Saves on its own,
+                      in place, never through the form below: see `ListingForkSetting`. */}
+                  {context.kind === 'onsite' ? (
+                    <ListingForkSetting
+                      appListingId={context.appListingId}
+                      forkable={context.forkable}
+                      forkableAvailable={context.forkableAvailable}
+                    />
+                  ) : null}
+                  <AppsListingDetailsEditor listingId={context.appListingId} />
+                </Stack>
               </Tabs.Panel>
             ) : null}
 
@@ -282,6 +318,19 @@ export default function AppListingEditPage() {
                   role={context.role}
                   status={context.status}
                   lastModerationAction={context.lastModerationAction}
+                  // 🔴 BOTH HALVES OF THE GUARDED READ, PASSED THROUGH UNCHANGED. The level
+                  // alone is not enough: `visibilityAvailable: false` means the manual-apply
+                  // migration has not run here, and the control must disable itself and say
+                  // so rather than offer a write with no missing-column degradation.
+                  //
+                  // ⚠️ The REVIEW CEILING is NOT passed. It is derived client-side from the
+                  // shared `maxVisibilityForStatus`, which is the same function the server
+                  // read and write use — one implementation, not two, so D6 is satisfied
+                  // without a DTO field. An earlier revision shipped `maxVisibility` here
+                  // and nothing consumed it; see its absence note in
+                  // `AppListingAuthoringContext`.
+                  visibility={context.visibility}
+                  visibilityAvailable={context.visibilityAvailable}
                 />
               </Tabs.Panel>
             ) : null}
@@ -291,6 +340,12 @@ export default function AppListingEditPage() {
             {tabs.includes('history') ? (
               <Tabs.Panel value="history" pt="md" data-testid="apps-edit-panel-history">
                 <ListingHistoryPanel appListingId={context.appListingId} />
+              </Tabs.Panel>
+            ) : null}
+
+            {tabs.includes('feedback') ? (
+              <Tabs.Panel value="feedback" pt="md" data-testid="apps-edit-panel-feedback">
+                <AppFeedbackInboxPanel appListingId={context.appListingId} />
               </Tabs.Panel>
             ) : null}
 

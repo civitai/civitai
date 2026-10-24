@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
@@ -19,7 +21,7 @@ const {
   expandBlurbs,
   getReferencedBlurbIds,
   reconcileBlurbReferences,
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
   submitModelTextModeration,
   preventReplicationLag,
   evaluateAutoNsfw,
@@ -27,7 +29,7 @@ const {
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
-  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
   submitModelTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
   evaluateAutoNsfw: vi.fn(),
@@ -35,7 +37,7 @@ const {
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
 }));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
@@ -71,6 +73,11 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 });
 
 import { applyModelContentChange, upsertModel } from '~/server/services/model.service';
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 
 const MODEL_ID = 51;
 const OWNER_ID = 7;
@@ -122,18 +129,13 @@ function descriptionSql() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   reconcileBlurbReferences.mockResolvedValue(undefined);
-  throwOnBlockedLinkDomain.mockResolvedValue(undefined);
+  throwOnBlockedUserContent.mockResolvedValue(undefined);
   submitModelTextModeration.mockResolvedValue(undefined);
-  dbMock.dbRead.model.findUnique.mockResolvedValue(storedModel);
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({
-    name: storedModel.name,
-    nsfw: false,
-    lockedProperties: [],
-    meta: null,
-  });
+  dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel);
   evaluateAutoNsfw.mockReturnValue(null);
   dbMock.dbWrite.model.update.mockResolvedValue({
     id: MODEL_ID,
@@ -160,6 +162,16 @@ beforeEach(() => {
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
+/**
+ * The guard takes one value or several — a title alongside a body — so a call's checked text is a
+ * list. Flattened here rather than indexed, so an assertion below says WHICH text was checked
+ * without also pinning how many fields the call happens to bundle.
+ */
+const checkedTexts = () =>
+  throwOnBlockedUserContent.mock.calls.map(([value]: [string | string[]]) =>
+    Array.isArray(value) ? value : [value]
+  );
+
 describe('upsertModel — blurb expansion', () => {
   it('stores what the blurb says, not the html the client sent', async () => {
     await upsert();
@@ -175,8 +187,9 @@ describe('upsertModel — blurb expansion', () => {
     // The first guard saw the client's html. Drop the `data.description = expansion.html`
     // assignment and the re-check runs against the same unexpanded string, so a blocked domain
     // that arrived inside the blurb body is never seen.
-    const checked = throwOnBlockedLinkDomain.mock.calls.map(([html]) => html);
-    expect(checked.slice(0, 2)).toEqual([CLIENT_HTML, EXPANDED_HTML]);
+    const checked = checkedTexts();
+    expect(checked[0]).toContain(CLIENT_HTML);
+    expect(checked[1]).toEqual([EXPANDED_HTML]);
   });
 
   it('expands against the owner, not the moderator doing the saving', async () => {
@@ -215,7 +228,7 @@ describe('upsertModel — blurb expansion', () => {
   });
 
   it('stores the expanded html on a create too', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
 
     await upsert({ id: undefined });
 
@@ -336,7 +349,7 @@ describe('applyModelContentChange', () => {
   });
 
   it('rejects a blocked link domain before writing anything', async () => {
-    throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
+    throwOnBlockedUserContent.mockRejectedValue(new Error('invalid urls: blocked.example'));
 
     await expect(
       applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML })
@@ -358,6 +371,22 @@ describe('applyModelContentChange', () => {
 // rewrites an already-published description with text that gate never saw. Publish clean, then
 // edit the blurb, and the model keeps the rating it earned with the old words.
 describe('applyModelContentChange — the auto-NSFW gate', () => {
+  it('does not run once Model text scan is active; the rescan is the rating path', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    evaluateAutoNsfw.mockReturnValue({
+      metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
+      lock: true,
+    });
+
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(evaluateAutoNsfw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    expect(submitModelTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL_ID })
+    );
+  });
+
   const FLAGGED = {
     metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
     lock: true,

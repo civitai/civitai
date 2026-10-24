@@ -3,12 +3,20 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// Per-test-controllable balance mutation impl. `vi.mock` is hoisted, so the fn
-// must live in a hoisted block the factory can close over (mirrors
-// PageBlockHostWorkflow's `mocks.balance`). The other bridges stay inert
-// throwaway fns — only GET_BUZZ_BALANCE is behaviorally exercised here.
+// Inert per-procedure fns the mount needs. The forwarded bridges (workflows, buzz
+// balance, private + shared storage) are exercised on this host by
+// `IframeHostForwardMatrix.browser.test.tsx`; this file covers the block-render
+// beacon and the BLOCK_HELLO seam only.
 const mocks = vi.hoisted(() => ({
+  estimate: vi.fn(),
+  poll: vi.fn(),
   balance: vi.fn(),
+  append: vi.fn(),
+  update: vi.fn(),
+  vote: vi.fn(),
+  unvote: vi.fn(),
+  withdraw: vi.fn(),
+  report: vi.fn(),
 }));
 
 // IframeHost drives two tRPC queries at render (getEffectiveCheckpoint +
@@ -32,12 +40,36 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // wholesale trpc factory below does not provide, so spreading the original makes
 // the file fail to LOAD ("does not provide an export named
 // setTrpcBatchingEnabled") — verified by removing this mock.
+// 🔴 `useOptionalFeatureFlags` IS LISTED TOO, AND OMITTING IT BREAKS THE WHOLE FILE.
+// This factory REPLACES the module (deliberately — see the note above), so it must
+// name every export anything in this file's module graph imports. The app-block
+// chrome's breadcrumb crumb reads `useOptionalFeatureFlags` for its store gate (the
+// non-throwing variant, because the chrome renders outside a provider), and the day
+// it started doing so this factory stopped satisfying the link:
+//   SyntaxError: The requested module '/src/providers/FeatureFlagsProvider.tsx'
+//   does not provide an export named 'useOptionalFeatureFlags'
+//
+// 🔴 THE FILE THEN FAILS TO IMPORT, WHICH IS NOT THE SAME AS FAILING. Nothing is
+// collected, so the run reported `Test Files 6 failed` alongside `Tests 374 passed`
+// — zero failing ASSERTIONS. Anything reading a failure count, or a per-test
+// summary, sees success. Read the FILE count, not the test count.
+//
+// Both hooks return the SAME flags: the gate must be decided by this fixture, not
+// by which of the two a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       getEffectiveCheckpoint: {
         useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
@@ -49,20 +81,20 @@ vi.mock('~/utils/trpc', () => ({
       // here — the block never sends SUBMIT/ESTIMATE/POLL/SET_USER_SETTINGS in
       // these beacon tests).
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      estimateWorkflow: { useMutation: () => ({ mutateAsync: mocks.estimate }) },
+      pollWorkflow: { useMutation: () => ({ mutateAsync: mocks.poll }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: mocks.balance }) },
     },
     apps: {
       shared: {
-        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        append: { useMutation: () => ({ mutateAsync: mocks.append }) },
+        update: { useMutation: () => ({ mutateAsync: mocks.update }) },
+        vote: { useMutation: () => ({ mutateAsync: mocks.vote }) },
+        unvote: { useMutation: () => ({ mutateAsync: mocks.unvote }) },
+        withdraw: { useMutation: () => ({ mutateAsync: mocks.withdraw }) },
+        report: { useMutation: () => ({ mutateAsync: mocks.report }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -143,26 +175,6 @@ function postFromBlock(type: string, payload?: unknown) {
   );
 }
 
-// Capture host→block replies. `send` posts onto the iframe's contentWindow, so
-// we listen there. Mirrors PageBlockHostWorkflow's helper, adapted to the model-
-// slot iframe testid.
-function listenForReply() {
-  const received: Array<{ type: string; payload: unknown }> = [];
-  const iframeEl = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
-  const cw = iframeEl.contentWindow;
-  if (!cw) throw new Error('iframe contentWindow missing');
-  const handler = (e: MessageEvent) => {
-    const d = e.data as { type?: string; payload?: unknown } | null;
-    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
-  };
-  cw.addEventListener('message', handler);
-  return {
-    received,
-    last: (type: string) => [...received].reverse().find((m) => m.type === type),
-    stop: () => cw.removeEventListener('message', handler),
-  };
-}
-
 const install: BlockInstall = {
   blockInstanceId: 'inst_test',
   blockId: 'my-model-app',
@@ -240,9 +252,7 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
   beforeEach(() => {
     // vi.spyOn dedupes to the same mock when fetch is already spied, so its
     // .mock.calls would accumulate across tests — clear it each time.
-    fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     fetchSpy.mockClear();
   });
 
@@ -294,76 +304,6 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
   });
 });
 
-// ── Phase 3: per-account buzz — GET_BUZZ_BALANCE on the model-slot host ───────
-//
-// The model-slot IframeHost is the live production surface; its GET_BUZZ_BALANCE
-// handler is a COPY of PageBlockHost's but WITHOUT the explicit null-token guard,
-// because IframeHost's `token` is a non-null `string` (an empty token falls
-// through to the router's `z.string().min(1)` reject → the `catch` → error reply,
-// never a hang). This block pins that divergent branch — the PageBlockHost tests
-// don't cover it. We drive the same real postMessage bridge to BLOCK_READY, then
-// post GET_BUZZ_BALANCE and read the BUZZ_BALANCE_RESULT reply off the iframe.
-describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () => {
-  beforeEach(() => {
-    mocks.balance.mockReset();
-  });
-
-  test('GET_BUZZ_BALANCE forwards the IframeHost token to getMyBuzzBalance and posts BUZZ_BALANCE_RESULT', async () => {
-    const balance = { blue: 1200, green: 300, yellow: 50 };
-    mocks.balance.mockResolvedValue(balance);
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal' });
-
-    await vi.waitFor(() => {
-      // Forwarded the IframeHost `token` PROP as blockToken (the SELF-BOUND
-      // credential); the handler never trusts a client-supplied userId.
-      expect(mocks.balance).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
-    });
-    await vi.waitFor(() => {
-      const r = replies.last('BUZZ_BALANCE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_bal', balance });
-    });
-    replies.stop();
-  });
-
-  test('GET_BUZZ_BALANCE error path posts an error-variant BUZZ_BALANCE_RESULT (no hang)', async () => {
-    mocks.balance.mockRejectedValue(new Error('invalid block token'));
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rq_bal_err' });
-
-    await vi.waitFor(() => {
-      const r = replies.last('BUZZ_BALANCE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      // error-carrying variant (no balance) so useBuzzBalance rejects instead of
-      // spinning to its timeout. This is the branch a `z.string().min(1)` router
-      // reject would land in for an empty token — proving no hang.
-      expect(r.payload).toEqual({ requestId: 'rq_bal_err', error: 'invalid block token' });
-      expect(r.payload).not.toHaveProperty('balance');
-    });
-    replies.stop();
-  });
-
-  test('GET_BUZZ_BALANCE with NO requestId is dropped (no mutation, no reply)', async () => {
-    renderWithProviders(<IframeHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_BUZZ_BALANCE', {}); // missing requestId
-
-    await new Promise((r) => setTimeout(r, 150));
-    expect(mocks.balance).not.toHaveBeenCalled();
-    expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
-    replies.stop();
-  });
-});
-
 /**
  * The readiness-announce SEAM on the model-slot host — the one link no pure
  * unit test can reach, because it is a claim about how the COMPONENT is wired
@@ -373,7 +313,10 @@ describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () 
  * retry loop or the readiness timeout) is pinned deterministically in
  * `__tests__/iframeInitController.test.ts`. Asserting the CALL here rather than
  * counting BLOCK_INIT posts is deliberate: a count would race the host's own
- * 400ms retry tick and could pass for the wrong reason.
+ * re-post schedule (`INIT_RETRY_BACKOFF_MS`, 50/100/200ms then every 400ms) and
+ * could pass for the wrong reason — and that race got FASTER when the front of
+ * that schedule was shortened, so the reasoning holds more strongly now, not
+ * less.
  */
 describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
   test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {

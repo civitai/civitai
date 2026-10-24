@@ -22,6 +22,8 @@ const mockDbWrite = dbMock.dbWrite;
 const { mockCacheFetch } = vi.hoisted(() => ({ mockCacheFetch: vi.fn() }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ bust: vi.fn(), fetch: mockCacheFetch, lookupFn: undefined }),
+  // resourceDataCache, reached through updateFile's cache bust; not exercised here.
+  createCachedArray: () => ({ bust: vi.fn(), fetch: vi.fn() }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 

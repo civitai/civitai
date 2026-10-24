@@ -60,6 +60,8 @@ export function explainHarness() {
     queries,
     hasDb: !!realDb,
     reset: () => queries.splice(0, queries.length),
+    /** One compiled statement; `explainAll` is the usual entry. */
+    explain,
     /** ALL of them, not the last: one service call issues several (`getReports` counts, then pages). */
     explainAll: async () => {
       if (!queries.length) throw new Error('explainHarness: nothing was compiled to plan');

@@ -1,7 +1,7 @@
 import type { ImageGetInfinite } from '~/types/router';
 import { ImageSort } from '~/server/common/enums';
 import { ownContentPickerFilters } from '~/components/Image/image.utils';
-import { PLACEMENT_SURFACES, SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
+import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
 import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 
 /**
@@ -262,22 +262,6 @@ export function freeRefusalOutcome(
   // guessing here is what produced a modal that told everyone they lost a race.
   return { title: "Couldn't submit that", message: serverMessage, fallBackToPaid: false };
 }
-
-/**
- * Whether this gallery would accept a PAID submission.
- *
- * Not the same question as `open`, which `getRemixGalleryVisibility` answers
- * from `mode !== 'off'` alone. Price and free capacity are independent in the
- * schema, so a gallery can be open, take free submissions, and refuse every paid
- * one — unpriced, where the submit button is disabled, or priced below the
- * surface floor, where the button works and the mutation refuses.
- *
- * Mirrors the two refusals on the paid path in `createRemixGallerySubmission`.
- * A third rule there needs one here, or the card starts recommending a refusal
- * again.
- */
-export const paidSubmissionOpen = (price: number | null | undefined) =>
-  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;
 
 /**
  * Which option the control is on: an explicit choice, else free when it is

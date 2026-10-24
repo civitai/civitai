@@ -8,7 +8,7 @@ import {
 } from '~/server/services/placement-space.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type {
-  PlacementSpaceEntity,
+  PlacementTargetType,
   PlacementSpaceMode,
   PlacementSurface,
 } from '~/shared/utils/placement';
@@ -16,6 +16,7 @@ import {
   FREE_PLACEMENTS_PER_DAY,
   PLACEMENT_SURFACES,
   freePlacementDayStart,
+  placementSurfaceAllowsZeroPrice,
 } from '~/shared/utils/placement';
 
 /**
@@ -82,14 +83,14 @@ const LOCK_TIMEOUT = '3s';
  */
 const spaceLockKey = (
   surface: PlacementSurface,
-  targetType: PlacementSpaceEntity,
+  targetType: PlacementTargetType,
   targetId: number
 ) => `${surface}:${targetType}:${targetId}`;
 
 type PlacementClient = Pick<typeof dbWrite, 'placement'>;
 type SpaceTarget = {
   surface: PlacementSurface;
-  targetType: PlacementSpaceEntity;
+  targetType: PlacementTargetType;
   targetId: number;
 };
 
@@ -175,6 +176,14 @@ export async function createFreePlacement({
   sellerId,
   data,
 }: CreateFreePlacement) {
+  // A surface that may be priced at zero has no free tier: a `free` row on it would spend a slot
+  // and the daily allowance, which every surface shares, so continuing a story would quietly
+  // cost the placer today's free sticker. Refused before any I/O.
+  if (placementSurfaceAllowsZeroPrice(surface))
+    throw throwBadRequestError(
+      `placement: ${PLACEMENT_SURFACES[surface].label} have no free tier to claim from`
+    );
+
   const target = { surface, targetType, targetId };
   const space = await resolvePlacementSpaceFor(target);
 

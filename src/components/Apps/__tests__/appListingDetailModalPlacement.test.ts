@@ -23,8 +23,7 @@ import { describe, expect, it } from 'vitest';
  * its close transition, and the modal is portalled and opens synchronously, so
  * `expect.element(...).toBeInTheDocument()` resolves inside that window and cannot tell the
  * two placements apart. That is a real property of the rendering, so no rewrite of the
- * assertion in the browser tier is obviously going to fix it — and the browser tier is
- * report-only in CI regardless.
+ * assertion in the browser tier is obviously going to fix it.
  *
  * So the rule is pinned STRUCTURALLY, in the blocking node project, where it is exactly a
  * claim about where a tag appears in the source. That is a weaker kind of evidence than a
@@ -40,18 +39,26 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC = path.resolve(__dirname, '../../..');
-const BODY_MODULE = 'components/Apps/AppListingDetailBody.tsx';
+/**
+ * 🔴 RE-POINTED FROM `AppListingDetailBody.tsx` TO THE SHARED MENU. The `⋮` menu was
+ * extracted so the store CARD renders the same one; the rule, the dropdown and all four
+ * modals moved with it. Re-pointing rather than widening to "either file" is deliberate:
+ * there is exactly ONE dropdown in the codebase now, which is what the extractor below
+ * asserts, and a second one appearing anywhere is the regression this whole file guards.
+ */
+const BODY_MODULE = 'components/Apps/AppListingActionsMenu.tsx';
 
 /**
- * Every modal the detail body's overflow menu opens. All four, not just the two this
- * change adds: the rule is the same for all of them, and the two pre-existing ones were
- * the mutants measured above as uncaught.
+ * Every modal the overflow menu opens. All of them: the rule is the same for each, and
+ * two of them were the mutants measured above as uncaught.
  */
 const MENU_MODALS = [
   'ReviewListingModal',
   'ReportListingModal',
   'MessageAppOwnerModal',
   'ListingTakedownModal',
+  'ListingVisibilityMenuModal',
+  'ModListingVisibilityModal',
 ] as const;
 
 /** A `data-testid` known to live INSIDE the dropdown — the extractor's positive control. */
@@ -107,6 +114,17 @@ describe('the detail body mounts every menu-opened modal OUTSIDE Menu.Dropdown',
       expect(inside).toEqual([]);
     });
   }
+
+  it('MENU_MODALS lists every *Modal the menu module mounts (a ledger, not a sample)', () => {
+    // Without this, a modal added to the menu but not to the list above is checked by
+    // nothing — the per-modal cases only cover names someone remembered to add.
+    const mounted = new Set(
+      [...source().matchAll(/<([A-Z][A-Za-z0-9]*Modal)[\s/>]/g)].map((m) => m[1])
+    );
+    // Positive control: the regex sees the menu's modals at all.
+    expect(mounted.size).toBeGreaterThan(0);
+    expect([...mounted].sort()).toEqual([...MENU_MODALS].sort());
+  });
 
   it('the placement detector fires on a modal moved INSIDE the dropdown', () => {
     // 🔴 The negative control, on synthetic source rather than by editing the real file:

@@ -20,6 +20,9 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
 
 /**
  * Ceiling on workflows pulled per overlay. A row whose workflow falls outside this many
@@ -133,17 +136,28 @@ export type TrainingRunState = {
  * Fetched by workflow id rather than through the list query so it is exact — the list's cap and
  * page bounds do not apply, and a run the user opens is the one that gets read.
  */
-export async function getTrainingRunState({
-  modelVersionId,
-  userId,
-  isModerator,
-  ctx,
-}: {
+export async function getTrainingRunState(args: TrainingRunArgs): Promise<TrainingRunState> {
+  const { state } = await resolveTrainingRun(args);
+  return state;
+}
+
+type TrainingRunArgs = {
   modelVersionId: number;
   userId: number;
   isModerator: boolean;
   ctx: { req: NextApiRequest; res: NextApiResponse };
-}): Promise<TrainingRunState> {
+};
+
+/**
+ * `getTrainingRunState` plus what a download needs to name its files. Epoch downloads resolve
+ * through this so they can only offer what the epoch-selection screen shows.
+ */
+export async function resolveTrainingRun({
+  modelVersionId,
+  userId,
+  isModerator,
+  ctx,
+}: TrainingRunArgs): Promise<{ state: TrainingRunState; run: TrainingRunNameParts }> {
   // Read through the WRITE connection: `ModelFile.metadata` is TOASTed jsonb, which the logical
   // subscriber drops on UPDATE, so on the replica `trainingResults` comes back empty and this
   // screen would show a finished run as having no epochs. Same reason as
@@ -151,9 +165,11 @@ export async function getTrainingRunState({
   const version = await dbWrite.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
+      id: true,
       trainingStatus: true,
+      trainingDetails: true,
       meta: true,
-      model: { select: { userId: true } },
+      model: { select: { userId: true, name: true } },
       files: {
         where: { type: 'Training Data' },
         select: { id: true, type: true, metadata: true, sizeKB: true },
@@ -163,24 +179,23 @@ export async function getTrainingRunState({
   if (!version) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
   if (version.model.userId !== userId && !isModerator) throw throwAuthorizationError();
 
-  const file = pickBestTrainingFile(version.files);
-  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
-    null) as TrainingResultsV2 | null;
+  const run: TrainingRunNameParts = {
+    modelName: version.model.name,
+    versionId: version.id,
+    architecture: trainingArchitectureKey(version.trainingDetails as TrainingDetailsObj | null),
+  };
 
-  const workflowId =
-    stored?.workflowId ??
-    // Written alongside the training results at submit. It lives on a small json column the
-    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
-    // whose stored results came back empty — which is exactly when this screen needs the
-    // orchestrator most.
-    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
+  const { file, stored, workflowId } = resolveTrainingWorkflowId(version);
+  const storedState: TrainingRunState = {
+    source: 'stored',
+    trainingStatus: version.trainingStatus,
+    trainingResults: stored,
+  };
 
-  if (!file || !workflowId)
-    return { source: 'stored', trainingStatus: version.trainingStatus, trainingResults: stored };
+  if (!file || !workflowId) return { state: storedState, run };
 
   const overlay = await getTrainingWorkflowOverlayById({ workflowId, userId, ctx });
-  if (overlay.byModelFileId.size === 0)
-    return { source: 'stored', trainingStatus: version.trainingStatus, trainingResults: stored };
+  if (overlay.byModelFileId.size === 0) return { state: storedState, run };
 
   const merged = applyTrainingWorkflowOverlay(
     { trainingStatus: version.trainingStatus, files: [{ id: file.id, metadata: file.metadata }] },
@@ -188,12 +203,35 @@ export async function getTrainingRunState({
   );
 
   return {
-    source: 'orchestrator',
-    trainingStatus: merged.trainingStatus,
-    trainingResults:
-      ((merged.files[0].metadata as FileMetadata | null)?.trainingResults as TrainingResultsV2) ??
-      stored,
+    state: {
+      source: 'orchestrator',
+      trainingStatus: merged.trainingStatus,
+      trainingResults:
+        ((merged.files[0].metadata as FileMetadata | null)?.trainingResults as TrainingResultsV2) ??
+        stored,
+    },
+    run,
   };
+}
+
+/**
+ * The orchestrator workflow a model version was trained by, from its stored records. Read the
+ * version through `dbWrite` — see `resolveTrainingRun`.
+ */
+export function resolveTrainingWorkflowId<F extends { metadata: unknown }>(version: {
+  meta: unknown;
+  files: F[];
+}): { file: F | undefined; stored: TrainingResultsV2 | null; workflowId: string | undefined } {
+  const file = pickBestTrainingFile(version.files);
+  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
+    null) as TrainingResultsV2 | null;
+  const workflowId =
+    stored?.workflowId ??
+    // Written alongside the training results at submit. It lives on a small json column the
+    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
+    // whose stored results came back empty.
+    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
+  return { file, stored, workflowId };
 }
 
 /** One workflow, derived, or null if it cannot be read — past retention, malformed, or upstream down. */

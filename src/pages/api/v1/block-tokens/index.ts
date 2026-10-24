@@ -16,6 +16,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -30,8 +31,12 @@ import {
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
+  effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
+  resolvePerCallBuzzBudget,
+  isAppStorageScope,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -42,14 +47,62 @@ import {
   consentGatedScopes,
 } from '~/server/services/blocks/scope-grant.service';
 import {
+  isConsentRequiredError,
+  manifestCanMintOauthToken,
+  manifestWantsOauthToken,
+  oauthScopeBitsFor,
+} from '~/server/services/blocks/block-oauth-scope';
+import {
+  clampPrivateRunScopes,
   clampTunnelDeclaredScopes,
   FORCED_SFW_CEILING,
   parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   signDevScopedPageToken,
+  signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
 import type { Logger } from '@civitai/next-axiom';
+
+/**
+ * The EFFECTIVE browsing-level ceiling this mint advertises to the host for
+ * `BLOCK_INIT` — the intersection of the domain ceiling already computed for
+ * the token claim and the VIEWER's own NSFW browsing level.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL: `maxBrowsingLevel` is a property of the DOMAIN, so
+ * two viewers on `civitai.red` — one who never enabled NSFW, one at XXX — are
+ * handed the identical, maximally-wide ceiling. A block that renders mature
+ * affordances off `maxBrowsingLevel` therefore shows them to a viewer whose own
+ * setting says PG. This value is the one a block should render against.
+ *
+ * 🔴 WHY IT IS AN INTERSECTION AND NOT THE VIEWER'S RAW LEVEL: on `blue` the
+ * App-Blocks domain ceiling is SFW (see `domainBrowsingCeiling`) while the
+ * viewer's saved level may carry R/X/XXX, so the raw viewer level is WIDER than
+ * the domain permits. Shipping it would hand untrusted publisher code a number
+ * that reads as permission and is not one. Only the intersection is safe to
+ * project, and it is what a block actually needs.
+ *
+ * `getServerBrowsingLevel` is the platform's single source of truth for "the
+ * viewer's own level" (the same helper `wildcard-pack.service.ts` gates on);
+ * this does not re-derive it. It already fails closed to PG for an anonymous
+ * viewer and for a viewer with NSFW off, and `effectiveBrowsingCeiling` fails
+ * closed again on both operands — so every absent/anonymous/malformed path
+ * lands on a subset of the domain ceiling, never a superset.
+ *
+ * `canViewNsfw` is read from the SAME `getFeatureFlags({ user, req })` call
+ * shape the route already uses for `appBlocks`, so the domain half of the
+ * viewer-level derivation cannot drift from the rest of the request.
+ */
+function resolveEffectiveBrowsingLevel(args: {
+  req: NextApiRequest;
+  sessionUser: SessionUser | undefined;
+  maxBrowsingLevel: number;
+}): number {
+  const { req, sessionUser, maxBrowsingLevel } = args;
+  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
+  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
+  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+}
 
 /**
  * POST /api/v1/block-tokens
@@ -60,6 +113,9 @@ import type { Logger } from '@civitai/next-axiom';
  * Anon viewers receive a token with `sub: "anon"`. Scopes requiring an
  * authenticated subject (buzz:read:self, social:tip:self, user:read:self)
  * are rejected downstream by the block-scope middleware.
+ *
+ * A bearer credential must be a full-access personal API key
+ * (`requireFullScopeSession`); any other bearer credential gets 403.
  *
  * CSRF posture: SAME-ORIGIN ONLY with EXACT host equality. The host page on
  * civitai.com fetches the token here and passes it into the iframe via
@@ -115,6 +171,12 @@ const requestSchema = z.object({
   // a block's iframe JS can never self-declare/widen its own scopes. (The bearer
   // `/api/v1/blocks/dev-token` localhost path legitimately body-sources; this
   // cookie-authed page-host path does not.)
+  //
+  // `devTunnel` — sent by `DevTunnelBlockHost`. It can only NARROW a token: the
+  // ordinary mint drops every document-store scope when it is set, and the
+  // tunnel-only branches ignore it. A client-asserted flag is therefore safe —
+  // omitting it yields exactly what `/apps/run/<slug>` already mints for this viewer.
+  devTunnel: z.boolean().optional(),
 });
 
 // W10 — synthetic block-instance id prefix for a stateless full-page app. The
@@ -130,11 +192,13 @@ const PAGE_INSTANCE_PREFIX = 'page_';
 // is therefore `page_ephemeral-<slug>`.
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
-const BUZZ_BUDGET_DEFAULT = 10;
-const BUZZ_BUDGET_CAP = 1000;
-
 const PER_IP_RATE_LIMIT_WINDOW_SECONDS = 60;
 const PER_IP_RATE_LIMIT_MAX = 120;
+
+/** `scopes` minus the whole `isAppStorageScope` family, legacy scopes included. */
+function withoutDocumentStoreScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => !isAppStorageScope(s));
+}
 
 function projectClientCtx(slotContext: Record<string, unknown>): Record<string, unknown> {
   // What goes in the JWT ctx claim is ONLY what a downstream scope might
@@ -296,17 +360,70 @@ function resolveBuzzBudget(
   publisherSettings: Record<string, unknown>
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
-  const raw = publisherSettings?.buzz_budget_per_gen;
-  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
-  // finite number. A fractional / Infinity / NaN / non-number value falls back
-  // to the platform default rather than flowing through to a fractional Buzz
-  // budget. This treats model slots and pages identically — both arrive here as
-  // `buzz_budget_per_gen` (the model path from install settings, the page path
-  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
-  // way. A valid positive integer (the model-slot common case) is unchanged.
-  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
-  if (candidate <= 0) return 0; // sentinel — caller rejects with 422
-  return Math.min(candidate, BUZZ_BUDGET_CAP);
+  // Model slots and pages arrive here identically, as `buzz_budget_per_gen` (install
+  // settings, or mapped from manifest `page.buzzBudgetPerGen`). 0 is the sentinel the
+  // caller rejects with 422.
+  return resolvePerCallBuzzBudget(publisherSettings?.buzz_budget_per_gen);
+}
+
+type OauthMintOutcome =
+  | { outcome: 'minted'; token: string; expiresAt: string }
+  | { outcome: 'consent_required'; withheld: string[] };
+
+/**
+ * Hub-minted OAuth access token for an `auth: "oauth"` manifest. The consent
+ * row is mirrored from the grant right before asking, so grants that predate
+ * the mirror still mint; a missing grant or a hub `consent_required` refusal
+ * falls back to the JWT path with the consent signal set, never a 500.
+ *
+ * 🔴 #5127: the "missing grant" half of that sentence was a CLAIM, not a
+ * behaviour, until the mirror was fixed. `syncOauthConsentFromGrant` used to
+ * WRITE an `OauthConsent` row for a viewer with no grant at all — ORing in
+ * `UserRead` — so this function never saw the `null` it branches on and the hub
+ * validated consent against the row the platform had just manufactured. This
+ * comment described the intended design while the code did the opposite. The
+ * mirror now also returns `null` for a grant row that does not carry
+ * `user:read:self`, so "a missing grant" reads more precisely as "consent that
+ * cannot support an OAuth token".
+ */
+async function mintDevTunnelOauth(args: {
+  userId: number;
+  clientId: string;
+  scopes: string[];
+}): Promise<{ token: string; expiresAt: string }> {
+  const { mintDevTunnelOauthToken } = await import(
+    '~/server/services/blocks/dev-tunnel-oauth.service'
+  );
+  return mintDevTunnelOauthToken(args);
+}
+
+async function devTunnelClientIdFor(userId: number, slug: string): Promise<string> {
+  const { devTunnelClientId } = await import('~/server/services/blocks/dev-tunnel-oauth.service');
+  return devTunnelClientId(userId, slug);
+}
+
+async function mintOauthAppToken(args: {
+  userId: number;
+  appBlockId: string;
+  clientId: string;
+  scopes: string[];
+}): Promise<OauthMintOutcome> {
+  const { userId, appBlockId, clientId, scopes } = args;
+  const [{ syncOauthConsentFromGrant }, { mintAppToken }] = await Promise.all([
+    import('~/server/services/blocks/oauth-consent-sync.service'),
+    import('@civitai/auth'),
+  ]);
+  const consent = await syncOauthConsentFromGrant({ userId, appBlockId, scopes });
+  if (!consent) return { outcome: 'consent_required', withheld: consentGatedScopes(scopes) };
+  try {
+    const minted = await mintAppToken({ userId, clientId, scope: oauthScopeBitsFor(scopes) });
+    return { outcome: 'minted', token: minted.accessToken, expiresAt: minted.expiresAt };
+  } catch (err) {
+    if (isConsentRequiredError(err)) {
+      return { outcome: 'consent_required', withheld: consentGatedScopes(scopes) };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -331,13 +448,20 @@ function resolveBuzzBudget(
  *     `status:'ephemeral'` (a just-approved app self-corrects on client reload via
  *     the prod path).
  *   - SPEND CONTAINMENT: the token is self-bound (`sub` = the session user), so at
- *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
- *     `assertViewerIsAppDeveloper(sub)` + the per-call (DEV_BUZZ_BUDGET_CAP) /
- *     per-session / per-day caps. There is NO bearer credential here, so the
- *     dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true` (and
- *     `spendRequested: true`, since this path has no request body — the declaring
- *     manifest IS the request); the runtime author-flag re-check is the substitute
- *     spend gate.
+ *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, bounded by the per-call
+ *     `buzzBudget` claim (DEV_BUZZ_BUDGET_CAP) and the aggregate per-user / per-app
+ *     caps in `reserveBlockBuzzSpendForClaims`. There is NO bearer credential here,
+ *     so the dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true`
+ *     (and `spendRequested: true`, since this path has no request body — the
+ *     declaring manifest IS the request); the SELF-BOUND `sub` plus those caps are
+ *     the substitute for the missing bearer ceiling.
+ *     🔴 CORRECTED 2026-09-27: this bullet used to name `assertViewerIsAppDeveloper(sub)`
+ *     as the gate and "the runtime author-flag re-check" as the substitute. Neither
+ *     exists on the submit path — the two same-named helpers are module-private to
+ *     `blocks/user-settings.service.ts` and `apps/app-storage.service.ts`, and their
+ *     only call sites are a viewer SETTINGS write and the mod review STORAGE branch.
+ *     `blocks.router.ts`'s header records that the gate left the runtime procedures
+ *     deliberately. Do not widen a gate that is not there.
  *   - SCOPE SOURCE (the resolver is the single authority — `app.scopes`): the
  *     caller's OWN pending submission's SERVER-READ `manifest.scopes` (pending), else
  *     the AUTHENTICATED CLI's dev-tunnel SESSION `grantedScopes` (brand-new — NEVER a
@@ -427,17 +551,29 @@ async function tryDevTunnelScopedMint(args: {
   const granted = clampTunnelDeclaredScopes(app.scopes);
   const buzzBudget = resolveDevBuzzBudget(granted);
 
+  const wantsOauth = tunnel?.declaredAuth ? tunnel.declaredAuth === 'oauth' : app.auth === 'oauth';
+  const oauth =
+    wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintDevTunnelOauth({
+          userId,
+          clientId: await devTunnelClientIdFor(userId, slug),
+          scopes: granted,
+        })
+      : null;
+
   // SIGN — synthetic, non-resolving ids (`ephemeral-<slug>`), the client's page
   // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
-  const result = await signDevScopedPageToken({
-    userId,
-    signBlockId: app.blockId,
-    signAppId: app.appId,
-    signAppBlockId: app.appBlockId,
-    blockInstanceId,
-    granted,
-    buzzBudget,
-  });
+  const result =
+    oauth ??
+    (await signDevScopedPageToken({
+      userId,
+      signBlockId: app.blockId,
+      signAppId: app.appId,
+      signAppBlockId: app.appBlockId,
+      blockInstanceId,
+      granted,
+      buzzBudget,
+    }));
 
   // MINT-TIME AUDIT (dev-token.ts `blocks.dev-token.*-mint` parity): a synthetic
   // `ephemeral-<slug>` app has NO durable AppBlock-backed row, so this structured
@@ -456,6 +592,7 @@ async function tryDevTunnelScopedMint(args: {
     sessionId: tunnel?.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
+    kind: oauth ? 'oauth' : 'block',
   };
   req.log?.info('app-blocks.dev-tunnel.mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.mint', mintAudit);
@@ -464,6 +601,8 @@ async function tryDevTunnelScopedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: oauth ? 'oauth' : 'block',
+    buzzBudget,
     // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
     // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
     needsConsent: false,
@@ -471,6 +610,14 @@ async function tryDevTunnelScopedMint(args: {
     // Forced-SFW: the dev mint never reads the request host.
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // Still narrowed by the author's OWN browsing level: forced-SFW caps the
+    // domain half, it says nothing about the viewer half. An author with NSFW
+    // off dogfoods at PG here, exactly as they would on the public run page.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
   });
   return 'handled';
 }
@@ -513,9 +660,15 @@ async function tryDevTunnelScopedMint(args: {
  *      the caller. Any off → 404. (No `unsubmitted-spend` flag: unlike a never-reviewed
  *      ephemeral app, this app's scopes ARE a prior moderator-approved snapshot.)
  *   4. SELF-BOUND — the token `sub` is the caller (the owner), so at RUNTIME it spends
- *      the caller's OWN Buzz under `assertViewerIsAppDeveloper(sub)` + the per-call /
- *      per-session / per-day caps. Budget = the manifest `page.buzzBudgetPerGen` clamped
- *      to the dev cap (default as the ephemeral path), forced-SFW.
+ *      the caller's OWN Buzz, bounded by the per-call `buzzBudget` claim and the
+ *      aggregate per-user / per-app caps in `reserveBlockBuzzSpendForClaims`. Budget =
+ *      the manifest `page.buzzBudgetPerGen` clamped to the dev cap (default as the
+ *      ephemeral path), forced-SFW.
+ *      🔴 CORRECTED 2026-09-27: this invariant used to read "under
+ *      `assertViewerIsAppDeveloper(sub)`", naming a call that is not on the submit
+ *      path (see the Phase 2 branch's docblock above for the full correction). The
+ *      SELF-BOUND `sub` in this invariant's own title is what does the work here —
+ *      the token cannot spend anyone else's Buzz — not an author-flag re-check.
  *   5. SCOPES — sourced from the app's APPROVED SNAPSHOT (`approvedScopes`), NEVER the
  *      raw/re-published manifest, then run through the SAME `clampTunnelDeclaredScopes`
  *      belt (TUNNEL allowlist, no widening). No scope escalation.
@@ -603,17 +756,31 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
   const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
 
+  const wantsOauth = tunnel.declaredAuth
+    ? tunnel.declaredAuth === 'oauth'
+    : manifestWantsOauthToken(app.manifest);
+  const oauth =
+    wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintDevTunnelOauth({
+          userId,
+          clientId: app.appId,
+          scopes: granted,
+        })
+      : null;
+
   // SIGN with the app's REAL ids (appId/appBlockId/blockId), the client's page
   // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
-  const result = await signDevScopedPageToken({
-    userId,
-    signBlockId: app.blockId,
-    signAppId: app.appId,
-    signAppBlockId: app.appBlockId,
-    blockInstanceId,
-    granted,
-    buzzBudget,
-  });
+  const result =
+    oauth ??
+    (await signDevScopedPageToken({
+      userId,
+      signBlockId: app.blockId,
+      signAppId: app.appId,
+      signAppBlockId: app.appBlockId,
+      blockInstanceId,
+      granted,
+      buzzBudget,
+    }));
 
   // MINT-TIME AUDIT (parity with the ephemeral branch): the forensic record of
   // granting a (possibly spend-capable) dev token to a NON-approved owned app. Never
@@ -626,6 +793,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     sessionId: tunnel.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
+    kind: oauth ? 'oauth' : 'block',
   };
   req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
@@ -634,10 +802,289 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: oauth ? 'oauth' : 'block',
+    scopes: granted,
+    buzzBudget,
     needsConsent: false,
     missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
+  });
+  return 'handled';
+}
+
+/**
+ * PHASE 3 — PRIVATE RUN of a DELISTED / SUSPENDED app's ALREADY-DEPLOYED bundle, for
+ * its OWNER, an ACCEPTED listing collaborator, or a MODERATOR.
+ *
+ * ── HOW IT DIFFERS FROM PHASE 2, WHICH IT SITS DIRECTLY AFTER ────────────────────
+ * PHASE 2 (`tryDevTunnelOwnedNonApprovedMint`) serves the OWNER'S LOCAL CODE through an
+ * ACTIVE DEV TUNNEL. PHASE 3 serves the app's DEPLOYED bundle at its real origin, and
+ * requires NO tunnel. The two are MUTUALLY EXCLUSIVE BY CONSTRUCTION in the direction
+ * that matters: PHASE 2 requires a tunnel, so a tunnelled owner is handled there and
+ * never reaches this branch — which is deliberate, because when a tunnel exists the
+ * author's local code is the artifact they asked for. An owner WITHOUT a tunnel falls
+ * through to here and gets the deployed bundle instead of a 404.
+ *
+ * 🔴 ORDERING IS THEREFORE LOAD-BEARING AND NOT ALPHABETICAL. Placing PHASE 3 before
+ * PHASE 2 would silently take the dev tunnel away from every owner of a suspended app:
+ * both branches would match, and the first one wins.
+ *
+ * ── SECURITY INVARIANTS (any failure → 'continue' → the SAME bare 404) ───────────
+ *  1. ACCESS — `resolvePrivateRunAccess`, the ONE predicate the SSR route also calls.
+ *     It resolves the role through the REAL `resolveAppAccess` rather than a
+ *     re-implementation, which is the whole point: the defect that created PHASE 2 was
+ *     an SSR↔mint asymmetry where SSR allowed what the mint refused.
+ *  2. FLAG — `isAppBlocksPrivateRunEnabled`, evaluated FOR THE CALLER, and NOTHING
+ *     ELSE. 🔴 Do NOT add `isAppBlocksAuthorEnabled`: it would refuse a moderator who
+ *     has never published an app, i.e. the audience this branch exists for.
+ *  3. SELF-BOUND — the token `sub` is the VIEWER in every audience, so nobody ever
+ *     spends another user's Buzz. This is the invariant that actually bounds spend
+ *     here; it is not an author-flag re-check.
+ *  4. SCOPES — `clampPrivateRunScopes(app.approvedScopes, audience)`: the moderator-
+ *     approved SNAPSHOT, never the re-published manifest, then the tunnel belt, then
+ *     the tip-rail strip, then the editor read-only strip. An app with
+ *     `approvedScopes: []` mints a VALID token that can spend nothing.
+ *  5. DEPLOY GATE — inside the predicate, LAST. A never-deployed app is refused with
+ *     the bare 404, NOT the public path's `409 'Block is not yet deployed'`, which
+ *     would be an existence oracle.
+ *  6. NO `dev: true` — `reserveAppSpend` (the per-app velocity cap) is skipped for a
+ *     `dev` token, so a `dev` private-run token would hand every admitted viewer an
+ *     uncapped per-app surface on an app the platform has taken down. Enforced three
+ *     times over: here (we call the private-run signer), at the signer (throws), and
+ *     at the verifier (rejects the pair).
+ *  7. NO PUBLIC-PATH BYPASS — `resolvePageBlock` and `resolvePageBlockBySlug` keep
+ *     `status: 'approved'` and are untouched. A suspended app stays non-runnable
+ *     publicly, and the store stays hidden.
+ *
+ * PRODUCT INTENT (this is NOT a suspension bypass): a delist removes the PUBLIC
+ * listing and the PUBLIC run. It does not, and should not, stop the owner iterating to
+ * get the app back into review, a collaborator diagnosing it, or a moderator
+ * reproducing what got it taken down. The action is fully contained — self-bound,
+ * forced-SFW, budget-capped per call AND per (viewer, app), scope-clamped to the prior
+ * approval snapshot with the tip rail removed, flag-gated, and non-public.
+ */
+async function tryPrivateRunMint(args: {
+  req: NextApiRequest & { log?: Logger };
+  res: NextApiResponse;
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+  sessionUser: SessionUser | undefined;
+  userId: number | null;
+}): Promise<'handled' | 'continue'> {
+  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId } = args;
+
+  // Cookie-authed caller only, and the REAL-id namespace only — the synthetic
+  // `ephemeral-*` ids belong to PHASE 2's own branch and have no deployed bundle.
+  if (userId == null || !sessionUser) return 'continue';
+  if (appBlockId.startsWith(EPHEMERAL_APP_ID_PREFIX)) return 'continue';
+  // ⚠️ STRUCTURALLY UNREACHABLE ON THIS PATH, AND SAID SO RATHER THAN LEFT TO READ AS A
+  // GATE. The caller derives `appBlockId` BY SLICING this very string
+  // (`blockInstanceId.slice(PAGE_INSTANCE_PREFIX.length)`) after the handler's own gate
+  // has already required the `page_` prefix — so `page_${appBlockId}` reconstructs
+  // `blockInstanceId` exactly, always, and this comparison can never be true. PHASE 2
+  // carries the identical line with the identical property; this is a copy of that
+  // belt, kept for symmetry with the branch beside it rather than deleted, because the
+  // two branches being byte-comparable is worth more than one dead line is worth
+  // removing.
+  //
+  // 🔴 IT IS DELIBERATELY NOT TESTED, and that is the point of this comment. A test
+  // asserting "a mismatched instance id is refused" CANNOT construct the input on this
+  // path, so it would either pass vacuously or be written against a different branch
+  // and read as coverage for this one. An unreachable guard that nobody has claimed is
+  // tested is harmless; one that appears in a coverage list stops the next person
+  // looking for the real gate — which is the handler's `startsWith` check plus this
+  // derivation.
+  if (blockInstanceId !== `${PAGE_INSTANCE_PREFIX}${appBlockId}`) return 'continue';
+  // Belt-and-suspenders: the page slot must be a real page slot.
+  if (!isPageSlot(slotId)) return 'continue';
+
+  // FLAG, evaluated for THIS caller. Dynamic import so the flag module stays off the
+  // prod-mint import path, matching PHASE 2.
+  const { isAppBlocksPrivateRunEnabled } = await import('~/server/services/app-blocks-flag');
+  const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: sessionUser });
+
+  // ACCESS — the shared predicate. `db: 'write'` so a freshly-suspended, freshly-
+  // relisted or freshly-seated row cannot be read through a replication-lag window in
+  // either direction; the whole mint reads the primary for this reason.
+  //
+  // 🔴 SOFT-DELETE / BAN ARE RE-READ FROM THE PRIMARY *INSIDE* THE PREDICATE, and this
+  // branch therefore performs NO copy of its own — see the note where THIS BRANCH's copy
+  // used to be, below. (It said "PHASE 2's copy" for one commit, which was wrong twice
+  // over: PHASE 2's copies were never removed and are ABOVE, not below —
+  // `tryDevTunnelScopedMint` and `tryDevTunnelOwnedNonApprovedMint` each still hold one.
+  // A reader following that pointer for PHASE 2's check landed on a note saying it had
+  // been deleted.) (This comment said the re-read was "kept here too, below" for one
+  // commit after the read had moved; two comments in one function then gave opposite
+  // instructions, and the stale one was the first a reader hit while looking for the
+  // check. Corrected rather than deleted, because the property it describes — a session
+  // that survived a soft-delete must not mint — is still the requirement.)
+  const { resolvePrivateRunAccess } = await import(
+    '~/server/services/blocks/private-run-access.service'
+  );
+  const access = await resolvePrivateRunAccess({
+    by: { appBlockId },
+    viewer: sessionUser,
+    db: 'write',
+    privateRunEnabled,
+  });
+
+  // 🔴 EVERY REFUSAL MAPS TO THE SAME `'continue'`, WHICH THE CALLER TURNS INTO THE
+  // PRE-EXISTING BARE 404. The predicate's `reason` is rich on purpose — it feeds the
+  // audit line below and the guard tests — and it must NEVER reach the response. A
+  // status code or body that varies by reason is an existence oracle: it would tell an
+  // unauthenticated prober whether a slug exists and whether it is theirs.
+  if (!access.allowed) {
+    // AUDIT THE REFUSAL. Same dual sink as the grant, so "who tried to privately run
+    // what, and which gate stopped them" is answerable — and it is the only place that
+    // question CAN be answered, because the response is a bare 404 that says nothing.
+    // Flags and identifiers only.
+    //
+    // 🔴 EXCEPT `flag-off`, WHICH IS DELIBERATELY NOT LOGGED, AND THE REASON IS VOLUME
+    // RATHER THAN TASTE. That gate is answered before any database read, so it is the
+    // CHEAPEST request in the set and the one an unauthenticated-but-signed-in prober
+    // can issue for any `page_<anything>` id that the public mint and PHASE 2 both
+    // miss. With the flag off — the shipping state — logging it would write two records
+    // per such request, forever, carrying no information at all: "the feature is
+    // disabled" is already known from the flag. The SSR route declines to log for
+    // exactly this reason, and the two surfaces taking opposite decisions on the same
+    // enumerable input is what review caught.
+    //
+    // Every OTHER reason is logged. ⚠️ AND THE JUSTIFICATION FOR THAT IS NARROWER THAN
+    // THIS COMMENT FIRST CLAIMED — it said "each of them means a real app was resolved
+    // and a real gate refused a real viewer", which is FALSE for `no-app`, `approved`
+    // and `not-a-page`: `no-app` is produced for any `page_<garbage>` id and is
+    // therefore the highest-volume enumerable reason after `flag-off`.
+    //
+    // It is still the right call, for a different reason: `no-app` at volume is exactly
+    // how you would DETECT enumeration, so it earns its lines in a way `flag-off` never
+    // did. The bound is the per-IP limit (the per-(subject,instance) bucket keys on the
+    // instance id, so a prober rotating ids never exhausts it). If that volume ever
+    // matters, SAMPLE `no-app` rather than dropping it — dropping it removes the signal.
+    //
+    // 🔴 A SEPARATE EVENT NAME FROM THE GRANT, NOT `outcome` ON ONE NAME. Two reasons,
+    // and the second is the one that decided it. (a) A log store can then count
+    // refusals without parsing a field. (b) `mint-audit-stdout.call-site-ledger`
+    // enumerates emit sites as a LIST, not a set, so it also implicitly asserts ONE
+    // site per event name — emitting one name from two sites made that ledger red, and
+    // the alternative was to dedupe its comparison, which would have quietly removed a
+    // property it was enforcing. Splitting the name keeps that guard intact.
+    //
+    // 🔴 AND THE NAME CONTAINS "mint" ON PURPOSE. That ledger's Axiom-side scan filters
+    // its population with `/mint/i`, deliberately a SUBSTRING match because an anchored
+    // suffix was once escapable by spelling. A ledgered event NOT containing "mint" is
+    // the inverse hole: it appears in the stdout population, is filtered out of the
+    // Axiom one, and reads as "mirrored but the rich sink was dropped". `mint-refused`
+    // satisfies the filter and is the accurate name — this IS a refused mint — so the
+    // guard needed no widening.
+    if (access.reason !== 'flag-off') {
+      const refusalAudit = {
+        outcome: 'refused',
+        reason: access.reason,
+        userId,
+        appBlockId,
+      };
+      req.log?.info('app-blocks.private-run.mint-refused', refusalAudit);
+      emitMintAuditToStdout('app-blocks.private-run.mint-refused', refusalAudit);
+    }
+    return 'continue';
+  }
+
+  const app = access.block;
+
+  // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
+  // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
+  // copy (the fourth in this file), which is what created the asymmetry review found:
+  // the mint re-read the row authoritatively and the SSR route did not, so a
+  // soft-deleted viewer whose session lacked `deletedAt` got a full render and only then
+  // failed here. One read in the shared predicate serves both callers and removes the
+  // copy. Do not re-add it: a second read cannot make the answer more true, and a
+  // divergence between the two callers is the one defect this predicate exists to
+  // prevent.
+
+  // SCOPES — the approved snapshot through the private-run clamp. See
+  // `clampPrivateRunScopes` for all three steps and why the editor strip is there.
+  const granted = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  // BUDGET — the manifest's `page.buzzBudgetPerGen` clamped to the dev cap, defaulting
+  // as every other non-public page path does. Only meaningful if `ai:write:budgeted`
+  // survived the clamp, which it never does for an editor.
+  const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
+  const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
+
+  // SIGN with the app's REAL ids. 🔴 THE REAL IDS ARE A DELIBERATE DIVERGENCE FROM THE
+  // REVIEW SANDBOX, which signs a non-resolving synthetic `pending-<id>` to make both
+  // money rails miss. Copying that here would break three things this surface needs:
+  // per-app storage namespacing (`apps:storage:*` resolves against the real app), the
+  // ban-revocation instance id `page_<appBlockId>` (which this token inherits for
+  // free), and every runtime metric label. The money rails are closed EXPLICITLY
+  // instead, by the signed `privateRun` claim's two arms.
+  //
+  // No OAuth branch: a private run is a first-party diagnostic surface on a taken-down
+  // app, and minting a hub OAuth token for one would widen the credential surface for
+  // no stated need.
+  const result = await signPrivateRunPageToken({
+    userId,
+    signBlockId: app.blockId,
+    signAppId: app.appId,
+    signAppBlockId: app.appBlockId,
+    blockInstanceId,
+    granted,
+    buzzBudget,
+    audience: access.audience,
+  });
+
+  // MINT-TIME AUDIT — the forensic record of granting a (possibly spend-capable) token
+  // for an app the platform has taken down. Never the token itself. DUAL-SINKED to
+  // Axiom AND stdout for the reason given at PHASE 2's audit.
+  //
+  // 🔴 THIS LINE IS WHERE THE AUDIENCE LIVES, and that is a design decision recorded in
+  // two other files: the attribution void arm is deliberately audience-BLIND so it
+  // holds for whichever audiences the clamp admits, so "how many private runs, by whom,
+  // on what" is answerable HERE and nowhere else. `MintAuditFields` permits only flat
+  // scalars and scalar arrays — that narrowness IS the non-throwing guarantee; do not
+  // widen it to carry a nested object.
+  const mintAudit = {
+    outcome: 'granted',
+    status: app.status,
+    listingStatus: app.listingStatus,
+    audience: access.audience,
+    userId,
+    slug: app.blockId,
+    appBlockId: app.appBlockId,
+    scopes: granted,
+    spendGranted: granted.includes('ai:write:budgeted'),
+    kind: 'block',
+  };
+  req.log?.info('app-blocks.private-run.mint', mintAudit);
+  emitMintAuditToStdout('app-blocks.private-run.mint', mintAudit);
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    token: result.token,
+    expiresAt: result.expiresAt,
+    kind: 'block',
+    scopes: granted,
+    buzzBudget,
+    // No consent round-trip on this surface: the scope set is the prior approval
+    // snapshot, not a consent-gated request, and a grant would re-mint a WIDER token at
+    // the request of code the platform has taken down.
+    needsConsent: false,
+    missingScopes: [],
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    // Forced-SFW is the DOMAIN half only; see PHASE 2's identical note.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
   });
   return 'handled';
 }
@@ -670,7 +1117,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
     return;
   }
-  const { blockInstanceId, slotContext } = parsed.data;
+  const { blockInstanceId, slotContext, devTunnel } = parsed.data;
 
   // H3 order: per-IP rate limit FIRST (before any DB read). The per-(subject,
   // instance) limit runs after the session lookup but BEFORE findUnique.
@@ -682,6 +1129,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const session = await getServerAuthSession({ req, res });
+  if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
@@ -807,7 +1255,25 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         userId,
       });
       if (ownedMint === 'handled') return;
-      // Missing / not-approved / not-a-page app → 404 (never leaks which).
+      // PHASE 3 — PRIVATE RUN of a DELISTED / SUSPENDED app's already-DEPLOYED bundle,
+      // for its owner, an accepted listing collaborator, or a moderator. Requires NO
+      // dev tunnel, which is what makes it mutually exclusive with PHASE 2 above: a
+      // tunnelled owner is already handled there and never arrives here, so the
+      // author's local code keeps winning whenever a tunnel exists. Any non-match /
+      // refusal → 'continue' → the SAME bare 404 below (no role, status, deploy or
+      // existence oracle).
+      const privateRunMint = await tryPrivateRunMint({
+        req,
+        res,
+        appBlockId,
+        blockInstanceId,
+        slotId: slotContext.slotId,
+        sessionUser: session?.user,
+        userId,
+      });
+      if (privateRunMint === 'handled') return;
+      // Missing / not-approved / not-a-page / not-yours / not-deployed app → 404
+      // (never leaks which).
       res.status(404).json({ error: 'Page app not found' });
       return;
     }
@@ -1028,9 +1494,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // (allowed through the mint gate once the appBlocks flag is public) are handled
   // by the anon-scope strip immediately below — they have no grant ledger. The
   // grant lookup is keyed on (userId, appBlockId); a missing grant row → empty
-  // set → every consent-gated scope is withheld (fail-closed). Publisher/ambient
-  // scopes (block:settings:*, apps:storage:*) are consent-exempt and always pass
-  // through — see partitionByConsent.
+  // set → every consent-gated scope is withheld (fail-closed). The consent-exempt
+  // scopes (CONSENT_EXEMPT_SCOPES — among them the four legacy `apps:storage:*`
+  // scopes and `apps:storage`) always pass through — see partitionByConsent.
+  // NOT the whole storage family: `apps:storage:publish` is consent-gated, so an
+  // ungranted one is withheld here and reported as `needs_consent`.
   let manifestScopes = requestedScopes;
   let needsConsent = false;
   let missingScopes: string[] = [];
@@ -1051,9 +1519,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // single source of truth for "requires a per-user grant"; an anon viewer has
   // no grant and never can, so the entire consent-gated set is withheld.
   //
-  // What remains for anon is only the consent-exempt scopes
-  // (`apps:storage:*`; `block:settings:*` is additionally installer-only and
-  // gets rejected just below for anon). For generate-from-model the manifest is
+  // What remains for anon is only the consent-exempt scopes (the four legacy
+  // `apps:storage:*` scopes, `apps:storage`, and the other CONSENT_EXEMPT_SCOPES
+  // members; `apps:storage:publish` is consent-gated and so stripped here;
+  // `block:settings:*` is additionally installer-only and gets rejected just
+  // below for anon). For generate-from-model the manifest is
   // `models:read:self` + `ai:write:budgeted`, so the anon subset is empty — the
   // block renders from the (scope-free) BLOCK_INIT context (showcase + form),
   // and Generate stays server-gated: with no `ai:write:budgeted` scope the
@@ -1071,6 +1541,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // into a sign-in prompt, not a re-consent flow.
     missingScopes = [];
     needsConsent = false;
+  }
+
+  // civitai#2989 Decision 1: a tunnel preview's token carries no document-store
+  // scopes, whatever the app's approval state (the tunnel-only branches enforce it
+  // for non-approved apps through their allowlists). Stripped from the consent
+  // signal too, so the preview is never prompted for a scope it cannot receive.
+  if (devTunnel === true) {
+    manifestScopes = withoutDocumentStoreScopes(manifestScopes);
+    missingScopes = withoutDocumentStoreScopes(missingScopes);
+    needsConsent = missingScopes.length > 0;
   }
 
   // C8 (now INERT — retained as fail-safe): settings scopes were publisher-only,
@@ -1102,7 +1582,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     }
   }
 
-  const buzzBudget = manifestScopes.includes('ai:write:budgeted')
+  let buzzBudget = manifestScopes.includes('ai:write:budgeted')
     ? resolveBuzzBudget(manifestScopes, (install.settings ?? {}) as Record<string, unknown>) ??
       undefined
     : undefined;
@@ -1182,18 +1662,62 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const result = await BlockTokenService.sign({
-    userId,
-    blockId: block.blockId,
-    appId: block.appId,
-    appBlockId: block.id,
-    blockInstanceId,
-    scopes: manifestScopes,
-    ctx,
-    buzzBudget,
-    domain: domainColor ?? null,
-    maxBrowsingLevel,
-  });
+  // 🔴 #5127 (F1): `manifestCanMintOauthToken`, not `manifestWantsOauthToken`. An
+  // `auth: "oauth"` manifest that does not DECLARE `user:read:self` cannot mint —
+  // the token unavoidably carries `UserRead`, the consent mirror will not claim a
+  // bit the viewer never granted, and the hub refuses. Entering the branch anyway
+  // turns that refusal into a NON-TERMINATING consent loop: `withheld` below is
+  // `consentGatedScopes(manifestScopes)`, i.e. scopes this viewer ALREADY granted,
+  // which get stripped from the token and reported as missing, so the host renders
+  // its persistent "missing permissions" banner and re-consent re-offers the same
+  // already-granted set for ever. Skipping the branch gives such a manifest a clean
+  // block JWT with an honest, empty consent signal. `requestedScopes` (the DECLARED,
+  // approved-snapshot-intersected set) is the right input — not `manifestScopes`,
+  // which is this viewer's granted subset and would also skip the branch for the
+  // ungranted viewer of a correctly-declared manifest, suppressing the prompt they
+  // do need.
+  const oauth =
+    userId != null &&
+    manifestCanMintOauthToken(block.manifest, requestedScopes) &&
+    env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintOauthAppToken({
+          userId,
+          appBlockId: block.id,
+          clientId: block.appId,
+          scopes: manifestScopes,
+        })
+      : null;
+  if (oauth?.outcome === 'consent_required') {
+    manifestScopes = manifestScopes.filter((s) => !oauth.withheld.includes(s));
+    missingScopes = [...missingScopes, ...oauth.withheld];
+    needsConsent = true;
+    if (!manifestScopes.includes('ai:write:budgeted')) buzzBudget = undefined;
+  }
+
+  const result =
+    oauth?.outcome === 'minted'
+      ? oauth
+      : await BlockTokenService.sign({
+          userId,
+          blockId: block.blockId,
+          appId: block.appId,
+          appBlockId: block.id,
+          blockInstanceId,
+          scopes: manifestScopes,
+          ctx,
+          buzzBudget,
+          domain: domainColor ?? null,
+          maxBrowsingLevel,
+        });
+
+  // An OAuth token is not signed here: its budget is resolved when it is verified,
+  // from the manifest alone (`resolveHubTokenClaims`), never from install settings.
+  const reportedBuzzBudget =
+    oauth?.outcome === 'minted' && buzzBudget !== undefined
+      ? resolvePerCallBuzzBudget(
+          (block.manifest as { page?: { buzzBudgetPerGen?: unknown } }).page?.buzzBudgetPerGen
+        )
+      : buzzBudget;
 
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
@@ -1204,6 +1728,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    scopes: manifestScopes,
+    // The per-call budget this token carries, so the host forwards it to the block
+    // instead of deriving its own: an install setting it can resolve from is not
+    // always visible to the client. Absent when the token carries no spend scope.
+    buzzBudget: reportedBuzzBudget,
     needsConsent,
     missingScopes,
     // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE
@@ -1212,5 +1742,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // self-filter their catalog reads / blur. See projectBlockInit.ts.
     domain: domainColor ?? null,
     maxBrowsingLevel,
+    // The PER-VIEWER narrowing of the line above. `maxBrowsingLevel` is a
+    // property of the domain and is identical for every viewer on it; this is
+    // that ceiling intersected with the viewer's own NSFW browsing level, and
+    // it is what a block should render mature affordances against. Always a
+    // subset of `maxBrowsingLevel` — see `resolveEffectiveBrowsingLevel`.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser: session?.user,
+      maxBrowsingLevel,
+    }),
   });
 });

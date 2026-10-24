@@ -1,4 +1,4 @@
-import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
+import { gateRuleSchema } from '~/shared/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
@@ -7,6 +7,8 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  setEvictableSchema,
+  setAdditionalResourceFeeWaivedSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -14,16 +16,23 @@ import {
   getGenerationData,
   getGenerationStatus,
   getGateRules,
+  getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
-  setGateRules,
+  saveGateRule,
+  deleteGateRule,
+  saveGeneratorMessage,
+  deleteGeneratorMessage,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
+  setEvictable,
+  setAdditionalResourceFeeWaived,
 } from '~/server/services/generation/generation.service';
+import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -34,6 +43,8 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -55,9 +66,21 @@ export const generationRouter = router({
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
-    .query(({ input, ctx }) =>
-      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
-    ),
+    .query(async ({ input, ctx }) => {
+      const data = await getGenerationData({
+        query: input,
+        user: ctx.user,
+        browsingLevel: getRequestBrowsingLevel(ctx),
+        mediaViewer: ctx,
+      });
+      if (input.type !== 'modelVersion' && input.type !== 'modelVersions') return data;
+      return {
+        ...data,
+        resources: data.resources.filter((r) =>
+          canViewPoiModel(r.model.poi, r.model.userId, ctx.user)
+        ),
+      };
+    }),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(checkResourcesCoverageSchema)
@@ -114,29 +137,49 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  setGateRules: moderatorProcedure
-    .input(z.array(gateRuleSchema))
-    .mutation(({ input }) => setGateRules(input)),
+  saveGateRule: moderatorProcedure
+    .input(gateRuleSchema)
+    .mutation(({ input }) => saveGateRule(input)),
+  deleteGateRule: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGateRule(input.id)),
+  getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
+  saveGeneratorMessage: moderatorProcedure
+    .input(generatorMessageSchema)
+    .mutation(({ input }) => saveGeneratorMessage(input)),
+  deleteGeneratorMessage: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGeneratorMessage(input.id)),
   toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
     ),
+  setEvictable: moderatorProcedure
+    .input(setEvictableSchema)
+    .mutation(({ input, ctx }) => setEvictable({ ...input, isModerator: ctx.user.isModerator })),
+  setAdditionalResourceFeeWaived: moderatorProcedure
+    .input(setAdditionalResourceFeeWaivedSchema)
+    .mutation(({ input, ctx }) =>
+      setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
+    ),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) =>
-      getResourceData(input.ids, {
-        user: ctx.user,
-        withPreview: true,
-        sfwOnly: ctx.features.isGreen,
-      })
+    .query(async ({ input, ctx }) =>
+      (
+        await getResourceData(input.ids, {
+          user: ctx.user,
+          withPreview: true,
+          browsingLevel: getRequestBrowsingLevel(ctx),
+        })
+      ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>
-      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      resolveImageMeta({ input, user: ctx.user, browsingLevel: getRequestBrowsingLevel(ctx) })
     ),
   // App Blocks wildcard-pack import (W13) — the SESSION-authed resolve step for
   // the page-host message bridge. A page block posts GET_WILDCARD_PACK to the

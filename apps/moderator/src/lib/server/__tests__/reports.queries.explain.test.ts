@@ -78,13 +78,25 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     }
   );
 
-  it('getReportCounts — the materialized CTE and all fifteen union branches', async () => {
+  it('getReportCounts — the materialized CTE and every union branch', async () => {
     await service.getReportCounts();
 
     const [counts] = h.queries;
     // Per-branch joins back to Report seq-scanned it once per entity type; hence the CTE.
-    expect(counts.sql).toMatch(/with .*open_reports as materialized/i);
+    expect(counts.sql).toMatch(/with .*matched as materialized/i);
     expect(counts.sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
+  it('getReportLastActioned — the materialized CTE and every union branch', async () => {
+    await service.getReportLastActioned();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
+  it('getReportOldestOpen — the materialized CTE and every union branch', async () => {
+    await service.getReportOldestOpen();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
     await plans();
   });
 
@@ -94,7 +106,7 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     await service.getMostReportedPage({ page: 4, limit: 25, days: 30 });
     await plans();
   });
-  it('getMostReported — the LIMIT-in-a-CTE shape with its seventeen subplans', async () => {
+  it('getMostReported — the LIMIT-in-a-CTE shape with its per-entity subplans', async () => {
     // Subplans resolve OUTSIDE the CTE: Postgres cannot project through a Sort, so flattening this
     // evaluates them for every pending report of the week.
     await service.getMostReported({ limit: 10 });

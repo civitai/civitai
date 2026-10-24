@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * PageBlockHost SET_USER_CHECKPOINT — fail-fast NACK parity (gotcha-#73).
@@ -44,6 +45,13 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     // PageBlockHost wires the workflow + storage bridges at render; stub so it
@@ -62,6 +70,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -140,6 +154,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -187,6 +204,7 @@ describe('PageBlockHost SET_USER_CHECKPOINT (fail-fast NACK — no silent hang)'
       // empty/undefined error would surface a useless message to the user.
       expect(typeof payload.error).toBe('string');
       expect((payload.error ?? '').length).toBeGreaterThan(0);
+      expectReplyKeys('SET_USER_CHECKPOINT', 'error', ['error', 'ok'], payload);
     });
     replies.stop();
   });

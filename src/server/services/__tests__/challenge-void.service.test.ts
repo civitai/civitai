@@ -9,7 +9,7 @@ const { mockGetChallengeById, mockCloseCollection, mockRefund } = vi.hoisted(() 
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
-  buildWinnerPayoutTransactions: vi.fn(),
+  buildWinnerPrizes: vi.fn(),
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefund,
 }));
@@ -38,6 +38,7 @@ describe('voidChallenge', () => {
     mockRefund.mockResolvedValue({ refundedEntries: 0 });
     mockCloseCollection.mockResolvedValue(undefined);
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.prize.updateMany.mockResolvedValue({ count: 0 });
   });
 
   it('Active: atomically claims Active/Scheduled -> Cancelled, then refunds', async () => {
@@ -50,6 +51,17 @@ describe('voidChallenge', () => {
     expect(mockRefund).toHaveBeenCalledWith(1, 'void');
   });
 
+  // A failed completion that already awarded prizes is reset to Active and can be voided; the pool
+  // is refunded, so those prizes must stop being claimable.
+  it('voids the unpaid prizes it awarded, so a refunded pool is not also claimed', async () => {
+    mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Active));
+    await voidChallenge(1);
+    expect(mockDbWrite.prize.updateMany).toHaveBeenCalledWith({
+      where: { sourceType: 'Challenge', sourceId: 1, claimedAt: null, voidedAt: null },
+      data: { voidedAt: expect.any(Date) },
+    });
+  });
+
   it('claim lost (completion cron or a concurrent void won): does NOT refund', async () => {
     mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Active));
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 0 });
@@ -57,6 +69,8 @@ describe('voidChallenge', () => {
     // `voided: false` is what lets callers avoid reporting a refund that never happened.
     expect(res).toEqual({ success: true, voided: false });
     expect(mockRefund).not.toHaveBeenCalled();
+    // The completion that won keeps the prizes it awarded.
+    expect(mockDbWrite.prize.updateMany).not.toHaveBeenCalled();
   });
 
   it('retry on already-Cancelled: skips the claim and re-refunds (idempotent recovery)', async () => {

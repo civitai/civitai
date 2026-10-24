@@ -10,11 +10,20 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appFeedback: lazy(() =>
+    import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter)
+  ),
   appCollaborators: lazy(() =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
   ),
   blockImageUpload: lazy(() =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
+  ),
+  blockImagePicker: lazy(() =>
+    import('~/server/routers/block-image-picker.router').then((m) => m.blockImagePickerRouter)
+  ),
+  platformFeedback: lazy(() =>
+    import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter)
   ),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
@@ -36,6 +45,15 @@ export const appRouter = router({
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
   feedback: lazy(() => import('./feedback.router').then((m) => m.feedbackRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
+  huggingFaceImport: lazy(() =>
+    import('./huggingface-import.router').then((m) => m.huggingFaceImportRouter)
+  ),
+  creatorServiceDeal: lazy(() =>
+    import('./creator-service-deal.router').then((m) => m.creatorServiceDealRouter)
+  ),
+  creatorServiceDealFile: lazy(() =>
+    import('./creator-service-deal-file.router').then((m) => m.creatorServiceDealFileRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
@@ -45,8 +63,12 @@ export const appRouter = router({
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
+  storyline: lazy(() => import('./storyline.router').then((m) => m.storylineRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  postPreset: lazy(() => import('./post-preset.router').then((m) => m.postPresetRouter)),
+  promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
+  ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
@@ -69,6 +91,9 @@ export const appRouter = router({
   generation: lazy(() => import('./generation.router').then((m) => m.generationRouter)),
   generationPreset: lazy(() =>
     import('./generation-preset.router').then((m) => m.generationPresetRouter)
+  ),
+  generationSizePreset: lazy(() =>
+    import('./generation-size-preset.router').then((m) => m.generationSizePresetRouter)
   ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
@@ -99,6 +124,7 @@ export const appRouter = router({
     import('./purchasable-reward.router').then((m) => m.purchasableRewardRouter)
   ),
   vault: lazy(() => import('./vault.router').then((m) => m.vaultRouter)),
+  siteAlerts: lazy(() => import('./site-alert.router').then((m) => m.siteAlertRouter)),
   research: lazy(() => import('~/server/routers/research.router').then((m) => m.researchRouter)),
   redeemableCode: lazy(() =>
     import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
@@ -112,6 +138,12 @@ export const appRouter = router({
   ),
   creatorShop: lazy(() =>
     import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)
+  ),
+  mysteryBox: lazy(() =>
+    import('~/server/routers/mystery-box.router').then((m) => m.mysteryBoxRouter)
+  ),
+  creatorService: lazy(() =>
+    import('~/server/routers/creator-service.router').then((m) => m.creatorServiceRouter)
   ),
   productBadge: lazy(() =>
     import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)
@@ -137,7 +169,13 @@ export const appRouter = router({
   creatorProgram: lazy(() =>
     import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
   ),
+  creatorJourney: lazy(() =>
+    import('~/server/routers/creator-journey.router').then((m) => m.creatorJourneyRouter)
+  ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
+  resourceLoad: lazy(() =>
+    import('~/server/routers/resource-load.router').then((m) => m.resourceLoadRouter)
+  ),
   changelog: lazy(() => import('~/server/routers/changelog.router').then((m) => m.changelogRouter)),
   bug: lazy(() => import('~/server/routers/bug.router').then((m) => m.bugRouter)),
   nowPayments: lazy(() => import('./nowpayments.router').then((m) => m.nowPaymentsRouter)),
@@ -158,6 +196,8 @@ export const appRouter = router({
   scannerPolicies: lazy(() =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
   ),
+  crucible: lazy(() => import('./crucible.router').then((m) => m.crucibleRouter)),
+  prize: lazy(() => import('./prize.router').then((m) => m.prizeRouter)),
 });
 
 // export type definition of API

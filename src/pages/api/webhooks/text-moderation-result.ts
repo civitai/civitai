@@ -25,8 +25,8 @@
  * retry, per-entity reconcile crons (e.g. `article-ingestion-reconcile`)
  * pick up the drift.
  */
-import type { WorkflowEvent, XGuardModerationStep } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent, XGuardModerationStep } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -35,6 +35,7 @@ import {
 } from '~/server/services/entity-moderation.service';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { recordXGuardScanFromWorkflow } from '~/server/services/scanner-audit.service';
+import { logScanVerdict, xguardVerdict } from '~/server/services/text-scan/verdict-log';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -86,6 +87,16 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
       }
 
       const adapter = getModerationAdapter(entityType);
+      void logScanVerdict(
+        xguardVerdict({
+          entityType,
+          entityId,
+          workflowId: event.workflowId,
+          blocked,
+          triggeredLabels,
+          hasAdapter: !!adapter?.applyResult,
+        })
+      );
       if (adapter?.applyResult) {
         await adapter.applyResult({
           entityId,

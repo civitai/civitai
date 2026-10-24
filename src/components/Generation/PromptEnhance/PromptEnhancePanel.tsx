@@ -1,7 +1,7 @@
 import { Badge, Tabs } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
-import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
+import type { SnippetReferenceValue } from '~/shared/generation/schemas/snippet-schema';
 import { EnhanceTab } from './EnhanceTab';
 import type { PromptEnhanceImage } from './promptEnhanceStore';
 import { HistoryTab, type RemixData } from './HistoryTab';

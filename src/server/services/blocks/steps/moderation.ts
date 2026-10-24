@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -241,7 +241,8 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
 
         // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
         //
-        // `auditPromptServer` RETURNS EARLY on an empty prompt. Passing it one would
+        // `auditPromptServer` audits no prompt text on an empty prompt (it returns early
+        // unless a negative prompt is present). Passing it one would
         // therefore be a declared moderation posture that runs, audits nothing, and
         // reports success — indistinguishable from a clean audit at every call site.
         // The registry's load-time probe proves the entry produces text for its
@@ -628,9 +629,21 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
   let unpublishableReason: string | undefined;
 
   for (const step of workflow.steps ?? []) {
-    // Only REGISTERED step types have a declared posture. Everything else —
-    // textToImage, customComfy, comfy, imageGen — is media-only on this bridge
-    // and has no text surface to publish, so there is nothing here to withhold.
+    // Only REGISTERED step types have a declared posture. textToImage,
+    // customComfy, comfy and imageGen are media-only on this bridge, so there is
+    // nothing here to withhold.
+    //
+    // 🔴 THIS LOOKUP IS BY `$type`, NOT BY WHICH ARM SUBMITTED THE STEP, and that
+    // is load-bearing now that a block may name a `$type` directly: a
+    // pass-through step whose `$type` COLLIDES with a registry entry's
+    // `orchestratorType` is found here and IS scanned. `chat-completion` declares
+    // `'chatCompletion'`, so that case is covered rather than bypassed.
+    //
+    // A pass-through `$type` that collides with NOTHING has no posture and no
+    // scan — its output reaches the block verbatim on `stepOutputs`. That is the
+    // operator decision recorded on `stepOutputs` in
+    // `schema/blocks/workflow.schema`, not an oversight here; stated so the
+    // `continue` is not read as "there is no text on those types".
     const entry = getStepByOrchestratorType(step.$type);
     if (!entry) continue;
     // 🔴 NO PER-POSTURE BRANCH HERE. The dispatch owns that table; this loop

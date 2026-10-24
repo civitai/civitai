@@ -1,7 +1,7 @@
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { usersSearchIndex } from '~/server/search-index';
+import { usersSearchIndex } from '~/server/search-index/users.search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {

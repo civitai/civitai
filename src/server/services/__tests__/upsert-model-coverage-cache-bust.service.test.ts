@@ -39,7 +39,10 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),
   getUserCollectionPermissionsById: vi.fn(),
@@ -130,6 +133,7 @@ const storedModel = {
   allowDifferentLicense: true,
   type: ModelType.LORA,
   uploadType: ModelUploadType.Created,
+  createdAt: new Date('2025-01-01T00:00:00Z'),
 };
 
 const baseInput = {
@@ -150,7 +154,7 @@ function upsert(input: Partial<ModelUpsertInput> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockDbRead.model.findUnique.mockResolvedValue(storedModel);
+  mockDbWrite.model.findUnique.mockResolvedValue(storedModel);
   mockDbWrite.modelVersion.findMany.mockResolvedValue(VERSION_IDS.map((id) => ({ id })));
   mockDbWrite.$queryRaw.mockResolvedValue([]);
   mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -184,7 +188,10 @@ describe('upsertModel — busts version caches when generation coverage can chan
   });
 
   it('busts when availability changes', async () => {
-    await upsert({ availability: Availability.Private });
+    await upsert({
+      availability: Availability.Private,
+      isModerator: true,
+    } as Partial<ModelUpsertInput>);
 
     expect(bustMvCache).toHaveBeenCalledWith(VERSION_IDS, MODEL_ID, OWNER_ID);
   });
@@ -199,7 +206,7 @@ describe('upsertModel — busts version caches when generation coverage can chan
   // would bust on every single save of every model, which is a bust per version per save against
   // the orchestrator.
   it('does not bust when allowCommercialUse is resubmitted in a different order', async () => {
-    mockDbRead.model.findUnique.mockResolvedValue({
+    mockDbWrite.model.findUnique.mockResolvedValue({
       ...storedModel,
       allowCommercialUse: [CommercialUse.Rent, CommercialUse.RentCivit],
     });

@@ -18,9 +18,12 @@
     IconCash,
     IconClock,
     IconBuildingBank,
+    IconPigMoney,
     IconTrophy,
+    IconDatabase,
   } from '@tabler/icons-svelte';
-  import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import { centsToUsd, currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import { MIN_WITHDRAWAL_AMOUNT } from '$lib/creator-program';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import {
     BANKABLE_CURRENCIES,
@@ -31,6 +34,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
+  import { formatBytes } from '$lib/analytics/storage';
   import type { PageData } from './$types';
 
   type Stat = {
@@ -106,6 +110,15 @@
   const cashStats: Stat[] = $derived(
     data.membership.isCreatorProgramMember
       ? [
+          {
+            label: 'Banked this month',
+            value: data.banked != null ? formatBuzz(data.banked) : null,
+            buzz: data.banked ?? undefined,
+            pending: false,
+            hint: 'Paid out at month end',
+            icon: IconPigMoney,
+            color: currencyMeta('creatorProgramBank').color,
+          },
           {
             label: 'Cash pending',
             value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
@@ -259,11 +272,11 @@
     </div>
     <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
   </div>
-  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
     {#each stats as stat (stat.label)}
       <StatCard label={stat.label} icon={stat.icon} color={stat.color}>
         {#if stat.value != null}
-          <div class="mt-1 flex items-baseline gap-2">
+          <div class="mt-1 flex flex-wrap items-baseline gap-x-2">
             <p class="text-xl font-semibold text-white">
               {#if stat.buzz != null}<CurrencyDisplay amount={stat.buzz} />{:else}{stat.value}{/if}
             </p>
@@ -284,7 +297,7 @@
             <span class="shrink-0 text-dark-4">· 30d</span>
           </p>
         {:else}
-          <p class="mt-2 flex items-center gap-1 text-xs text-dark-3">
+          <p class="mt-2 flex items-center gap-1 text-xs text-dark-2">
             {#if stat.label === 'Buzz earned'}
               {#each buzzLegend as c (c)}
                 <span class="inline-block h-2 w-2 rounded-full" style="background:{c}"></span>
@@ -295,6 +308,36 @@
         {/if}
       </StatCard>
     {/each}
+  </div>
+  {#if data.membership.isCreatorProgramMember && !data.membership.isMember}
+    <p class="mt-3 text-sm text-dark-2">
+      Your membership isn't active, so you can't bank more Buzz. Buzz you've already banked still pays
+      out at the end of the month. To withdraw cash, you need ${centsToUsd(MIN_WITHDRAWAL_AMOUNT)} ready to withdraw and your payment
+      details set up; no membership is needed.
+    </p>
+  {/if}
+</section>
+
+<section class="mb-8">
+  <div class="mb-2 flex items-center justify-between">
+    <p class="text-xs uppercase tracking-wide text-dark-2">Storage</p>
+    <a href="/analytics/storage" class="text-xs text-dark-2 hover:text-white">View storage →</a>
+  </div>
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <StatCard label="Uploaded" icon={IconDatabase} color="#4dabf7">
+      {#if data.storage}
+        <p class="mt-1 text-xl font-semibold text-white">{formatBytes(data.storage.total.bytes)}</p>
+        <p class="mt-2 text-xs text-dark-2">
+          {data.storage.media === 'done'
+            ? 'Public files, all types'
+            : data.storage.media === 'refreshing'
+              ? 'Updating your images and videos'
+              : 'Counting your images and videos'}
+        </p>
+      {:else}
+        <p class="mt-1 text-xl font-semibold text-dark-4">—</p>
+      {/if}
+    </StatCard>
   </div>
 </section>
 

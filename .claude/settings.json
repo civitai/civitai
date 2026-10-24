@@ -18,12 +18,13 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-svelte-ts.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-expiring-comments.mjs\""
           }
         ]
       }
     ]
-  },
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true
   }
 }

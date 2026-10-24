@@ -216,6 +216,22 @@ The service exposes comprehensive Prometheus metrics at `/metrics`. All metrics 
   - Labels: `operation` (increment, etc.)
 - `mew_redis_cache_errors_total{operation}` - Total Redis cache errors (counter)
 
+#### Metric Exclusion Metrics
+
+The reaction-farm suppression list (`metricExcludedUsers` in ClickHouse) is mirrored into each pod and
+gates both the Redis cache increment and the live metric signal, matching what the ClickHouse metric
+aggregates already filter.
+
+- `mew_metric_excluded_users` - Users in this pod's exclusion list (gauge)
+  - Per-pod state, so the fleet value is a MINIMUM rather than a single number: alert on
+    `min(mew_metric_excluded_users) == 0`, since one pod counting farm reactions drifts the shared cache.
+    A pod whose first load failed recovers on the next refresh, so a sustained 0 means the refresh itself
+    is failing.
+- `mew_metric_excluded_skipped_total{operation}` - Cache increments and live signals suppressed (counter)
+  - Labels: `operation` (`increment`, `increment_once`, `signal`)
+- `mew_metric_excluded_refresh_errors_total{cause}` - Failed refreshes of the exclusion list (counter)
+  - Labels: `cause` (`query` = the ClickHouse read, `unexpected` = a throw the refresh path does not expect)
+
 #### Default Node.js Metrics
 
 The service also exposes default Node.js metrics:
@@ -270,6 +286,7 @@ WORKER_POOL_SIZE=10  # Defaults to 10
 BATCH_INSERT_INTERVAL=30  # ClickHouse batch interval (seconds)
 INDEX_UPDATE_INTERVAL=300  # Meilisearch update interval (seconds)
 HEALTH_CHECK_PORT=3000  # Health check server port
+METRIC_EXCLUSION_REFRESH_MS=300000  # Re-read interval for the reaction-farm exclusion list; floored at 1000
 
 # Meilisearch (if using search index updates)
 MEILISEARCH_IMAGE_INDEX_URL=http://localhost:7700

@@ -24,7 +24,7 @@ export async function getTodaysProhibitedPrompts(limit = 500): Promise<Prohibite
     query_params: { limit },
     format: 'JSONEachRow',
   });
-  return resultSet.json<ProhibitedPrompt[]>();
+  return resultSet.json<ProhibitedPrompt>();
 }
 
 export async function getTodaysProhibitedUserCounts(): Promise<ProhibitedUserCount[]> {
@@ -38,6 +38,6 @@ export async function getTodaysProhibitedUserCounts(): Promise<ProhibitedUserCou
     `,
     format: 'JSONEachRow',
   });
-  const rows = await resultSet.json<{ userId: number; count: string }[]>();
+  const rows = await resultSet.json<{ userId: number; count: string }>();
   return rows.map((r) => ({ userId: r.userId, count: Number(r.count) }));
 }

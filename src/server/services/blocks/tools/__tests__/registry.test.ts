@@ -552,7 +552,7 @@ describe('projectModelForTool — per-field length bounds', () => {
  * Follow-ups from clawgate #426 — the couplings that were named but unpinned.
  */
 describe('#426 — constants that must not drift', () => {
-  it('🔴 item 3: the route bounds a tool name with the chat step\'s OWN constant', async () => {
+  it("🔴 item 3: the route bounds a tool name with the chat step's OWN constant", async () => {
     // The route used to spell `64` as a literal while `MAX_TOOL_NAME_CHARS` was
     // module-private. The values agreed only by inspection — the same drift the
     // neighbouring `.regex(TOOL_NAME_PATTERN)` had already closed by importing.
@@ -567,10 +567,9 @@ describe('#426 — constants that must not drift', () => {
       new URL('../../../../../pages/api/v1/blocks/tools.ts', import.meta.url),
       'utf8'
     );
-    expect(
-      src,
-      'the wire `name` bound must be the imported constant, not a literal'
-    ).toContain('.max(MAX_TOOL_NAME_CHARS)');
+    expect(src, 'the wire `name` bound must be the imported constant, not a literal').toContain(
+      '.max(MAX_TOOL_NAME_CHARS)'
+    );
     expect(src).not.toMatch(/name:\s*z\.string\(\)\.min\(1\)\.max\(\d+\)/);
   });
 
@@ -580,9 +579,7 @@ describe('#426 — constants that must not drift', () => {
     // the declaration is the model's only source of truth about the contract —
     // so a change to the route's default would leave the model confidently
     // misinformed, with nothing failing.
-    const { DEFAULT_TOOL_RESULT_ITEMS } = await import(
-      '~/server/services/blocks/tools/registry'
-    );
+    const { DEFAULT_TOOL_RESULT_ITEMS } = await import('~/server/services/blocks/tools/registry');
     const decl = blockToolDeclarations().find((d) => d.function.name === 'search_models');
     expect(decl, 'search_models must be declared').toBeTruthy();
 
@@ -590,10 +587,9 @@ describe('#426 — constants that must not drift', () => {
       decl!.function.parameters as { properties: { limit?: { description?: string } } }
     ).properties.limit?.description;
     expect(limitDesc, 'the limit parameter must carry a description').toBeTruthy();
-    expect(
-      limitDesc,
-      'the declared default must be the constant the route applies'
-    ).toContain(`default ${DEFAULT_TOOL_RESULT_ITEMS}`);
+    expect(limitDesc, 'the declared default must be the constant the route applies').toContain(
+      `default ${DEFAULT_TOOL_RESULT_ITEMS}`
+    );
 
     // Positive control: the assertion above must be able to FAIL. A description
     // that named a different number must not satisfy it.
@@ -657,7 +653,7 @@ describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
     expect(mapped).toHaveLength(200);
     expect(
       mapped.filter((v) => v === NEUTRALIZE_DEPTH_PLACEHOLDER),
-      'no element may be replaced by the depth placeholder — a flat array has no depth',
+      'no element may be replaced by the depth placeholder — a flat array has no depth'
     ).toHaveLength(0);
     expect(mapped.every((v) => v === 'urn-air-leak')).toBe(true);
   });
@@ -680,7 +676,7 @@ describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
 // assertion an audit could falsify by reading — which is exactly the class that
 // rots silently, because prose does not go red.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('🔴 block tool registry — the module\'s own claims', () => {
+describe("🔴 block tool registry — the module's own claims", () => {
   it('🔴 `sort` offers the WHOLE ModelSort enum, not a curated subset', async () => {
     const { ModelSort } = await import('~/server/common/enums');
     const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
@@ -709,15 +705,13 @@ describe('🔴 block tool registry — the module\'s own claims', () => {
     );
   });
 
-  it('🔴 no Prisma client on this module\'s load path', async () => {
+  it("🔴 no Prisma client on this module's load path", async () => {
     // The header's rule is "does this pull Prisma or a service onto the load
     // path", NOT "is it under ~/server" — the wording used to say
     // server-import-free, which stopped being true. Assert the PROPERTY.
     const { readFileSync } = await import('node:fs');
-    const src = readFileSync(
-      new URL('../registry.ts', import.meta.url).pathname,
-      'utf8'
-    );
+    // Pass the URL itself: .pathname is '/C:/…' on Windows, which resolves to 'C:\C:\…'.
+    const src = readFileSync(new URL('../registry.ts', import.meta.url), 'utf8');
     const imports = [...src.matchAll(/^import[^;]*?from '([^']+)';/gm)].map((m) => m[1]);
 
     // Everything imported must be zod or a pure enum module. A service, a

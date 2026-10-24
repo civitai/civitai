@@ -46,7 +46,7 @@ describe('chipFocusTarget', () => {
   describe('when the entry is STILL on the list', () => {
     /**
      * The server returns `fail(409)` whenever the removal matched nothing — a state it models
-     * deliberately, because the page is served from a month-long Redis cache and goes stale. The
+     * deliberately, because the page is served from a short-lived Redis cache and goes stale. The
      * list is then unchanged, and the user must end up back on the chip they were on.
      *
      * Without this rule that happened only because the index coincidentally still resolved to the

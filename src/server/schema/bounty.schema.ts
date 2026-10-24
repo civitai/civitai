@@ -8,7 +8,7 @@ import {
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
@@ -16,6 +16,9 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+
+// A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
+const utcToday = () => dayjs.utc(stripTime(new Date()));
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -64,14 +67,14 @@ export const createBountyInputSchema = z.object({
   expiresAt: stringToDate(
     z
       .date()
-      .min(
-        dayjs.utc(stripTime(new Date())).add(1, 'day').toDate(),
+      .refine(
+        (date) => date >= utcToday().add(1, 'day').toDate(),
         'Expiration date must come after the start date'
       )
   ),
   startsAt: z.coerce
     .date()
-    .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
+    .refine((date) => date >= utcToday().toDate(), 'Start date must be in the future'),
   mode: z.enum(BountyMode),
   type: z.enum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
@@ -85,7 +88,11 @@ export const createBountyInputSchema = z.object({
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
   images: z
-    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
+    .array(
+      imageReferenceInputSchema.extend({
+        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+      })
+    )
     .min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
 });
@@ -111,7 +118,10 @@ export const updateBountyInputSchema = createBountyInputSchema
     expiresAt: stringToDate(
       z
         .date()
-        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
+        .refine(
+          (date) => date >= dayjs().add(1, 'day').startOf('day').toDate(),
+          'Expiration date must be in the future'
+        )
     ),
     lockedProperties: z.string().array().optional(),
   });

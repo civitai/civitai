@@ -198,10 +198,11 @@ against a live screenshot of `Buzz`, which matches the export exactly.
 
 **`Buzz` → "View Buzz" pane** — much richer than what was built:
 
-- [ ] Retool had a `Check Buzz` button + **After date** picker, three filters (**Payment Type**,
+- [~] Retool had a `Check Buzz` button + **After date** picker, three filters (**Payment Type**,
       **Receipt Type**, **Description**) and **four tables in a 2×2 grid** (`table23`/`table24` at
-      `col 0`/`col 6`, then `table53`/`table54` below). Ours is a single unfiltered "Buzz history" list.
-      The filters are the dropped-entry-point shape again.
+      `col 0`/`col 6`, then `table53`/`table54` below). The filters and the side-by-side pair are
+      **built**; the grouped lower pair is the only part left, and it is blocked on a screenshot —
+      see the `table53`/`table54` entry above.
 
 - [x] **`Bulk Image Manager` is a section of User Lookup's own sidebar** in the live app (visible in the
       screenshot, between "Socials & Bio" and "Buzz"). `sections.ts` deliberately omitted it because

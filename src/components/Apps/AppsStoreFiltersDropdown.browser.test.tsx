@@ -24,7 +24,10 @@ const mocks = vi.hoisted(() => ({ mobile: false, isClient: true }));
 //  - `useIsMobile()` → `useContainerContext()` (picks popover vs drawer).
 // Unmocked, either takes the render down entirely.
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => mocks.isClient }));
-vi.mock('~/hooks/useIsMobile', () => ({
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useIsMobile: () => mocks.mobile,
   isMobileDevice: () => mocks.mobile,
 }));

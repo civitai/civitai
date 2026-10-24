@@ -18,8 +18,9 @@ import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/bl
  * removed a listing the server would happily republish.
  *
  * 🔴 TWO DIFFERENT COUNTING BASES APPEAR IN THIS ARC — do not read either as the other.
- *   (a) READ SITES IN THIS LEDGER: **5** — the direct reads of the table that the scanner
- *       below finds under `src/**` excluding tests. 4 `filtered` + 1 `full-timeline`. This
+ *   (a) READ SITES IN THIS LEDGER: **6** — the direct reads of the table that the scanner
+ *       below finds under `src/**` excluding tests. 4 `filtered` + 1 `full-timeline` + 1
+ *       `rating-review`. This
  *       is the number the assertions here are about, and it is measured, not asserted from
  *       memory: the scanner reports it on every run.
  *   (b) OPEN-CODED COPIES FOUND ACROSS THE ARC: a running tally kept by the review rounds,
@@ -88,13 +89,13 @@ function readIsFiltered(strippedLines: string[], line: number): boolean {
   return window.includes('LISTING_STATUS_CHANGING_MODERATION_ACTIONS');
 }
 
-type Kind = 'filtered' | 'full-timeline';
+type Kind = 'filtered' | 'full-timeline' | 'rating-review';
 
 /**
  * 🔴 THE LEDGER. Every non-test read of `AppListingModerationEvent` in the repo, and what
  * question it asks. Adding a reader means adding a line here and stating which it is.
  *
- * There are FIVE entries, which is the read-site count — basis (a) in the header. The
+ * There are SIX entries, which is the read-site count — basis (a) in the header. The
  * "sixth copy" / "seventh copy" labels in two `why` strings are basis (b), the arc-wide
  * open-coded-copy tally; they are provenance, not a position in this list.
  *
@@ -102,6 +103,8 @@ type Kind = 'filtered' | 'full-timeline';
  *                   `LISTING_STATUS_CHANGING_MODERATION_ACTIONS`.
  * `full-timeline` — renders the audit history; deliberately reads EVERY action, because a
  *                   `message-owner` is precisely what the owner is meant to see there.
+ * `rating-review` — asks "what rating did this listing's newest review decide?"; reads
+ *                   `rating-change` events only, so a status event can never answer it.
  */
 const LEDGER: Record<string, { kind: Kind; why: string }> = {
   'src/server/services/blocks/app-listing-owner-unpublish.ts': {
@@ -119,6 +122,10 @@ const LEDGER: Record<string, { kind: Kind; why: string }> = {
   'src/server/services/blocks/offsite-listing.service.ts': {
     kind: 'filtered',
     why: 'listMySubmissions — raw DISTINCT ON, the off-site my-submissions page. Was UNFILTERED (arc tally: the seventh open-coded copy; basis (b), not a read-site index).',
+  },
+  'src/server/services/blocks/app-listing-rating-rederive.service.ts': {
+    kind: 'rating-review',
+    why: 'readReviewedRating — the floor a moderator re-rating an image may not lower a listing past.',
   },
   'src/server/services/blocks/offsite-moderation.service.ts': {
     kind: 'full-timeline',
@@ -167,6 +174,17 @@ describe('AppListingModerationEvent read ledger', () => {
     expect(lines.length).toBeGreaterThan(0);
     const unfiltered = lines.filter((l) => !readIsFiltered(stripped[file], l));
     expect(unfiltered).toEqual([]);
+  });
+
+  it('the rating-review reader restricts to `rating-change` events, not to the status set', () => {
+    const file = 'src/server/services/blocks/app-listing-rating-rederive.service.ts';
+    const lines = found[file] ?? [];
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) {
+      const window = stripped[file].slice(Math.max(0, l - 3), l - 1 + WINDOW).join('\n');
+      expect(window).toContain('RATING_CHANGE_ACTION');
+      expect(readIsFiltered(stripped[file], l)).toBe(false);
+    }
   });
 
   /**

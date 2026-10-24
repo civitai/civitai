@@ -7,7 +7,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
 import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -18,11 +20,33 @@ import {
 import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 
-async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
+/**
+ * The exact payload `Tracker.reaction` accepts.
+ *
+ * 🔴 THIS ANNOTATION IS THE GUARD, NOT DOCUMENTATION. Every `type` below is built as
+ * `` `<Entity>_${action}` ``, and a template-literal expression is inferred as plain
+ * `string` unless something contextually types it. Without this return type the switch
+ * produced `string`, the call site laundered it through `as ReactionType`, and the
+ * `Post_*` arm — a value `reactions.type` does not carry — type-checked for as long as
+ * it has existed while the tracker dropped every row it produced client-side. Do not
+ * re-add a cast at the call site; fix the union or the branch instead.
+ */
+type ReactionTrackerEvent = {
+  type: ReactionType;
+  entityId: number;
+  ownerId: number;
+  reaction: ReviewReactions;
+  nsfw: NsfwLevelDeprecated;
+};
+
+async function getTrackerEvent(
+  input: ToggleReactionInput,
+  result: 'removed' | 'created'
+): Promise<ReactionTrackerEvent | undefined> {
   const shared = {
     entityId: input.entityId,
     reaction: input.reaction,
@@ -147,20 +171,74 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       }
       break;
     case 'bountyEntry':
-      const bountyEntry = await dbRead.answer.findFirst({
+      const bountyEntry = await dbRead.bountyEntry.findFirst({
         where: { id: input.entityId },
         select: { userId: true },
       });
-      if (bountyEntry) {
+      // `userId` is nullable (SetNull when the author is deleted). An ownerless entry has no
+      // owner to record, and no owner the reactor could be, so it gets no tracker row.
+      if (bountyEntry?.userId != null) {
         return {
           type: `BountyEntry_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          ownerId: bountyEntry?.userId,
+          ownerId: bountyEntry.userId,
+          ...shared,
+        };
+      }
+      break;
+    case 'resourceReview':
+      const review = await dbRead.resourceReview.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (review) {
+        return {
+          type: `Review_${action}`,
+          nsfw: NsfwLevelDeprecated.None,
+          ownerId: review.userId,
           ...shared,
         };
       }
       break;
   }
+}
+
+/**
+ * Whether the user already holds this exact reaction. Asked only for a value the entity type
+ * no longer allows creating, to tell removing a legacy reaction (allowed) from creating one
+ * (refused). Reads the primary: a lagging replica would refuse a legitimate removal.
+ */
+async function holdsReaction({
+  entityType,
+  entityId,
+  userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) {
+  const where = { userId, reaction };
+  // The return annotation makes a missing entity type a compile error rather than a refusal.
+  const count = await ((): Promise<number> => {
+    switch (entityType) {
+      case 'question':
+        return dbWrite.questionReaction.count({ where: { ...where, questionId: entityId } });
+      case 'answer':
+        return dbWrite.answerReaction.count({ where: { ...where, answerId: entityId } });
+      case 'commentOld':
+        return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
+      case 'comment':
+        return dbWrite.commentV2Reaction.count({ where: { ...where, commentId: entityId } });
+      case 'image':
+        return dbWrite.imageReaction.count({ where: { ...where, imageId: entityId } });
+      case 'post':
+        return dbWrite.postReaction.count({ where: { ...where, postId: entityId } });
+      case 'resourceReview':
+        return dbWrite.resourceReviewReaction.count({ where: { ...where, reviewId: entityId } });
+      case 'article':
+        return dbWrite.articleReaction.count({ where: { ...where, articleId: entityId } });
+      case 'bountyEntry':
+        return dbWrite.bountyEntryReaction.count({ where: { ...where, bountyEntryId: entityId } });
+    }
+  })();
+  return count > 0;
 }
 
 const reactionMetricMap: { [p in ReviewReactions]?: EntityMetric_MetricType_Type } = {
@@ -178,6 +256,16 @@ export const toggleReactionHandler = async ({
   input: ToggleReactionInput;
 }) => {
   try {
+    // A value no longer allowed is still accepted when the user holds it, so it can be removed.
+    if (
+      !isReactionAllowedForEntity(input.entityType, input.reaction) &&
+      !(await holdsReaction({ ...input, userId: ctx.user.id }))
+    ) {
+      throw throwBadRequestError(
+        `The ${input.reaction} reaction is not available for this ${input.entityType}.`
+      );
+    }
+
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
@@ -231,12 +319,7 @@ export const toggleReactionHandler = async ({
     });
     const trackerEvent = result === 'noop' ? undefined : await getTrackerEvent(input, result);
     if (trackerEvent) {
-      await ctx.track
-        .reaction({
-          ...trackerEvent,
-          type: trackerEvent.type as ReactionType,
-        })
-        .catch(handleLogError);
+      await ctx.track.reaction(trackerEvent).catch(handleLogError);
     }
 
     if (input.entityType === 'image' && result !== 'noop') {
@@ -289,10 +372,20 @@ export const toggleReactionHandler = async ({
   }
 };
 
-const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
+// Exported for tests: the property that matters is that an unavailable exclusion
+// list still produces a notification, and that is only observable here.
+export const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
   if (entityType === 'image') {
+    // Every displayed count filters reaction-farm accounts; a raw Postgres count did
+    // not, so the milestone fired on numbers no display agreed with. An empty list
+    // here means the lookup was unavailable and the count is unfiltered — the
+    // pre-change behaviour, and never a skipped notification.
+    const excludedUserIds = await getMetricExcludedUserIds();
     const cnt = await dbRead.imageReaction.count({
-      where: { imageId: entityId },
+      where: {
+        imageId: entityId,
+        ...(excludedUserIds.length ? { userId: { notIn: excludedUserIds } } : {}),
+      },
     });
 
     // const { reactionCount: cnt = 0 } =
@@ -310,6 +403,14 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const key = `${type}:${entityId}:${match}`;
 
     if (await notifications.notificationExists({ key })) return;
+
+    // KNOWN, and deliberately not guarded here: filtering can lower `cnt`, so `match`
+    // can move DOWN, and where a burst crossed several thresholds at once only the top
+    // key was written — so a lower milestone can arrive after a higher one. Guarding it
+    // means asking `notificationExists` for each higher threshold, and that is an HTTP
+    // call per key to the notifications service, re-run on every reaction to exactly the
+    // images this suppression targets. A cosmetic ordering quirk is not worth a standing
+    // cross-service N+1; it needs a batched existence check first.
 
     const resource = await dbRead.image.findFirst({
       where: { id: entityId },

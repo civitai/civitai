@@ -35,7 +35,11 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Embla
       key={id}
-      className={viewportClassName}
+      // The viewport clips at the first slide's edge: event hats get no room there, nor to grow.
+      className={clsx(
+        '[--event-decoration-allowance:0px] [--event-decoration-grow:1]',
+        viewportClassName
+      )}
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}

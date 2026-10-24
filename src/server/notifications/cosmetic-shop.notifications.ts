@@ -81,6 +81,28 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: `/user/transactions`,
     }),
   },
+  // Event-driven (created in runWithdrawnRefund).
+  'cosmetic-shop-item-refunded': {
+    displayName: 'Shop: A cosmetic you bought was withdrawn',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" was withdrawn from the shop, so it's been taken off your account and your Buzz was refunded.`,
+      url: `/user/transactions`,
+    }),
+  },
+  // Event-driven (created in refundItemPurchases).
+  'cosmetic-shop-purchase-refunded': {
+    displayName: 'Shop: A purchase was refunded',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `Your purchase of "${
+        details.title as string
+      }" was refunded, so it's been taken off your account and your Buzz was returned.`,
+      url: `/user/transactions`,
+    }),
+  },
   // Moveable (if created through API)
   'cosmetic-shop-item-added-to-section': {
     optIn: true,
@@ -137,25 +159,32 @@ export const cosmeticShopNotifications = createNotificationProcessor({
     }),
     prepareQuery: ({ lastSent }) => `
       WITH sold_items AS (
-        SELECT DISTINCT
+        SELECT
           cp."buzzTransactionId",
-          CAST(jsonb_array_elements(si.meta->'paidToUserIds') as INT) "ownerId",
-          JSONB_BUILD_OBJECT(
-            'shopItemTitle', si."title",
-            'buzzAmount', FLOOR(si."unitAmount" / jsonb_array_length(si.meta->'paidToUserIds')),
-			      'buyer', u.username
-          ) "details"
+          (payout->>'userId')::int "ownerId",
+          si."title" "shopItemTitle",
+          u.username "buyer",
+          SUM((payout->>'amount')::int) "buzzAmount"
         FROM "UserCosmeticShopPurchases" cp
         JOIN "CosmeticShopItem" si ON si.id = cp."shopItemId"
-		    LEFT JOIN "User" u ON u.id = cp."userId"
-        WHERE cp."purchasedAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
-        cp."purchasedAt" <= NOW() - INTERVAL '5 minutes'
+        LEFT JOIN "User" u ON u.id = cp."userId"
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(cp.meta->'payouts') = 'array' THEN cp.meta->'payouts' ELSE '[]'::jsonb END
+        ) payout
+        WHERE cp."purchasedAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes'
+          AND cp."purchasedAt" <= NOW() - INTERVAL '5 minutes'
+          AND (payout->>'amount')::int > 0
+        GROUP BY cp."buzzTransactionId", (payout->>'userId')::int, si."title", u.username
       )
       SELECT
-        CONCAT('cosmetic-shop-item-sold:',"buzzTransactionId") "key",
+        CONCAT('cosmetic-shop-item-sold:', "buzzTransactionId", ':', "ownerId") "key",
         "ownerId"    "userId",
         'cosmetic-shop-item-sold' "type",
-        details
+        JSONB_BUILD_OBJECT(
+          'shopItemTitle', "shopItemTitle",
+          'buzzAmount', "buzzAmount",
+          'buyer', "buyer"
+        ) "details"
       FROM sold_items
       -- One line: the polarity guard matches this clause as a literal.
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = sold_items."ownerId" AND type = 'cosmetic-shop-item-sold')

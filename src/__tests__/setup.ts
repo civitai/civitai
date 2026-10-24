@@ -4,7 +4,7 @@ import { getTestRsaKeyPair } from './rsa-test-key';
 import { dbMock } from './mocks/db.mock';
 import { redisMock } from './mocks/redis.mock';
 import { loggingMock } from './mocks/logging.mock';
-import { env, setEnvDefaults } from './mocks/env.mock';
+import { env, loadSchemaDefaults, setEnvDefaults } from './mocks/env.mock';
 import { resetSharedMocks } from './mocks';
 
 // Canonical shared-module mocks. Registered here, for every test file, rather than per
@@ -50,60 +50,74 @@ vi.mock('~/server/redis/client', async () => ({
   withSysReadDeadline: redisMock.withSysReadDeadline,
 }));
 
-// Mock @civitai/client to avoid ESM resolution issues
-vi.mock('@civitai/client', () => ({
-  // Enums
-  BuzzClientAccount: { System: 'System', User: 'User' },
-  TransactionType: { Credit: 'Credit', Debit: 'Debit' },
-  Priority: { Normal: 'Normal', High: 'High' },
-  NsfwLevel: { None: 'None', Soft: 'Soft', Mature: 'Mature', X: 'X' },
-  WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
-  KlingMode: {},
-  KlingModel: {},
-  MiniMaxVideoGenModel: {},
-  HaiperVideoGenModel: {},
-  ViduVideoGenStyle: {},
-  Veo3Version: {},
-  Scheduler: {
-    EULER_A: 'EULER_A',
-    EULER: 'EULER',
-    LMS: 'LMS',
-    HEUN: 'HEUN',
-    DP_M2: 'DP_M2',
-    DP_M2A: 'DP_M2A',
-    DP_M2SA: 'DP_M2SA',
-    DP_M2M: 'DP_M2M',
-    DPMSDE: 'DPMSDE',
-    DPM_FAST: 'DPM_FAST',
-    DPM_ADAPTIVE: 'DPM_ADAPTIVE',
-    LMS_KARRAS: 'LMS_KARRAS',
-    DP_M2_KARRAS: 'DP_M2_KARRAS',
-    DP_M2A_KARRAS: 'DP_M2A_KARRAS',
-    DP_M2SA_KARRAS: 'DP_M2SA_KARRAS',
-    DP_M2M_KARRAS: 'DP_M2M_KARRAS',
-    DPMSDE_KARRAS: 'DPMSDE_KARRAS',
-    DP_M3MSDE: 'DP_M3MSDE',
-    DDIM: 'DDIM',
-    PLMS: 'PLMS',
-    UNI_PC: 'UNI_PC',
-    LCM: 'LCM',
-    UNDEFINED: 'UNDEFINED',
-  },
-  TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
-  // Functions
-  createCivitaiClient: vi.fn(),
-  getWorkflow: vi.fn(),
-  submitWorkflow: vi.fn(),
-  getResource: vi.fn(),
-  invalidateResource: vi.fn(),
-  handleError: vi.fn(),
-  invokeImageUploadStepTemplate: vi.fn(),
-  // Misc
-  Air: class Air {
-    static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
-    static stringify = vi.fn(() => '');
-  },
-}));
+// The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
+// it; a test that drives the submit path mocks the package itself with `civitai-client.stub`.
+function orchestratorClientMock() {
+  return {
+    // Enums
+    BuzzClientAccount: { System: 'System', User: 'User' },
+    TransactionType: { Credit: 'Credit', Debit: 'Debit' },
+    Priority: { Normal: 'Normal', High: 'High' },
+    NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
+    WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
+    KlingMode: {},
+    KlingModel: {},
+    MiniMaxVideoGenModel: {},
+    HaiperVideoGenModel: {},
+    ViduVideoGenStyle: {},
+    Veo3Version: {},
+    Scheduler: {
+      EULER_A: 'EULER_A',
+      EULER: 'EULER',
+      LMS: 'LMS',
+      HEUN: 'HEUN',
+      DP_M2: 'DP_M2',
+      DP_M2A: 'DP_M2A',
+      DP_M2SA: 'DP_M2SA',
+      DP_M2M: 'DP_M2M',
+      DPMSDE: 'DPMSDE',
+      DPM_FAST: 'DPM_FAST',
+      DPM_ADAPTIVE: 'DPM_ADAPTIVE',
+      LMS_KARRAS: 'LMS_KARRAS',
+      DP_M2_KARRAS: 'DP_M2_KARRAS',
+      DP_M2A_KARRAS: 'DP_M2A_KARRAS',
+      DP_M2SA_KARRAS: 'DP_M2SA_KARRAS',
+      DP_M2M_KARRAS: 'DP_M2M_KARRAS',
+      DPMSDE_KARRAS: 'DPMSDE_KARRAS',
+      DP_M3MSDE: 'DP_M3MSDE',
+      DDIM: 'DDIM',
+      PLMS: 'PLMS',
+      UNI_PC: 'UNI_PC',
+      LCM: 'LCM',
+      UNDEFINED: 'UNDEFINED',
+    },
+    TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
+    // Functions
+    createCivitaiClient: vi.fn(),
+    getWorkflow: vi.fn(),
+    submitWorkflow: vi.fn(),
+    updateWorkflow: vi.fn(),
+    getResource: vi.fn(),
+    invalidateResource: vi.fn(),
+    handleError: vi.fn(),
+    invokeImageUploadStepTemplate: vi.fn(),
+    // Misc
+    Air: class Air {
+      static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
+      static stringify = vi.fn(() => '');
+      // Copied VERBATIM from node_modules/@civitai/orchestration-client/dist/utils/Air.js (ESM-only,
+      // so not importable here). An approximation lets AIR tests pass against a parser
+      // production does not run.
+      static parseSafe = vi.fn(
+        (identifier: string) =>
+          identifier.match(
+            /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
+          )?.groups
+      );
+    },
+  };
+}
+vi.mock('@civitai/orchestration-client', orchestratorClientMock);
 
 // App Blocks: provision a real RSA keypair so BlockTokenService can sign and
 // tests can verify against the matching public key. The public PEM is
@@ -148,7 +162,10 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 // One `env` object for the worker, reads layered defaults-then-per-file-overrides. A test
 // declares what it needs with `setEnv({ … })` instead of replacing the whole module — which
 // is what made 109 files each re-enumerate the defaults and drop the ones they forgot.
-vi.mock('~/env/server', () => ({ env }));
+vi.mock('~/env/server', async () => {
+  await loadSchemaDefaults();
+  return { env };
+});
 
 // Prevent prom/client from initializing real DB pools at module load.
 // A metric-shaped stub covering every prom-client surface our code touches
@@ -185,8 +202,30 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  // App Blocks author-fee CHARGE rail. Reached from `blocks.router.ts` via
+  // `quoteBlockAuthorFee`/`chargeBlockAuthorFee`, so ANY suite exercising an
+  // estimate or a submit touches them — not only the fee's own tests.
+  //
+  // 🔴 OMITTING ONE NOW FAILS **SILENTLY**, AND AN EARLIER REVISION OF THIS
+  // COMMENT CLAIMED THE OPPOSITE. Vitest implements a missing mock export as a
+  // Proxy `get` trap, so the throw fires at PROPERTY ACCESS — and both accesses
+  // sit inside the `try { … } catch { /* swallow */ }` the fee service wraps its
+  // incs in. The counter would simply never fire and every suite would stay
+  // green. The corroboration is in this same tree: `blockAuthorFeeObservedCounter`,
+  // `blockAuthorFeeBuzzCounter` and `blockAuthorFeeBaseBuzzCounter` are ALREADY
+  // absent here, are read the same way inside try/catch in `author-fee.ts`, and
+  // nothing is red.
+  //
+  // So this list is load-bearing and unguarded. That is a real gap, not a
+  // reassurance — it is recorded rather than fixed because closing it means a
+  // completeness guard over a module on `PENDING_SPECIFIERS`, which is its own
+  // change.
+  blockAuthorFeeQuotedCounter: promMetricStub(),
+  blockAuthorFeeChargedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
+  serviceDealExhaustedLegsGauge: promMetricStub(),
+  serviceDealUnconfirmedHoldsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
   restrictedBaseModelDivergenceGauge: promMetricStub(),
@@ -201,6 +240,10 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  // Incremented by `publicProcedure`'s client-version middleware (src/server/trpc.ts) on every
+  // `x-client: web` request, so a suite driving a procedure over HTTP as the web client 500s
+  // without it.
+  trpcClientReadCapabilityRequests: promMetricStub(),
   // Also re-exported rather than declared here, and NOT a metric — it is the real cross-graph
   // Registry that `src/pages/api/metrics.ts` scrapes and now also registers its own failure counter
   // on, at MODULE scope. Omitting it means any suite that merely IMPORTS that page throws
@@ -213,12 +256,22 @@ vi.mock('~/server/prom/client', () => ({
   // and register into it, and a stub that answered those with vi.fn() would let a suite assert
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
+  // Called at module scope by ~/server/prom/ingestion-gauge-store, which /api/metrics imports.
+  setIngestionGaugeSharedStore: vi.fn(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
-  // prom/client, so this module-replacing mock drops it. `base.reward` and
-  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
-  // neighbours use, so the first test to drive either fail-soft path dies here
-  // rather than on whatever it was written to check.
+  // prom/client, so this module-replacing mock drops it. Every fail-soft call site
+  // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT
+  // the `?.inc?.()` guard their neighbours use, so the first test to drive one of those
+  // paths dies here rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
+  // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the
+  // `?.inc?.()` guard. Do not read that chaining as making this entry optional. `?.`
+  // guards the RESULT of the property access, not the module-namespace access that
+  // produces it, so the throw lands either way. Measured by deleting this line: four
+  // cases in `src/server/rewards/__tests__/reward-config.test.ts` go red with
+  // `[vitest] No "rewardConfigReadFailedCounter" export is defined on the
+  // "~/server/prom/client" mock`, pointing at the optional-chained call itself.
   rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
@@ -228,6 +281,8 @@ vi.mock('~/server/prom/client', () => ({
   imagesFeedWithoutIndexCounter: promMetricStub(),
   creatorCompCreatorsPaidCounter: promMetricStub(),
   creatorCompAmountPaidCounter: promMetricStub(),
+  generationTipCreatorsPaidCounter: promMetricStub(),
+  generationTipAmountPaidCounter: promMetricStub(),
   licenseFeeCreatorsPaidCounter: promMetricStub(),
   licenseFeeAmountPaidCounter: promMetricStub(),
   userUpdateCounter: promMetricStub(),
@@ -236,6 +291,7 @@ vi.mock('~/server/prom/client', () => ({
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageUserQuotaUntrackedCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),
   // sysRedis sentinel observability counters (PR #2331 round-3).
   sysredisSentinelTopologyChangesCounter: promMetricStub(),
@@ -251,6 +307,9 @@ vi.mock('~/server/prom/client', () => ({
   imageIngestCronCounter: promMetricStub(),
   imageIngestCronQueueDepth: promMetricStub(),
   imageScanWebhookCounter: promMetricStub(),
+  // ingestImage() submit outcome — reached by the ingestion URL-allowlist suites and any
+  // future suite that drives a scan submit through the service.
+  imageScanSubmittedCounter: promMetricStub(),
 }));
 
 // Mock logging.

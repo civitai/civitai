@@ -4,12 +4,17 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export const getBuzzBulkMultiplier = ({
   buzzAmount: _buzzAmount,
-  purchasesMultiplier,
+  purchasesMultiplier: _purchasesMultiplier,
 }: {
   buzzAmount: number;
   purchasesMultiplier: number;
 }) => {
   const buzzAmount = Number(_buzzAmount);
+  // Floor at 1 (no bonus), never 0: on the paid-purchase path a non-finite or sub-1 multiplier makes
+  // `buzzAmount * m - buzzAmount` zero/negative, and the caller's `metadata.transactionId`
+  // idempotency marker makes that zero-credit unrepairable by retry. See ClickUp 868m0axkg.
+  const parsedMultiplier = Number(_purchasesMultiplier);
+  const purchasesMultiplier = Number.isFinite(parsedMultiplier) ? Math.max(parsedMultiplier, 1) : 1;
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;
@@ -173,12 +178,11 @@ export function orderBlockCurrencyTypes(
 /**
  * PAYOUT-SAFETY GATE (App Blocks Sybil / payout review).
  *
- * Which Buzz account types are eligible to accrue an app-author payout
- * (`spendSharePct` > 0 / the dark #2605 rev-share rail) when spent inside a
- * block. This is the load-bearing rule that lets block currencies widen to
- * on-site parity (blue/green/yellow) WITHOUT ever turning into a
- * platform-funded farming loop: FREE Buzz is EXCLUDED so a Sybil ring can
- * never mint platform-funded bounty out of free daily Buzz.
+ * Which Buzz account types are eligible to accrue an app-author payout when
+ * spent inside a block. This is the load-bearing rule that lets block
+ * currencies widen to on-site parity
+ * (blue/green/yellow) WITHOUT ever turning into a farming loop: FREE Buzz is
+ * EXCLUDED so a Sybil ring can never mint a payout out of free daily Buzz.
  *
  * Determination (from `src/shared/constants/buzz.constants.ts` buzzTypeConfig;
  * PAID vs FREE confirmed by product 2026-06-30 — "green buzz is paid, only
@@ -193,10 +197,19 @@ export function orderBlockCurrencyTypes(
  *   - red    ('FakeRed')     → EXCLUDED. disabled; never a real spend.
  *
  * Rule: PAID (purchasable) types are payout-eligible; the free type (blue) is
- * not. The payout rail (#2605) MUST route every tracked spend row through this
- * predicate before paying — see `computeSpendShare`, which zeroes the share
- * for any non-eligible type. DO NOT widen this set without monetization +
- * Sybil-economics sign-off.
+ * not. DO NOT widen this set without monetization + Sybil-economics sign-off.
+ *
+ * ⚠️ THIS USED TO SAY "the payout rail (#2605) MUST route every tracked spend
+ * row through this predicate before paying". Corrected: #2605 reads
+ * `blockBuzzAttribution` (the PURCHASE table) only and never reads a spend row,
+ * and the platform-funded spend bounty that would have paid them is removed. So
+ * no rail pays a spend row today, and this predicate is not a gate in front of
+ * one. What it IS, still, and why it stays load-bearing: `blocks.router.ts` uses
+ * it to narrow the realized per-account debit to its PAID portion before that
+ * becomes a spend row's `grossValueCents`. It bounds the money BASIS at write
+ * time rather than the payout at pay time — so free Buzz can never enter the
+ * basis in the first place, which is the stronger of the two placements.
+ * Any future payout rail inherits that, and should still consult this predicate.
  */
 export const PAYOUT_ELIGIBLE_BUZZ_TYPES: ReadonlySet<string> = new Set<BuzzSpendType>([
   'green',

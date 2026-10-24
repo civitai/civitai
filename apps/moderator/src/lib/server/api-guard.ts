@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { canAccess } from './access';
+import { denied, type PermissionId } from '$lib/permissions';
 
 // `/api/*` is exempt from the global route gate in hooks.server.ts, so every endpoint carries its own
 // check. Sharing it keeps the page path in one place: it is spelled as a literal, and `/retool/*` is a
@@ -27,6 +28,12 @@ export function requireIdParam(
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0 || id > MAX_INT) error(400, `Bad ${name}.`);
   return id;
+}
+
+/** Composed with the page check rather than folded into it: reaching a page and holding a right are
+ *  separate axes, and an endpoint serving several pages must not let one stand in for the other. */
+export function requirePermission(locals: App.Locals, id: PermissionId): void {
+  if (!locals.grants[id]) error(403, denied(id));
 }
 
 export const requireUserIdParam = (

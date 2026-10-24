@@ -21,16 +21,19 @@ import { runClickHouseRead } from '~/server/utils/errorHandling';
 //   - a REAL query/schema fault (non-connection CH error, e.g. Code: 62 syntax) → rethrown
 //     UNCHANGED so it still surfaces (and alerts) as a 500;
 //   - a successful read passes its value straight through.
+//
+// The clickhouseFailSoftCounter half of the contract lives in the sibling
+// errorHandling.runClickHouseRead.metrics.test.ts.
 
 describe('runClickHouseRead — transient ClickHouse error → 503 (SERVICE_UNAVAILABLE)', () => {
   it('passes the value through on success (no wrapping)', async () => {
     const rows = [{ id: 1 }];
-    await expect(runClickHouseRead(async () => rows)).resolves.toBe(rows);
+    await expect(runClickHouseRead(async () => rows, { path: 'unit-test' })).resolves.toBe(rows);
   });
 
   it('maps a `socket hang up` read failure to a TRPCError SERVICE_UNAVAILABLE', async () => {
     const fn = vi.fn().mockRejectedValue(new Error('ClickHouse query failed: socket hang up'));
-    await expect(runClickHouseRead(fn)).rejects.toSatisfy(
+    await expect(runClickHouseRead(fn, { path: 'unit-test' })).rejects.toSatisfy(
       (e: unknown) => e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE'
     );
   });
@@ -41,24 +44,24 @@ describe('runClickHouseRead — transient ClickHouse error → 503 (SERVICE_UNAV
       .mockRejectedValue(
         new Error('ClickHouse query failed: Code: 202. DB::Exception: Too many simultaneous queries')
       );
-    await expect(runClickHouseRead(fn)).rejects.toSatisfy(
+    await expect(runClickHouseRead(fn, { path: 'unit-test' })).rejects.toSatisfy(
       (e: unknown) => e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE'
     );
   });
 
   it('maps a raw socket syscall (ECONNRESET) to SERVICE_UNAVAILABLE', async () => {
     const err = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
-    await expect(runClickHouseRead(async () => Promise.reject(err))).rejects.toSatisfy(
-      (e: unknown) => e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE'
-    );
+    await expect(
+      runClickHouseRead(async () => Promise.reject(err), { path: 'unit-test' })
+    ).rejects.toSatisfy((e: unknown) => e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE');
   });
 
   it('uses the caller-supplied message and preserves the original error as cause', async () => {
     const original = new Error('ClickHouse query failed: socket hang up');
-    const err = await runClickHouseRead(
-      () => Promise.reject(original),
-      'Daily Buzz compensation is temporarily unavailable, please retry.'
-    ).catch((e) => e);
+    const err = await runClickHouseRead(() => Promise.reject(original), {
+      path: 'unit-test',
+      message: 'Daily Buzz compensation is temporarily unavailable, please retry.',
+    }).catch((e) => e);
     expect(err).toBeInstanceOf(TRPCError);
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
     expect((err as TRPCError).message).toBe(
@@ -71,14 +74,18 @@ describe('runClickHouseRead — transient ClickHouse error → 503 (SERVICE_UNAV
     // Code: 62 = syntax error — a genuine query/schema bug, NOT a transient blip. It must
     // NOT be masked as a 503 (so a schema break / bad SELECT still 500s + alerts).
     const original = new Error('ClickHouse query failed: Code: 62. DB::Exception: Syntax error');
-    const err = await runClickHouseRead(() => Promise.reject(original)).catch((e) => e);
+    const err = await runClickHouseRead(() => Promise.reject(original), {
+      path: 'unit-test',
+    }).catch((e) => e);
     expect(err).toBe(original);
     expect(err instanceof TRPCError).toBe(false);
   });
 
   it('does NOT convert an arbitrary application error (e.g. undefined access) — surfaces raw', async () => {
     const original = new TypeError("Cannot read properties of undefined (reading 'x')");
-    const err = await runClickHouseRead(() => Promise.reject(original)).catch((e) => e);
+    const err = await runClickHouseRead(() => Promise.reject(original), {
+      path: 'unit-test',
+    }).catch((e) => e);
     expect(err).toBe(original);
     expect(err instanceof TRPCError).toBe(false);
   });

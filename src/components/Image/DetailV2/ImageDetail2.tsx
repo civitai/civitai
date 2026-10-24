@@ -32,12 +32,21 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import {
+  StorylineStageOverlay,
+  StorylineToolbarChip,
+} from '~/components/Storyline/StorylineDetail';
+import { StorylineChapterRail } from '~/components/Storyline/StorylineChapterRail';
+import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
+import {
+  getStorylineStep,
+  withStorylineNavigation,
+} from '~/components/Storyline/storyline-mode.utils';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
 import { useStickerRevealParam } from '~/store/sticker-reveal.store';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
@@ -50,10 +59,10 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
+import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
@@ -74,9 +83,13 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
+import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -164,6 +177,15 @@ export function ImageDetail2() {
 
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
+  const storyline = useStorylineMode();
+  const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
+  const navigation = withStorylineNavigation(
+    carouselNavigation,
+    images.length,
+    storyline.active ? () => storyline.setEndOpen(true) : undefined,
+    storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
+  );
+
   // Deferred to the carousel settling rather than run per slide change: the URL
   // replace pushes a global store update that re-renders every useBrowserRouter
   // consumer, which is too much to do inside an animating frame.
@@ -178,6 +200,18 @@ export function ImageDetail2() {
     // dead-end (and loop back) at the edge of the loaded page
     if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
   };
+
+  // The drawer and the fork point move the detail to another image from outside the carousel.
+  // An index that only caught up with the carousel's own settle is skipped, or a quick second
+  // swipe would be dragged back.
+  const carouselNavigate = carouselNavigation.navigate;
+  useEffect(() => {
+    const target = images[index];
+    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
+    lastSettledIdRef.current = target.id;
+    carouselNavigate(index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
+  }, [index, storyline.active]);
 
   const image = images[carouselNavigation.index];
 
@@ -225,7 +259,7 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
-  const LeftImageControls = (
+  const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
@@ -243,6 +277,13 @@ export function ImageDetail2() {
           Save
         </Text>
       </Button>
+      {withStoryline && (
+        <StorylineToolbarChip
+          imageId={image.id}
+          postId={image.postId ?? null}
+          placement="toolbar"
+        />
+      )}
       {image.postId && (
         <NextLink
           href={`/posts/${image.postId}`}
@@ -284,70 +325,11 @@ export function ImageDetail2() {
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
-  const creator =
-    image.user.username && !image.user.deletedAt
-      ? {
-          '@type': 'Person',
-          name: image.user.username,
-          url: env.NEXT_PUBLIC_BASE_URL
-            ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
-            : undefined,
-        }
-      : undefined;
-  const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
-  const copyrightNotice =
-    image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
-
-  // Poster/thumbnail params mirror EdgeVideo's poster generation (anim=false,
-  // transcode=true) so Google fetches the same static frame we render.
-  const mediaSchema = isVideo
-    ? {
-        '@context': 'https://schema.org',
-        '@type': 'VideoObject',
-        name: title,
-        description: title,
-        contentUrl: getEdgeUrl(image.url, {
-          type: 'video',
-          width: 450,
-          transcode: true,
-          optimized: true,
-          anim: true,
-        }),
-        thumbnailUrl: getEdgeUrl(image.url, {
-          width: 450,
-          anim: false,
-          transcode: true,
-          optimized: true,
-          original: false,
-        }),
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        uploadDate: image.createdAt,
-      }
-    : {
-        '@context': 'https://schema.org',
-        '@type': 'ImageObject',
-        contentUrl: getEdgeUrl(image.url),
-        thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
-        caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
-          ? `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`
-          : undefined,
-        uploadDate: image.createdAt,
-        datePublished: image.createdAt,
-      };
+  const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
   return (
     <Gated
-      contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
       bypassRating={isOwner || !!currentUser?.isModerator}
       meta={{
         title,
@@ -355,13 +337,15 @@ export function ImageDetail2() {
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
         schema: mediaSchema,
-        // Per-image HTML pages are thin/duplicative and drive negligible search
-        // traffic, so plain images stay deindexed (Google Images still surfaces
-        // them via the ImageObject schema). Videos are the exception: a single-
-        // video page is a legitimate "watch page", so we index safe-rated videos
-        // and back them with VideoObject schema. NSFW videos stay deindexed to
-        // avoid the content/meta mismatch on the green domain (see docs/seo-audit.md).
-        deIndex: !isVideo || nsfw,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+          { name: title },
+        ]),
+        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+        // stays out of search snippets, and indexed safe videos earned effectively no search
+        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+        // article pages that embed the media — don't re-enable this without new evidence.
+        deIndex: true,
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
@@ -381,11 +365,16 @@ export function ImageDetail2() {
                           className="size-9 rounded-full"
                         />
                         <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          {/* Placeholder */}
-                          <div className="@md:hidden" />
+                          <div className="flex items-center @md:hidden">
+                            <StorylineToolbarChip
+                              imageId={image.id}
+                              postId={image.postId ?? null}
+                              placement="mobile"
+                            />
+                          </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                            {LeftImageControls}
+                            {renderLeftImageControls(true)}
                           </div>
 
                           <div className="flex items-center gap-1">
@@ -453,13 +442,17 @@ export function ImageDetail2() {
                       </div>
 
                       {/* IMAGE CAROUSEL */}
-                      <ImageDetailCarousel
-                        images={images}
-                        videoRef={videoRef}
-                        connect={connect}
-                        onSettle={handleSettle}
-                        {...carouselNavigation}
-                      />
+                      <div className="relative flex min-h-0 flex-1 flex-col">
+                        <ImageDetailCarousel
+                          images={images}
+                          videoRef={videoRef}
+                          connect={connect}
+                          onSettle={handleSettle}
+                          loop={!storyline.active}
+                          {...navigation}
+                        />
+                        <StorylineStageOverlay isLastImage={isLastImage} imageId={image?.id} />
+                      </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
                         <div className="flex justify-center">
@@ -491,10 +484,23 @@ export function ImageDetail2() {
                             <ImageDetailReactions image={image} />
                             {/* Inside the provider, not beside it: the bar reads
                                 the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar imageId={image.id} className="ml-2" />
+                            <StickerPlacementBar
+                              imageId={image.id}
+                              imageNsfwLevel={image.nsfwLevel}
+                              className="ml-2"
+                            />
                           </ReactionSettingsProvider>
                         </div>
-                        <CarouselIndicators {...carouselNavigation} />
+                        {storyline.active ? (
+                          <StorylineChapterRail
+                            storyline={storyline}
+                            images={images}
+                            index={carouselNavigation.index}
+                            navigate={carouselNavigation.navigate}
+                          />
+                        ) : (
+                          <CarouselIndicators {...carouselNavigation} />
+                        )}
                         {/* {viewportHeight >= 1050 && (
                       <AdUnitImageDetailBanner />
                     )} */}
@@ -505,14 +511,36 @@ export function ImageDetail2() {
               </div>
               <div
                 className={`@max-md:absolute @max-md:inset-0 ${
-                  !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
+                  !active
+                    ? // COLLAPSED, and on `/images/[imageId]` this 60px strip is the
+                      // bottom of the layout viewport whenever `hideAds` suppresses
+                      // the ad bar below it — the route passes `footer: null`, so
+                      // nothing else is down there. The strip has to grow by the
+                      // inset or its controls sit 12px above the physical bottom,
+                      // i.e. inside the home indicator. Same expression as the
+                      // header row's padding just below, so the strip stays exactly
+                      // that row and no scroll content peeks under the indicator.
+                      //
+                      // `…-unpaid` and not the raw inset: when the ad bar DOES
+                      // render it is the viewport bottom and pays for itself, and
+                      // this panel is back to being an ordinary box above it.
+                      '@max-md:translate-y-[calc(100%-60px-var(--safe-area-inset-bottom-unpaid))]'
+                    : '@max-md:transition-transform'
                 } @md:w-[450px] @md:min-w-[450px] ${
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
               >
-                <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
-                  <div className="flex gap-1">{LeftImageControls}</div>
+                {/* The padding is on the `!active` branch only. Expanded, this row
+                    is at the TOP of the panel and the inset below it would be a
+                    spurious 34px gap — over-payment, which is a defect here in
+                    exactly the way under-payment is. */}
+                <div
+                  className={`@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden ${
+                    !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
+                  }`}
+                >
+                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
                   <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
@@ -556,10 +584,8 @@ export function ImageDetail2() {
                       // the prop and never fires the ambient
                       // `model3d.getByPostId` query. A Meili-sourced feed item
                       // with no link resolves to `null` (chip hidden, no
-                      // fallback). The only residual fallback is BitDex-sourced
-                      // items (model3dId not indexed → `undefined`), which
-                      // self-heal as the index gains the field — the #2682
-                      // model3dFeed flag-gate is otherwise redundant now.
+                      // fallback), so the #2682 model3dFeed flag-gate is
+                      // redundant now.
                       <PostingToModel3DCard
                         model3dId={(image as { model3dId?: number | null }).model3dId}
                         postId={image.postId}
@@ -597,32 +623,19 @@ export function ImageDetail2() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
-                      !image.needsReview &&
-                      isOwner && (
-                        <AlertWithIcon
-                          icon={<IconAlertTriangle />}
-                          color="yellow"
-                          iconColor="yellow"
-                          title="Blocked by moderators"
-                          radius={0}
-                          px="md"
-                        >
-                          This image has been blocked by our moderators. We can make mistakes, if
-                          you believe this was done in error,{' '}
-                          <Anchor
-                            type="button"
-                            onClick={() =>
-                              dialogStore.trigger({
-                                component: AppealDialog,
-                                props: { entityId: image.id, entityType: EntityType.Image },
-                              })
-                            }
-                          >
-                            appeal this removal
-                          </Anchor>
-                        </AlertWithIcon>
-                      )}
+                    {isAppealableImage(image) && isOwner && (
+                      <AlertWithIcon
+                        icon={<IconAlertTriangle />}
+                        color="yellow"
+                        iconColor="yellow"
+                        title="Blocked by moderators"
+                        radius={0}
+                        px="md"
+                      >
+                        This image has been blocked by our moderators.{' '}
+                        <AppealRemovalPrompt entityId={image.id} entityType={EntityType.Image} />
+                      </AlertWithIcon>
+                    )}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>
@@ -709,14 +722,17 @@ function ImageDetailReactions({
       }}
     >
       {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          targetUserId={image.user.id}
-          disableBuzzTip={image.poi}
-        />
+        <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
+          <Reactions
+            entityId={image.id}
+            entityType="image"
+            reactions={image.reactions}
+            metrics={metrics}
+            metricsUnknown={image.stats?.statsUnknown}
+            targetUserId={image.user.id}
+            disableBuzzTip={image.poi}
+          />
+        </ImageReactorsPreview>
       )}
     </Metrics>
   );

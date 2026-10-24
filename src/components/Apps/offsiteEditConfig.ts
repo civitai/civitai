@@ -23,6 +23,12 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 /** One prefill asset (icon/cover) — its imageId + an edge-resolved preview URL. */
 export type EditAsset = { imageId: number | null; url: string | null };
 
+/**
+ * The civitai.red icon / cover overrides as the editor reads them; `available: false` while the
+ * environment cannot store them (the picker is then replaced by a note).
+ */
+export type EditRedMedia = { available: boolean; icon: EditAsset; cover: EditAsset };
+
 /** One prefill screenshot — its row id + imageId + edge-resolved preview URL. */
 export type EditScreenshot = {
   id: string;
@@ -77,6 +83,13 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /**
+     * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
+     * context + fixture (all of which predate the field) still type-checks, and absent reads
+     * exactly like "not in beta" — see {@link editContextToForm}.
+     */
+    isBeta?: boolean;
+    betaMessage?: string | null;
   };
   assets: {
     icon: EditAsset;
@@ -84,10 +97,16 @@ export type ListingEditContext = {
     screenshots: EditScreenshot[];
   };
   /**
+   * The edit target's civitai.red icon / cover overrides (`ListingAssetStep`'s `redMedia`).
+   * OPTIONAL so pre-existing edit contexts + fixtures still type-check; absent renders no
+   * civitai.red section.
+   */
+  redMedia?: EditRedMedia;
+  /**
    * OAuth-connect scope disclosure (present for the merged external-app model;
    * OPTIONAL so pre-existing non-connect edit contexts + tests still type-check):
    *   - `connectClientId`            — the linked client (null → no scope section).
-   *   - `connectAllowedScopes`       — the client's CURRENT allowedScopes = the
+   *   - `connectAllowedScopes`       — the client's CURRENT consentable scopes = the
    *     DERIVED requested set the form shows read-only + submits.
    *   - `connectRequestedScopes`     — the STORED snapshot (for drift detection).
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
@@ -233,7 +252,7 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
  *
  * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
  * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT `allowedScopes` has DRIFTED from the stored snapshot, and
+ * connect client's CURRENT consentable scopes has DRIFTED from the stored snapshot, and
  * `materialPatchChanges` counts that key as material only when the two masks actually
  * differ. So while they agree, a justification edit is trivial and saves fine here.
  *
@@ -271,7 +290,7 @@ export function scopeDisclosureLockedForEdit(
 export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormValues {
   const base = emptyOffsiteSubmitForm();
   const s = ctx.scalars;
-  // The requested scopes are DERIVED from the client's CURRENT allowedScopes (read-
+  // The requested scopes are DERIVED from the client's CURRENT consentable scopes (read-
   // only in the form; the server re-snapshots them on save). Prefilled justifications
   // are pruned to that derived set so a scope the client no longer has doesn't seed a
   // dangling rationale.
@@ -282,6 +301,18 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    isBeta: s.isBeta === true,
+    // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
+    // projections apply, so the form's baseline and the wire value agree — otherwise
+    // `buildScalarPatch` would diff against a note the author cannot see and emit a spurious
+    // clear.
+    //
+    // 🔴 IT IS NO LONGER THE ONLY THING STANDING BETWEEN A STALE NOTE AND THE PUBLIC PAGE,
+    // and an earlier version of this comment said the opposite — that "the server clears the
+    // note only on the next write", which described a write that did not exist. It does now:
+    // `buildListingPatchData` nulls `beta_message` whenever a patch turns the flag OFF. That
+    // is the real fix; this line is defence in depth for rows written before it existed.
+    betaMessage: s.isBeta === true ? s.betaMessage ?? '' : '',
     tagline: s.tagline ?? '',
     description: s.description ?? '',
     category: (s.category as MarketplaceCategory | null) ?? null,
@@ -420,6 +451,37 @@ export function buildScalarPatch(
     patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
   }
 
+  // Beta status + note. Emitted ONLY when the author actually changed them, which is what
+  // keeps the two columns out of every unrelated patch — load-bearing while the manual-apply
+  // migration is outstanding, since a write naming a missing column would fail the whole
+  // save with a PRECONDITION_FAILED the author did not ask for.
+  if (current.isBeta !== original.isBeta) patch.isBeta = current.isBeta;
+  // 🔴 THE NOTE IS ONLY EMITTED WHILE THE BOX IS TICKED, and this guard is what stops an
+  // ABANDONED note from failing the entire save.
+  //
+  // The server refuses a `betaMessage` set while the effective flag is off (a note behind an
+  // off flag is what resurrects deleted copy later). That refusal is right for a stale form
+  // and for a direct API caller — and it was reachable from four ordinary clicks in ONE tab:
+  //   1. listing has beta OFF; 2. author ticks the box, which reveals the textarea;
+  //   3. types a note; 4. changes their mind and UNTICKS.
+  // The textarea is only hidden, not cleared (deliberately — re-ticking should restore what
+  // they typed), so `current.betaMessage` still holds the text while `current.isBeta` is back
+  // to its original `false`. Without this guard the diff emitted `{betaMessage}` ALONE, the
+  // server refused, and because the whole form saves in one mutation EVERY other edit in it —
+  // name, tagline, description, category, URL — was rejected too. Worse, the refusal's advice
+  // ("tick the box and save again") would have published the note they had just abandoned.
+  //
+  // Emitting nothing here is correct in every direction: turning beta OFF on a listing that
+  // HAS a note still clears it, because the server nulls the note on the off transition, so
+  // the note never needs to ride the patch to be removed.
+  if (current.isBeta) {
+    const betaMessage = current.betaMessage.trim();
+    const originalBetaMessage = original.betaMessage.trim();
+    if (betaMessage !== originalBetaMessage) {
+      patch.betaMessage = betaMessage.length > 0 ? betaMessage : null;
+    }
+  }
+
   const tagline = current.tagline.trim();
   const originalTagline = original.tagline.trim();
   if (tagline !== originalTagline) patch.tagline = tagline.length > 0 ? tagline : null;
@@ -438,7 +500,7 @@ export function buildScalarPatch(
   }
 
   // OAuth-connect scope disclosure: the server re-snapshots `requestedScopes` from
-  // the client's CURRENT allowedScopes whenever the patch touches scopes, so we send
+  // the client's CURRENT consentable scopes whenever the patch touches scopes, so we send
   // the (derived) mask + shaped justifications when EITHER the justifications changed
   // OR the client's allowedScopes drifted from the stored snapshot. Both re-enter mod
   // review on an approved listing (a scope change is material). No client → no scope

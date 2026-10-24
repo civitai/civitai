@@ -16,6 +16,7 @@
     perPage,
     onPageChange,
     label = 'items',
+    summary = true,
   }: {
     page: number;
     total: number;
@@ -23,6 +24,9 @@
     onPageChange: (page: number) => void;
     /** Plural noun for the count line — "1,204 images · page 3 of 21". */
     label?: string;
+    /** The count line under the pages. Off for a second pager above a list, where the one below
+     *  already says it and the line only pushes the list down. */
+    summary?: boolean;
   } = $props();
 
   const pageCount = $derived(Math.max(1, Math.ceil(total / perPage)));
@@ -62,9 +66,11 @@
         </PaginationContent>
       {/snippet}
     </Pagination>
-    <span class="text-xs text-dark-2">
-      {num(total)}
-      {label} · page {num(page)} of {num(pageCount)}
-    </span>
+    {#if summary}
+      <span class="text-xs text-dark-2">
+        {num(total)}
+        {label} · page {num(page)} of {num(pageCount)}
+      </span>
+    {/if}
   </div>
 {/if}

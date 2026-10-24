@@ -10,14 +10,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * signDevScopedPageToken) with only the DB, the JWT signer, and the audit log mocked.
  */
 
-const { mockSign,  } = vi.hoisted(() => ({
+const { mockSign } = vi.hoisted(() => ({
   mockSign: vi.fn(async (input: unknown) => ({
     token: 'review.jwt.signed',
     expiresAt: '2099-01-01T00:00:00Z',
     jti: 'j',
     _input: input,
   })),
-  
 }));
 
 // Sign is the real signDevScopedPageToken's downstream — mock it so we can inspect
@@ -79,9 +78,7 @@ describe('mintReviewBlockToken', () => {
     const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
 
     // Resolved by publishRequestId (never ownership).
-    expect(mockFindUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: PUBREQ } })
-    );
+    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: PUBREQ } }));
 
     // The JWT claims (from the captured sign input).
     expect(mockSign).toHaveBeenCalledTimes(1);
@@ -104,11 +101,7 @@ describe('mintReviewBlockToken', () => {
     // The minted SCOPES contain NONE of the withheld money/private/write scopes —
     // only the render-only survivors (+ force-granted user:read:self).
     const scopes = arg.scopes as string[];
-    expect(scopes).toEqual([
-      'collections:read:self',
-      'models:read:self',
-      'user:read:self',
-    ]);
+    expect(scopes).toEqual(['collections:read:self', 'models:read:self', 'user:read:self']);
     for (const withheld of [
       'media:read:owned', // removed decorative scope — unknown → stripped
       'ai:write:budgeted',
@@ -155,6 +148,46 @@ describe('mintReviewBlockToken', () => {
     const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
     expect(res.sandbox).toBe('allow-scripts');
     expect(res.appName).toBe('plain-app'); // falls back to slug
+  });
+
+  it('carries the manifest bootSkeleton so the moderator reviews the SHIPPED presentation', async () => {
+    // Render fidelity, same class as `sandbox` above: the review preview mounts
+    // the real PageBlockHost, so a declaration the approved app will honour must
+    // reach it. Without this the moderator approves a presentation the shipped
+    // app does not have — and the projection was reversible with a green gate.
+    mockFindUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'boot-app',
+      manifest: { scopes: ['models:read:self'], bootSkeleton: true },
+    });
+    const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+    expect(res.bootSkeleton).toBe(true);
+  });
+
+  it('bootSkeleton defaults to false, and a TRUTHY non-boolean does not enable it', async () => {
+    // Publisher JSON on an UNREVIEWED manifest — the strictest place for the
+    // `=== true` coercion, since this value is read before any moderator has
+    // looked at it.
+    for (const [manifestValue, expected] of [
+      [undefined, false],
+      ['true', false],
+      [1, false],
+      [{}, false],
+      [true, true],
+    ] as const) {
+      mockFindUnique.mockResolvedValue({
+        id: PUBREQ,
+        status: 'pending',
+        slug: 'boot-app',
+        manifest:
+          manifestValue === undefined
+            ? { scopes: [] }
+            : { scopes: [], bootSkeleton: manifestValue },
+      });
+      const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+      expect(res.bootSkeleton).toBe(expected);
+    }
   });
 
   it('THROWS for a missing request (no oracle) and never signs', async () => {
@@ -275,6 +308,33 @@ describe('mintReviewBlockToken', () => {
       const arg = mockSign.mock.calls[0][0] as Record<string, unknown>;
       expect(arg.buzzBudget).toBeUndefined();
     });
+
+    // Literals, not the constants: 6301 overshoots the cap without being a multiple.
+    it.each([
+      ['at the cap', { buzzBudgetPerGen: 5000 }, 5000],
+      ['one over the cap', { buzzBudgetPerGen: 5001 }, 5000],
+      ['far over the cap', { buzzBudgetPerGen: 6301 }, 5000],
+      ['undeclared', {}, 1000],
+      ['a non-integer', { buzzBudgetPerGen: 12.5 }, 1000],
+      ['negative', { buzzBudgetPerGen: -5 }, 1000],
+    ])(
+      'a manifest budget, %s, mints the review token’s per-call budget',
+      async (_l, page, minted) => {
+        mockFindUnique.mockResolvedValue({
+          id: PUBREQ,
+          status: 'pending',
+          slug: 'budget-app',
+          manifest: { scopes: ['ai:write:budgeted'], page },
+        });
+        await mintReviewBlockToken({
+          publishRequestId: PUBREQ,
+          modUserId: MOD_ID,
+          runForReal: true,
+        });
+        const arg = mockSign.mock.calls[0][0] as Record<string, unknown>;
+        expect(arg.buzzBudget).toBe(minted);
+      }
+    );
 
     it('FLOORS the per-call buzz budget to the dev cap when the manifest asks for more', async () => {
       mockFindUnique.mockResolvedValue({

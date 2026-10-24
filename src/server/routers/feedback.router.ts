@@ -1,9 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
-import { createFeedback, isFeedbackAreaEnabled } from '~/server/services/feedback.service';
+import {
+  createFeedback,
+  FEEDBACK_AREA_DISABLED_MESSAGE,
+  isFeedbackAreaEnabled,
+} from '~/server/services/feedback.service';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { rateLimit } from '~/server/middleware.trpc';
-import { guardedProcedure, router } from '~/server/trpc';
+import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
 
 export const feedbackRouter = router({
   // Same procedure level as `create`: anyone who can see the prompt must be able
@@ -12,11 +16,13 @@ export const feedbackRouter = router({
   // the flag's context carries cohort properties, so it must be built from what the
   // server knows about the caller. Both procedures pass the SAME thing, which is what
   // keeps the notice and the submit endpoint from disagreeing.
-  getArea: guardedProcedure.input(getFeedbackAreaSchema).query(async ({ input, ctx }) => {
-    const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
-    return { enabled };
-  }),
-  create: guardedProcedure
+  getArea: guardedProcedureAllowUnverifiedEmail
+    .input(getFeedbackAreaSchema)
+    .query(async ({ input, ctx }) => {
+      const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
+      return { enabled };
+    }),
+  create: guardedProcedureAllowUnverifiedEmail
     .use(
       rateLimit({
         limit: FEEDBACK_RATE_LIMIT.max,
@@ -29,10 +35,7 @@ export const feedbackRouter = router({
       const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
       // Loud rather than dropped: if the area went off mid-typing, say so.
       if (!enabled)
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Feedback is not being collected here right now.',
-        });
+        throw new TRPCError({ code: 'FORBIDDEN', message: FEEDBACK_AREA_DISABLED_MESSAGE });
       return createFeedback({ ...input, userId: ctx.user.id });
     }),
 });

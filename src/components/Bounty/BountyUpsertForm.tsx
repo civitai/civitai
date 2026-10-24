@@ -55,7 +55,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
@@ -85,6 +85,8 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { stringToDate } from '~/utils/zod-helpers';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
+
+const sortedBaseModels = [...activeBaseModels].sort((a, b) => a.localeCompare(b));
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -192,7 +194,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     schema: formSchema,
     form,
     timeout: 1000,
-    key: `bounty_new`,
+    key: `bounty_${bounty?.id ?? 'new'}`,
     watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
@@ -407,7 +409,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           label="Base model"
                           placeholder="Please select a base model"
                           withAsterisk
-                          data={[...activeBaseModels]}
+                          data={sortedBaseModels}
+                          searchable
                         />
                       )}
                     </Group>
@@ -466,6 +469,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           placeholder="empty"
                           src={image.url}
                           alt={undefined}
+                          width={DEFAULT_EDGE_IMAGE_WIDTH}
                           style={{ objectFit: 'cover', height: '100%' }}
                         />
                         <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -510,6 +514,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                                 placeholder="empty"
                                 src={file.url}
                                 alt={file.name ?? undefined}
+                                width={DEFAULT_EDGE_IMAGE_WIDTH}
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>

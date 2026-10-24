@@ -50,6 +50,7 @@ vi.mock('~/server/utils/app-moderator-message-rate-limit', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockBlockedLink,
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/blocks/app-moderator-message-notify', () => ({
   notifyAppModeratorMessage: mockNotify,

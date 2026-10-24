@@ -102,7 +102,7 @@ export function PublisherSubscriptionBanner({ modelId, modelType }: Props) {
               {sub.manifest.name ?? sub.blockId}
             </Text>
             <Group gap={6}>
-              <Anchor component={Link} href="/apps/installed" size="xs">
+              <Anchor component={Link} href="/apps/activity" size="xs">
                 Edit subscription
               </Anchor>
               <Button

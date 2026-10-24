@@ -14,6 +14,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Tracker } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
+import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import type { SessionUser } from '~/types/session';
 
 // Narrow cross-app write for a model version's paid-access config — the creator
@@ -64,7 +65,11 @@ export default AuthedEndpoint(
 
     // Permanent access is reachable only from the Creator Studio — require the shared token. The
     // monetization rules themselves are enforced below, not by whoever is calling.
-    if (paidAccess?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
+    if (
+      paidAccess?.permanent &&
+      !user.isModerator &&
+      !matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN)
+    ) {
       return res
         .status(403)
         .json({ error: 'Permanent access can only be set from the Creator Studio.' });

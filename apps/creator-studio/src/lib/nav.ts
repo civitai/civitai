@@ -1,11 +1,13 @@
 import {
   IconLayoutDashboard,
+  IconCalendarEvent,
   IconSpeakerphone,
   IconLicense,
   IconCoin,
   IconChartBar,
   IconSettings,
   IconSparkles,
+  IconShieldLock,
 } from '@tabler/icons-svelte';
 
 // Single source for both the desktop sidebar and mobile header (plan §3), icon component included so there's no
@@ -17,6 +19,8 @@ type NavIcon = typeof IconLayoutDashboard;
 export type NavChild = { href: string; label: string; flag?: string };
 /** The flag gating the Sales subpage — the same key its route and every one of its actions read. */
 export const SALES_FLAG = 'scheduled-model-sales';
+/** 🔴 Must stay the main app's `postPlanner` fliptKey: one flag drives the planner in both apps. */
+export const POST_PLANNER_FLAG = 'post-planner';
 
 export type NavItem = {
   href: string;
@@ -26,6 +30,8 @@ export type NavItem = {
   nonMemberOnly?: boolean;
   // Hidden unless the named feature flag resolved true for this user (see +layout.server.ts).
   flag?: string;
+  // Display hint only — the gate is the /admin layout load.
+  adminOnly?: boolean;
   // Sub-pages shown nested in the sidebar when this section is active.
   children?: NavChild[];
 };
@@ -54,14 +60,17 @@ export const NAV: NavItem[] = [
       { href: '/analytics/engagement', label: 'Engagement' },
       { href: '/analytics/content', label: 'Content' },
       { href: '/analytics/audience', label: 'Audience' },
+      { href: '/analytics/storage', label: 'Storage' },
     ],
   },
+  { href: '/calendar', label: 'Calendar', icon: IconCalendarEvent, flag: POST_PLANNER_FLAG },
   {
     href: '/announcements',
     label: 'Announcements',
     icon: IconSpeakerphone,
     flag: 'creator-announcements',
   },
+  { href: '/admin', label: 'Admin', icon: IconShieldLock, adminOnly: true },
   { href: '/settings', label: 'Settings', icon: IconSettings },
   { href: '/join', label: 'Join Creator Program', icon: IconSparkles, nonMemberOnly: true },
 ];
@@ -93,10 +102,15 @@ export function activeNavHref(pathname: string): string | undefined {
 
 // `isMember` here is the Creator Program gate (B1) — the single bar the Studio's member-only surfaces key on,
 // not subscription tier. Callers pass `membership.isCreatorProgramMember`.
-export function navForMember(isMember: boolean, enabledFlags: string[] = []): NavItem[] {
+export function navForMember(
+  isMember: boolean,
+  enabledFlags: string[] = [],
+  isAdmin = false
+): NavItem[] {
   const allowed = (flag?: string) => !flag || enabledFlags.includes(flag);
   return (
-    NAV.filter((item) => (item.nonMemberOnly ? !isMember : true))
+    NAV.filter((item) => (item.adminOnly ? isAdmin : true))
+      .filter((item) => (item.nonMemberOnly ? !isMember : true))
       .filter((item) => allowed(item.flag))
       // A flagged-off child is dropped, not disabled: a link whose page answers "not available on your
       // account" is a worse gate than no link. Children are filtered as well as items because a section

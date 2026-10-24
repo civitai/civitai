@@ -1,6 +1,7 @@
 import { dbRead } from './db';
 import type { ChatMessageWithChat } from './chat-audit.service';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
+import { recordChatReads, type Reader } from './chat-read-audit';
 
 // Everything behind `/api/chat-insights` — the platform-wide aggregates Retool showed as a stats strip,
 // plus its spam detector. Every query here scans `ChatMessage` (4.2M rows, no index on `createdAt` or
@@ -130,7 +131,7 @@ export async function getChatStats(): Promise<ChatStats> {
 // The "Newest" tab: a live feed of the most recent messages platform-wide. Retool let a moderator set the
 // row count; this is a fixed cap because the query has no index to use — `createdAt` is unindexed, so it
 // is a full scan plus a top-N sort (~700ms) regardless of how many rows come back.
-export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
+export async function getNewestMessages(reader: Reader, limit = 100): Promise<NewestMessage[]> {
   const rows = await dbRead
     .selectFrom('ChatMessage as cm')
     .leftJoin('User as u', 'u.id', 'cm.userId')
@@ -140,6 +141,8 @@ export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
       'cm.userId',
       'cm.content',
       'cm.createdAt',
+      'cm.editedAt',
+      'cm.deletedAt',
       'u.username',
       'u.bannedAt',
     ])
@@ -147,6 +150,13 @@ export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
     .orderBy('cm.createdAt', 'desc')
     .limit(limit)
     .execute();
+  await recordChatReads(
+    reader,
+    [...new Map(rows.map((r) => [`${r.chatId}:${r.userId}`, r])).values()].map((r) => ({
+      chatId: r.chatId,
+      subjectId: r.userId,
+    }))
+  );
   return rows;
 }
 
@@ -158,6 +168,7 @@ export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
 // spam a moderator can still act on is recent by definition. The window is returned so the panel can
 // say what it covered rather than implying "ever".
 export async function getSpamGroups(
+  reader: Reader,
   days = 30,
   minChats = 2,
   limit = 50
@@ -182,6 +193,11 @@ export async function getSpamGroups(
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit);
   const byId = await usersByIds(page.map((r) => r.userId));
+  // A group spans chats it does not name, so the read is of the sender's messages: chatId 0.
+  await recordChatReads(
+    reader,
+    [...new Set(page.map((r) => r.userId))].map((subjectId) => ({ chatId: 0, subjectId }))
+  );
 
   return {
     days,

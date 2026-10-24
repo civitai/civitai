@@ -46,8 +46,10 @@
   let verdict = $state('');
   const form = new FormState({
     onSubmit: ({ action }) => (verdict = VERDICTS[action.search] ?? ''),
-    onSuccess: () => {
-      if (verdict) toast.success(verdict);
+    onSuccess: (data) => {
+      const warning = (data as { warning?: unknown } | undefined)?.warning;
+      if (typeof warning === 'string') toast.error(warning, { duration: Infinity });
+      else if (verdict) toast.success(verdict);
       leave();
     },
   });

@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { sessionClient } from '~/server/auth/session-client';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -48,6 +50,16 @@ export default PublicEndpoint(
       access.forEach((r) => {
         data[r.entityId] = r.hasAccess;
       });
+
+      const restricted = await dbRead.modelVersion.findMany({
+        where: { id: { in: entityIds }, model: { poi: true } },
+        select: { id: true, model: { select: { userId: true } } },
+      });
+      const viewer = userId != null ? { id: userId, isModerator: sessionUser?.isModerator } : null;
+      for (const version of restricted) {
+        if (version.id in data && !canViewPoiModel(true, version.model.userId, viewer))
+          data[version.id] = false;
+      }
 
       return res.json(data);
     } catch (error) {

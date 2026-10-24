@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 const mockRedis = redisMock.redis;
@@ -202,6 +203,67 @@ describe('BlockRegistry.installOnModel preserves settings on omit (audit M2)', (
       data: { settings?: unknown };
     };
     expect(args.data).toHaveProperty('settings', { foo: 'bar' });
+  });
+});
+
+/**
+ * Re-installing over a `toggleEnabled(false)` row revives that row's existing
+ * blockInstanceId, so the marker written on disable would otherwise keep 403ing
+ * an install the DB reports as enabled — for the marker's whole TTL, which now
+ * covers the longest token lifetime rather than 15 minutes.
+ */
+describe('BlockRegistry.installOnModel clears a revocation marker on the revived row', () => {
+  const REVOKED_PREFIX = `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE}:`;
+  const revokedKeysDeleted = () =>
+    mockRedis.del.mock.calls
+      .flatMap((c) => (Array.isArray(c[0]) ? c[0] : [c[0]]))
+      .map(String)
+      .filter((k) => k.startsWith(REVOKED_PREFIX));
+
+  beforeEach(() => {
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      status: 'approved',
+      blockId: 'g',
+      manifest: {},
+      approvedScopes: [],
+    });
+    mockDbWrite.blockUserSubscription.findMany.mockReset();
+    mockDbWrite.blockUserSubscription.findMany.mockResolvedValue([]);
+    mockDbWrite.blockUserSubscription.findFirst.mockReset();
+    mockDbWrite.blockUserSubscription.create.mockReset();
+    mockDbWrite.blockUserSubscription.update.mockReset();
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
+    mockDbWrite.blockUserSubscription.create.mockResolvedValue({});
+    mockRedis.del.mockClear();
+  });
+
+  it('clears the marker for the id the row already carried', async () => {
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue({
+      id: 'bus_existing',
+      blockInstanceId: 'bki_revived',
+    });
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.installOnModel({
+      modelId: 1,
+      appBlockId: 'ab_test',
+      slotId: 'model.sidebar_top',
+      installedByUserId: 42,
+    });
+    expect(revokedKeysDeleted()).toEqual([`${REVOKED_PREFIX}bki_revived`]);
+  });
+
+  it('clears no marker for a first install — that id has no history to clear', async () => {
+    // Negative control: without it, a blanket unconditional clear would pass
+    // the case above while telling us nothing about which id it targeted.
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue(null);
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.installOnModel({
+      modelId: 1,
+      appBlockId: 'ab_test',
+      slotId: 'model.sidebar_top',
+      installedByUserId: 42,
+    });
+    expect(revokedKeysDeleted()).toEqual([]);
   });
 });
 

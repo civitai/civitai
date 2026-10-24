@@ -4,10 +4,7 @@ import * as z from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { CollectionSort } from '~/server/common/enums';
-import {
-  getAllCollections,
-  getCollectionItemCount,
-} from '~/server/services/collection.service';
+import { getAllCollections, getCollectionItemCount } from '~/server/services/collection.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -105,9 +102,19 @@ export default MixedAuthEndpoint(async function handler(
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
   const coverUrl = (
-    image: { url: string; type: MediaType | null; nsfwLevel: number | null } | null | undefined
+    image:
+      | {
+          url: string;
+          type: MediaType | null;
+          nsfwLevel: number | null;
+          poi: boolean;
+          minor: boolean;
+        }
+      | null
+      | undefined
   ): string | null =>
-    image?.url && withinCeiling(image.nsfwLevel, browsingLevel)
+    // poi/minor: the same exclusion the public image endpoints apply.
+    image?.url && !image.poi && !image.minor && withinCeiling(image.nsfwLevel, browsingLevel)
       ? getEdgeUrl(image.url, { width: 450, type: image.type ?? undefined })
       : null;
 
@@ -154,7 +161,7 @@ export default MixedAuthEndpoint(async function handler(
         nsfwLevel: true,
         userId: true,
         user: { select: { id: true, username: true } },
-        image: { select: { url: true, type: true, nsfwLevel: true } },
+        image: { select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true } },
       },
     });
 

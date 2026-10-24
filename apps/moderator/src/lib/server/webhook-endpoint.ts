@@ -19,38 +19,35 @@ import { env } from '$env/dynamic/private';
 // There is NO USER behind the token. `locals.user` is deliberately never populated here, so anything
 // reached this way cannot attribute a write — which is what keeps `human_judgement` human-only.
 //
-// TWO CREDENTIALS ARE ACCEPTED, and the difference is reach, not privilege — inside this app they
-// authorise exactly the same thing:
+// ONE CREDENTIAL IS ACCEPTED INBOUND: MOD_INBOUND_TOKEN. It is inbound-only — this app never presents
+// it outbound — which is what lets a service that only calls IN hold something narrower than the
+// shared token it used to need.
 //
-//   MOD_INBOUND_TOKEN — inbound-only, and the one to prefer for anything that only calls IN.
-//   WEBHOOK_TOKEN     — accepted for COMPATIBILITY. This app is on both ends of it, so its value is
-//     shared rather than local (see .env.example) and a second accepted token, not a rotation, is
-//     what lets an inbound-only caller hold something narrower.
+// 🔴 WEBHOOK_TOKEN IS NO LONGER ACCEPTED INBOUND, AND IS STILL REQUIRED. Those are two different
+// facts and collapsing them breaks this app. It was dropped from `acceptedTokens` once the runtime
+// signal below showed no caller presenting it inbound. It remains SET, and four services here present
+// it OUTBOUND to the main app (kono.ts, search-index.ts, training-moderation.service.ts,
+// user-actions.service.ts) — two of which degrade by WARNING rather than failing, so unsetting the
+// variable goes QUIET rather than loud. Do not "finish the migration" by removing it.
 //
-// So this is a MIGRATION SEAM, not a permission model. Move each inbound caller to MOD_INBOUND_TOKEN,
-// and once none present WEBHOOK_TOKEN inbound, drop it from `acceptedTokens`.
+// 🔴 HOW THAT REMOVAL WAS GRADED — recorded because the same standard applies to the next one, and
+// because the obvious shortcut is wrong. Every token-authenticated request logs which credential class
+// matched (`webhook credential presented`, emitted from hooks.server.ts). The verdict needs BOTH
+// numbers over one window: a ZERO for the retiring class is evidence only beside a NON-ZERO count for
+// a live one in the SAME window, which is the in-band positive control proving the emit path was live
+// and ingesting at the moment the zero was read. Without the pair, "nobody presents it any more" and
+// "the log line never shipped, or stopped being ingested" are the identical observation. That is why
+// the emit covers EVERY class rather than just a retiring one.
 //
-// 🔴 TWO WAYS TO GET THAT REMOVAL WRONG, and neither is visible from this file alone:
-//   1. "None present it inbound" is a claim about THE MAIN APP, not about this repo. The main app
-//      presents WEBHOOK_TOKEN on every call into this app, from its own codebase — so grepping HERE,
-//      finding no inbound presenter and concluding the migration is done 401s every delegated
-//      moderation action. The RUNTIME SIGNAL that settles it now exists: every token-authenticated
-//      request logs which credential class matched (`webhook credential presented`, emitted from
-//      hooks.server.ts), so the claim is checkable instead of inferred.
-//   2. Dropping it from `acceptedTokens` is NOT the same as unsetting the variable. Four services in
-//      this app present it OUTBOUND, and two of them degrade by WARNING rather than failing.
-//
-// 🔴 HOW TO READ THAT SIGNAL — the ZERO ALONE IS NOT THE EVIDENCE. Count the attribution lines grouped
-// by `credential` over a window long enough to cover every inbound caller's slowest schedule. The
-// verdict needs BOTH numbers: `WEBHOOK_TOKEN` at zero is only meaningful next to a NON-ZERO
-// `MOD_INBOUND_TOKEN` in the same window, which is the in-band positive control proving the emit path
-// was live and ingesting at the moment the legacy count read zero. Without the pair, "nobody presents
-// it any more" and "the log line never shipped, or stopped being ingested" produce the identical
-// observation. That is why the emit covers BOTH classes and not just the legacy one.
+// 🔴 AND THE WINDOW MUST HAVE EXERCISED THE CALLERS. A window in which some inbound path never ran
+// carries no evidence about that path — no calls and no legacy credential look the same from the
+// count. The removal waited for a window in which every inbound caller had actually called, including
+// the main app's own delegated moderation actions, which are human-driven and can be quiet for hours.
 //
 // Scoping a token to particular endpoints is a separate, later change: `EndpointAuth` is already
 // `{kind:'webhook'} | {kind:'session'; page}` (api-endpoint.ts), so `{kind:'webhook'; scope}` has
-// somewhere to go.
+// somewhere to go. 🔴 If that ever adds a SECOND accepted class, re-arm the no-early-exit guard in
+// `__tests__/webhook-endpoint-timing.test.ts` — it is DORMANT at one credential and says so in place.
 //
 // Operational rationale for the split lives in the private infra repo, not here.
 
@@ -73,15 +70,19 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
 }
 
 /**
- * The credential VARIABLE NAMES this app can accept inbound, in PREFERENCE-DESCENDING order — most
- * preferred first, most legacy last. The order is load-bearing twice over: it decides which name the
- * attribution record carries when a deployment sets both variables to the same value (see the match
- * loop below), and it is the order the 503 body lists them in.
+ * The credential VARIABLE NAMES this app accepts inbound, in PREFERENCE-DESCENDING order — most
+ * preferred first, most legacy last.
+ *
+ * 🔴 ONE ENTRY TODAY, and two properties of this list are dormant rather than gone. Keep the ordering
+ * rule if a second class is ever added: it decides which name the attribution record carries when a
+ * deployment sets two variables to the SAME value (the match loop below is last-match-wins, so an
+ * ambiguous deployment attributes to the most LEGACY class — which can only ever overstate legacy use,
+ * never understate it), and it is the order the 503 body lists them in.
  *
  * A credential class is a variable NAME, never a value. Nothing derived from a token's bytes — not a
  * prefix, a length, or a hash — may leave this module.
  */
-export const ACCEPTED_CREDENTIALS = ['MOD_INBOUND_TOKEN', 'WEBHOOK_TOKEN'] as const;
+export const ACCEPTED_CREDENTIALS = ['MOD_INBOUND_TOKEN'] as const;
 
 export type AcceptedCredential = (typeof ACCEPTED_CREDENTIALS)[number];
 
@@ -108,7 +109,6 @@ function acceptedTokens(): AcceptedToken[] {
   // and forgetting to read it here is a type error, not a credential that silently never matches.
   const values: Record<AcceptedCredential, string | undefined> = {
     MOD_INBOUND_TOKEN: env.MOD_INBOUND_TOKEN,
-    WEBHOOK_TOKEN: env.WEBHOOK_TOKEN,
   };
   return ACCEPTED_CREDENTIALS.map((credential) => ({
     credential,
@@ -143,17 +143,22 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   const accepted = acceptedTokens();
   // Fails CLOSED — with NO secret configured every wrapped endpoint is unreachable rather than
   // unguarded. 503 rather than 401 so an operator reading logs sees a deployment problem, not a caller
-  // with a bad token. Either variable alone is a complete configuration: WEBHOOK_TOKEN alone is the
-  // state before migration, MOD_INBOUND_TOKEN alone the state after. The body names every accepted
-  // class, derived from the list itself so the two cannot drift.
+  // with a bad token. MOD_INBOUND_TOKEN is now the ONLY accepted inbound class, so it is also the only
+  // complete configuration; the legacy class was dropped once the runtime signal showed no caller
+  // presenting it (see the header). The body names every accepted class, derived from the list itself
+  // so the two cannot drift.
   if (accepted.length === 0) {
+    // Phrased for EITHER list length: "Neither A nor B" is ungrammatical with one name, and this list
+    // is one name today. Keeping it derived rather than hardcoded is what stops the body drifting from
+    // the accepted set when a second class is added back.
     const names = ACCEPTED_CREDENTIALS.join(' nor ');
+    const message =
+      ACCEPTED_CREDENTIALS.length > 1
+        ? `Neither ${names} is configured on this deployment.`
+        : `${names} is not configured on this deployment.`;
     return {
       kind: 'refused',
-      response: Response.json(
-        { message: `Neither ${names} is configured on this deployment.` },
-        { status: 503 }
-      ),
+      response: Response.json({ message }, { status: 503 }),
     };
   }
 

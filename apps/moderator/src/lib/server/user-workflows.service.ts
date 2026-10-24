@@ -10,9 +10,27 @@ import { env } from '$env/dynamic/private';
  * with the service token this app already holds, so it asks the question without impersonating anyone.
  *
  * Shapes are read defensively: a step's output is `$type`-dependent (`images` for imageGen, `video` for
- * videoGen, `blob` elsewhere) and the orchestrator adds step types without asking us. An unrecognised
- * one contributes no media rather than throwing.
+ * videoGen, `blobs` for customComfy, `blob` elsewhere) and the orchestrator adds step types without
+ * asking us. An unrecognised one contributes no media rather than throwing.
  */
+
+/**
+ * Which submitter's workflows to read. The orchestrator holds everything an account touched under one
+ * id — on-site generations, Comfy Cloud sessions, training runs, prompt-enhancement and scan workflows
+ * — and only the tag separates them, so an unfiltered query answers no question at all.
+ *
+ * `comfy` is what makes Comfy Cloud investigable: it submits under the user's own id, so its work never
+ * reaches the site and does not appear in the `gen` feed.
+ */
+export const WORKFLOW_SOURCE_TAGS = {
+  onsite: 'gen',
+  comfy: 'civitai-comfy-nodes',
+} as const;
+
+export type WorkflowSource = keyof typeof WORKFLOW_SOURCE_TAGS;
+
+export const isWorkflowSource = (v: string | null | undefined): v is WorkflowSource =>
+  !!v && Object.prototype.hasOwnProperty.call(WORKFLOW_SOURCE_TAGS, v);
 
 export type GeneratedMedia = {
   id: string;
@@ -55,16 +73,32 @@ type Blobish = {
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const int = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-function readBlob(raw: unknown, type: 'image' | 'video'): GeneratedMedia | 'unavailable' | null {
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
+
+/**
+ * customComfy names its outputs only by filename — the step declares no media type, and a comfy graph
+ * saves whatever its nodes were wired to save. The extension is the only signal there is; an
+ * unrecognised one renders as an image, which shows a broken tile rather than dropping the evidence.
+ */
+function mediaTypeFromName(name: string): 'image' | 'video' {
+  const path = name.split('?')[0].toLowerCase();
+  return VIDEO_EXTENSIONS.some((ext) => path.endsWith(ext)) ? 'video' : 'image';
+}
+
+function readBlob(
+  raw: unknown,
+  type: 'image' | 'video' | 'byName'
+): GeneratedMedia | 'unavailable' | null {
   if (!raw || typeof raw !== 'object') return null;
   const b = raw as Blobish;
   const url = str(b.url);
   // `available: false` still carries a URL, and it 404s. Counted, not rendered.
   if (!url || b.available === false) return 'unavailable';
+  const id = str(b.id) ?? url;
   return {
-    id: str(b.id) ?? url,
+    id,
     url,
-    type,
+    type: type === 'byName' ? mediaTypeFromName(id) : type,
     width: int(b.width),
     height: int(b.height),
     nsfwLevel: str(b.nsfwLevel),
@@ -77,11 +111,14 @@ function readStepMedia(step: unknown): { media: GeneratedMedia[]; unavailable: n
   const output = (step as { output?: unknown } | null)?.output;
   if (!output || typeof output !== 'object') return { media, unavailable };
 
-  const o = output as { images?: unknown; video?: unknown; blob?: unknown };
-  const candidates: [unknown, 'image' | 'video'][] = [
+  const o = output as { images?: unknown; video?: unknown; blob?: unknown; blobs?: unknown };
+  const candidates: [unknown, 'image' | 'video' | 'byName'][] = [
     ...(Array.isArray(o.images) ? o.images.map((i): [unknown, 'image'] => [i, 'image']) : []),
     [o.video, 'video'],
     [o.blob, 'image'],
+    // customComfy. `tempBlobs` sits beside this one and is deliberately skipped: it holds the graph's
+    // intermediate artifacts, not what the user set out to make.
+    ...(Array.isArray(o.blobs) ? o.blobs.map((b): [unknown, 'byName'] => [b, 'byName']) : []),
   ];
 
   for (const [raw, type] of candidates) {
@@ -104,6 +141,8 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
   const id = str(w.id);
   if (!id) return null;
 
+  // Comfy Cloud sends `metadata: {}`, so every field read from it is null for those rows — the prompt
+  // exists only inside the raw node graph at `steps[].input.workflow`. The media carries them instead.
   const params = w.metadata?.params ?? {};
   const steps = Array.isArray(w.steps) ? w.steps : [];
   const media: GeneratedMedia[] = [];
@@ -129,7 +168,7 @@ function readWorkflow(raw: unknown): GeneratedWorkflow | null {
 
 export async function getUserGeneratedWorkflows(
   userId: number,
-  options: { take?: number; cursor?: string | null } = {}
+  options: { take?: number; cursor?: string | null; source?: WorkflowSource } = {}
 ): Promise<GeneratedWorkflowPage> {
   const endpoint = env.ORCHESTRATOR_ENDPOINT;
   const token = env.ORCHESTRATOR_ACCESS_TOKEN;
@@ -139,9 +178,7 @@ export async function getUserGeneratedWorkflows(
   const query = new URLSearchParams({
     UserId: String(userId),
     Take: String(Math.min(Math.max(options.take ?? 20, 1), 100)),
-    // The generation feed, not every workflow the account touched: prompt-enhancement and scan
-    // workflows carry the same account and answer nothing about what they made.
-    Tags: 'gen',
+    Tags: WORKFLOW_SOURCE_TAGS[options.source ?? 'onsite'],
     ExcludeFailed: 'true',
   });
   if (options.cursor) query.set('Cursor', options.cursor);

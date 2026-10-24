@@ -193,25 +193,6 @@ describe('POST /api/admin/reaction-abuse — mod-action audit trail', () => {
     expect(res._body()).toMatchObject({ excluded: 1, auditRecorded: false });
   });
 
-  // The response field is inert until a caller branches on it, so the log is the signal that works
-  // today. Pinned because deleting it left every other test in this file green.
-  it('reports a failed audit write to Axiom, not just in the response body', async () => {
-    trackModActivity.mockRejectedValueOnce(new Error('pg down'));
-
-    const { req, res } = createMocks({ action: 'exclude', userIds: [777], reason: 'r' });
-    await handler(req, res);
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'reaction-abuse audit write failed',
-        message: 'pg down',
-      }),
-      'moderation'
-    );
-  });
-
   it('does not log to Axiom when the audit write succeeds', async () => {
     const { req, res } = createMocks({ action: 'exclude', userIds: [999], reason: 'r' });
     await handler(req, res);

@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 // The AppBlock→AppListing mapping is the SINGLE SOURCE OF TRUTH for the listing
 // shape, shared with `publish-request.service.approveRequest` (the go-forward
 // auto-create-on-approve path) so the two can never drift. Re-exported below so
@@ -187,6 +188,11 @@ export async function backfillAppListings(
       });
     }
   }
+
+  // Catalog bust: the backfill mints rows at `status: 'approved'` — a GO-LIVE path, not a
+  // data migration (see the actionability gate above). Guarded on a real write: a dry run
+  // wrote nothing, and a run that created nothing has nothing to invalidate.
+  if (!dryRun && result.created > 0) await bustAppListingCatalogCache().catch(() => undefined);
 
   return result;
 }

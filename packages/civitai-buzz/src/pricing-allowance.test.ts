@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { MONETIZATION_MIN_CREATOR_SCORE, minCreatorScoreForSale } from './paid-access';
 import {
+  EARLY_ACCESS_NOT_COUNTED,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
+  FEE_ALLOWANCE_BOOST_MAX,
+  feeAllowanceBoost,
+  feeAllowanceBoostNote,
+  gateConversionExceedsAllowance,
+  pricingAllowanceLimits,
+  pricingLimitFor,
+  pricingLimitMessage,
+  PRICING_SLOT_EXPLAINER,
   exceedsAllowance,
   formatPricingAllowance,
   isAlreadyPriced,
@@ -128,13 +138,13 @@ describe('pricingAllowanceState', () => {
 describe('formatPricingAllowance', () => {
   it('says the same thing everywhere it is rendered', () => {
     expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toBe(
-      '1 of 3 versions monetized this month'
+      '1 of 3 versions priced this month'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 3, limit: 3 }))).toBe(
-      '3 of 3 versions monetized this month · limit reached'
+      '3 of 3 versions priced this month · limit reached'
     );
     expect(formatPricingAllowance(pricingAllowanceState({ used: 7, limit: null }))).toBe(
-      '7 versions monetized this month · unlimited'
+      '7 versions priced this month · unlimited'
     );
   });
 });
@@ -169,19 +179,142 @@ describe('refusal messages', () => {
     expect(pricingAllowanceMessage(3, 3)).not.toMatch(/\d+ models\b/);
   });
 
-  // "monetize" is the verb everywhere a slot is counted; "price" survives only as the NOUN for what
-  // is already set ("changing a price you have already set").
-  it('use monetize as the verb, not price', () => {
-    expect(pricingAllowanceMessage(3, 3)).toMatch(/monetized 3 of 3/);
-    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/\bpriced\b/);
-    expect(pricingFloorMessage()).toMatch(/to monetize a model version/);
-    expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toMatch(
+  it('say priced, not monetized, wherever a slot is counted', () => {
+    expect(pricingAllowanceMessage(3, 3)).toMatch(/priced 3 of 3/);
+    expect(pricingAllowanceMessage(3, 3)).not.toMatch(/monetized/);
+    expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).toMatch(/priced/);
+    expect(formatPricingAllowance(pricingAllowanceState({ used: 1, limit: 3 }))).not.toMatch(
       /monetized/
     );
+    expect(pricingFloorMessage()).toMatch(/to monetize a model version/);
+  });
+
+  it('the cap refusal rules Early Access out and names both things that count', () => {
+    const message = pricingAllowanceMessage(25, 25);
+    expect(message).toMatch(/licensing fee/i);
+    expect(message).toMatch(/permanent paid access/i);
+    expect(message).toMatch(/Early Access/);
+    expect(message).toMatch(/separate limit/);
+    expect(PRICING_SLOT_EXPLAINER).toMatch(/Early Access/);
+    expect(EARLY_ACCESS_NOT_COUNTED).toMatch(/separate limit/);
+  });
+
+  it('names the tier when the caller knows it', () => {
+    expect(pricingAllowanceMessage(25, 25, 'Silver')).toContain('on Silver');
+    expect(pricingAllowanceMessage(25, 25)).not.toContain('undefined');
   });
 
   it('both say an existing price is unaffected', () => {
     expect(pricingFloorMessage()).toMatch(/already set/);
     expect(pricingAllowanceMessage(3, 3)).toMatch(/already set/);
+  });
+});
+
+describe('feeAllowanceBoost', () => {
+  const during = new Date('2026-10-15T12:00:00Z');
+
+  it('honours a grant until the window closes, and nothing from that instant on', () => {
+    const lastMs = new Date(FEE_ALLOWANCE_BOOST_ENDS_AT.getTime() - 1);
+    expect(feeAllowanceBoost('100', lastMs)).toBe(100);
+    expect(feeAllowanceBoost('100', FEE_ALLOWANCE_BOOST_ENDS_AT)).toBe(0);
+    expect(FEE_ALLOWANCE_BOOST_ENDS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+  });
+
+  it('caps a stored grant at the maximum', () => {
+    expect(FEE_ALLOWANCE_BOOST_MAX).toBe(100);
+    expect(feeAllowanceBoost('250', during)).toBe(100);
+    expect(feeAllowanceBoost(40, during)).toBe(40);
+    expect(feeAllowanceBoost('40.9', during)).toBe(40);
+  });
+
+  it.each([null, undefined, '', 'abc', -5, NaN, {}])('reads %s as no grant', (stored) => {
+    expect(feeAllowanceBoost(stored, during)).toBe(0);
+  });
+});
+
+describe('pricingLimitFor', () => {
+  it('adds the boost to a licensing fee only', () => {
+    expect(pricingLimitFor({ tier: 'free', boost: 100, addsGate: false })).toBe(103);
+    expect(pricingLimitFor({ tier: 'free', boost: 100, addsGate: true })).toBe(3);
+    expect(pricingLimitFor({ tier: 'silver', boost: 0, addsGate: false })).toBe(25);
+  });
+
+  it('leaves an unlimited tier unlimited', () => {
+    expect(pricingLimitFor({ tier: 'gold', boost: 100, addsGate: false })).toBe(Infinity);
+  });
+});
+
+describe('pricingLimitMessage', () => {
+  it('tells a boosted creator refused a gate that the extra slots are fee-only', () => {
+    expect(
+      pricingLimitMessage({ used: 3, limit: 3, boost: 100, addsGate: true, tierLabel: 'Free' })
+    ).toContain('cover licensing fees only, not paid access');
+  });
+
+  it('is the plain allowance message without a boost', () => {
+    expect(pricingLimitMessage({ used: 3, limit: 3, boost: 0, addsGate: true })).toBe(
+      pricingAllowanceMessage(3, 3)
+    );
+  });
+});
+
+describe('pricingAllowanceLimits', () => {
+  it('reports the tier limit and the boosted fee limit separately', () => {
+    expect(pricingAllowanceLimits({ tier: 'free', boost: 100 })).toEqual({
+      baseLimit: 3,
+      feeLimit: 103,
+    });
+    expect(pricingAllowanceLimits({ tier: 'gold', boost: 100 })).toEqual({
+      baseLimit: null,
+      feeLimit: null,
+    });
+  });
+});
+
+describe('gateConversionExceedsAllowance', () => {
+  const thisMonth = { slotSpentThisMonth: true };
+
+  it('refuses a gate on a licensed version only once boost-funded slots are in use', () => {
+    expect(
+      gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: 100, ...thisMonth })
+    ).toBe(true);
+    expect(
+      gateConversionExceedsAllowance({ used: 3, tier: 'free', boost: 100, ...thisMonth })
+    ).toBe(false);
+  });
+
+  it('never applies without a boost or on an unlimited tier', () => {
+    expect(gateConversionExceedsAllowance({ used: 50, tier: 'free', boost: 0, ...thisMonth })).toBe(
+      false
+    );
+    expect(
+      gateConversionExceedsAllowance({ used: 500, tier: 'gold', boost: 100, ...thisMonth })
+    ).toBe(false);
+  });
+
+  it('treats an unreadable grant list as a grant', () => {
+    expect(
+      gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: null, ...thisMonth })
+    ).toBe(true);
+  });
+
+  it('leaves a version priced in an earlier month free to convert', () => {
+    expect(
+      gateConversionExceedsAllowance({
+        used: 50,
+        tier: 'free',
+        boost: 100,
+        slotSpentThisMonth: false,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('the boost end date creators read', () => {
+  it('is the last UTC day before the window closes', () => {
+    expect(feeAllowanceBoostNote(100)).toBe(
+      'includes 100 extra for licensing fees through October 31 (UTC)'
+    );
+    expect(feeAllowanceBoostNote(0)).toBe('');
   });
 });

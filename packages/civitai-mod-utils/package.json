@@ -6,6 +6,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./prompt-audit": "./src/prompt-audit/index.ts"
+    "./prompt-audit": "./src/prompt-audit/index.ts",
+    "./prompt-audit/lists": "./src/prompt-audit/lists/index.ts",
+    "./profanity/lists": "./src/profanity/lists/index.ts",
+    "./prompt-audit/word-regex": "./src/prompt-audit/word-regex.ts",
+    "./prompt-audit/lists/ages": "./src/prompt-audit/lists/ages.ts"
   }
 }

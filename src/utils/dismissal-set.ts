@@ -47,3 +47,22 @@ export function pruneDismissals<T>(dismissed: readonly T[], live: Iterable<T>): 
   if (kept.length === dismissed.length) return undefined;
   return kept;
 }
+
+/**
+ * Narrow a dismissal set that came from somewhere else — the account-level backstop — to the
+ * ids a surface is actually showing.
+ *
+ * The account set is one flat list of announcement ids; the device stores partition theirs (by
+ * announcement type in the cookie, and a separate store for creator announcements). Keeping the
+ * intersection here means the account set can never put an id in the wrong bucket, and can never
+ * reintroduce an id the surface's own prune would then drop.
+ *
+ * Deliberately not shared with `pruneDismissals` above, which computes the same intersection and
+ * then reports whether anything changed. Folding one into the other is a real cleanup and it is
+ * filed as its own change: `pruneDismissals` has an open defect of its own, and a follow-up that
+ * has to explain why its blame lands on a schema PR starts at a disadvantage.
+ */
+export function selectLiveDismissals<T>(remote: readonly T[], live: Iterable<T>): T[] {
+  const liveSet = live instanceof Set ? (live as Set<T>) : new Set(live);
+  return remote.filter((id) => liveSet.has(id));
+}

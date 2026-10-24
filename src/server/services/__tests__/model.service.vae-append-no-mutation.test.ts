@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as RedisClient from '~/server/redis/client';
 
 /**
@@ -68,13 +69,17 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: vi.fn().mockResolvedValue({}),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
-vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),
   getPublicPaidAccessForModelVersions: vi.fn().mockResolvedValue({}),
+  getModelPaidAccessGates: vi.fn().mockResolvedValue(new Map()),
   bustPaidAccessCache: vi.fn(),
   bustModelSaleCache: vi.fn(),
 }));
@@ -183,7 +188,7 @@ function primeOneModelWithALinkedVae() {
     },
   } as never);
 
-  mockDbRead.$queryRaw.mockResolvedValue([]); // getModelEarlyAccessDeadlines
+  mockDbRead.$queryRaw.mockResolvedValue([]);
   mockDbRead.modelMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersionMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);

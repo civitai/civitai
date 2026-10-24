@@ -26,39 +26,29 @@ export const LineClamp = forwardRef<
 
 LineClamp.displayName = 'LineClamp';
 
+function useClamped<T extends HTMLElement>(children: React.ReactNode, showMore: boolean) {
+  const [clamped, setClamped] = useState(false);
+  // Expanded text is never taller than its box, so measuring then would hide "Show less".
+  const measure = (element: HTMLElement | null) => {
+    if (!element || showMore) return;
+    setClamped(element.clientHeight < element.scrollHeight);
+  };
+
+  const ref = useResizeObserver<T>((entry) => measure(entry.target as HTMLElement));
+
+  useEffect(() => {
+    measure(ref.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children]);
+
+  return { ref, clamped };
+}
+
 const LineClampInline = forwardRef<HTMLDivElement, LineClampProps>(
   ({ children, lineClamp = 3, className, id, variant, ...props }, ref) => {
-    const [clamped, setClamped] = useState(false);
     const [showMore, setShowMore] = useState(false);
     const backgroundColorRef = useRef<string | null>(null);
-    const prevWidthRef = useRef<number | null>(null);
-
-    const resizeObserverRef = useResizeObserver<HTMLParagraphElement>((entry) => {
-      if (!prevWidthRef.current || prevWidthRef.current !== entry.contentRect.width) {
-        prevWidthRef.current = entry.contentRect.width;
-        const element = entry.target as HTMLElement;
-        const shouldClamp = element.clientHeight < element.scrollHeight;
-        setClamped(shouldClamp);
-      }
-    });
-
-    // useEffect(() => {
-    //   const elem = resizeObserverRef.current;
-    //   if (!elem) return;
-
-    //   function callback() {
-    //     const elem = resizeObserverRef.current;
-    //     if (!elem) return;
-    //     // can only set clamped to true. This handles cases where text is injected into divs outside of the react ecysystem
-    //     setClamped((clamped) => clamped || elem.clientHeight < elem.scrollHeight);
-    //   }
-
-    //   const observer = new MutationObserver(callback);
-    //   observer.observe(elem, { subtree: true, childList: true });
-    //   return () => {
-    //     observer.disconnect();
-    //   };
-    // }, []);
+    const { ref: resizeObserverRef, clamped } = useClamped<HTMLDivElement>(children, showMore);
 
     const mergedRef = useMergedRef(resizeObserverRef, ref);
 
@@ -124,16 +114,8 @@ export function LineClampBlock({
   lineClamp = 3,
   ...props
 }: Omit<LineClampProps, 'variant'>) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [clamped, setClamped] = useState(false);
   const [showMore, setShowMore] = useState(false);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-
-    setClamped(element.offsetHeight < element.scrollHeight);
-  }, []);
+  const { ref, clamped } = useClamped<HTMLDivElement>(children, showMore);
 
   return (
     <>

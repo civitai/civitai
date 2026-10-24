@@ -1,19 +1,29 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import {
   MONETIZATION_MIN_CREATOR_SCORE,
+  capTierLabel,
   clearsLastPrice,
   exceedsAllowance,
+  feeAllowanceBoost,
+  gateConversionExceedsAllowance,
+  gateConversionMessage,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
+  gatePrices,
   isAlreadyPriced,
   monthlyPricingAllowance,
-  pricingAllowanceMessage,
   pricingFloorMessage,
+  pricingLimitFor,
+  pricingLimitMessage,
   pricingMonthStart,
 } from '@civitai/buzz';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 // The queries and the ordering behind the two pricing rules; the rules themselves are in
 // @civitai/buzz, shared with the creator-studio spoke, which enforces them against the same database
@@ -22,24 +32,46 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 /** The entity kinds that can carry a price. Mirrors PaidAccessEntityType. */
 export type PricingSlotEntityType = 'ModelVersion' | 'ComicChapter';
 
-type UserMetaScores = { scores?: { models?: number } };
-
-/** Absent or malformed meta reads as 0 — this decides who may start charging, so it fails closed. */
-export function creatorScoreFromMeta(meta: unknown): number {
-  const score = (meta as UserMetaScores | null | undefined)?.scores?.models;
-  return typeof score === 'number' && Number.isFinite(score) ? score : 0;
-}
-
 export async function getCreatorScore(userId: number): Promise<number> {
   const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
   return creatorScoreFromMeta(user?.meta);
 }
 
 /** Slots spent this calendar month. Index-only on (ownerId, createdAt) — no join. */
-export async function countPricingSlotsThisMonth(ownerId: number): Promise<number> {
-  return dbRead.pricingSlot.count({
+export async function countPricingSlotsThisMonth(
+  ownerId: number,
+  db: Pick<PrismaClient, 'pricingSlot'> = dbRead
+): Promise<number> {
+  return db.pricingSlot.count({
     where: { ownerId, createdAt: { gte: pricingMonthStart() } },
   });
+}
+
+/**
+ * Extra licensing-fee slots granted to this creator. Fails to 0: an outage costs a boosted creator
+ * their extra slots for its duration, never anyone their tier allowance.
+ */
+export async function getFeeAllowanceBoost(
+  userId: number,
+  now: Date = new Date()
+): Promise<number> {
+  return (await readFeeAllowanceBoost(userId, now)) ?? 0;
+}
+
+/** `null` when the grant list could not be read. */
+async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number | null> {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  try {
+    const granted = await withSysReadDeadline(
+      sysRedis.hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId))
+    );
+    return feeAllowanceBoost(granted, now);
+  } catch (error) {
+    logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId }).catch(
+      () => undefined
+    );
+    return null;
+  }
 }
 
 /**
@@ -63,8 +95,8 @@ export async function recordPricingSlot(
 
 /**
  * How long the charge lookup may take before the caller falls back to the daily mirror. A try/catch
- * cannot catch a hang and the client sets no request_timeout, so without this its own 30s default
- * would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
+ * cannot catch a hang, and the shared client's `request_timeout` is 300s, so without this a wedged
+ * read would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
  */
 const CHARGE_LOOKUP_TIMEOUT_MS = 3000;
 
@@ -243,13 +275,18 @@ async function attemptRelease({ entityType, entityId, ownerId }: ReleaseArgs): P
 export type PricingWriteCheck = {
   userId: number;
   /**
-   * Whether the entity carries a price BEFORE this write. Editing an existing price is exempt from
-   * both rules, so this is the single thing that decides whether they apply at all. Callers get it
-   * from `isAlreadyPriced`.
+   * Whether the entity carries a price BEFORE this write. A priced entity skips the floor and the
+   * allowance; only a fee gaining a gate is still checked. Callers get it from `isAlreadyPriced`.
    */
   wasPriced: boolean;
   /** Whether it will carry one after. */
   willBePriced: boolean;
+  /** Whether this write leaves a permanent paid-access gate. Such a write gets no fee boost. */
+  addsGate: boolean;
+  /** Whether the entity carries a permanent paid-access gate BEFORE this write. */
+  hadGate: boolean;
+  /** Required for an existing entity: without it, a fee gaining a gate goes unchecked. */
+  entity?: { entityType: PricingSlotEntityType; entityId: number };
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
    * three uncached queries against the primary, and the tier is only read once a write turns out to
@@ -277,23 +314,143 @@ export async function assertPricingAllowed({
   userId,
   wasPriced,
   willBePriced,
+  addsGate,
+  hadGate,
+  entity,
   tier,
   userMeta,
 }: PricingWriteCheck): Promise<PricingWriteOutcome> {
-  if (!willBePriced || wasPriced)
+  if (!willBePriced || wasPriced) {
+    if (wasPriced && addsGate && !hadGate && entity)
+      await assertGateConversionAllowed(userId, tier, entity);
     return { spendsSlot: false, releasesSlot: clearsLastPrice({ wasPriced, willBePriced }) };
+  }
 
   const score =
     userMeta !== undefined ? creatorScoreFromMeta(userMeta) : await getCreatorScore(userId);
   if (score < MONETIZATION_MIN_CREATOR_SCORE)
     throw throwBadRequestError(pricingFloorMessage(score));
 
-  const limit = monthlyPricingAllowance(typeof tier === 'function' ? await tier() : tier);
-  if (Number.isFinite(limit)) {
-    const used = await countPricingSlotsThisMonth(userId);
+  const resolvedTier = typeof tier === 'function' ? await tier() : tier;
+  if (Number.isFinite(monthlyPricingAllowance(resolvedTier))) {
+    const [used, boost] = await Promise.all([
+      countPricingSlotsThisMonth(userId),
+      getFeeAllowanceBoost(userId),
+    ]);
+    const limit = pricingLimitFor({ tier: resolvedTier, boost, addsGate });
     if (exceedsAllowance(used, limit))
-      throw throwBadRequestError(pricingAllowanceMessage(used, limit));
+      throw throwBadRequestError(
+        pricingLimitMessage({
+          used,
+          limit,
+          boost,
+          addsGate,
+          tierLabel: capTierLabel(resolvedTier),
+        })
+      );
   }
 
   return { spendsSlot: true, releasesSlot: false };
+}
+
+async function assertGateConversionAllowed(
+  userId: number,
+  tier: TierInput,
+  entity: { entityType: PricingSlotEntityType; entityId: number }
+): Promise<void> {
+  const boost = await readFeeAllowanceBoost(userId, new Date());
+  if (boost === 0) return;
+  const slot = await dbWrite.pricingSlot.findUnique({
+    where: { entityType_entityId: entity },
+    select: { createdAt: true },
+  });
+  const slotSpentThisMonth = slot != null && slot.createdAt >= pricingMonthStart();
+  const resolvedTier = typeof tier === 'function' ? await tier() : tier;
+  const used = await countPricingSlotsThisMonth(userId, dbWrite);
+  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost, slotSpentThisMonth }))
+    throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
+}
+
+export type PricingSlotEntry = {
+  entityType: PricingSlotEntityType;
+  entityId: number;
+  createdAt: Date;
+  countsThisMonth: boolean;
+  modelId: number | null;
+  modelName: string | null;
+  versionName: string | null;
+  /** Buzz per image, as stored. Null when the version carries no fee. */
+  licensingFee: number | null;
+  /** Download price of a permanent gate. Null when the version's only gate is timed. */
+  accessPrice: number | null;
+  generationPrice: number | null;
+};
+
+/**
+ * The creator's spent slots, newest first.
+ *
+ * Amounts are the version's price NOW, not the price at spend time: `PricingSlot` is
+ * `{ entityType, entityId, ownerId, createdAt }` keyed on the entity — one row per version, not per
+ * event. A real ledger needs `amount`/`releasedAt` columns that do not exist.
+ */
+export async function listPricingSlots(
+  ownerId: number,
+  { limit = 100 }: { limit?: number } = {}
+): Promise<PricingSlotEntry[]> {
+  const slots = await dbRead.pricingSlot.findMany({
+    where: { ownerId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: { entityType: true, entityId: true, createdAt: true },
+  });
+  if (slots.length === 0) return [];
+
+  const versionIds = slots
+    .filter((slot) => slot.entityType === 'ModelVersion')
+    .map((slot) => slot.entityId);
+  const [versions, gates] = await Promise.all([
+    versionIds.length
+      ? dbRead.modelVersion.findMany({
+          where: { id: { in: versionIds } },
+          select: {
+            id: true,
+            name: true,
+            licensingFee: true,
+            model: { select: { id: true, name: true, deletedAt: true } },
+          },
+        })
+      : [],
+    versionIds.length
+      ? dbRead.paidAccess.findMany({
+          where: { entityType: 'ModelVersion', entityId: { in: versionIds } },
+          select: { entityId: true, timeframeDays: true, terms: true },
+        })
+      : [],
+  ]);
+  const versionById = new Map(versions.map((v) => [v.id, v]));
+  // Only a permanent gate is a price — a timed Early Access window must not read as one.
+  const gateById = new Map(
+    gates.filter((g) => g.timeframeDays == null).map((g) => [g.entityId, g])
+  );
+
+  const monthStart = pricingMonthStart();
+  return slots.map((slot) => {
+    const version = versionById.get(slot.entityId);
+    const prices = gatePrices(gateById.get(slot.entityId)?.terms as ModelVersionTerms | undefined);
+    const hasGate = gateById.has(slot.entityId);
+    const fee = version?.licensingFee != null ? Number(version.licensingFee) : 0;
+    return {
+      entityType: slot.entityType as PricingSlotEntityType,
+      entityId: slot.entityId,
+      createdAt: slot.createdAt,
+      countsThisMonth: slot.createdAt >= monthStart,
+      // A soft-deleted model still holds its slot, so the row stays — but it has no page to link to.
+      modelId: version?.model?.deletedAt ? null : version?.model?.id ?? null,
+      modelName: version?.model?.name ?? null,
+      versionName: version?.name ?? null,
+      licensingFee: fee > 0 ? fee : null,
+      accessPrice: hasGate ? prices.download : null,
+      generationPrice: hasGate && prices.generation > 0 ? prices.generation : null,
+    };
+  });
 }

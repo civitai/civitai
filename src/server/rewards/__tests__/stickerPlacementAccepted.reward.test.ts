@@ -22,6 +22,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...(args as [])),
   getMultipliersForUser: (...args: unknown[]) => h.getMultipliersForUser(...(args as [])),
+  getTransactionByExternalId: vi.fn(async () => null),
 }));
 
 import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';

@@ -12,9 +12,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 - [x] **[todo]** **Public marketing landing page for non-authed users** — done. The root `/` is now a public,
   SSR landing page (hero + feature cards for licensing fees / analytics / Creator Program payouts + CTAs). The
-  dashboard moved to `/dashboard`. All authed routes live in a SvelteKit **`(app)` route group** (URLs
+  dashboard moved to `/dashboard`. The authed Studio routes live in a SvelteKit **`(app)` route group** (URLs
   unchanged) whose layout owns the sidebar shell + requires a user; the landing sits outside the group under a
   bare root layout, so logged-out visitors get marketing chrome only and gated pages keep a non-null user type.
+  (`/admin` was later added as its own `(admin)` group — a second authed shell, gated on the `creator-studio:admin`
+  hub role in its layout load.)
   - **Public route** — `hooks.server.ts` `OPTIONAL_AUTH_PATHS` lets `/` through logged-out (attaching a user
     when present); every other route stays gated. Signed-in visitors to `/` are redirected to `/dashboard`.
   - **SEO** — real `<title>` + meta description, `robots: index,follow`, canonical, Open Graph + Twitter tags,
@@ -83,9 +85,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
     no-op today (0 permanent versions) and correct once the feature is used.
 - [x] **[todo]** **Access allowance indicator (how many already set)** — done. The two limits work
   *differently*, so the indicator states each honestly:
-  - **Permanent** — a **count** cap by Creator-Program **tier** (`bronze 3 / silver 10 / gold unlimited`,
-    0 without a tier): shows `X of Y set`, amber at the cap, plus remaining capacity on the "Make permanent"
-    checkbox so the cap isn't a save-time surprise.
+  - **Permanent** — *was* a **count** cap by Creator-Program **tier** (`bronze 3 / silver 10 / gold unlimited`,
+    0 without a tier), shown as `X of Y set`. **Superseded by the 2026-08 monetization revamp**: that cap no
+    longer exists. The counter now reads `N of M versions priced this month` against the monthly pricing
+    allowance (free 3 / bronze 10 / silver 25 / gold ∞), and a timed Early Access window spends nothing.
+    See R3 in [../features/monetization-rules.md](../features/monetization-rules.md).
   - **Early access** — score-gated **two** ways: `X of Y active` (concurrent count) **and** `up to N days`.
     **The count cap was missing entirely from creator-studio** — it only mirrored
     `EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock` (days) and not `scoreQuantityUnlock`

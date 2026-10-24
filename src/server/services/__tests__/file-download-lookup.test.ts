@@ -224,6 +224,47 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     if (result.status === 'success') expect(result.url).toBe('https://cdn.example.com/signed');
   });
 
+  it('never picks a replaced file when resolving the primary file', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('never picks a replaced file when resolving by type', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'VAE',
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('still serves a replaced file asked for by its id', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      fileId: aFile.id,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).not.toHaveProperty('replacedAt');
+  });
+
   // --- Access denial must not masquerade as "you need to log in" ----------
   // A signed-in user who lacks a grant used to get `unauthorized`, which the download endpoint
   // answers with a redirect to /login. Already having a session, they were bounced straight back to
@@ -555,8 +596,24 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
       noAuth: true,
       user: PUBLIC_REQUESTER,
     });
-    const where = modelFileFindFirst.mock.calls[0][0].where;
-    expect(where).toMatchObject({ id: 21, modelVersionId: 4242 });
+    // The pin is applied in memory so the file's siblings come back too (they decide whether its
+    // download name needs a variant suffix), which leaves the version — the boundary that matters —
+    // as the only thing keeping another version's file out of the result set.
+    const where = modelFileFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ modelVersionId: 4242 });
+  });
+
+  it('a pinned URL serves the file that was pinned, not the first on the version', async () => {
+    // Guards the in-memory half of the pin above: version 4242 holds files 21 and 22, and 21 is
+    // both lower-numbered and the primary, so picking wrongly still returns a plausible file.
+    const result = (await getFileForModelVersion({
+      ...toRouteInput('/api/download/models/4242?fileId=22'),
+      noAuth: true,
+      user: PUBLIC_REQUESTER,
+    })) as { status: string; fileId?: number };
+
+    expect(result.status).toBe('success');
+    expect(result.fileId).toBe(22);
   });
 });
 
@@ -598,6 +655,7 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
   // user-less call returns `unauthorized` before it ever resolves a URL — which
   // would make every assertion below vacuous rather than failing.
   const A_USER = { id: 1, isModerator: true };
+  const ATTRIBUTION = { caller: 'download-route', actor: 'user' } as const;
 
   // The 4th argument is the options bag. Asserting on it by index rather than
   // with objectContaining is deliberate: a dropped argument is `undefined`
@@ -608,21 +666,43 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
     ['true', true],
     ['false', false],
   ])('forwards direct:%s exactly as given', async (_label, direct) => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, direct });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      direct,
+      attribution: ATTRIBUTION,
+    });
 
     expect(resolveDownloadUrlMock).toHaveBeenCalledTimes(1);
-    expect(optionsArg()).toEqual({ direct });
+    expect(optionsArg()).toEqual({ direct, ...ATTRIBUTION });
+  });
+
+  // The caller's attribution reaches the resolver unchanged. Two distinct pairs
+  // so a hardcoded caller or actor at the resolve cannot pass both.
+  it.each([
+    [{ caller: 'download-route', actor: 'anon' }],
+    [{ caller: 'wildcard', actor: 'user' }],
+  ] as const)('forwards attribution %o unchanged', async (attribution) => {
+    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER, attribution });
+
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...attribution });
   });
 
   // A caller that omits `direct` must not be upgraded to a direct resolve. This
   // is the default every pre-existing call site takes.
   it('passes direct:undefined when the caller omits it, never true', async () => {
-    await getFileForModelVersion({ modelVersionId: 1, noAuth: true, user: A_USER });
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: A_USER,
+      attribution: ATTRIBUTION,
+    });
 
     // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
     // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
     // is exactly the distinction the comment above claims this assertion makes.
-    expect(optionsArg()).toStrictEqual({ direct: undefined });
+    expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
   });
 });

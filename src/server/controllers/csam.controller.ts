@@ -9,8 +9,9 @@ import type {
 } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
+import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
 import { BlockImageReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
@@ -29,14 +30,18 @@ export async function createCsamReportHandler({
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
   const { userId, imageIds = [], details, type, reportedById } = input;
   let denyFailed = false;
+  let denyBookkeepingFailed = false;
   await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
-    const affectedImages = await dbWrite.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { pHash: true },
-    });
+    const [affectedImages, imageReports] = await Promise.all([
+      dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }),
+      dbWrite.imageReport.findMany({
+        where: { imageId: { in: imageIds } },
+        select: { reportId: true, image: { select: { userId: true } } },
+      }),
+    ]);
 
     await Promise.all([
       bulkAddBlockedImages({
@@ -47,11 +52,24 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
             reason: BlockImageReason.CSAM,
           })),
       }),
+      // Bookkeeping only: a failure here must not stop the account being removed below.
       bulkSetReportStatus({
-        ids: imageIds,
+        ids: imageReports.map((report) => report.reportId),
         status: ReportStatus.Actioned,
         userId: reportedById,
-      }),
+        noRewardFor: csamReportRewardExclusions(userId, imageReports),
+        rewardRemovedReporters: false,
+      }).catch((e) =>
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          important: true,
+          message: 'actioning the reports on filed images failed',
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined)
+      ),
     ]);
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];
@@ -62,7 +80,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       // The deny is the least certain step (the gate can be already resolved, expired, or the
       // orchestrator briefly down) and the one that is safe to retry, so it must not gate the rest.
       try {
-        await handleDenyTrainingData({ input: { id: modelVersionId } });
+        const denied = await handleDenyTrainingData({ input: { id: modelVersionId } });
+        // The gate IS released here, so this is not a failed deny — the run is stopped and repeating
+        // the action would refuse. Only our own record is behind, which still needs a human.
+        denyBookkeepingFailed = denied.webhookFailed;
       } catch (e) {
         denyFailed = true;
         logToAxiom({
@@ -85,8 +106,11 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await softDeleteUser({ id: userId, userId: reportedById });
   }
 
+  // Last, so the images are already blocked and the report row committed when the flag comes off.
+  if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
+
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
-  return { denyFailed };
+  return { denyFailed, denyBookkeepingFailed };
 }
 
 export async function createExternalCsamReportHandler({

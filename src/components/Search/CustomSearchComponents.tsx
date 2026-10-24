@@ -13,7 +13,7 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MultiSelectProps } from '@mantine/core';
 import {
   Accordion,
   Box,
@@ -45,8 +45,7 @@ import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
-import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import type { BrowsingLevelAttribute } from '~/components/Search/search-index-filters';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
@@ -114,8 +113,9 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 
 export function SearchableMultiSelectRefinementList({
   title,
+  renderOption,
   ...props
-}: RefinementListProps & { title: string }) {
+}: RefinementListProps & { title: string; renderOption?: MultiSelectProps['renderOption'] }) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -195,6 +195,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
+            renderOption={renderOption}
             nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
@@ -265,16 +266,14 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
 export const BrowsingLevelFilter = ({
   indexKey,
-  attributeOverride,
   filters: _filters,
   ...props
 }: {
   indexKey: SearchIndexKey;
-  attributeOverride?: BrowsingLevelAttribute;
   filters?: string[] | string;
 } & Omit<ConfigureProps, 'filters'>) => {
-  const browsingLevel = useBrowsingLevelDebounced();
-  const attribute = attributeOverride ?? BROWSING_LEVEL_ATTRIBUTE[indexKey];
+  const { browsingLevel } = useBrowsingSettingsAddons();
+  const attribute = BROWSING_LEVEL_ATTRIBUTE[indexKey];
 
   const filters = useMemo(
     () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),

@@ -11,7 +11,10 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import {
+  throwOnBlockedCommentContent,
+  throwOnBlockedUserContent,
+} from '~/server/services/blocklist.service';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -23,9 +26,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  chapterEarlyAccessCapMessage,
+  chapterEarlyAccessLockedMessage,
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   Availability,
   ComicReferenceStatus,
@@ -42,7 +48,11 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  assertUnlockAllowed,
+  assertUnlockReleasesOutput,
+  formatGenerationResponse2,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
@@ -51,12 +61,17 @@ import {
   whatIfPresetImageGen,
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import {
+  NSFW_CAPPED,
+  NSFW_CAPPED_MESSAGE,
+  WorkflowData,
+} from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -75,6 +90,7 @@ import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { keepOwnReactorIds } from '~/server/utils/reaction-identity';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -109,6 +125,7 @@ import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Prisma } from '@prisma/client';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 // Feature flag gate — all procedures require the comicCreator flag
 // ALL comic counters come from `ComicProjectMetric` — a Postgres rollup
@@ -317,6 +334,22 @@ function sendComicPanelSignal(
   signalClient.send({ userId, target: SignalMessages.ComicPanelUpdate, data }).catch(() => null); // Fire-and-forget
 }
 
+/**
+ * Loads an existing image that `userId` may attach to their comic, or refuses with an
+ * authorization error when it is missing or belongs to someone else. The one image-ownership
+ * check for every comics route that points a row at an existing image by id.
+ */
+async function getOwnedImageOrThrow(imageId: number, userId: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { id: true, userId: true, url: true },
+  });
+  if (!image || image.userId !== userId) {
+    throw throwAuthorizationError();
+  }
+  return image;
+}
+
 // Middleware to check project ownership
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -412,6 +445,8 @@ const comicModelEnum = z.enum([
   'SeedreamLite',
   'OpenAI',
   'OpenAI2',
+  'OpenAI25Flare',
+  'OpenAI25Sunburst',
   'Qwen',
   'Grok',
 ]);
@@ -656,9 +691,7 @@ async function assertCanGrantEarlyAccess({
     features: ctx.features,
   });
   if (maxDays === 0) {
-    throw throwBadRequestError(
-      'Your creator score is not high enough to put a chapter in early access yet.'
-    );
+    throw throwBadRequestError(chapterEarlyAccessLockedMessage(creatorScoreFromSession(ctx.user)));
   }
   if (timeframe > maxDays) {
     throw throwBadRequestError(
@@ -675,9 +708,11 @@ async function assertCanGrantEarlyAccess({
   const otherActive = excludeChapterId ? active.filter((c) => c.id !== excludeChapterId) : active;
   if (otherActive.length >= maxActive) {
     throw throwBadRequestError(
-      `You already have ${otherActive.length} chapter${
-        otherActive.length === 1 ? '' : 's'
-      } in early access — that's the cap for your current creator score.`
+      chapterEarlyAccessCapMessage({
+        active: otherActive.length,
+        limit: maxActive,
+        score: creatorScoreFromSession(ctx.user),
+      })
     );
   }
 }
@@ -2137,7 +2172,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You enhance prompts.' },
             { role: 'user', content: 'A sample prompt for cost estimation.' },
@@ -2231,7 +2266,7 @@ export const comicsRouter = router({
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         return orchestratorChatCompletionCost({
           token,
-          model: 'gpt-4o-mini',
+          model: DEFAULT_CHAT_COMPLETION_MODEL,
           messages: [
             { role: 'system', content: 'You plan comic panels.' },
             { role: 'user', content: 'A sample story for cost estimation.' },
@@ -2249,6 +2284,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createProjectSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2331,11 +2370,15 @@ export const comicsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.id },
-        select: { userId: true },
+        select: { userId: true, coverImageId: true, heroImageId: true },
       });
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const data: Record<string, any> = {};
       if (input.name !== undefined) data.name = input.name;
@@ -2347,6 +2390,11 @@ export const comicsRouter = router({
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.coverImageId !== undefined) {
+        // A route may only point at an image the caller may use. Clearing, or re-sending the
+        // project's current image, needs no lookup.
+        if (input.coverImageId !== null && input.coverImageId !== project.coverImageId) {
+          await getOwnedImageOrThrow(input.coverImageId, ctx.user.id);
+        }
         data.coverImageId = input.coverImageId;
       } else if (input.coverUrl !== undefined) {
         if (input.coverUrl) {
@@ -2363,6 +2411,9 @@ export const comicsRouter = router({
 
       // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.heroImageId !== undefined) {
+        if (input.heroImageId !== null && input.heroImageId !== project.heroImageId) {
+          await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
+        }
         data.heroImageId = input.heroImageId;
       } else if (input.heroUrl !== undefined) {
         if (input.heroUrl) {
@@ -2394,7 +2445,11 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createChapterSchema)
     .use(isProjectOwner)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user?.isModerator,
+        surface: 'comic',
+      });
       // Auto-increment position (use dbWrite to reduce read→write race window)
       const lastChapter = await dbWrite.comicChapter.findFirst({
         where: { projectId: input.projectId },
@@ -2427,6 +2482,10 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
 
       const updated = await dbWrite.comicChapter.update({
         where: {
@@ -2728,6 +2787,10 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createReferenceSchema)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent([input.name, input.description], {
+        isModerator: ctx.user!.isModerator,
+        surface: 'comic',
+      });
       const reference = await dbWrite.comicReference.create({
         data: {
           userId: ctx.user!.id,
@@ -3310,11 +3373,8 @@ export const comicsRouter = router({
               hasOutput: !!step.output,
               outputImages: step.output?.images?.length ?? 0,
               outputBlobs: step.output?.blobs?.length ?? 0,
-              jobs: (step.jobs ?? []).map((job: any) => ({
-                id: job.id,
-                status: job.status,
-                queuePosition: job.queuePosition,
-              })),
+              queuePosition: step.queuePosition,
+              estimatedProgressRate: step.estimatedProgressRate,
             })),
           };
         } catch (error: any) {
@@ -3417,29 +3477,6 @@ export const comicsRouter = router({
         };
       }
 
-      // Backstop timeout: orchestrator step timeout is 21 min, use 25 min as hard cap
-      const GENERATION_TIMEOUT = 25 * 60 * 1000;
-      if (panel.createdAt.getTime() < Date.now() - GENERATION_TIMEOUT) {
-        const updated = await dbWrite.comicPanel.update({
-          where: { id: panel.id },
-          data: {
-            status: ComicPanelStatus.Failed,
-            errorMessage: 'Generation timed out',
-          },
-        });
-        sendComicPanelSignal(ctx.user!.id, {
-          panelId: updated.id,
-          projectId: panel.projectId,
-          status: updated.status,
-        });
-        return {
-          id: updated.id,
-          status: updated.status,
-          imageUrl: updated.imageUrl,
-          errorMessage: updated.errorMessage,
-        };
-      }
-
       // Check orchestrator status
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -3466,10 +3503,22 @@ export const comicsRouter = router({
         const wfData = new WorkflowData(normalized as any, {
           domain: domainFlags,
           nsfwEnabled: !!ctx.user!.showNsfw,
+          holdUnrated: true,
         });
         const firstStep = wfData.steps[0];
         const rawOutputs = firstStep?.output ?? [];
         const imageUrl = rawOutputs[0]?.url ?? null;
+
+        // Succeeded can precede the rating; hold the panel until it lands, since Ready is never
+        // re-checked.
+        if (workflow.status === 'succeeded' && rawOutputs.some((o) => o.pendingRating)) {
+          return {
+            id: panel.id,
+            status: panel.status,
+            imageUrl: panel.imageUrl,
+            errorMessage: panel.errorMessage,
+          };
+        }
         // SFW-domain mature output: the orchestrator returns a blurred
         // preview URL alongside a `blockedReason` (e.g. `canUpgrade`,
         // `siteRestricted`). Persisting that URL as `panel.imageUrl` (or as
@@ -3667,6 +3716,8 @@ export const comicsRouter = router({
               ? 'This generation produced mature content that cannot be viewed on this site.'
               : blockedReason === 'canUpgrade'
               ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
+              : blockedReason === NSFW_CAPPED
+              ? NSFW_CAPPED_MESSAGE
               : `Generation blocked: ${blockedReason}.`;
 
           if (
@@ -3825,7 +3876,12 @@ export const comicsRouter = router({
           };
         }
 
-        if (workflow.status === 'failed' || workflow.status === 'canceled') {
+        // `expired` is terminal too — every other surface already treats it that way.
+        if (
+          workflow.status === 'failed' ||
+          workflow.status === 'canceled' ||
+          workflow.status === 'expired'
+        ) {
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
@@ -3846,7 +3902,29 @@ export const comicsRouter = router({
           };
         }
       } catch (error) {
-        // If we can't check the workflow, don't fail the poll - just return current state
+        // A workflow the orchestrator no longer has is never coming back, and this poll is the only
+        // thing that can say so — otherwise the panel spins on every page view for good.
+        if ((error as { code?: string })?.code === 'NOT_FOUND') {
+          const updated = await dbWrite.comicPanel.update({
+            where: { id: panel.id },
+            data: {
+              status: ComicPanelStatus.Failed,
+              errorMessage: 'Generation is no longer available',
+            },
+          });
+          sendComicPanelSignal(ctx.user!.id, {
+            panelId: updated.id,
+            projectId: panel.projectId,
+            status: updated.status,
+          });
+          return {
+            id: updated.id,
+            status: updated.status,
+            imageUrl: updated.imageUrl,
+            errorMessage: updated.errorMessage,
+          };
+        }
+        // Any other read failure is transient — don't fail the poll, just return current state.
         console.error('Failed to poll workflow status:', error);
       }
 
@@ -3878,43 +3956,31 @@ export const comicsRouter = router({
         throw throwBadRequestError('Panel has no workflow to unlock.');
       }
 
-      // Don't allow lifting mature restrictions while the user is on the
-      // SFW (green) domain — that would push the unblurred result into the
-      // editor on a domain that's not allowed to show it. Force the
-      // redirect-to-red flow instead.
-      if (ctx.domain === 'green') {
-        throw throwBadRequestError(
-          'Mature content cannot be unlocked on this site. Open the project on civitai.red to unlock.'
-        );
-      }
+      assertUnlockAllowed({ domain: ctx.domain, showNsfw: !!ctx.user!.showNsfw });
 
-      // We deliberately do NOT gate on `panel.status` or
-      // `metadata.blockedReason` here. Those values are written by the
-      // poll loop and can be stale (or missing entirely on legacy panels
-      // produced before the RequireUnlock state existed). Whether the
-      // workflow needs unlocking is something only the orchestrator
-      // knows; we let it tell us authoritatively below by re-fetching
-      // after the `allowMatureContent: true` write. If the panel was
-      // already clean we'll fall through harmlessly. If it was stuck in
-      // a legacy state, the inline re-derive recovers it.
+      // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
+      // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
       const meta = (panel.metadata as any) ?? {};
       const isSinglePanelBlocked = panel.status !== ComicPanelStatus.AwaitingSelection;
       const candidates: Array<{ key?: string; requiresUnlock?: boolean; blockedReason?: string }> =
         meta.candidateImages ?? [];
 
-      // 1) Lift the mature restriction at the orchestrator. This is what
-      //    actually charges yellow Buzz and re-emits clean URLs.
+      // 1) Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
+      //    workflow's cap leaves nothing to release, so the cap check runs before the write.
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);
-        await updateWorkflow({
-          token,
-          workflowId: panel.workflowId,
-          allowMatureContent: true,
-        });
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
+      await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
+      // Uncaught: the mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+      await updateWorkflow({
+        token,
+        workflowId: panel.workflowId,
+        allowMatureContent: true,
+        throwOnError: true,
+      });
 
       // 2) Re-fetch the workflow and run it through the same `BlobData`
       //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
@@ -3931,6 +3997,7 @@ export const comicsRouter = router({
       const wfData = new WorkflowData(normalized as any, {
         domain: domainFlags,
         nsfwEnabled: !!ctx.user!.showNsfw,
+        holdUnrated: true,
       });
       const firstStep = wfData.steps[0];
       const outputs = firstStep?.output ?? [];
@@ -4512,6 +4579,10 @@ export const comicsRouter = router({
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      await throwOnBlockedUserContent(input.chapterName, {
+        isModerator: ctx.user?.isModerator,
+        surface: 'comic',
+      });
       // Check how many queue slots the user has available upfront.
       // Panels that fit will be submitted immediately; the rest get enqueued
       // for the background job to process when slots free up.
@@ -5751,13 +5822,7 @@ export const comicsRouter = router({
 
         // Mode 1: Import from existing image ID
         if (panelDef.imageId != null) {
-          const image = await dbRead.image.findUnique({
-            where: { id: panelDef.imageId },
-            select: { id: true, userId: true, url: true },
-          });
-          if (!image || image.userId !== ctx.user!.id) {
-            throw throwAuthorizationError();
-          }
+          const image = await getOwnedImageOrThrow(panelDef.imageId, ctx.user!.id);
 
           const panel = await dbWrite.comicPanel.create({
             data: {
@@ -6047,13 +6112,7 @@ export const comicsRouter = router({
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       // Verify the image belongs to the user
-      const image = await dbRead.image.findUnique({
-        where: { id: input.imageId },
-        select: { id: true, userId: true, url: true },
-      });
-      if (!image || image.userId !== ctx.user!.id) {
-        throw throwAuthorizationError();
-      }
+      const image = await getOwnedImageOrThrow(input.imageId, ctx.user!.id);
 
       // Get next position
       let nextPosition: number;
@@ -6145,6 +6204,10 @@ export const comicsRouter = router({
       if (!reference || reference.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await throwOnBlockedUserContent(input.name, {
+        isModerator: ctx.user.isModerator,
+        surface: 'comic',
+      });
       const updated = await dbWrite.comicReference.update({
         where: { id: input.referenceId },
         data: { name: input.name },
@@ -6286,6 +6349,7 @@ export const comicsRouter = router({
         },
       });
 
+      if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);
       return thread;
     }),
 
@@ -6340,12 +6404,7 @@ export const comicsRouter = router({
           threadId: thread.id,
         },
       });
-
-      // Increment comment count
-      await dbWrite.thread.update({
-        where: { id: thread.id },
-        data: { commentCount: { increment: 1 } },
-      });
+      queueScamScan({ entityType: 'CommentV2', entityId: comment.id });
 
       // Notify the comic project owner (if commenter is not the owner)
       const project = await dbRead.comicProject.findUnique({

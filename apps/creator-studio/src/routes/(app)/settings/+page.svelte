@@ -11,18 +11,18 @@
     CREATOR_PROGRAM_URL,
     CIVITAI_MEMBERSHIP_URL,
     CIVITAI_MANAGE_MEMBERSHIP_URL,
+    MIN_WITHDRAWAL_AMOUNT,
   } from '$lib/creator-program';
-  import { formatAmount } from '$lib/earnings';
+  import { centsToUsd, formatAmount } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const BUZZ_DASHBOARD_URL = 'https://civitai.com/user/buzz-dashboard';
   // Payout onboarding is gated on settled cash so we don't push creators into a Tipalti signup (which bills us
-  // per account) before they can actually withdraw ($50 min withdrawal). Once they clear that, prompt setup.
-  const PAYOUT_UNLOCK_USD = 50;
+  // per account) before they can actually withdraw. Once they clear that, prompt setup.
   // cash balances are USD cents; settled is the withdrawable balance.
-  const canSetUpPayout = $derived(!!data.cash && data.cash.settled >= PAYOUT_UNLOCK_USD * 100);
+  const canSetUpPayout = $derived(!!data.cash && data.cash.settled >= MIN_WITHDRAWAL_AMOUNT);
 
   const tier = $derived(data.membership.tier);
   const isMember = $derived(data.membership.isMember);
@@ -108,7 +108,7 @@
           > in settled cash ready to withdraw. Set up payouts to cash out.
         {:else}
           Payout setup unlocks once you have <strong class="text-white"
-            >${PAYOUT_UNLOCK_USD} in settled cash</strong
+            >${centsToUsd(MIN_WITHDRAWAL_AMOUNT)} in settled cash</strong
           >
           ready to withdraw — so there's nothing to set up yet.
         {/if}

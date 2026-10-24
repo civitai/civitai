@@ -1,5 +1,7 @@
+import { decode } from 'he';
 import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
+import { removeTags } from '~/utils/string-helpers';
 import { isValidURL } from '~/utils/type-guards';
 
 const DEFAULT_ALLOWED_TAGS = [
@@ -130,6 +132,17 @@ export const BLURB_INTERIOR_SANITIZE_OPTIONS = {
   allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
   allowedStyles: { span: { color: CSS_COLOR } },
 };
+
+/**
+ * A blurb's text as the reader sees it. Entities stay encoded through `removeTags`, and the
+ * editor and sanitize-html encode them differently (`&nbsp;` vs U+00A0), so the cap and the
+ * counter only agree once decoded. Inline tags are removed outright first, because `removeTags`
+ * spaces every tag and bolding half a word would otherwise count a character.
+ */
+const BLURB_INLINE_TAG = /<\/?(?:strong|em|u|s|a|span|code)\b[^>]*>/gi;
+export function getBlurbText(html: string) {
+  return decode(removeTags(html.replace(BLURB_INLINE_TAG, '')));
+}
 
 /**
  * The one way to make a blurb's stored text safe to splice into a host body. Every consumer

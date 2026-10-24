@@ -207,13 +207,15 @@ export function ChapterExportButton({
 
   return (
     <Menu position="bottom-end" withinPortal>
-      <Menu.Target>
-        <Tooltip label={`Download ${chapterName}`}>
+      {/* Tooltip WRAPS Menu.Target, not the other way round — the inner nesting
+          silently stops the menu opening. See AppListingActionsMenu.tsx. */}
+      <Tooltip label={`Download ${chapterName}`}>
+        <Menu.Target>
           <ActionIcon variant="subtle" color="gray" loading={exporting} size="sm">
             <IconDownload size={16} />
           </ActionIcon>
-        </Tooltip>
-      </Menu.Target>
+        </Menu.Target>
+      </Tooltip>
       <Menu.Dropdown>
         <Menu.Label>Download as</Menu.Label>
         <Menu.Item

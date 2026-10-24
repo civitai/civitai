@@ -29,18 +29,19 @@ const { mockDbRead } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
+vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
+  // 🔴 BOTH EXPORTS. `app-listing.service` now imports `bustCacheTag` as well as
+  // `queryCache` (it owns `bustAppListingCatalogCache`), and a one-key factory makes the
+  // WHOLE FILE fail to import with `No "bustCacheTag" export is defined on the … mock`.
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       mockDbRead.$queryRaw(sql),
+  bustCacheTag: vi.fn(async () => undefined),
 }));
 
-import {
-  listAllListingsForModeration,
-  projectModerationListing,
-} from '../app-listing.service';
+import { listAllListingsForModeration, projectModerationListing } from '../app-listing.service';
 
 /** A hydrated moderation row as `moderationListingSelect` returns it. */
 function modRow(over: Record<string, unknown> = {}) {
@@ -109,16 +110,37 @@ describe('projectModerationListing', () => {
             id: 'alpr_1',
             submittedAt: new Date('2026-01-02T00:00:00Z'),
             changelog: 'first version',
-            submittedBy: { id: 42, username: 'author', image: null },
+            submittedBy: { id: 42, username: 'author', deletedAt: null, image: null },
           },
         ],
       }) as never
     );
+    // 🔴 `deletedAt` SURVIVES THE PROJECTION, and that is the point of this assertion.
+    //
+    // This row is handed to the REUSED off-site review modal — the same modal the review
+    // queue opens — so it is a review surface and the chip must match every other review
+    // read. ⚠️ That modal renders the submitter as PLAIN TEXT today, so the `deletedAt`
+    // branch is not yet exercised there; the select carries the field so it is available the
+    // moment the cell adopts `UserAvatar`, which the on-site half of the same list already
+    // did. The select was widened to the
+    // shared `reviewUserChipSelect` and the projection now passes the chip through WHOLE
+    // rather than re-projecting it through `creatorChip`, which spells `{ id, username,
+    // image }` explicitly and would drop it with no type error. An explicit re-projection is
+    // exactly how this defect travels one layer at a time.
+    //
+    // ⚠️ The sibling `owner` chip is deliberately NOT widened — it is the listings table's
+    // own plain-text creator cell, a different screen, and still reads `ModerationUserChip`.
+    //
+    // 🔴 AND THIS ASSERTION PINS THE PROJECTION, NOT THE SELECT. Narrowing
+    // `moderationListingSelect` back leaves this case green; what catches that is
+    // `ModerationListingRow`'s `ReviewSubmitterChip` annotation, which fails `pnpm typecheck`
+    // with one error naming this field. Said here because a reader looking for the red test
+    // that guards the select will not find one.
     expect(dto.pendingRequest).toEqual({
       id: 'alpr_1',
       submittedAt: new Date('2026-01-02T00:00:00Z'),
       changelog: 'first version',
-      submittedBy: { id: 42, username: 'author', image: null },
+      submittedBy: { id: 42, username: 'author', deletedAt: null, image: null },
     });
   });
 

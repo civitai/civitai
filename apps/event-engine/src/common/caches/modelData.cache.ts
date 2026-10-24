@@ -16,6 +16,13 @@ export type ModelCacheData = {
 export const modelData = createCache<ModelCacheData>({
   redisKey: 'model:data',
   idKey: 'modelId',
+  fieldTypes: {
+    modelId: 'number',
+    name: 'string',
+    type: 'string',
+    nsfw: 'boolean',
+    userId: 'number',
+  },
   async fetch({ pg }: CacheContext, ids: number[]) {
     const models = await pg.query<ModelCacheData>(
       `SELECT

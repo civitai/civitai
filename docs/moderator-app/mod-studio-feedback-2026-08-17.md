@@ -63,6 +63,9 @@ new code. Recorded because two are repeats of things this file already documents
 - [x] **`Images to Ingest` is `informational`** — the page has no actions and the count is upload
       throughput, so summing it into the Images badge reads as a review backlog whenever the scanner
       stalls.
+      - The flag reached the dashboard total only; the sidebar's `rollupFor` kept summing it until the
+        stuck-scan change (`feat/image-scan-stuck-alert`), which also switched the badge to count stuck
+        scans (`stuckIngestion`) instead of every pending upload from the last 5 days.
 - [x] **The Most reported rewrite evaluated its seventeen subplans below the sort**, i.e. for every
       qualifying report rather than the twenty kept — Postgres cannot project through a `Sort`, and the
       comment claimed the opposite. The LIMIT is taken in a CTE and the ids resolved outside it.

@@ -13,6 +13,7 @@ import {
 } from '~/server/services/buzz.service';
 import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import { onPlacementApproved } from '~/server/events/points/hooks';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isPlacementSpendType } from '~/shared/constants/placement.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -23,6 +24,7 @@ import type {
   PlacementTransactionKind,
 } from '~/shared/utils/placement';
 import {
+  PLACEMENT_LEDGER_TEXT,
   PLACEMENT_SURFACES,
   declineFeeAmount,
   isPlacementSurface,
@@ -197,46 +199,6 @@ export const PAYOUT_KINDS = [
 ] as const;
 
 /**
- * What a placement leg reads as in someone's Buzz history.
- *
- * Keyed by surface as well as leg because the two surfaces are different events
- * to the person reading the row: a sticker is put on your image, a remix is
- * added to your gallery. The internal leg name is unchanged and still identifies
- * the leg everywhere it is used to find money — the `PlacementTransaction` row,
- * the external transaction id, every recovery query.
- */
-const LEDGER_TEXT: Record<PlacementSurface, Record<PlacementTransactionKind, string>> = {
-  sticker: {
-    holdFee: 'Sticker placement fee, held while the creator decides',
-    holdPrincipal: 'Sticker placement, held while the creator decides',
-    toOwner: 'Someone placed a sticker on your image',
-    feeToOwner: 'Fee for a sticker you declined',
-    toSeller: 'Someone used your sticker',
-    // Deliberately says nothing about why. One refund path serves a decline, an
-    // expiry, an owner removal and a cosmetic takedown, and a leg cannot tell
-    // them apart — so naming one of them here would be wrong on the other three.
-    principalToPlacer: 'Refund: your sticker placement',
-    feeToPlacer: 'Refund: sticker placement fee',
-    // Neither of these two reaches Buzz — the platform legs keep the money in
-    // escrow and record a receipt instead — so this text is what a row WOULD say
-    // if that ever changes, and nothing renders it today.
-    toPlatform: 'Platform share of a sticker placement',
-    forfeit: 'Forfeited sticker placement',
-  },
-  remixGallery: {
-    holdFee: 'Remix submission fee, held while the creator decides',
-    holdPrincipal: 'Remix submission, held while the creator decides',
-    toOwner: 'Someone added a remix to your gallery',
-    feeToOwner: 'Fee for a remix you declined',
-    toSeller: 'Share of a remix submission',
-    principalToPlacer: 'Refund: your remix submission',
-    feeToPlacer: 'Refund: remix submission fee',
-    toPlatform: 'Platform share of a remix submission',
-    forfeit: 'Forfeited remix submission',
-  },
-};
-
-/**
  * `/user/transactions` renders a "View Image" link from `entityType`/`entityId`,
  * so the row reaches the image the placement is on and the copy never has to
  * name a raw id. Both columns are on the row every caller already holds, so this
@@ -248,7 +210,9 @@ const placementLedgerEntry = (
 ) => ({
   // Guarded rather than cast: `surface` is a TEXT column, and this is a money
   // path where a dull row beats a TypeError that strands the leg.
-  description: isPlacementSurface(target.surface) ? LEDGER_TEXT[target.surface][kind] : 'Placement',
+  description: isPlacementSurface(target.surface)
+    ? PLACEMENT_LEDGER_TEXT[target.surface][kind]
+    : 'Placement',
   details:
     target.targetType === 'image' && target.targetId
       ? { entityType: 'Image', entityId: target.targetId }
@@ -274,8 +238,9 @@ type SettleAction =
   | 'declineByBlock'
   /**
    * The owner declined, but the host could not have shown the placement anyway —
-   * it is blocked, unscanned or under review, so approval was refused and the
-   * owner was never offered a choice. Same reasoning as a block: the fee prices
+   * it is blocked, unscanned or under review, or the sticker is SFW-only and the
+   * image is not — so approval was refused and the owner was never offered a
+   * choice. Same reasoning as a block: the fee prices
    * the owner's *attention*, and there was no judgement here to charge for.
    *
    * Recorded as a decline rather than an expiry, though the money is identical.
@@ -466,11 +431,18 @@ export async function holdPlacementEscrow({
   surface,
   amount,
   spendType,
+  declineFeeRate,
 }: {
   placementId: number;
   placerId: number;
   surface: PlacementSurface;
   amount: number;
+  /**
+   * The host's decline fee as resolved and shown to the buyer, required on a
+   * surface whose host sets it and refused on one whose fee is fixed. It sizes
+   * the fee hold, which is the snapshot a decline later pays.
+   */
+  declineFeeRate?: number;
   /**
    * The one currency this placement is paid in, decided by the domain it was
    * made on. Required rather than defaulted: a default would silently reinstate
@@ -485,6 +457,17 @@ export async function holdPlacementEscrow({
     throw new Error(`placement escrow: ${spendType} is not a placement spend type`);
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
+  const hostRange = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!hostRange && declineFeeRate !== undefined)
+    throw new Error(`placement escrow: the decline fee on ${surface} is fixed`);
+  if (
+    hostRange &&
+    (typeof declineFeeRate !== 'number' ||
+      !(declineFeeRate >= hostRange.min / 100 && declineFeeRate <= hostRange.max / 100))
+  )
+    throw new Error(
+      `placement escrow: ${surface} needs the host's decline fee, got ${declineFeeRate}`
+    );
 
   // A free placement must never reach the escrow, even for zero. `amount === 0`
   // returns harmlessly below, so this is not about the money — it is about
@@ -556,7 +539,7 @@ export async function holdPlacementEscrow({
 
   if (amount === 0) return { fee: 0, principal: 0 };
 
-  const fee = declineFeeAmount(amount, config.declineFeeRate(surface));
+  const fee = declineFeeAmount(amount, declineFeeRate ?? config.declineFeeRate(surface));
   const principal = amount - fee;
 
   const hold = (kind: PlacementTransactionKind, holdAmount: number) =>
@@ -628,15 +611,23 @@ export async function holdPlacementEscrow({
  * expiry sweep firing during a decline) cannot both settle: the loser matches no
  * rows and moves no money. The winner's per-leg receipts then make the payout
  * itself resumable, which the claim alone cannot do.
+ *
+ * `inTransaction` runs inside the status flip's transaction, only when this call
+ * won the flip, with the row as it stood while pending. It is for a write that
+ * must exist exactly when the new status does (a storyline approval's chapter
+ * edge): a throw rolls the flip and the payout plan back, so the placement stays
+ * pending and no money moves. Postgres only, through `tx` (`no-io-in-transaction`).
  */
 export async function settlePlacement({
   placementId,
   action,
   actorId,
+  inTransaction,
 }: {
   placementId: number;
   action: SettleAction;
   actorId?: number;
+  inTransaction?: (tx: Prisma.TransactionClient, pending: PlacementRow) => Promise<unknown>;
 }) {
   const status = STATUS_FOR_ACTION[action];
   const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
@@ -669,11 +660,13 @@ export async function settlePlacement({
       },
     });
 
-    if (updated.count > 0)
+    if (updated.count > 0) {
       await tx.placementTransaction.createMany({
         data: legs.map((leg) => ({ placementId, ...leg })),
         skipDuplicates: true,
       });
+      if (inTransaction) await inTransaction(tx, before);
+    }
 
     return updated;
   });
@@ -685,6 +678,11 @@ export async function settlePlacement({
   // retried webhook both land here — but this call moves no money of its own:
   // the payout below reads the winner's outcome off the row, not this action.
   if (count === 0 && placement.status !== status) return { settled: false, placement };
+
+  // Event points ride the approval itself, not the payout: a payout that throws is resumed by a
+  // sweeper that never fires this, and an award stamped after a slow payout could land after a
+  // takedown of the same placement.
+  if (count > 0 && status === 'approved') void onPlacementApproved(placement);
 
   await payOutPlacement(placement);
 
@@ -829,7 +827,9 @@ async function payoutLegsFor(
       const split = splitPlacementPayment({
         amount: fee + principal,
         outcome,
-        declineFeeRate: config.declineFeeRate(placement.surface as PlacementSurface),
+        // An approval never reads the decline rate, and a host-set surface has no
+        // operator rate to ask for.
+        declineFeeRate: 0,
         sellerShare: shares.seller,
         platformShare: shares.platform,
       });
@@ -956,6 +956,23 @@ async function payOutPlacement(placement: PlacementRow) {
     }
   }
 }
+
+/**
+ * Whether every Buzz of a paid placement's amount has been receipted into the
+ * escrow. False while a hold is in flight or after one failed.
+ */
+export const isPlacementEscrowFunded = async ({
+  placementId,
+  amount,
+}: {
+  placementId: number;
+  amount: number;
+}) => {
+  const held = await heldAmountsFor(placementId);
+  let total = 0;
+  for (const value of held.values()) total += value;
+  return total >= amount;
+};
 
 /**
  * What is actually sitting in the escrow account for this placement.

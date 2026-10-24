@@ -62,12 +62,13 @@ export const TokenScope = {
   VaultRead: 1 << 23, // 8388608
   VaultWrite: 1 << 24, // 16777216
 
-  // App Blocks — submit an App Block bundle/version for moderator review.
+  // App Blocks — manage the Apps you author from a token: submit and withdraw versions, pull
+  // source, mint local dev tokens, edit store listings, read analytics, and read and triage the
+  // feedback inbox. The name is historical; submitting was the first thing it gated.
   // Opt-in, off-by-default (NOT part of `Full`): granted only to OAuth clients
   // that explicitly list it in `allowedScopes` and request it (e.g. the
-  // first-party `civitai-cli` client). The submit endpoint
-  // (api/v1/blocks/submit-version) accepts an OAuth-issued token ONLY if it
-  // carries this bit AND the user is a moderator. See AppBlocksSubmit gate.
+  // first-party `civitai-cli` client). Keep its `tokenScopeLabels` entry in step with what it
+  // gates: that label is the consent text.
   AppBlocksSubmit: 1 << 25, // 33554432
 
   // App Blocks — open an on-site dev tunnel for an App Block you author.
@@ -76,9 +77,25 @@ export const TokenScope = {
   // the first-party `civitai-cli` client, so `civitai app dev-tunnel` works over
   // the OAuth `civitai login` token instead of a Full personal API key). The
   // dev-tunnel tRPC procedures (blocks.router: startDevTunnel / stopDevTunnel /
-  // devTunnelStatus) gate on this bit via `.meta({ requiredScope })`. Like
+  // devTunnelStatus / devTunnelDnsReady) gate on this bit via `.meta({ requiredScope })`. Like
   // AppBlocksSubmit it is EXCLUDED from `Full` so it never widens an existing key.
   AppBlocksDevTunnel: 1 << 26, // 67108864
+
+  // Civitai Link — pair the Civitai Link desktop app with this account. Opt-in and
+  // EXCLUDED from `Full`: link-service introspects the app's access token and refuses
+  // to mint an instance key without this bit.
+  LinkConnect: 1 << 27, // 134217728
+
+  // App Store catalog sync — publish and withdraw store items under the off-site listing linked
+  // to the calling OAuth client. Opt-in and EXCLUDED from `Full`, and only ever minted through
+  // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`); the hub refuses it on
+  // every user-facing flow, the consent screen included.
+  AppStoreCatalogWrite: 1 << 28, // 268435456
+
+  // Worker registration — a worker machine registering with the orchestrator. Opt-in and EXCLUDED
+  // from `Full`, carried only by `Worker` tokens from the hub's token-exchange grant (see
+  // `WORKER_ONLY_SCOPES`); every other grant refuses it.
+  WorkerRegister: 1 << 29, // 536870912
 
   // All scopes
   //
@@ -96,7 +113,8 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit` and `AppBlocksDevTunnel`). Use this as the
+ * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
+ * `AppStoreCatalogWrite` and `WorkerRegister`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -132,9 +150,34 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.NotificationsWrite]: 'Manage notification preferences',
   [TokenScope.VaultRead]: 'View vault',
   [TokenScope.VaultWrite]: 'Manage vault',
-  [TokenScope.AppBlocksSubmit]: 'Submit Apps for review',
+  [TokenScope.AppBlocksSubmit]:
+    'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
   [TokenScope.AppBlocksDevTunnel]: 'Open on-site dev tunnels',
+  [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
+  [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",
+  [TokenScope.WorkerRegister]: 'Register a worker machine with the orchestrator',
 };
+
+/**
+ * Scopes a token can carry only when minted through the `client_credentials` grant: the client
+ * acting as itself, never on a user's behalf. Every other grant refuses them.
+ */
+export const CLIENT_CREDENTIALS_ONLY_SCOPES: number = TokenScope.AppStoreCatalogWrite;
+
+/** The most a `client_credentials` token may carry (`UserRead` is forced onto every token). */
+export const CLIENT_CREDENTIALS_MAX_SCOPE: number =
+  TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+
+/** Scopes a token can carry only when minted through the hub's worker token-exchange grant. */
+export const WORKER_ONLY_SCOPES: number = TokenScope.WorkerRegister;
+
+/** Scopes no grant acting for a user may mint. */
+export const NON_USER_SCOPES: number = CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES;
+
+/** The part of a client's `allowedScopes` a user can be asked to consent to. */
+export function consentableScopes(allowedScopes: number): number {
+  return allowedScopes & ~NON_USER_SCOPES;
+}
 
 /** Convenience presets for the API key creation UI */
 export const TokenScopePresets = {
@@ -285,9 +328,7 @@ export function tokenScopeKeyByBit(bit: number): string | undefined {
  * bit ascending. Mirrors `Flags.hasFlag(mask, bit)` with an inlined bit test so
  * this stays a dependency-free leaf module. Empty mask (0) ⇒ [].
  */
-export function tokenScopeMaskToList(
-  mask: number
-): { bit: number; key: string; label: string }[] {
+export function tokenScopeMaskToList(mask: number): { bit: number; key: string; label: string }[] {
   return TOKEN_SCOPE_BITS.filter(({ bit }) => (mask & bit) === bit).map(({ bit, key }) => ({
     bit,
     key,
@@ -328,17 +369,13 @@ export function validateConnectScopeJustifications(
       continue;
     }
     if ((requestedScopes & bit) !== bit) {
-      errors.push(
-        `scopeJustifications["${key}"] is not among the requested scopes`
-      );
+      errors.push(`scopeJustifications["${key}"] is not among the requested scopes`);
       continue;
     }
     if (typeof value !== 'string' || value.length === 0) {
       errors.push(`scopeJustifications["${key}"] must be a non-empty string`);
     } else if (value.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
-      errors.push(
-        `scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
-      );
+      errors.push(`scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`);
     }
   }
   return errors;
@@ -366,8 +403,9 @@ export function validateConnectScopeJustifications(
  * moderator can eyeball exactly which permissions are flagged, and adding a new
  * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
  * that expose only PUBLIC data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
- * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in App-Block
- * scopes (`AppBlocksSubmit`/`AppBlocksDevTunnel`, never part of a connect ceiling).
+ * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in scopes
+ * (`AppBlocksSubmit`/`AppBlocksDevTunnel`/`LinkConnect`/`AppStoreCatalogWrite`, never part of a
+ * connect ceiling).
  * `NotificationsWrite`/`VaultWrite` are included as account-mutating writes even
  * though they are self-scoped.
  */

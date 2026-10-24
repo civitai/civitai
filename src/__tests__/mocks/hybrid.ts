@@ -130,3 +130,17 @@ export function resetHybridNodes() {
 export function hybridNodeCount() {
   return fns.size;
 }
+
+/**
+ * Test-only introspection: the path of every node under one of `roots` (e.g. `sysRedis`) that has
+ * been CALLED since its last reset, at any depth (`sysRedis.hGetAll`, `redis.packed.get`). Covers
+ * every command, including ones nobody listed, because each call goes through a vivified node.
+ */
+export function calledHybridNodes(roots: readonly string[]): string[] {
+  const called: string[] = [];
+  for (const [path, fn] of fns) {
+    const root = path.split('.')[0];
+    if (roots.includes(root) && fn.mock.calls.length > 0) called.push(path);
+  }
+  return called.sort();
+}

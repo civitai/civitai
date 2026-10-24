@@ -3,7 +3,9 @@ import {
   DEPLOY_PENDING_GRACE_MS,
   DEPLOY_STALE_AFTER_MS,
   canRetriggerBuild,
+  deployElapsedMs,
   deployRefetchInterval,
+  formatElapsed,
   isAwaitingDeployState,
   isInFlightDeploy,
   isStaleDeploy,
@@ -86,10 +88,7 @@ describe('deployRefetchInterval', () => {
   });
   it('a single fresh in-flight row keeps the fast cadence even alongside a stalled one', () => {
     expect(
-      deployRefetchInterval(
-        [row({ deployUpdatedAt: stale }), row({ deployUpdatedAt: fresh })],
-        NOW
-      )
+      deployRefetchInterval([row({ deployUpdatedAt: stale }), row({ deployUpdatedAt: fresh })], NOW)
     ).toBe(5000);
   });
   it('ignores terminal rows when choosing cadence', () => {
@@ -181,9 +180,14 @@ describe('isStrandedDeploy', () => {
 
 describe('isAwaitingDeployState', () => {
   it('true only inside the post-approval grace window', () => {
-    expect(isAwaitingDeployState(strandedRow({ reviewedAt: new Date(NOW - 1_000) }), NOW)).toBe(true);
+    expect(isAwaitingDeployState(strandedRow({ reviewedAt: new Date(NOW - 1_000) }), NOW)).toBe(
+      true
+    );
     expect(
-      isAwaitingDeployState(strandedRow({ reviewedAt: new Date(NOW - DEPLOY_PENDING_GRACE_MS) }), NOW)
+      isAwaitingDeployState(
+        strandedRow({ reviewedAt: new Date(NOW - DEPLOY_PENDING_GRACE_MS) }),
+        NOW
+      )
     ).toBe(true);
     expect(
       isAwaitingDeployState(
@@ -262,7 +266,10 @@ describe('canRetriggerBuild', () => {
     expect(canRetriggerBuild({ state: 'deploying', updatedAt: stale }, NOW)).toBe(true);
     // Exactly at the threshold is still "not stalled" — matches the server.
     expect(
-      canRetriggerBuild({ state: 'building', updatedAt: new Date(NOW - DEPLOY_STALE_AFTER_MS) }, NOW)
+      canRetriggerBuild(
+        { state: 'building', updatedAt: new Date(NOW - DEPLOY_STALE_AFTER_MS) },
+        NOW
+      )
     ).toBe(false);
   });
 
@@ -305,9 +312,7 @@ describe('isApprovedAndServing', () => {
 
   it('false for any non-approved status, however it deployed', () => {
     for (const st of ['pending', 'rejected', 'withdrawn']) {
-      expect(isApprovedAndServing(approved({ status: st, deployState: 'live' }))).toBe(
-        false
-      );
+      expect(isApprovedAndServing(approved({ status: st, deployState: 'live' }))).toBe(false);
     }
   });
 
@@ -316,9 +321,7 @@ describe('isApprovedAndServing', () => {
   });
 
   it('LEGACY null (approved before tracking began) IS serving', () => {
-    expect(isApprovedAndServing(approved({ reviewedAt: new Date(BEFORE_EPOCH) }))).toBe(
-      true
-    );
+    expect(isApprovedAndServing(approved({ reviewedAt: new Date(BEFORE_EPOCH) }))).toBe(true);
   });
 
   it('is EXCLUSIVE at the epoch instant itself', () => {
@@ -332,9 +335,9 @@ describe('isApprovedAndServing', () => {
   });
 
   it('a recorded transition means the lifecycle ran — serving, whatever the date', () => {
-    expect(
-      isApprovedAndServing(approved({ deployUpdatedAt: new Date(AFTER_EPOCH + 1000) }))
-    ).toBe(true);
+    expect(isApprovedAndServing(approved({ deployUpdatedAt: new Date(AFTER_EPOCH + 1000) }))).toBe(
+      true
+    );
   });
 
   it('fails toward SERVING when there is no anchor at all (never removes a right URL)', () => {
@@ -385,5 +388,35 @@ describe('isStrandedApprovedDeploy', () => {
         isStrandedApprovedDeploy(base({ deployState: s }), AFTER_EPOCH + DEPLOY_STALE_AFTER_MS + 1)
       ).toBe(false);
     }
+  });
+});
+
+describe('elapsed time while a build runs', () => {
+  it('is measured from the last recorded transition', () => {
+    expect(deployElapsedMs({ deployUpdatedAt: new Date(NOW - 130_000) }, NOW)).toBe(130_000);
+    expect(deployElapsedMs({ deployUpdatedAt: new Date(NOW - 130_000).toISOString() }, NOW)).toBe(
+      130_000
+    );
+  });
+
+  it('is null without a usable timestamp, or one in the future (clock skew)', () => {
+    expect(deployElapsedMs({ deployUpdatedAt: null }, NOW)).toBeNull();
+    expect(deployElapsedMs({ deployUpdatedAt: 'not a date' }, NOW)).toBeNull();
+    expect(deployElapsedMs({ deployUpdatedAt: new Date(NOW + 5_000) }, NOW)).toBeNull();
+  });
+
+  it.each([
+    [0, '0s'],
+    [999, '0s'],
+    [45_000, '45s'],
+    [59_999, '59s'],
+    [60_000, '1m 0s'],
+    [130_000, '2m 10s'],
+    [3_599_000, '59m 59s'],
+    [3_600_000, '1h 0m'],
+    [3_900_000, '1h 5m'],
+    [-5_000, '0s'],
+  ])('formats %i ms as %s', (ms, text) => {
+    expect(formatElapsed(ms)).toBe(text);
   });
 });

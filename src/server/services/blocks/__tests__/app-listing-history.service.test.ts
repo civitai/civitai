@@ -13,12 +13,19 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  *     the deploy callbacks) and by the suspend→re-queue clone in
  *     `offsite-moderation.service`. Carries `version`, `manifest`, `bundleSha256`,
  *     `deployState`.
- *   - `app_listing_publish_requests` — the STORE-LISTING stream. It has exactly THREE
- *     `create` sites in the tree, and only ONE of them can emit `kind: 'onsite'`:
- *     `submitListingRevision`, which passes `kind: shadow.kind`. So every on-site row in
- *     that table is a shadow-REVISION request (a change to the listing's name/media/
- *     category), never a code submission — `listMySubmissions` states the same invariant
- *     in prose: *"all onsite requests are shadow revisions"*.
+ *   - `app_listing_publish_requests` — the STORE-LISTING stream. A row is a change to the
+ *     listing's name/media/category, never a code submission.
+ *
+ *     🔴 The writer set is pinned as `LISTING_REQUEST_PRODUCERS` in
+ *     `offsite-listing.onsite-revision.service.test.ts` (fails on GROWTH and SHRINK) — do
+ *     not restate it here. And an on-site row does **not** imply a shadow revision:
+ *     `routeRepublishToReviewInTx` writes NON-shadow on-site rows. Discriminate on
+ *     `revisionOfId`, never on `kind`.
+ *
+ *     ⚠ This paragraph asserted the opposite until 2026-09-12 — "exactly THREE create
+ *     sites", "only ONE can emit `kind: 'onsite'`", "every on-site row is a shadow". All
+ *     three were falsified by #4440 and none of them was load-bearing for any assertion
+ *     below, which is why a fully green suite never noticed.
  *
  * A version bump and a listing edit are DIFFERENT EVENTS on the same app. Deduplicating
  * them would delete real history; ignoring one table would hide half of it.
@@ -43,6 +50,7 @@ const mockWriteDb = dbMock.dbWrite;
 void mockWriteDb;
 
 const {
+  authorFailureDetail,
   listListingHistory,
   listMyOrphanedSubmissions,
   blockRequestWhereForListing,
@@ -106,6 +114,7 @@ const blockReq = (over: Record<string, unknown> & { id: string }) => ({
   rejectionReason: null,
   approvalNotes: null,
   deployState: null,
+  deployDetail: null,
   deployUpdatedAt: null,
   ...over,
 });
@@ -741,5 +750,140 @@ describe('🔴 the orphan read scans wider than it displays', () => {
     expect(await listMyOrphanedSubmissions({ userId: OWNER })).toHaveLength(
       ORPHANED_SUBMISSIONS_LIMIT
     );
+  });
+});
+
+describe('🔴 the failure detail reaches the app’s team, and only for a failed approved version', () => {
+  /**
+   * The History tab is the only author surface that explains a failed build. The detail is
+   * projected ONLY for `approved` + `failed`: on other rows the same column holds moderator
+   * data (a review-sandbox JSON blob on a pending row, "re-triggered by moderator #id" on a
+   * re-fired build), which no collaborator's browser should receive.
+   */
+  const EXCERPT = 'Build None\n\nERROR: no package-lock.json is committed.';
+  const SANDBOX_JSON = '{"sha":"abc123","host":"preview-host.example","error":null}';
+  const RETRIGGERED = 'Build re-triggered by moderator #7 at 2026-10-08T19:00:00.000Z';
+
+  it('the block query selects deployDetail', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    const select = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0].select;
+    expect(select.deployDetail).toBe(true);
+  });
+
+  it('a failed approved version carries its detail — to a SEATED collaborator too', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'v_failed', deployState: 'failed', deployDetail: EXCERPT }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
+    expect(out[0]).toMatchObject({ id: 'v_failed', deployDetail: EXCERPT });
+  });
+
+  it('no other row carries it, whatever the column holds', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'v_sandbox',
+        status: 'pending',
+        deployState: 'preview-live',
+        deployDetail: SANDBOX_JSON,
+        submittedAt: new Date('2026-06-03T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_rebuilding',
+        deployState: 'building',
+        deployDetail: RETRIGGERED,
+        submittedAt: new Date('2026-06-02T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_failed_pending',
+        status: 'pending',
+        deployState: 'failed',
+        deployDetail: EXCERPT,
+        submittedAt: new Date('2026-06-01T00:00:00Z'),
+      }),
+    ]);
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'l_edit', submittedAt: new Date('2026-05-30T00:00:00Z') }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out.map((e) => [e.id, e.deployDetail])).toEqual([
+      ['v_sandbox', null],
+      ['v_rebuilding', null],
+      ['v_failed_pending', null],
+      ['l_edit', null],
+    ]);
+  });
+
+  it('authorFailureDetail is the whole rule', () => {
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'failed', deployDetail: 'x' })
+    ).toBe('x');
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'live', deployDetail: 'x' })
+    ).toBeNull();
+    expect(
+      authorFailureDetail({ status: 'rejected', deployState: 'failed', deployDetail: 'x' })
+    ).toBeNull();
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'failed', deployDetail: null })
+    ).toBeNull();
+  });
+});
+
+describe('the latest build attempt’s step + class ride along with the failure detail', () => {
+  it('a failed approved version carries its latest attempt’s signals; no other row does', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'v_failed',
+        deployState: 'failed',
+        deployDetail: 'Build None',
+        deployUpdatedAt: new Date('2026-06-02T01:00:00Z'),
+        submittedAt: new Date('2026-06-02T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_live',
+        deployState: 'live',
+        submittedAt: new Date('2026-06-01T00:00:00Z'),
+      }),
+    ]);
+    mockDb.appBlockBuildAttempt.findMany.mockImplementation(async () => [
+      {
+        publishRequestId: 'v_failed',
+        failedStep: 'scan',
+        failureClass: 'unknown',
+        createdAt: new Date('2026-06-02T01:00:01Z'),
+      },
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out.map((e) => [e.id, e.buildSignals])).toEqual([
+      ['v_failed', { failedStep: 'scan', failureClass: 'unknown' }],
+      ['v_live', null],
+    ]);
+    // Only the failed approved version is looked up.
+    expect(mockDb.appBlockBuildAttempt.findMany.mock.calls[0][0].where.publishRequestId).toEqual({
+      in: ['v_failed'],
+    });
+  });
+
+  it('TABLE MISSING: history still loads, with no signals', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'v_failed', deployState: 'failed', deployDetail: 'Build None' }),
+    ]);
+    mockDb.appBlockBuildAttempt.findMany.mockImplementation(async () => {
+      throw new Error('The table `public.app_block_build_attempts` does not exist');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out[0]).toMatchObject({
+      id: 'v_failed',
+      deployDetail: 'Build None',
+      buildSignals: null,
+    });
+    warn.mockRestore();
   });
 });

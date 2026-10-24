@@ -6,9 +6,10 @@ import type { RouterOutput } from '~/types/router';
 import type {
   GetCommunityCosmeticsInput,
   GetPublicShopItemsInput,
+  GetReviewQueueInput,
   ReviewQueueSort,
 } from '~/server/schema/creator-shop.schema';
-import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -130,7 +131,7 @@ export const useQueryCreatorShopReviewQueue = ({
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
   userId?: number;
-  cosmeticTypes?: (CosmeticType | 'Pack')[];
+  cosmeticTypes?: GetReviewQueueInput['cosmeticTypes'];
   sort?: ReviewQueueSort;
   page?: number;
   enabled?: boolean;
@@ -204,6 +205,13 @@ export const useMutateCreatorShop = () => {
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
       await queryUtils.creatorShop.getPack.invalidate();
+      // The moderator cosmetic-store list edits packs through this same
+      // mutation, and both storefronts render a pack's title and price — a
+      // price or contents edit also drops it to PendingReview, so all three
+      // are showing a listing that is no longer on sale.
+      await queryUtils.cosmeticShop.getShopItemsPaged.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
       showSuccessNotification({ message: 'Pack updated' });
     },
     onError: onError('Failed to update pack'),
@@ -291,7 +299,8 @@ export const useMutateCreatorShop = () => {
   });
 
   const reviewItem = trpc.creatorShop.reviewItem.useMutation({
-    async onSuccess() {
+    // Settled, not success: a verdict refused because the item changed needs the new version shown.
+    async onSettled() {
       await queryUtils.creatorShop.getReviewQueue.invalidate();
     },
     onError: onError('Failed to review item'),
@@ -315,18 +324,16 @@ export const useMutateCreatorShop = () => {
         }% of those sales) from the seller and removed it from ${result.revokedFrom} account${
           result.revokedFrom === 1 ? '' : 's'
         }.${
-          failed
-            ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
+          result.boxesPulled || result.boxOpeningsRefunded
+            ? ` Pulled from ${result.boxesPulled} mystery box${
+                result.boxesPulled === 1 ? '' : 'es'
+              } and refunded ${result.boxOpeningsRefunded} box opener${
+                result.boxOpeningsRefunded === 1 ? '' : 's'
+              }.`
             : ''
         }${
-          // A pack's split can't be re-derived without a payout record, so the
-          // amount is only knowable here. Telling the moderator to finish by
-          // hand without telling them how much leaves them the one person who
-          // can act and can't see the number.
-          result.unrecoveredPackPool
-            ? ` ${numberWithCommas(
-                result.unrecoveredPackPool
-              )} Buzz of pack payouts could not be reversed.`
+          failed
+            ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
             : ''
         }`,
       });
