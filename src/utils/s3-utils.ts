@@ -216,6 +216,22 @@ export async function uploadImageBufferToStore(
   return { key, backend };
 }
 
+/**
+ * Server-side: the bytes stored under an image key, read from the image upload bucket directly
+ * rather than through the image CDN.
+ */
+export async function readImageUploadObject(
+  key: string,
+  { timeoutMs = 30_000 }: { timeoutMs?: number } = {}
+): Promise<Uint8Array> {
+  const { s3, bucket } = await getImageUploadBackend();
+  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }), {
+    abortSignal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.Body) throw new Error('image upload object has no body');
+  return response.Body.transformToByteArray();
+}
+
 export function getS3Client() {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);

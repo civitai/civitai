@@ -1,6 +1,8 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { Prisma } from '@prisma/client';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -59,6 +61,8 @@ const normalizeMimeType = (mimeType: string | null | undefined): string | null =
 const getImageDeliveryMetadataCacheKey = (url: string) =>
   `${REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${url}` as `${typeof REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${string}`;
 
+const BUST_ATTEMPTS = 2;
+
 // Omit rows whose source is known gone (ingestion NotFound) so the caller checks the original
 // itself instead of converting it. Rows with hideMeta stay: "no row" makes the caller serve
 // with metadata visible.
@@ -67,7 +71,8 @@ const deliverableSource = Prisma.sql`NOT (
 )`;
 
 // Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves.
+// resolves. Several rows can share a url (a copied image keeps its source's url); if any of them
+// hides its metadata, the shared bytes must be served hidden, hence the ORDER BY.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
   const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
       SELECT
@@ -79,6 +84,7 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
       FROM "Image"
       WHERE url = ${url}
         AND ${deliverableSource}
+      ORDER BY "hideMeta" DESC
       LIMIT 1
     `.catch(() => {
     dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
@@ -92,6 +98,7 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
         FROM "Image"
         WHERE url = ${url}
           AND ${deliverableSource}
+        ORDER BY "hideMeta" DESC
         LIMIT 1
       `;
   });
@@ -127,8 +134,8 @@ const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMet
 // shrinks invalidation to writers that change an EXISTING image's cached shape.
 //
 // STALENESS: `hideMeta` can flip. The privacy-sensitive direction (false -> true, the owner
-// hiding their prompt) is busted explicitly in `updatePostImage` (co-located with its
-// existing `purgeResizeCache`), so an app-path flip takes effect at once. An out-of-band
+// hiding their prompt) is busted explicitly in `updatePostImage` (first step of
+// `invalidateHiddenImageMetadata`), so an app-path flip takes effect at once. An out-of-band
 // flip (mod tooling / direct DB) lags at most TTL; because the delivered image BYTES are
 // still separately purged/CDN-managed and this value only gates embedded-metadata
 // visibility, a bounded ≤TTL window is acceptable. TTL is deliberately short (3 min) to keep
@@ -163,11 +170,29 @@ export const getCachedImageDeliveryMetadata = async (
 
 // Bust a single url key. Hard delete (not a staleness reset): because we never cache
 // negatives, deleting the key means the next read re-queries and re-populates the fresh row.
-// Called by `updatePostImage` when `hideMeta` changes.
+// Called by `updatePostImage` when `hideMeta` changes. Retried once, then logged; never throws,
+// because the TTL still bounds a missed bust and the caller is a user's save.
 export const bustImageDeliveryMetadataCache = async (url: string) => {
-  try {
-    await redis.del(getImageDeliveryMetadataCacheKey(url));
-  } catch {
-    // Best-effort bust; the TTL bounds any residual staleness.
+  const key = getImageDeliveryMetadataCacheKey(url);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= BUST_ATTEMPTS; attempt++) {
+    try {
+      await redis.del(key);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  recordImageDeliveryBustFailure();
+  await logToAxiom({
+    type: 'warning',
+    name: 'image-delivery-metadata-bust',
+    message: 'image-delivery metadata cache bust failed after retry',
+    imageKey: url,
+    attempts: BUST_ATTEMPTS,
+    error: safeError(lastError),
+  }).catch(() => {
+    // swallow — best effort logging
+  });
 };

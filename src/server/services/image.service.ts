@@ -376,9 +376,13 @@ export async function purgeResizeCache({
   url,
   scope = 'all',
   retractPublicBlobs = false,
+  waitForInvalidation = false,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
+  /** Resolve only once the service has answered (or the call timed out), for a caller that must
+   *  purge the CDN after it. Still never throws. */
+  waitForInvalidation?: boolean;
 } & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
@@ -458,7 +462,7 @@ export async function purgeResizeCache({
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
     }
 
-    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
+    const invalidation = fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
       headers,
       // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
@@ -502,6 +506,7 @@ export async function purgeResizeCache({
           // swallow — best effort logging
         });
       });
+    if (waitForInvalidation) await invalidation;
   }
 }
 

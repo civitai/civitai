@@ -144,6 +144,43 @@ describe('purgeResizeCache', () => {
     });
   });
 
+  describe('waitForInvalidation', () => {
+    // The hide flip purges the CDN next; doing that before the service has answered lets the CDN
+    // refill from copies the service has not dropped yet.
+    it('resolves only after the service answers when asked to wait', async () => {
+      let answer!: (res: { ok: boolean; status: number }) => void;
+      mockFetch.mockReturnValueOnce(new Promise((r) => (answer = r)));
+
+      let settled = false;
+      const done = purgeResizeCache({
+        url: UUID,
+        scope: 'hidden-meta-orphans',
+        waitForInvalidation: true,
+      }).then(() => (settled = true));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(invalidateCalls()).toHaveLength(1);
+      expect(settled).toBe(false);
+
+      answer({ ok: true, status: 202 });
+      await done;
+      expect(settled).toBe(true);
+    });
+
+    it('still resolves, without throwing, when the service call fails', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(
+        purgeResizeCache({ url: UUID, scope: 'hidden-meta-orphans', waitForInvalidation: true })
+      ).resolves.toBeUndefined();
+    });
+
+    it('does not wait by default, so the delete flow is not slowed down', async () => {
+      mockFetch.mockReturnValueOnce(new Promise(() => undefined));
+
+      await expect(purgeResizeCache({ url: UUID })).resolves.toBeUndefined();
+    });
+  });
+
   describe('auth', () => {
     it('sends the shared secret when one is configured', async () => {
       await purgeResizeCache({ url: UUID });
