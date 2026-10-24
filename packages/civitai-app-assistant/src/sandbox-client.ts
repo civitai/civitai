@@ -96,12 +96,21 @@ export interface SandboxClientOptions {
   /** The caller's OAuth access token; `refresh` asks for a new one after a 401. */
   getToken: (opts?: { refresh?: boolean }) => Promise<string>;
   fetch?: typeof fetch;
+  /** How long a read (list, get) may take before it fails; {@link SANDBOX_READ_TIMEOUT_MS} unless set. */
+  readTimeoutMs?: number;
 }
+
+/**
+ * A read that hangs (a dead connection) would otherwise hold every later poll that joins it, and a
+ * page waiting on its app would never hear that it runs.
+ */
+export const SANDBOX_READ_TIMEOUT_MS = 20_000;
 
 export function createSandboxClient({
   baseUrl,
   getToken,
   fetch: fetchImpl = (...args) => fetch(...args),
+  readTimeoutMs = SANDBOX_READ_TIMEOUT_MS,
 }: SandboxClientOptions): SandboxClient {
   const base = baseUrl.replace(/\/+$/, '');
 
@@ -110,7 +119,8 @@ export function createSandboxClient({
     method: string,
     path: string,
     body?: unknown,
-    refresh = false
+    refresh = false,
+    signal?: AbortSignal
   ): Promise<Response> {
     const token = await getToken({ refresh });
     const res = await fetchImpl(`${base}${path}`, {
@@ -120,9 +130,30 @@ export function createSandboxClient({
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
-    if (res.status === 401 && !refresh) return request(method, path, body, true);
+    if (res.status === 401 && !refresh) return request(method, path, body, true, signal);
     return res;
+  }
+
+  /** A GET that fails as `unavailable` (504) once it has taken `readTimeoutMs`, body included. */
+  async function read(path: string) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), readTimeoutMs);
+    try {
+      const res = await request('GET', path, undefined, false, controller.signal);
+      if (!res.ok) throw await failure(res);
+      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      // A body cut off by the timeout is not an empty answer.
+      if (controller.signal.aborted) throw new Error('timed out');
+      return { status: res.status, data };
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new SandboxApiError('The sandbox service did not answer in time', 504, 'unavailable');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function failure(res: Response): Promise<SandboxApiError> {
@@ -151,11 +182,11 @@ export function createSandboxClient({
 
   return {
     async list() {
-      const { data } = await send('GET', '/v1/sandboxes');
+      const { data } = await read('/v1/sandboxes');
       return Array.isArray(data?.sandboxes) ? (data.sandboxes as Sandbox[]) : [];
     },
     async get(name) {
-      return (await send('GET', itemPath(name))).data as unknown as Sandbox;
+      return (await read(itemPath(name))).data as unknown as Sandbox;
     },
     async open(app) {
       const { status, data } = await send('POST', '/v1/sandboxes', { app });

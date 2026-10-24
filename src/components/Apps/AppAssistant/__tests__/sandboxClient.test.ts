@@ -221,3 +221,53 @@ describe('createSandboxClient exportApp (the app as a zip, from the sandbox gate
     }
   );
 });
+
+describe('createSandboxClient reads that hang', () => {
+  /** A fetch that never answers, only failing once its signal aborts (as the browser's does). */
+  function hanging() {
+    const seen: (AbortSignal | undefined)[] = [];
+    const fetchMock = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          seen.push(init?.signal ?? undefined);
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        })
+    );
+    const client = createSandboxClient({
+      baseUrl: BASE,
+      getToken: async () => 'cached-token',
+      fetch: fetchMock,
+      readTimeoutMs: 30,
+    });
+    return { client, seen };
+  }
+
+  it.each([
+    ['list', (c: ReturnType<typeof createSandboxClient>) => c.list()],
+    ['get', (c: ReturnType<typeof createSandboxClient>) => c.get('sbx-0123456789ab')],
+  ])('%s fails as unavailable (504) after its timeout instead of hanging', async (_name, call) => {
+    const { client, seen } = hanging();
+    const error = await call(client).catch((e) => e);
+    expect(error).toBeInstanceOf(SandboxApiError);
+    expect(error).toMatchObject({
+      status: 504,
+      kind: 'unavailable',
+      message: 'The sandbox service did not answer in time',
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.aborted).toBe(true);
+  });
+
+  it('NEGATIVE CONTROL: a read that answers in time is unaffected', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, { sandboxes: [SANDBOX] }));
+    const client = createSandboxClient({
+      baseUrl: BASE,
+      getToken: async () => 'cached-token',
+      fetch: fetchMock,
+      readTimeoutMs: 1_000,
+    });
+    expect(await client.list()).toEqual([SANDBOX]);
+  });
+});

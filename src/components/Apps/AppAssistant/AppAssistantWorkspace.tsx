@@ -879,7 +879,7 @@ export function AppAssistantWorkspace({
   }, [active?.name, active?.state]);
   // The open app is starting (by any path): the page asks for its apps itself until it runs, a
   // stop at APP_START_TIMEOUT_MS saying so. Check again asks afresh.
-  const waitingToRun = !!active && (active.state === 'starting' || starting);
+  const waitingToRun = !!sandboxClient && !!active && (active.state === 'starting' || starting);
   const [startSlow, setStartSlow] = useState<string | null>(null);
   const [checks, setChecks] = useState(0);
   useEffect(() => {

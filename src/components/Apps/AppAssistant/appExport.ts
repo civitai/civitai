@@ -63,7 +63,8 @@ export async function exportAppZip({
 }): Promise<Blob> {
   const startAndWait = async (target: Sandbox) => {
     const { sandbox: started, created } = await start(target);
-    if (created) {
+    // A new app always comes under a new name; the user's own app is never the one discarded.
+    if (created && started.name !== target.name) {
       await discard(started.name).catch(() => undefined);
       throw new AppExportError(EXPORT_GONE, 'gone');
     }
