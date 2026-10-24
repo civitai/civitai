@@ -7,5 +7,7 @@ import { getSidebarCounts } from '$lib/server/sidebar-counts.service';
 // nav pruning happens client-side (a badge only shows for a nav item the user can see).
 export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) return json({});
-  return json(await getSidebarCounts());
+  const { counts, unavailable } = await getSidebarCounts();
+  // Flat, with `unavailable` beside the counts: a tab opened before a deploy still reads its numbers.
+  return json({ ...counts, unavailable });
 };

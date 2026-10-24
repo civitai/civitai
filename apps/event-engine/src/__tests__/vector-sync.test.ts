@@ -2,13 +2,18 @@
 // each makes reach (embed, delete, payload write, retry), which is what a caller would notice.
 import type { Pool } from 'pg';
 import { describe, expect, test, vi } from 'vitest';
-import { runBackfill } from '@/vector-sync/backfill';
+import { inWindow, parseWindow, runBackfill } from '@/vector-sync/backfill';
 import type { RunState } from '@/vector-sync/cursor';
 import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
 import { ModelMismatchError, VectorStore } from '@/vector-sync/qdrant';
 import type { QdrantClient } from '@qdrant/js-client-rest';
 import { buildEmbedInput, chunkInputs, Embedder, MixedStampError } from '@/vector-sync/embedder';
-import { eligibleSql, isEligible, type ImageRow } from '@/vector-sync/eligibility';
+import {
+  eligibleSql,
+  IMAGE_ROW_COLUMNS,
+  isEligible,
+  type ImageRow,
+} from '@/vector-sync/eligibility';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
 import type { ImagePayload } from '@/vector-sync/source';
 import { reconcile } from '@/vector-sync/reconcile';
@@ -30,6 +35,8 @@ function imageRow(id: number, patch: Partial<ImageRow> = {}): ImageRow {
     minor: false,
     poi: false,
     sizeKB: 100,
+    width: 1024,
+    height: 1024,
     duration: null,
     ...patch,
   };
@@ -1131,5 +1138,108 @@ describe('review round 2', () => {
     expect(queue.embedStopped).toMatch(/two models/);
     await queue.flush();
     expect(n).toBe(2);
+  });
+});
+
+describe('follow-ups 13 and 14', () => {
+  test('a video over 4096 px on either side is skipped, not sent to fail its batch', () => {
+    const opts = { imageLocation: 'https://cdn.example', embedVideo: true };
+    const video = (width: number, height: number) =>
+      buildEmbedInput(imageRow(1, { type: 'video', duration: 10, url: 'v', width, height }), opts);
+    expect(video(4097, 1080)).toEqual({ skip: 'video-too-large-dimensions' });
+    expect(video(1080, 5000)).toEqual({ skip: 'video-too-large-dimensions' });
+    expect(video(4096, 4096)).toHaveProperty('input');
+  });
+
+  // Decision: metadata is free-form, so every number read from it is range-guarded before its
+  // cast. An unguarded ::int or ::float8 overflows on a value like 1e10 and fails the whole row
+  // query, which wedges live sync on that id. Verified against a real Postgres in PR #6732.
+  test('metadata numbers are read through the overflow-safe guard', () => {
+    expect(
+      IMAGE_ROW_COLUMNS.match(/LEAST\(\(i\.metadata->>'(width|height|duration)'\)::numeric/g)
+    ).toHaveLength(3);
+    expect(IMAGE_ROW_COLUMNS).not.toMatch(/->>'[a-z]+'\)::(int|float)/);
+  });
+
+  test('the window is UTC and may wrap midnight', () => {
+    const at = (hhmm: string) => Date.parse(`2026-10-24T${hhmm}:00Z`);
+    const night = parseWindow('22:00-06:00');
+    expect([at('23:30'), at('02:00'), at('05:59')].map((t) => inWindow(t, night))).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect([at('06:00'), at('12:00'), at('21:59')].map((t) => inWindow(t, night))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const day = parseWindow('09:00-17:30');
+    expect([at('09:00'), at('17:29'), at('17:30')].map((t) => inWindow(t, day))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(() => parseWindow('25:00-06:00')).toThrow(/HH:MM/);
+    expect(() => parseWindow('06:00-06:00')).toThrow(/differ/);
+  });
+
+  function clockedRun(pg: FakePg, store: FakeStore, startMs: number, pageMs = 0) {
+    let clock = startMs;
+    const pageStarts: number[] = [];
+    const base = pg.query;
+    pg.query = (async (sql: string, params: unknown[]) => {
+      if (sql.includes('i.id >= $1 AND i.id < $2')) {
+        pageStarts.push(clock);
+        clock += pageMs;
+      }
+      return base(sql, params);
+    }) as FakePg['query'];
+    let cursor: number | null = null;
+    const state: RunState = {
+      getCursor: async () => cursor,
+      setCursor: async (id) => void (cursor = id),
+      isPaused: async () => false,
+      setPaused: async () => undefined,
+      reset: async () => undefined,
+      close: async () => undefined,
+      ...memoryLease(),
+    };
+    return {
+      pageStarts,
+      deps: {
+        ...deps(pg, store),
+        state,
+        now: () => clock,
+        sleep: async (ms: number) => void (clock += Math.max(ms, 1)),
+      },
+    };
+  }
+
+  test('--max-rate spaces pages by their writes', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const run = clockedRun(pg, store, 0);
+    // 10 writes per page at 5 writes/s: each page must start at least 2 s after the last.
+    await runBackfill({ watermark: 30, floor: 0, span: 10, pages: 1, maxRate: 5 }, run.deps);
+    expect(store.points.size).toBe(30);
+    const gaps = run.pageStarts.slice(1).map((t, i) => t - run.pageStarts[i]);
+    // Pages [21,31), [11,21), [1,11) and the empty [0,1): three gaps, each after 10 writes.
+    expect(gaps.length).toBe(3);
+    expect(gaps.every((g) => g >= 2000)).toBe(true);
+  });
+
+  test('--window starts no page outside it, including after it closes mid-run', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const start = Date.parse('2026-10-24T21:59:50Z');
+    // Each page takes 3 h of fake time, so the run crosses 06:00 and must wait for the next night.
+    const run = clockedRun(pg, store, start, 3 * 3600_000);
+    const window = '22:00-06:00';
+    await runBackfill({ watermark: 30, floor: 0, span: 5, pages: 1, window }, run.deps);
+    expect(store.points.size).toBe(30);
+    expect(run.pageStarts.every((t) => inWindow(t, parseWindow(window)))).toBe(true);
+    expect(run.pageStarts[0]).toBeGreaterThanOrEqual(Date.parse('2026-10-24T22:00:00Z'));
+    expect(run.pageStarts.some((t) => t >= Date.parse('2026-10-25T22:00:00Z'))).toBe(true);
   });
 });

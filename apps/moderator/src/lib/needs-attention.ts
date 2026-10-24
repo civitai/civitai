@@ -7,6 +7,8 @@ export type AttentionItem = {
   count: number | null;
   countKey?: string;
   informational?: boolean;
+  /** It, or a tab it sums, could not be counted: `count` is a floor, or `null` when nothing was. */
+  partial?: boolean;
 };
 
 /** Below every severity step: a queue with no threshold sorts after those that have one. */
@@ -19,7 +21,8 @@ const UNRANKED = Number.MAX_SAFE_INTEGER;
  *
  * A tracked queue with no recent action ranks as the stalest. A queue with no last-actioned source,
  * or a map that has not loaded, ranks after every known time rather than as stale, so a missing
- * signal never outranks a real one. Empty and informational queues are left out.
+ * signal never outranks a real one. Empty and informational queues are left out; a queue that could
+ * not be fully counted stays in, so an unread count never reads as a clear queue.
  */
 export function needsAttention(
   items: AttentionItem[],
@@ -31,7 +34,7 @@ export function needsAttention(
     return known ? Date.parse(known.at) : -Infinity;
   };
   const ranked = items
-    .filter((item) => !item.informational && !!item.count)
+    .filter((item) => !item.informational && (!!item.count || !!item.partial))
     .map((item) => ({
       item,
       rank: item.countKey ? queueSeverityRank(item.countKey, item.count) ?? UNRANKED : UNRANKED,

@@ -45,7 +45,15 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navCount, navHref, navWorstRank } from '$lib/nav-links';
+  import {
+    isNavLinkActive,
+    isPathActive,
+    navBadge,
+    navCount,
+    navHref,
+    navPartial,
+    navWorstRank,
+  } from '$lib/nav-links';
   import {
     sidebarCounts,
     sidebarLastActioned,
@@ -90,6 +98,14 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
+  // A count the server could not read is marked, not left out: "423+" rather than a smaller total.
+  const badgeFor = (item: NavLink, cnt: number | null) =>
+    navBadge(
+      cnt,
+      navPartial(item, (key) => counts.unavailable.includes(key))
+    );
+  const PARTIAL_TITLE = 'Some counts are unavailable';
+
   const lastActioned = sidebarLastActioned();
   const clock = minuteClock();
   const now = $derived(clock.now);
@@ -156,7 +172,7 @@
             {#each data.nav as item (item.path ?? item.label)}
                 {@const Icon = iconFor(item)}
                 {#if item.children}
-                  {@const rollup = rollupFor(item)}
+                  {@const rollup = badgeFor(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
                     onOpenChange={(o) => (openGroups[item.label] = o)}
@@ -172,8 +188,9 @@
                                 class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
                                   item
                                 ) ?? 'text-sidebar-foreground/70'}"
+                                title={rollup.partial ? PARTIAL_TITLE : undefined}
                               >
-                                {rollup}
+                                {rollup.text}
                               </span>
                             {/if}
                             <IconChevronRight
@@ -194,8 +211,9 @@
                              top-level ones; only the left indent and rule stay as the hierarchy cue. -->
                         <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = navCount(childLink, countFor)}
-                            {@const actioned = actionedFor(childLink, cnt)}
+                            {@const count = navCount(childLink, countFor)}
+                            {@const cnt = badgeFor(childLink, count)}
+                            {@const actioned = actionedFor(childLink, count)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -228,8 +246,11 @@
                                       {/if}
                                     {/if}
                                     {#if cnt !== null}
-                                      <span class="ml-auto text-xs tabular-nums text-sidebar-foreground/50">
-                                        {cnt}
+                                      <span
+                                        class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
+                                        title={cnt.partial ? PARTIAL_TITLE : undefined}
+                                      >
+                                        {cnt.text}
                                       </span>
                                     {/if}
                                   </a>
@@ -242,7 +263,7 @@
                     </SidebarMenuItem>
                   </Collapsible>
                 {:else}
-                  {@const cnt = navCount(item, countFor)}
+                  {@const cnt = badgeFor(item, navCount(item, countFor))}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
@@ -256,8 +277,9 @@
                               class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
                                 item
                               ) ?? 'text-sidebar-foreground/70'}"
+                              title={cnt.partial ? PARTIAL_TITLE : undefined}
                             >
-                              {cnt}
+                              {cnt.text}
                             </span>
                           {/if}
                         </a>
