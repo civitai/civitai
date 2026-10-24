@@ -304,6 +304,10 @@ export type ApiKey = {
   lastUsedAt: Timestamp | null;
   clientId: string | null;
   buzzLimit: unknown | null;
+  /**
+   * Set on `Worker` tokens only: the device the token was issued to.
+   */
+  workerDeviceId: number | null;
 };
 export type AppBlock = {
   id: string;
@@ -5164,9 +5168,19 @@ export type ServiceDealFile = {
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   /**
-   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has.
    */
   malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+   */
+  malwareScanWorkflowId: string | null;
+  /**
+   * When the file was first handed to the scan; the give-up window runs from here.
+   */
+  malwareScanStartedAt: Timestamp | null;
+  malwareScanSubmittedAt: Timestamp | null;
+  malwareScanAttempts: Generated<number>;
   /**
    * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
    */
@@ -6104,6 +6118,40 @@ export type WildcardSetCategory = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type WorkerClient = {
+  clientId: string;
+  /**
+   * The orchestrator provider this pool's workers register as.
+   */
+  provider: string;
+  /**
+   * The `subject_token_type` URNs this client may exchange.
+   */
+  subjectTokenTypes: Generated<string[]>;
+  /**
+   * Salad container groups whose IMDS tokens this client accepts.
+   */
+  saladContainerGroupIds: Generated<string[]>;
+  createdAt: Generated<Timestamp>;
+};
+export type WorkerDevice = {
+  id: Generated<number>;
+  clientId: string;
+  /**
+   * `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+   */
+  issuer: string;
+  subject: string;
+  /**
+   * `active` or `blocked`.
+   */
+  status: Generated<string>;
+  firstSeenAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastIp: string | null;
+  blockedAt: Timestamp | null;
+  blockedReason: string | null;
+};
 export type DB = {
   _LicenseToModel: LicenseToModel;
   Account: Account;
@@ -6523,4 +6571,6 @@ export type DB = {
   Webhook: Webhook;
   WildcardSet: WildcardSet;
   WildcardSetCategory: WildcardSetCategory;
+  WorkerClient: WorkerClient;
+  WorkerDevice: WorkerDevice;
 };

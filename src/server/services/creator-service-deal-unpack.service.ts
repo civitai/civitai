@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  getFinalScanReading,
   isFinalsMalwareScanOn,
   submitFinalScan,
   type FinalScanTarget,
@@ -25,6 +26,9 @@ import {
 } from '~/server/utils/service-deal-zip';
 import {
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
+  SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
+  SERVICE_FINAL_SCAN_RETRY_MS,
+  SERVICE_FINAL_SCAN_STALE_MS,
   SERVICE_UNPACK_RETRY_MS,
   SERVICE_UNPACK_STALE_MS,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
@@ -307,7 +311,15 @@ export async function unpackFinals({
       await unpackImage(file);
     }
     await markUnpacked(file.id, extension !== 'zip');
-    if (extension !== 'zip') await handOffToScan(file.id);
+    // A hand-off that fails is logged; `settleMalwareScans` submits it again.
+    if (extension !== 'zip')
+      await handOffToScan(file.id).catch((error) =>
+        logUnpack(
+          'scan hand-off failed',
+          { fileId: file.id, error: (error as Error)?.message },
+          'error'
+        )
+      );
     logUnpack('final unpacked', { fileId: file.id, ms: Date.now() - began });
     return 1;
   } catch (error) {
@@ -366,17 +378,123 @@ export async function settleEntryScans() {
   return { passed, rejected, unchecked, timedOut };
 }
 
+const WAITING_FOR_MALWARE_SCAN = Prisma.sql`
+  "kind" = 'Final'::"ServiceDealFileKind"
+  AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+  AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+
 /**
- * Step 3: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
+ * Step 3: the malware scan of each Final ready for it (see the scan module). Polls the workflows
+ * waiting for a verdict and records it; a scan that could not reach one, or has had none for too
+ * long, is dropped and submitted again. A Final that is not waiting on a workflow is submitted,
+ * which also takes up a hand-off that was lost. While the scan is on, a Final that has used its
+ * attempts, or has waited past the give-up window, fails its malware scan, so a round never hangs
+ * and nothing unscanned reaches the buyer. Returns counts.
+ */
+export async function settleMalwareScans({
+  shouldStop = () => false,
+  submitLimit = 1,
+}: { shouldStop?: () => boolean; submitLimit?: number } = {}) {
+  const counts = {
+    scansPassed: 0,
+    scansFailed: 0,
+    scansRetried: 0,
+    scansSubmitted: 0,
+    scansGivenUp: 0,
+  };
+
+  const waiting = await dbWrite.$queryRaw<{ id: number; workflowId: string; stale: boolean }[]>`
+    SELECT "id", "malwareScanWorkflowId" AS "workflowId",
+      "malwareScanSubmittedAt" < now() - (${SERVICE_FINAL_SCAN_STALE_MS}::int * interval '1 millisecond') AS "stale"
+    FROM "ServiceDealFile"
+    WHERE ${WAITING_FOR_MALWARE_SCAN} AND "malwareScanWorkflowId" IS NOT NULL
+    ORDER BY "id" LIMIT 50`;
+  for (const { id, workflowId, stale } of waiting) {
+    if (shouldStop()) return counts;
+    const reading = await getFinalScanReading(workflowId).catch((error) => {
+      logUnpack(
+        'malware scan read failed',
+        { fileId: id, workflowId, error: (error as Error)?.message },
+        'error'
+      );
+      return null;
+    });
+    const sameWorkflow = Prisma.sql`"id" = ${id}::int AND "malwareScanWorkflowId" = ${workflowId}::text
+      AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
+    if (reading === 'Passed' || reading === 'Failed') {
+      const recorded = await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFile" SET "malwareScanStatus" = ${reading}::"ServiceDealFileScanStatus"
+        WHERE ${sameWorkflow}`;
+      if (recorded) counts[reading === 'Passed' ? 'scansPassed' : 'scansFailed']++;
+      if (recorded && reading === 'Failed')
+        logUnpack('malware scan failed', { fileId: id, workflowId });
+    } else if (reading === 'Retry' || stale) {
+      counts.scansRetried += await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFile" SET "malwareScanWorkflowId" = NULL WHERE ${sameWorkflow}`;
+      logUnpack('malware scan will be submitted again', { fileId: id, workflowId, reading });
+    }
+  }
+
+  if (!(await isFinalsMalwareScanOn())) {
+    // Hands each Final waiting with no workflow back, which records its scan as skipped.
+    const orphans = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT "id" FROM "ServiceDealFile"
+      WHERE ${WAITING_FOR_MALWARE_SCAN} AND "malwareScanWorkflowId" IS NULL AND "repackedAt" IS NOT NULL
+      ORDER BY "id" LIMIT 50`;
+    for (const { id } of orphans) await handOffToScan(id);
+    return counts;
+  }
+
+  const givenUp = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "ServiceDealFile"
+    SET "malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus",
+      "failReason" = COALESCE("failReason", 'This file could not be checked. Upload it again.')
+    WHERE ${WAITING_FOR_MALWARE_SCAN} AND "repackedAt" IS NOT NULL
+      AND (("malwareScanAttempts" >= ${SERVICE_FINAL_SCAN_MAX_ATTEMPTS}::int
+          AND "malwareScanWorkflowId" IS NULL)
+        OR COALESCE("malwareScanStartedAt", "repackedAt")
+          < now() - (${SERVICE_FINAL_SCAN_GIVE_UP_MS}::int * interval '1 millisecond'))
+    RETURNING "id"`;
+  counts.scansGivenUp = givenUp.length;
+  if (givenUp.length) logUnpack('malware scans given up', { fileIds: givenUp.map(({ id }) => id) });
+
+  const due = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "ServiceDealFile"
+    WHERE ${WAITING_FOR_MALWARE_SCAN} AND "repackedAt" IS NOT NULL AND "failReason" IS NULL
+      AND "malwareScanWorkflowId" IS NULL
+      AND ("malwareScanSubmittedAt" IS NULL
+        OR "malwareScanSubmittedAt" < now() - (${SERVICE_FINAL_SCAN_RETRY_MS}::int * interval '1 millisecond'))
+    ORDER BY "id" LIMIT ${submitLimit}::int`;
+  for (const { id } of due) {
+    if (shouldStop()) return counts;
+    try {
+      await handOffToScan(id);
+      counts.scansSubmitted++;
+    } catch (error) {
+      logUnpack(
+        'malware scan submit failed; it will be retried',
+        { fileId: id, error: (error as Error)?.message },
+        'error'
+      );
+    }
+  }
+  return counts;
+}
+
+/**
+ * Step 4: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
  * It passes only when it is unpacked and every image and the malware scan passed; while the scan is
- * off, a skipped one counts. Once it is on, a Final still waiting whose scan was skipped is handed
- * to it again. One already Passed on a skipped scan stays Passed.
+ * off, a skipped one counts. Once it is on, a Final still waiting whose scan was skipped goes back
+ * to waiting for it, on a fresh give-up clock, and `settleMalwareScans` submits it. One already
+ * Passed on a skipped scan stays Passed.
  */
 export async function settleFinals() {
   const malwareScanOn = await isFinalsMalwareScanOn();
   if (malwareScanOn) {
     const skipped = await dbWrite.$queryRaw<{ id: number }[]>`
-      UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+      UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus",
+        "malwareScanWorkflowId" = NULL, "malwareScanSubmittedAt" = NULL, "malwareScanAttempts" = 0,
+        "malwareScanStartedAt" = now()
       WHERE "id" IN (
         SELECT "id" FROM "ServiceDealFile"
         WHERE "kind" = 'Final'::"ServiceDealFileKind"
@@ -384,19 +502,7 @@ export async function settleFinals() {
           AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
         ORDER BY "id" LIMIT 50)
       RETURNING "id"`;
-    for (const { id } of skipped)
-      await handOffToScan(id).catch(async (error) => {
-        // Back to skipped, so the next run hands it over again instead of leaving it waiting.
-        await dbWrite.$executeRaw`
-          UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
-          WHERE "id" = ${id}::int AND "malwareScanStatus" = 'Pending'::"ServiceDealFileScanStatus"`;
-        logUnpack(
-          'malware scan resubmit failed; it will be retried',
-          { fileId: id, error: (error as Error)?.message },
-          'error'
-        );
-      });
-    if (skipped.length) logUnpack('skipped malware scans resubmitted', { count: skipped.length });
+    if (skipped.length) logUnpack('skipped malware scans queued', { count: skipped.length });
   }
 
   const failing = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -440,7 +546,7 @@ export async function settleFinals() {
 }
 
 /**
- * Step 4: the copy of an image that passed has done its job. The copy of an image whose scan has not
+ * Step 5: the copy of an image that passed has done its job. The copy of an image whose scan has not
  * finished, or that was rejected, is KEPT, even after its file was deleted: its Image row is what
  * the moderation tooling reads, and deleting it would take the evidence with it. A copy whose file
  * is gone is judged like any other (see `settleEntryScans`) and its row goes with it once it

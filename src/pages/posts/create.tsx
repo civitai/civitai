@@ -64,6 +64,7 @@ export default Page(
       modelVersionId,
       model3dId,
       storyline: storylineId,
+      continues: continuesChapterId,
       tag: tagId,
       video: postingVideo,
       reviewing,
@@ -144,6 +145,8 @@ export default Page(
                   ? chapterOneWritten
                     ? 'Chapter 1 is written'
                     : 'Write Chapter 1'
+                  : continuesChapterId
+                  ? 'Write the next chapter'
                   : (collectionIdsAggregate?.length ?? 0) > 0
                   ? 'Submit Entry'
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}

@@ -562,7 +562,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
       if (bankable) {
         if (bankable.remaining <= 0)
           throw throwBadRequestError(
-            'You have no bankable Buzz left. Generation compensation no longer counts toward banking.'
+            'You have no bankable Buzz left. See the bankable Buzz breakdown for what counts.'
           );
         amount = Math.min(amount, bankable.remaining);
       }
