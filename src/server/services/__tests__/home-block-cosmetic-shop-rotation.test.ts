@@ -92,9 +92,9 @@ describe('a CosmeticShop home block', () => {
   });
 
   it('sends three rows of a rotating block, not the whole section', async () => {
-    const many = Array.from({ length: 40 }, (_, i) => ({ shopItem: { id: i + 1 } }));
+    const many = Array.from({ length: 60 }, (_, i) => ({ shopItem: { id: i + 1 } }));
     stubBlock({ id: 9, random: true }, many);
-    expect(ids(await read())).toHaveLength(18);
+    expect(ids(await read())).toHaveLength(42);
 
     stubBlock({ id: 9, random: true, maxItems: 4 }, many);
     expect(ids(await read())).toHaveLength(12);
