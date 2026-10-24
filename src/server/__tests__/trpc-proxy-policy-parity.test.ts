@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { NextRequest } from 'next/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -139,6 +140,17 @@ async function call(headers: Record<string, string>, on: boolean): Promise<Outco
   };
 }
 
+// The soak counters live on the cross-graph registry `/api/metrics` merges into the scrape, so
+// that is where this reads them. A counter that was never registered reads as 0.
+const PROXY_SKIPPED = 'civitai_app_trpc_proxy_skipped_total';
+const ROUTE_REGION_BLOCKS = 'civitai_app_trpc_route_region_blocks_total';
+async function counterValue(name: string) {
+  const metric = instrumentationRegistry.getSingleMetric(name);
+  if (!metric) return 0;
+  const { values } = await metric.get();
+  return values.reduce((sum, v) => sum + v.value, 0);
+}
+
 type BotData = { bot: string | null };
 // superjson (the default write format) wraps the payload in `json`.
 function botSeen(o: Outcome) {
@@ -161,6 +173,21 @@ describe.each([
     });
     // OFF: the proxy answers. ON: the proxy passes it through and the route answers.
     expect(o.proxyAnswered).toBe(!on);
+  });
+
+  it('counts a proxy skip only when the flag is ON', async () => {
+    const before = await counterValue(PROXY_SKIPPED);
+    const o = await call({ 'cf-ipcountry': 'US', 'user-agent': BROWSER }, on);
+    expect(o.status).toBe(200);
+    expect((await counterValue(PROXY_SKIPPED)) - before).toBe(on ? 1 : 0);
+  });
+
+  it('counts a route-side 451 only when the route answered it', async () => {
+    const before = await counterValue(ROUTE_REGION_BLOCKS);
+    const o = await call({ 'cf-ipcountry': 'GB', 'user-agent': BROWSER }, on);
+    expect(o.status).toBe(451);
+    // OFF: the proxy answers the 451, so the route never sees the request.
+    expect((await counterValue(ROUTE_REGION_BLOCKS)) - before).toBe(on ? 1 : 0);
   });
 
   it('sends the default Cache-Control and X-Handled-By', async () => {
