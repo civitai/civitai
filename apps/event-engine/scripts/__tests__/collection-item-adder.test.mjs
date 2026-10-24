@@ -3,8 +3,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  backfillSql,
   buildEvents,
-  entityScope,
+  clickhouseConfig,
   landedState,
   nextStampMs,
   openLedger,
@@ -59,15 +60,6 @@ describe('nextStampMs', () => {
     const second = nextStampMs(first, T * 1000 + 900);
     expect(first).toBe(T * 1000);
     expect(second).toBe(T * 1000 + 1000);
-  });
-});
-
-describe('entityScope', () => {
-  it('limits a run to one entity column and rejects anything else', () => {
-    expect(entityScope('Article')).toBe('ci."articleId" IS NOT NULL');
-    expect(entityScope('Model')).toBe('ci."modelId" IS NOT NULL');
-    expect(() => entityScope('Image')).toThrow(/--entity must be one of/);
-    expect(() => entityScope(undefined)).toThrow();
   });
 });
 
@@ -200,5 +192,72 @@ describe('landedState', () => {
 
   it('does not take a live event with the same key but another value as ours', () => {
     expect(landedState([ev(1, 2)], [ev(1, 1)])).toBe('none');
+  });
+});
+
+describe('backfillSql', () => {
+  // Run against a real Postgres, so this checks which rows the UPDATE touches, not its text.
+  async function db() {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark');
+      CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int, mode "CollectionMode");
+      CREATE TABLE "CollectionItem" (
+        id int PRIMARY KEY, "collectionId" int, "articleId" int, "modelId" int, "postId" int,
+        "imageId" int, "addedById" int);
+      INSERT INTO "Collection" VALUES (1, 5, 'Bookmark'), (2, 6, NULL), (3, 7, 'Contest');
+      INSERT INTO "CollectionItem" VALUES
+        (1, 1, 30, NULL, NULL, NULL, NULL),
+        (2, 2, 31, NULL, NULL, NULL, NULL),
+        (3, 3, 32, NULL, NULL, NULL, NULL),
+        (4, 1, NULL, 40, NULL, NULL, NULL);
+    `);
+    return pg;
+  }
+
+  it('gives an adder only to Bookmark-collection rows of the chosen entity', async () => {
+    const pg = await db();
+    const { update } = backfillSql('Article');
+    const { rows } = await pg.query(update, [0, 100]);
+    expect(rows.map((r) => [r.id, r.addedById])).toEqual([[1, 5]]);
+    const { rows: after } = await pg.query(
+      'SELECT id, "addedById" FROM "CollectionItem" ORDER BY id'
+    );
+    expect(after.map((r) => [r.id, r.addedById])).toEqual([
+      [1, 5],
+      [2, null],
+      [3, null],
+      [4, null],
+    ]);
+    await pg.close();
+  });
+
+  it('counts the rows it leaves out by collection mode', async () => {
+    const pg = await db();
+    const { rows } = await pg.query(backfillSql('Article').breakdown, [0, 100]);
+    expect(Object.fromEntries(rows.map((r) => [r.mode ?? 'none', r.n]))).toEqual({
+      Bookmark: 1,
+      Contest: 1,
+      none: 1,
+    });
+    await pg.close();
+  });
+
+  it('rejects an entity it does not know', () => {
+    expect(() => backfillSql('Image')).toThrow(/--entity must be one of/);
+  });
+});
+
+describe('clickhouseConfig', () => {
+  it('takes credentials from the environment only, and names what is missing', () => {
+    expect(clickhouseConfig({ CLICKHOUSE_URL: 'http://u:p@h' })).toEqual({ url: 'http://u:p@h' });
+    expect(
+      clickhouseConfig({ CLICKHOUSE_HOST: 'h', CLICKHOUSE_USER: 'u', CLICKHOUSE_PASSWORD: 'p' })
+    ).toEqual({ url: 'h', username: 'u', password: 'p' });
+    expect(() => clickhouseConfig({ CLICKHOUSE_HOST: 'h' })).toThrow(
+      'set CLICKHOUSE_URL, or CLICKHOUSE_USERNAME (or CLICKHOUSE_USER), CLICKHOUSE_PASSWORD, in the environment'
+    );
+    expect(() => clickhouseConfig({})).toThrow(/CLICKHOUSE_HOST/);
   });
 });

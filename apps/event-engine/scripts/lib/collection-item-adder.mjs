@@ -23,13 +23,45 @@ const ENTITY_METRICS = [
 // One entity per run, so each can be scoped and sized on its own; a bookmark row carries one of these.
 const ENTITY_COLUMNS = { Article: 'articleId', Model: 'modelId', Post: 'postId' };
 
-export function entityScope(entity) {
+// Only Bookmark collections: their owner is the only one who adds to them, so the owner is the
+// adder. In any other collection the owner may not be, and a row whose adder was nulled by a user
+// delete was already counted under that user. `breakdown` counts every mode so the dry run shows
+// what was left out. $1 and $2 are the id range.
+export function backfillSql(entity) {
   const column = ENTITY_COLUMNS[entity];
   if (!column)
     throw new Error(
       `--entity must be one of ${Object.keys(ENTITY_COLUMNS).join(', ')}, not ${entity}`
     );
-  return `ci."${column}" IS NOT NULL`;
+  const candidates = `
+    ci."collectionId" = c.id
+    AND ci.id >= $1 AND ci.id < $2
+    AND ci."addedById" IS NULL
+    AND ci."imageId" IS NULL
+    AND ci."${column}" IS NOT NULL
+    AND c."userId" > 0`;
+  return {
+    breakdown: `SELECT c.mode::text AS mode, count(*)::int AS n
+      FROM "CollectionItem" ci, "Collection" c WHERE ${candidates} GROUP BY 1`,
+    update: `UPDATE "CollectionItem" ci SET "addedById" = c."userId"
+      FROM "Collection" c
+      WHERE ${candidates} AND c.mode = 'Bookmark'
+      RETURNING ci.id, ci."collectionId", ci."articleId", ci."modelId", ci."postId", ci."addedById"`,
+  };
+}
+
+// From the environment only: a missing credential stops the run rather than falling back.
+export function clickhouseConfig(env) {
+  if (env.CLICKHOUSE_URL) return { url: env.CLICKHOUSE_URL };
+  const username = env.CLICKHOUSE_USERNAME ?? env.CLICKHOUSE_USER;
+  const missing = [
+    !env.CLICKHOUSE_HOST && 'CLICKHOUSE_HOST',
+    !username && 'CLICKHOUSE_USERNAME (or CLICKHOUSE_USER)',
+    !env.CLICKHOUSE_PASSWORD && 'CLICKHOUSE_PASSWORD',
+  ].filter(Boolean);
+  if (missing.length)
+    throw new Error(`set CLICKHOUSE_URL, or ${missing.join(', ')}, in the environment`);
+  return { url: env.CLICKHOUSE_HOST, username, password: env.CLICKHOUSE_PASSWORD };
 }
 
 export const METRIC_PAIRS = ENTITY_METRICS.map(([, entityType, metricType]) => [
