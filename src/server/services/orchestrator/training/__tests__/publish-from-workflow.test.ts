@@ -406,6 +406,33 @@ describe('createDraftModelFromWorkflow', () => {
     expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
   });
 
+  it.each([
+    ['mossImage', 'base', 'MOSS Image', 'urn:air:mossimage:checkpoint:civitai:3005406@3409868'],
+    ['mossImage', 'sft', 'MOSS Image', 'urn:air:mossimage:checkpoint:civitai:3005406@3409867'],
+    [
+      'flux3klein',
+      undefined,
+      'Flux.3 Klein-base',
+      'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+    ],
+  ])(
+    'drafts a Studio-only %s (%s) run under its base checkpoint',
+    async (ecosystem, modelVariant, baseModel, air) => {
+      const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+      base.steps[0].input = { ...base.steps[0].input, ecosystem, modelVariant };
+      await createDraftModelFromWorkflow({
+        user: USER,
+        workflow: base as unknown as Workflow,
+        selectedEpochNumber: 1,
+      });
+      const version = mockUpsertModelVersion.mock.calls[0][0];
+      expect(version.baseModel).toBe(baseModel);
+      expect(version.trainingDetails.baseModel).toBe(air);
+      expect(version.trainingDetails.params.ecosystem).toBe(ecosystem);
+      expect(version.trainingDetails.baseModelType).toBeUndefined();
+    }
+  );
+
   it('falls back to the last available epoch when the selected number has no blob', async () => {
     await createDraftModelFromWorkflow({
       user: USER,

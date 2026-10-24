@@ -540,10 +540,13 @@ export default function TrainingSelectFile({
     trainingStatus === TrainingStatus.InReview ||
     trainingStatus === TrainingStatus.Approved ||
     trainingStatus === TrainingStatus.Failed;
+  // No baseModelType = a Studio-only base (MOSS Image, Flux.3 Klein) the in-app trainer can't run;
+  // those continue in the Training Studio.
   const canTrainFurther =
     features.trainingStepsPricing &&
     trainingEnded &&
-    thisTrainingDetails?.params?.engine === 'ai-toolkit';
+    thisTrainingDetails?.params?.engine === 'ai-toolkit' &&
+    !!thisTrainingDetails.baseModelType;
 
   const handleContinueTraining = async (epoch: TrainingResultsV2['epochs'][number]) => {
     if (continuingFrom !== undefined) return;
