@@ -274,7 +274,7 @@ const BankableBuzzInfo = ({
         Each month you can bank the lower of your Cap and your bankable Buzz. Generation
         compensation is still paid to you but is not bankable. What you pay other users (tips, Early
         Access, shop items, bounties and donations) is subtracted from what you earn, then from your
-        Buzz on {cutover}.
+        unbanked Buzz from {cutover}.
       </p>
 
       <Table className="table-auto">
@@ -298,8 +298,8 @@ const BankableBuzzInfo = ({
       {paid > bankable.earned && (
         <p className="text-xs">
           You&apos;ve paid other users <BuzzAmount amount={paid - bankable.earned} /> more than
-          you&apos;ve earned since {cutover}. That comes out of your Buzz from {cutover}, and
-          anything beyond it out of what you earn next.
+          you&apos;ve earned since {cutover}. That comes out of your unbanked Buzz from {cutover},
+          then out of what you earn next.
         </p>
       )}
 
