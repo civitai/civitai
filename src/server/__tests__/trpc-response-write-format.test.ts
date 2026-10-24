@@ -216,10 +216,13 @@ describe('TRPC_WRITE_DEVALUE=true — format chosen per request', () => {
     expect(JSON.parse(served.text)[0].result.data).toEqual(asSuperjson(PAYLOAD));
   });
 
-  it('marks every devalue response private itself, without relying on the proxy default', async () => {
-    // This harness runs the route without the proxy middleware, so a superjson response
-    // carries no Cache-Control at all (control); a devalue one must carry the private default.
-    expect((await get('payload')).headers.get('cache-control')).toBeNull();
+  it('marks every devalue response private without relying on the proxy', async () => {
+    // This harness runs the route without the proxy middleware. The route applies the private
+    // default itself (applyApiRequestPolicy), so a superjson response carries it too; a devalue
+    // response must never come out without it.
+    expect((await get('payload')).headers.get('cache-control')).toBe(
+      'max-age=0, private, no-cache'
+    );
     const single = await get('payload', CAPABLE_WEB);
     expect(singleData(single)).toEqual(asDevalue(PAYLOAD));
     expect(single.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
@@ -245,9 +248,10 @@ describe('TRPC_WRITE_DEVALUE=false — superjson always', () => {
     h.writeDevalue = false;
   });
 
-  it('writes superjson even to a capable web bundle, with the route adding no header', async () => {
+  it('writes superjson even to a capable web bundle, with only the route default header', async () => {
     const served = await get('payload', CAPABLE_WEB);
     expect(singleData(served)).toEqual(asSuperjson(PAYLOAD));
-    expect(served.headers.get('cache-control')).toBeNull();
+    // The route's own private default (applyApiRequestPolicy); nothing format-specific.
+    expect(served.headers.get('cache-control')).toBe('max-age=0, private, no-cache');
   });
 });
