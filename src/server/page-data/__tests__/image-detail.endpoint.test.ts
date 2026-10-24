@@ -136,7 +136,7 @@ function renderPage({ user, imageId, host }: Fixture) {
 
 async function fetchPageData(
   { user, imageId, host }: Fixture,
-  { method = 'GET' }: { method?: string } = {}
+  { method = 'GET', cookies = {} }: { method?: string; cookies?: Record<string, string> } = {}
 ) {
   const token = user ? `viewer-${user.id}` : undefined;
   if (user && token) h.tokens.set(token, user);
@@ -144,7 +144,8 @@ async function fetchPageData(
     method,
     url: `/api/page-data/images/${imageId}`,
     headers: { host },
-    cookies: token ? { [sessionCookieName()]: token } : {},
+    // The session cookie first: the session stub reads the first cookie value.
+    cookies: { ...(token ? { [sessionCookieName()]: token } : {}), ...cookies },
     query: { imageId: String(imageId) },
   };
   const res = fakeResponse();
@@ -289,5 +290,43 @@ describe('page-data behind shell-images', () => {
     const { res } = await fetchPageData({ ...ownerFixture, user: USERS.moderator });
     expect(res.statusCode).toBe(200);
     expect(procedureCalls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('page-data keeps the shell route cookie in step with shell-images', () => {
+  const routeCookies = (res: ReturnType<typeof fakeResponse>) =>
+    ([] as unknown[])
+      .concat(res.getHeader('set-cookie') ?? [])
+      .map(String)
+      .filter((c) => c.startsWith('civ-shell-images='));
+  const SET = 'civ-shell-images=1; Path=/; Max-Age=604800; Secure; SameSite=Lax';
+  const CLEAR = 'civ-shell-images=; Path=/; Max-Age=0; Secure; SameSite=Lax';
+
+  it('a 200 for a signed-in viewer refreshes it, so it does not lapse while the flag is on', async () => {
+    const { res } = await fetchPageData(ownerFixture, { cookies: { 'civ-shell-images': '1' } });
+    expect(res.statusCode).toBe(200);
+    expect(routeCookies(res)).toEqual([SET]);
+  });
+
+  it('the flag off: a 404 that clears it, so the viewer stops getting the shell', async () => {
+    h.flagOn.current = false;
+    const { res } = await fetchPageData(ownerFixture, { cookies: { 'civ-shell-images': '1' } });
+    expect(res.statusCode).toBe(404);
+    expect(routeCookies(res)).toEqual([CLEAR]);
+  });
+
+  it('the flag off and no cookie: nothing to clear', async () => {
+    h.flagOn.current = false;
+    const { res } = await fetchPageData(ownerFixture);
+    expect(routeCookies(res)).toEqual([]);
+  });
+
+  it('a signed-out viewer: a stale cookie is cleared', async () => {
+    const { res } = await fetchPageData(
+      { ...ownerFixture, user: null },
+      { cookies: { 'civ-shell-images': '1' } }
+    );
+    expect(res.statusCode).toBe(200);
+    expect(routeCookies(res)).toEqual([CLEAR]);
   });
 });

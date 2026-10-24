@@ -16,6 +16,7 @@ import {
   settingsBootstrapRequest,
 } from '~/server/services/settings-bootstrap.service';
 import { getRegion } from '~/server/utils/region-blocking';
+import { syncShellRouteCookie } from '~/server/shell/shell-response';
 import {
   dehydrateSsgState,
   getServerProxySSGHelpers,
@@ -26,8 +27,8 @@ import {
  * `GET /api/page-data/images/[imageId]` — everything a server render of `/images/[imageId]`
  * computes for ITS viewer, in one response: the settings bootstrap and the session, the feature
  * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState`.
- * It is what a static (viewer-independent) shell of the page will read instead of being rendered
- * per viewer. Nothing calls it yet.
+ * It is what the static (viewer-independent) shell of the page reads instead of being rendered
+ * per viewer.
  *
  * Built from the same pieces as the render: the page's resolver (`~/server/page-data/image-detail`),
  * the SSG helpers and dehydrate of `createServerSideProps`, and the bootstrap's request builder and
@@ -44,7 +45,8 @@ import {
  * point — a viewer of a shell page has no other request that would.
  *
  * Gated by the `shell-images` flag: 404 for anyone it is off for. Only the session lookup runs
- * first (the flag is per user); no bootstrap seed and no page data is read for them.
+ * first (the flag is per user); no bootstrap seed and no page data is read for them. It keeps the
+ * route's `civ-shell-images` cookie in step with that flag (`~/server/shell/shell-response`).
  * Region blocking is the proxy's (`apiRegionBlockMiddleware`; `/api/page-data` is in its matcher).
  */
 
@@ -84,7 +86,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // The same evaluation as both `_app` (which passes the request's own host) and
     // `createServerSideProps`. Decided before the rest of the bootstrap is read.
     const flags = await getFeatureFlagsAsync({ user: session?.user, req });
-    if (!flags.shellImages) return send(404, { error: 'Not found' });
+    // The route cookie follows the flag from here too: a viewer the flag went off for stops being
+    // considered for the shell, and one it is on for keeps the cookie from expiring.
+    if (!flags.shellImages) {
+      syncShellRouteCookie(req, res, 'images', false);
+      return send(404, { error: 'Not found' });
+    }
 
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
     // host), so the host-derived ones — ToS, announcements — are the page's.
@@ -111,6 +118,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       session,
     });
     if ('notFound' in result) return send(404, { error: 'Not found' });
+
+    syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
 
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
     // gains later is not published here unreviewed.
