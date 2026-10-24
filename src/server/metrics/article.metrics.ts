@@ -17,10 +17,10 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   executeRefresh,
   getAffected,
-  getEntityMetricTasks,
   reactionCountKeys,
   snippets,
 } from '~/server/metrics/metric-helpers';
+import { getCollectionItemCountTasks } from '~/server/metrics/collection-item-counts';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { ArticleMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
@@ -186,7 +186,7 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 async function getCollectionTasks(ctx: MetricContext) {
-  return getEntityMetricTasks(ctx)('Article', 'collectedCount');
+  return getCollectionItemCountTasks(ctx)('Article');
 }
 
 async function getBuzzTasks(ctx: MetricContext) {
