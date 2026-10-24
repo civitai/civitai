@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   backfillSql,
   clickhouseConfig,
+  tableNamePattern,
   deltaSummary,
   landedState,
   nextStampMs,
@@ -135,7 +136,7 @@ describe('landedState', () => {
     entityType: 'Article',
     entityId,
     metricType: 'collectedCount',
-    userId: 0,
+    userId: -1,
     metricValue,
   });
 
@@ -250,7 +251,7 @@ describe('reconcile', () => {
       entityType: 'Article',
       entityId: 31,
       metricType: 'collectedCount',
-      userId: 0,
+      userId: -1,
       metricValue: 1,
       createdAt: T,
     });
@@ -313,6 +314,22 @@ describe('deltaSummary', () => {
         '> 1000': 1,
       },
     });
+  });
+});
+
+describe('tableNamePattern', () => {
+  // The daily views read the events table inside a subquery; the first preflight looked for
+  // `FROM <table>` at the top level and refused the real prod views.
+  const matches = (query) => new RegExp(tableNamePattern('entityMetricEvents_month')).test(query);
+
+  it('finds the table inside a subquery, qualified or not, and nothing that only shares a prefix', () => {
+    expect(
+      matches('TO x AS SELECT a FROM (SELECT a FROM default.entityMetricEvents_month WHERE b)')
+    ).toBe(true);
+    expect(matches('FROM (SELECT * FROM entityMetricEvents_month)')).toBe(true);
+    expect(matches('FROM default.`entityMetricEvents_month`')).toBe(true);
+    expect(matches('FROM default.entityMetricEvents_month_v2')).toBe(false);
+    expect(matches('FROM default.entityMetricEvents')).toBe(false);
   });
 });
 

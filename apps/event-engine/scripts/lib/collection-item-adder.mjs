@@ -89,8 +89,18 @@ export const VIEW_TOTALS_SQL = `SELECT entityId, sum(total) AS total FROM defaul
     AND entityId IN {ids:Array(Int64)}
   GROUP BY entityId`;
 
-// The reconcile events carry no user: they correct a total, not anyone's action.
-export const RECONCILE_USER_ID = 0;
+// The reconcile events carry no user: they correct a total, not anyone's action. -1 is what the
+// November 2025 seed used, so the views are known to count it.
+export const RECONCILE_USER_ID = -1;
+
+// The materialized views behind entityMetricDailyAgg_v2: sealed days and today.
+export const DAILY_VIEWS = ['entityMetricDaily_today_v2_mv', 'entityMetricDailySeal_v2_mv'];
+
+// A table name as a whole identifier anywhere in a query, so that `FROM (SELECT ... FROM t)` and
+// `default.t` match and `t_v2` does not. RE2, for ClickHouse's match().
+export function tableNamePattern(table) {
+  return `(^|[^A-Za-z0-9_])${table}([^A-Za-z0-9_]|$)`;
+}
 
 // One event per entity whose ClickHouse total is off from what it should count, valued at the
 // difference, so the total lands on the truth whatever put it where it is. An entity missing from

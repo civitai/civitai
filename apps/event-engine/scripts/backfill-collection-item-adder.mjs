@@ -18,9 +18,9 @@
  * insert one event per entity valued at the difference. Negative where the seed over-counted, none
  * where it is already right. It runs after phase 1 so deletes during phase 1 are absorbed too.
  *
- * Exactly-once, because a duplicate insert is not harmless here: entityMetricSum_v3 consumes each
- * insert before ReplacingMergeTree dedups it, so a retried insert counts twice. Every line below is
- * fsynced to the ledger before the step it records.
+ * Exactly-once, because a delta that lands twice moves every total it touches twice: a retry at a
+ * new stamp is a new row to every view. Every line below is fsynced to the ledger before the step
+ * it records.
  *   Phase 1: `pending` (txid, ids) -> COMMIT -> `committed`. On restart txid_status() of the
  *   unfinished batch decides: rolled back is redone, committed is marked so.
  *   Phase 2: `reconcile` (stamp, events) -> insert -> `reconciled`. On restart, once the stamp is
@@ -61,7 +61,8 @@
  *                      and the view's current total beside `have`; they differ only by events
  *                      the today view has not refreshed in yet.
  *   --events-table <t> Raw events table (default entityMetricEvents_month). The run refuses a
- *                      table that does not feed entityMetricSum_v3.
+ *                      table the daily views (entityMetricDaily_today_v2_mv and
+ *                      entityMetricDailySeal_v2_mv) do not read.
  */
 
 import { createClient } from '@clickhouse/client';
@@ -70,6 +71,7 @@ import { readFileSync, existsSync } from 'fs';
 import {
   METRIC_PAIRS,
   backfillSql,
+  DAILY_VIEWS,
   VIEW_TOTALS_SQL,
   chTotalsSql,
   clickhouseConfig,
@@ -79,6 +81,7 @@ import {
   openLedger,
   readLedger,
   reconcile,
+  tableNamePattern,
 } from './lib/collection-item-adder.mjs';
 
 const args = process.argv.slice(2);
@@ -166,20 +169,17 @@ async function main() {
   }
 
   // The reconcile is only right if the events it writes and the raw rows it reads are the ones the
-  // running sum and the today view are built from.
-  const readsEvents = async (where) =>
-    (
-      await query(
-        `SELECT name FROM system.tables
-         WHERE database = 'default' AND engine = 'MaterializedView' AND ${where}
-           AND match(create_table_query, {re:String})`,
-        { re: `FROM\\s+(default\\.)?\`?${EVENTS_TABLE}\`?(\\s|$)` }
-      )
-    ).length > 0;
-  if (!(await readsEvents(`position(create_table_query, 'entityMetricSum_v3') > 0`)))
-    fail(`Error: no materialized view feeds entityMetricSum_v3 from ${EVENTS_TABLE}. Wrong table?`);
-  if (!(await readsEvents(`name = 'entityMetricDaily_today_v2_mv'`)))
-    fail(`Error: entityMetricDaily_today_v2_mv does not read ${EVENTS_TABLE}. Wrong table?`);
+  // daily views behind entityMetricDailyAgg_v2 (what the metric job reads) are built from. Both
+  // read the events table inside a subquery, so look for the name as a whole identifier.
+  for (const view of DAILY_VIEWS) {
+    const found = await query(
+      `SELECT name FROM system.tables
+       WHERE database = 'default' AND engine = 'MaterializedView' AND name = {view:String}
+         AND match(create_table_query, {re:String})`,
+      { view, re: tableNamePattern(EVENTS_TABLE) }
+    );
+    if (!found.length) fail(`Error: ${view} does not read ${EVENTS_TABLE}. Wrong table?`);
+  }
 
   const pool = new pg.Pool({ connectionString: pgUrl, connectionTimeoutMillis: 30000, max: 3 });
   const { rows: maxRows } = await pool.query('SELECT max(id) AS max FROM "CollectionItem"');
