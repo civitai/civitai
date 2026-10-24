@@ -1275,7 +1275,7 @@ describe('takedown persist', () => {
     expect(await stateOf(u(1))).toBe('Retracted');
     expect((await queued()).n).toBe(0);
     expect(purged).toEqual([]);
-    expect(errorLogs('takedown-persist-failed')).toEqual([
+    expect(logsOf('warning', 'takedown-persist-failed')).toEqual([
       expect.objectContaining({ imageIds: [1], imageKey: u(1) }),
     ]);
     expect(await retryRows()).toEqual([
@@ -1375,7 +1375,7 @@ describe('takedown persist', () => {
       await expect(
         sendTakedownPersistOrRetry(u(1), { retract: false, purgeEdge: true }, { imageId: 1 })
       ).resolves.toBeUndefined();
-      expect(errorLogs('takedown-persist-retry-not-queued')).toHaveLength(1);
+      expect(logsOf('warning', 'takedown-persist-retry-not-queued')).toHaveLength(1);
       await expect(retryTakedownPersists()).resolves.toMatchObject({ queued: 0 });
     } finally {
       await bare.close();
@@ -1462,5 +1462,41 @@ describe('persist after a takedown hard delete', () => {
     expect(logsOf('warning', 'takedown-persist-failed')).toHaveLength(30);
     expect(await retryRows()).toHaveLength(30);
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
+
+describe('the persist retry, as the job runs it', () => {
+  const queueRetry = (id: number, url: string) =>
+    sql`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+        VALUES (${id}, 'Image', 'ImageCdnPersistRetry',
+                ${JSON.stringify({ url, retract: false, purgeEdge: true })}::jsonb)`;
+
+  it('cdn-access-sync sends and drains a queued retry', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    expect(persistsFor(u(1))).toHaveLength(1);
+    await queueRetry(1, u(1));
+
+    await cdnAccessSync.run({}).result;
+    expect(persistsFor(u(1))).toHaveLength(2);
+    expect(purged).toHaveLength(2);
+    expect(await retryRows()).toEqual([]);
+  });
+
+  it('leaves a row whose url another run holds, and counts it busy', async () => {
+    await image(1);
+    await moderatorBlock(1);
+    await syncCdnAccess();
+    await queueRetry(1, u(1));
+    await sql`INSERT INTO "ImageCdnAccessClaim" (url, token, "claimedUntil")
+              VALUES (${u(1)}, gen_random_uuid(), now() + interval '5 minutes')`;
+    const before = calls.length;
+
+    const totals = await retryTakedownPersists();
+    expect(totals).toEqual({ queued: 1, sent: 0, skipped: 0, failed: 0, busy: 1 });
+    expect(Object.values(totals).every((n) => Number.isInteger(n))).toBe(true);
+    expect(calls.slice(before)).toEqual([]);
+    expect(await retryRows()).toHaveLength(1);
   });
 });

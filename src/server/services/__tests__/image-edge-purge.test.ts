@@ -51,4 +51,11 @@ describe('getImageEdgePurgeUrls', () => {
       ])
     );
   });
+
+  it('drops a url a name resolves to outside this image', () => {
+    const urls = getImageEdgePurgeUrls({ url: KEY, id: 1, name: '../../../other/x.png' });
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((x) => x.startsWith(`${BASE}/`))).toBe(true);
+    expect(urls).toContain(`${BASE}/original=true/1.jpeg`);
+  });
 });

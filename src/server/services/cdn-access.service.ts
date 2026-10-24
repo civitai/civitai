@@ -549,7 +549,7 @@ export async function sendTakedownPersistOrRetry(
     await sendTakedownPersist(url, options, found.images);
   } catch (error) {
     await logToAxiom({
-      type: 'error',
+      type: 'warning',
       name: 'takedown-persist-failed',
       message: 'takedown persist failed; retrying once',
       imageIds,
@@ -580,7 +580,7 @@ export async function queueTakedownPersistRetry({
     `;
   } catch (error) {
     await logToAxiom({
-      type: 'error',
+      type: 'warning',
       name: 'takedown-persist-retry-not-queued',
       message: 'takedown persist retry was not queued',
       imageId,

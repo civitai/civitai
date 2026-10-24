@@ -156,6 +156,16 @@ describe('getImageEdgePurgeUrls', () => {
     expect(new Set(urls).size).toBe(urls.length);
   });
 
+  it('purges the id-named urls the cards and detail page request', () => {
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        `${LOC}/${KEY}/original=true/${ID}.jpeg`,
+        `${LOC}/${KEY}/anim=false,original=true/${ID}.jpeg`,
+        `${LOC}/${KEY}/width=450/${ID}.jpeg`,
+      ])
+    );
+  });
+
   it('covers the id and key names when the image has no name', () => {
     const unnamed = getImageEdgePurgeUrls({ id: ID, url: KEY, name: null });
     expect(unnamed).toContain(`${LOC}/${KEY}/original=true/${ID}.jpeg`);

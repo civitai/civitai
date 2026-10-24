@@ -53,5 +53,9 @@ export function getImageEdgePurgeUrls({ url, id, name, type }: ImageEdgePurgeTar
       }
     }
   }
-  return [...urls];
+  // A name can spell a path (`../`), and the url it resolves to is then some other image's. Only
+  // this image's urls are purged.
+  const first = [...urls][0];
+  const prefix = first.slice(0, first.indexOf(`${url}/`) + url.length + 1);
+  return [...urls].filter((x) => x.startsWith(prefix));
 }
