@@ -376,13 +376,13 @@ export async function purgeResizeCache({
   url,
   scope = 'all',
   retractPublicBlobs = false,
-  waitForInvalidation = false,
+  waitForInvalidationMs,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
-  /** Resolve only once the service has answered (or the call timed out), for a caller that must
-   *  purge the CDN after it. Still never throws. */
-  waitForInvalidation?: boolean;
+  /** Wait up to this long for the service to answer, for a caller that must purge the CDN after it.
+   *  Running out of time is expected for a slow purge and logged as info. Still never throws. */
+  waitForInvalidationMs?: number;
 } & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
@@ -471,7 +471,7 @@ export async function purgeResizeCache({
       // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
       redirect: 'error',
       // Invalidation must not slow down the delete flow.
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(waitForInvalidationMs ?? 2000),
     })
       .then((res) => {
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
@@ -495,10 +495,15 @@ export async function purgeResizeCache({
         }
       })
       .catch((err) => {
+        const expectedTimeout =
+          waitForInvalidationMs !== undefined &&
+          (err as Error | undefined)?.name === 'TimeoutError';
         logToAxiom({
-          type: 'warning',
+          type: expectedTimeout ? 'info' : 'warning',
           name: 'image-cacher-invalidate',
-          message: 'image-cacher invalidate failed',
+          message: expectedTimeout
+            ? 'image-cacher invalidate still running at the wait deadline'
+            : 'image-cacher invalidate failed',
           imageKey: url,
           scope,
           error: safeError(err),
@@ -506,7 +511,7 @@ export async function purgeResizeCache({
           // swallow — best effort logging
         });
       });
-    if (waitForInvalidation) await invalidation;
+    if (waitForInvalidationMs !== undefined) await invalidation;
   }
 }
 

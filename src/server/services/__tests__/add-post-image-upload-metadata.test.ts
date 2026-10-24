@@ -4,9 +4,7 @@ import type * as Metadata from '~/utils/metadata';
 import type * as S3Utils from '~/utils/s3-utils';
 
 /**
- * Where `addPostImage` reads an upload's embedded metadata from when the caller sent none. It
- * must read the stored upload, not request the image through the CDN: the Image row does not
- * exist yet at that point.
+ * `addPostImage` reads an upload's embedded metadata from storage when the caller sent none.
  *
  * The post.service import scaffold mirrors update-post-image-hidemeta-bust.test.ts.
  */
@@ -15,14 +13,14 @@ const KEY = '6f1c2b9e-3a4d-4e5f-8a7b-9c0d1e2f3a4b';
 const UPLOAD_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
 const mocks = vi.hoisted(() => ({
-  readImageUploadObject: vi.fn(),
+  readImageUploadObjectHead: vi.fn(),
   getMetadata: vi.fn(),
   fetch: vi.fn(),
 }));
 
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
-  readImageUploadObject: mocks.readImageUploadObject,
+  readImageUploadObjectHead: mocks.readImageUploadObjectHead,
 }));
 vi.mock('~/utils/metadata', async (importOriginal) => ({
   ...(await importOriginal<typeof Metadata>()),
@@ -115,7 +113,7 @@ const user = { id: 5 } as never;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', mocks.fetch);
-  mocks.readImageUploadObject.mockResolvedValue(UPLOAD_BYTES);
+  mocks.readImageUploadObjectHead.mockResolvedValue(UPLOAD_BYTES);
   mocks.getMetadata.mockResolvedValue({ prompt: 'a lighthouse' });
   // Stop right after metadata extraction: the post lookup misses and addPostImage throws.
   dbMock.dbRead.post.findFirst.mockResolvedValue(null);
@@ -127,7 +125,9 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
       addPostImage({ url: KEY, type: 'image', postId: 1, user } as never)
     ).rejects.toThrow();
 
-    expect(mocks.readImageUploadObject).toHaveBeenCalledWith(KEY);
+    expect(mocks.readImageUploadObjectHead).toHaveBeenCalledWith(KEY, {
+      maxBytes: 8 * 1024 * 1024,
+    });
     expect(mocks.getMetadata).toHaveBeenCalledTimes(1);
     expect(mocks.getMetadata).toHaveBeenCalledWith(UPLOAD_BYTES);
     expect(mocks.fetch).not.toHaveBeenCalled();
@@ -138,15 +138,17 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
       addPostImage({ url: KEY, type: 'image', postId: 1, user, meta: { prompt: 'x' } } as never)
     ).rejects.toThrow();
 
-    expect(mocks.readImageUploadObject).not.toHaveBeenCalled();
+    expect(mocks.readImageUploadObjectHead).not.toHaveBeenCalled();
     expect(mocks.getMetadata).not.toHaveBeenCalled();
   });
 
   it('still proceeds when the upload cannot be read', async () => {
-    mocks.readImageUploadObject.mockRejectedValue(new Error('NoSuchKey'));
+    mocks.readImageUploadObjectHead.mockRejectedValue(new Error('NoSuchKey'));
 
     await expect(
       addPostImage({ url: KEY, type: 'image', postId: 1, user } as never)
-    ).rejects.toThrow(/No post with id 1/);
+    ).rejects.toThrow(/^No post with id 1$/);
+    expect(mocks.readImageUploadObjectHead).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledTimes(1);
   });
 });

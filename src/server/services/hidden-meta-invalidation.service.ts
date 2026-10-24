@@ -4,41 +4,62 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
-type HiddenMetaImage = { url: string; name?: string | null; type?: MediaType | null };
+type HiddenMetaImage = {
+  id: number;
+  url: string;
+  name?: string | null;
+  type?: MediaType | null;
+};
+
+const CACHER_WAIT_MS = 70_000;
+
+/** As a browser sends it: spaces and non-ASCII percent-encoded. That is the CDN's cache key. */
+function asRequested(url: string) {
+  try {
+    return new URL(url).href;
+  } catch {
+    return encodeURI(url);
+  }
+}
 
 /**
  * The CDN urls a client can have requested for this image: the original and every width on the
- * ladder, under both names it is served as (its own name and its key), as `getEdgeUrl` spells them.
+ * ladder, under each name it is served as (its own name, its id as the cards and detail page fall
+ * back to, and its key), as `getEdgeUrl` spells them.
  */
-export function getHiddenMetaPurgeUrls({ url, name, type }: HiddenMetaImage): string[] {
+export function getHiddenMetaPurgeUrls({ id, url, name, type }: HiddenMetaImage): string[] {
   const types = [...new Set([type ?? MediaType.image, MediaType.image])];
-  const names = [...new Set([name ?? undefined, undefined])];
+  const names = [...new Set([name ?? undefined, String(id), undefined])];
   const urls = new Set<string>();
   for (const t of types) {
     for (const n of names) {
-      urls.add(getEdgeUrl(url, { name: n, type: t, original: true }));
-      for (const width of COMMON_IMAGE_WIDTHS) {
-        const optimized = resolveOptimized({ width }) ? true : undefined;
-        for (const anim of [undefined, false]) {
+      for (const anim of [undefined, false]) {
+        urls.add(getEdgeUrl(url, { name: n, type: t, anim, original: true }));
+        for (const width of COMMON_IMAGE_WIDTHS) {
+          const optimized = resolveOptimized({ width }) ? true : undefined;
           urls.add(getEdgeUrl(url, { name: n, type: t, width, anim }));
           urls.add(getEdgeUrl(url, { name: n, type: t, width, anim, optimized }));
         }
       }
     }
   }
-  return [...urls];
+  return [...urls].map(asRequested);
 }
 
 /**
  * Clear an image's cached copies after its owner hides its metadata, so they re-derive under the
  * new setting. Keyed by url, so it also covers other rows that share the url.
  *
- * The order matters: each layer refills from the one after it, so clearing the CDN before the
- * cache service has dropped its copies would let the CDN refill from those copies. Never throws:
- * the caller is the user's save.
+ * Only the delivery-cache bust is awaited: the cache service can take about a minute to purge, so
+ * the rest runs detached from the save. The CDN is purged only after the cache service answers (or
+ * the wait runs out), since the CDN refills from the cache service. Never throws.
  */
 export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
   await bustImageDeliveryMetadataCache(image.url);
+  void purgeCachedCopies(image);
+}
+
+async function purgeCachedCopies(image: HiddenMetaImage) {
   try {
     // Lazy: post.service imports this module, and a static edge would join the image.service cycle.
     const { purgeResizeCache } = await import('~/server/services/image.service');
@@ -47,7 +68,7 @@ export async function invalidateHiddenImageMetadata(image: HiddenMetaImage) {
     await purgeResizeCache({
       url: image.url,
       scope: 'hidden-meta-orphans',
-      waitForInvalidation: true,
+      waitForInvalidationMs: CACHER_WAIT_MS,
     });
     await purgeCache({ urls: getHiddenMetaPurgeUrls(image) });
   } catch (error) {

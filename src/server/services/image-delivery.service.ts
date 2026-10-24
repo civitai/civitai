@@ -4,6 +4,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { Prisma } from '@prisma/client';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -62,6 +63,7 @@ const getImageDeliveryMetadataCacheKey = (url: string) =>
   `${REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${url}` as `${typeof REDIS_KEYS.CACHES.IMAGE_DELIVERY_METADATA}:${string}`;
 
 const BUST_ATTEMPTS = 2;
+const BUST_DEADLINE_MS = 1_000;
 
 // Omit rows whose source is known gone (ingestion NotFound) so the caller checks the original
 // itself instead of converting it. Rows with hideMeta stay: "no row" makes the caller serve
@@ -71,8 +73,8 @@ const deliverableSource = Prisma.sql`NOT (
 )`;
 
 // Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves. Several rows can share a url (a copied image keeps its source's url); if any of them
-// hides its metadata, the shared bytes must be served hidden, hence the ORDER BY.
+// resolves. Several rows can share a url (a copied image keeps its source's url); rows sharing a
+// url resolve to the most restrictive setting, hence the ORDER BY.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
   const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
       SELECT
@@ -170,15 +172,24 @@ export const getCachedImageDeliveryMetadata = async (
 
 // Bust a single url key. Hard delete (not a staleness reset): because we never cache
 // negatives, deleting the key means the next read re-queries and re-populates the fresh row.
-// Called by `updatePostImage` when `hideMeta` changes. Retried once, then logged; never throws,
-// because the TTL still bounds a missed bust and the caller is a user's save.
+// Called by `updatePostImage` when `hideMeta` changes, inside the user's save: so it is bounded by
+// one deadline across both attempts, and it never throws (the TTL still bounds a missed bust).
 export const bustImageDeliveryMetadataCache = async (url: string) => {
   const key = getImageDeliveryMetadataCacheKey(url);
-  let lastError: unknown;
+  const deadline = Date.now() + BUST_DEADLINE_MS;
+  const timedOut = new Error(`bust timed out after ${BUST_DEADLINE_MS}ms`);
+  let lastError: unknown = timedOut;
   for (let attempt = 1; attempt <= BUST_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
     try {
-      await redis.del(key);
-      return;
+      const deleted = await withTimeoutFallback(
+        redis.del(key).then(() => true),
+        remaining,
+        false
+      );
+      if (deleted) return;
+      lastError = timedOut;
     } catch (error) {
       lastError = error;
     }
@@ -190,7 +201,6 @@ export const bustImageDeliveryMetadataCache = async (url: string) => {
     name: 'image-delivery-metadata-bust',
     message: 'image-delivery metadata cache bust failed after retry',
     imageKey: url,
-    attempts: BUST_ATTEMPTS,
     error: safeError(lastError),
   }).catch(() => {
     // swallow — best effort logging

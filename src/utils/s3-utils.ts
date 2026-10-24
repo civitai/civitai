@@ -217,17 +217,19 @@ export async function uploadImageBufferToStore(
 }
 
 /**
- * Server-side: the bytes stored under an image key, read from the image upload bucket directly
- * rather than through the image CDN.
+ * Server-side: the first bytes stored under an image key, read from the image upload bucket
+ * directly rather than through the image CDN. Capped by a Range request, and read with the
+ * retry-free probe client so SDK backoff cannot outlast `timeoutMs`.
  */
-export async function readImageUploadObject(
+export async function readImageUploadObjectHead(
   key: string,
-  { timeoutMs = 30_000 }: { timeoutMs?: number } = {}
+  { maxBytes, timeoutMs = 30_000 }: { maxBytes: number; timeoutMs?: number }
 ): Promise<Uint8Array> {
-  const { s3, bucket } = await getImageUploadBackend();
-  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }), {
-    abortSignal: AbortSignal.timeout(timeoutMs),
-  });
+  const { s3, bucket } = await getImageUploadProbeBackend();
+  const response = await s3.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${maxBytes - 1}` }),
+    { abortSignal: AbortSignal.timeout(timeoutMs) }
+  );
   if (!response.Body) throw new Error('image upload object has no body');
   return response.Body.transformToByteArray();
 }
