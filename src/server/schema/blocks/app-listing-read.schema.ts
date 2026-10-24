@@ -661,6 +661,12 @@ export const listListingForksSchema = z.object({
 });
 export type ListListingForksInput = z.infer<typeof listListingForksSchema>;
 
+/** `appListings.startFork` — the PARENT listing to fork. Nothing else: the server picks the rest. */
+export const startForkSchema = z.object({ listingId: z.string().min(1).max(64) });
+
+/** `appListings.getForkSession` — the fork slug the App Assistant page was sent to. */
+export const getForkSessionSchema = z.object({ forkSlug: z.string().min(3).max(40) });
+
 /** One fork in a parent's fork list — only what the list renders. */
 export type ListingForkItem = { id: string; slug: string; name: string };
 

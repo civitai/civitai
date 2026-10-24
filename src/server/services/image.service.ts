@@ -376,9 +376,13 @@ export async function purgeResizeCache({
   url,
   scope = 'all',
   retractPublicBlobs = false,
+  waitForInvalidationMs,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
+  /** Wait up to this long for the service to answer, for a caller that must purge the CDN after it.
+   *  Running out of time is expected for a slow purge and logged as info. Still never throws. */
+  waitForInvalidationMs?: number;
 } & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
@@ -458,7 +462,7 @@ export async function purgeResizeCache({
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
     }
 
-    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
+    const invalidation = fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?${query}`, {
       method: 'POST',
       headers,
       // Never follow a redirect while carrying the shared secret. `fetch` strips Authorization and
@@ -467,7 +471,7 @@ export async function purgeResizeCache({
       // 202/400/401, so a redirect here is already anomalous — fail instead of chasing it.
       redirect: 'error',
       // Invalidation must not slow down the delete flow.
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(waitForInvalidationMs ?? 2000),
     })
       .then((res) => {
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
@@ -491,10 +495,15 @@ export async function purgeResizeCache({
         }
       })
       .catch((err) => {
+        const expectedTimeout =
+          waitForInvalidationMs !== undefined &&
+          (err as Error | undefined)?.name === 'TimeoutError';
         logToAxiom({
-          type: 'warning',
+          type: expectedTimeout ? 'info' : 'warning',
           name: 'image-cacher-invalidate',
-          message: 'image-cacher invalidate failed',
+          message: expectedTimeout
+            ? 'image-cacher invalidate still running at the wait deadline'
+            : 'image-cacher invalidate failed',
           imageKey: url,
           scope,
           error: safeError(err),
@@ -502,6 +511,7 @@ export async function purgeResizeCache({
           // swallow — best effort logging
         });
       });
+    if (waitForInvalidationMs !== undefined) await invalidation;
   }
 }
 
@@ -1404,18 +1414,26 @@ async function markImageScanSubmitFailure({
   imageId,
   status,
   error,
+  retryAfter,
 }: {
   dbClient: { $executeRaw: typeof dbWrite.$executeRaw };
   imageId: number;
   status?: number;
   error: unknown;
+  /** Seconds from a 429's Retry-After. */
+  retryAfter?: number;
 }) {
   const reason = extractSubmitErrorMessage(error);
-  const failureClass =
-    !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
-      ? ImageScanFailureClass.Permanent
-      : classifyImageScanFailure({ reason, failureType: 'send-fail' });
+  // A 429 is the orchestrator asking us to wait, not a failed attempt: it must not spend the
+  // retry ceilings, and the cron's cooldown starts after the wait it asked for.
+  const rateLimited = status === 429;
+  const failureClass = rateLimited
+    ? ImageScanFailureClass.Transient
+    : !!status && PERMANENT_SUBMIT_STATUSES.includes(status)
+    ? ImageScanFailureClass.Permanent
+    : classifyImageScanFailure({ reason, failureType: 'send-fail' });
   const isPermanent = failureClass === ImageScanFailureClass.Permanent;
+  const scanRequestedAt = new Date(Date.now() + (rateLimited ? retryAfter ?? 0 : 0) * 1000);
 
   const errorJson = JSON.stringify({
     failureType: 'send-fail',
@@ -1433,15 +1451,23 @@ async function markImageScanSubmitFailure({
         WHEN ${isPermanent}::boolean THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
         ELSE "ingestion"
       END,
-      "scanRequestedAt" = ${new Date()},
+      "scanRequestedAt" = ${scanRequestedAt},
       "scanJobs" = jsonb_set(
         jsonb_set(
           COALESCE("scanJobs", '{}'),
           '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${rateLimited ? 0 : 1})
         ),
         '{error}',
-        ${errorJson}::jsonb
+        -- A run of 429s keeps the moment it started, which bounds the cron's age-out exemption.
+        ${errorJson}::jsonb || CASE WHEN ${rateLimited}::boolean THEN jsonb_build_object(
+          'firstRateLimitedAt',
+          COALESCE(
+            CASE WHEN "scanJobs"->'error'->>'responseStatus' = '429'
+              THEN "scanJobs"->'error'->'firstRateLimitedAt' END,
+            to_jsonb(${new Date().toISOString()}::text)
+          )
+        ) ELSE '{}'::jsonb END
       )
     WHERE id = ${imageId}
       -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
@@ -1508,6 +1534,7 @@ export const ingestImage = async ({
     data: workflowResponse,
     error: submitError,
     status: submitStatus,
+    retryAfter,
     useImageScanning,
   } = await createImageIngestionRequest({
     imageId: id,
@@ -1524,6 +1551,7 @@ export const ingestImage = async ({
       imageId: id,
       status: submitStatus,
       error: submitError,
+      retryAfter,
     });
     // createImageIngestionRequest's own log carries neither mediaType nor failureClass.
     logToAxiom({

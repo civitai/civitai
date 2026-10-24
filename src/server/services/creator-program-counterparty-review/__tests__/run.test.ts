@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import {
-  BANKABLE_EARNING_PREDICATE_SQL,
-  RECEIVED_FROM_USER_SQL,
+  platformPaidFromUsersSql,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
@@ -254,23 +254,22 @@ describe('counterpartyPairsSql', () => {
   // Pinned whole: a wrong join key or a dropped filter still returns plausible pairs.
   it('pairs bankable Buzz a creator received from a user with what the creator sent that user', () => {
     const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
-    const since = "'2026-11-01 00:00:00'";
+    const since = "toDateTime('2026-11-01 00:00:00', 'UTC')";
+    const earnedSince = `date >= ${since} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
     expect(squash(counterpartyPairsSql({ since: BANKABLE_CUTOVER, min: 1234.9 }))).toBe(
       squash(`
         SELECT received.recipient AS userId, received.payer AS counterpartyId,
           received.amount AS received, sent.amount AS sent
-        FROM (
-          SELECT toAccountId AS recipient, fromAccountId AS payer, sum(amount) AS amount
-          FROM buzzTransactions
-          WHERE date >= ${since}
-            AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})
-            AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-          GROUP BY recipient, payer
-        ) AS received
+        FROM (${receivedFromUsersSql(earnedSince)}) AS received
         INNER JOIN (
-          SELECT fromAccountId AS sender, toAccountId AS payee, sum(amount) AS amount
-          FROM buzzTransactions
-          WHERE date >= ${since} AND ${SENT_TO_USER_SQL}
+          SELECT sender, payee, sum(amount) AS amount FROM (
+            SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+              toInt64(amount) AS amount
+            FROM buzzTransactions
+            WHERE date >= ${since} AND ${SENT_TO_USER_SQL}
+            UNION ALL
+            SELECT payer, recipient, amount FROM (${platformPaidFromUsersSql(earnedSince)})
+          )
           GROUP BY sender, payee
         ) AS sent ON sent.sender = received.recipient AND sent.payee = received.payer
         WHERE received.payer != received.recipient

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
@@ -101,8 +101,9 @@ function fireQueueTrigger(row: ImageRow) {
   store.queue.push({ entityId: row.id, createdAt: tick() });
 }
 
-const { mockDeleteImages } = vi.hoisted(() => ({
+const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(async (ids: number[]) => ids.map((id) => ({ id }))),
+  mockPersistDeletedTakedowns: vi.fn(async () => ({ sent: 0, queued: 0, skipped: 0 })),
 }));
 
 // `isProd` alone is overridden; the rest of the module is spread so nothing else in the graph
@@ -148,6 +149,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   deleteImages: mockDeleteImages,
 }));
+vi.mock('~/server/services/cdn-access.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  persistDeletedTakedowns: mockPersistDeletedTakedowns,
+}));
 
 const { createImage, handleBlockImages } = await import('~/server/services/image.service');
 const { trackModActivity } = await import('~/server/services/moderator.service');
@@ -173,6 +178,38 @@ function retractionFor(id: number) {
   if (!call) return undefined;
   return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
+
+/** The images persisted after their delete. */
+const persisted = () =>
+  new Set(
+    (mockPersistDeletedTakedowns.mock.calls as unknown as [{ id: number }[]][]).flatMap(([rows]) =>
+      rows.map((r) => r.id)
+    )
+  );
+function persistFor(id: number) {
+  if (retractionFor(id) === undefined) return undefined;
+  return persisted().has(id);
+}
+
+/**
+ * 🔴 Persist follows retraction and nothing else: every case below that does not retract is also a
+ * case that must not persist, and a persist must come after the delete it follows.
+ */
+afterEach(() => {
+  for (const call of mockDeleteImages.mock.calls) {
+    const ids = call[0] as number[];
+    const retracts = Boolean(
+      (call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
+    );
+    for (const id of ids)
+      expect(persisted().has(id), `persist differs from retraction for image ${id}`).toBe(retracts);
+  }
+  if (mockPersistDeletedTakedowns.mock.calls.length)
+    expect(
+      Math.min(...mockPersistDeletedTakedowns.mock.invocationCallOrder),
+      'persist ran before the storage delete'
+    ).toBeGreaterThan(Math.min(...mockDeleteImages.mock.invocationCallOrder));
+});
 
 function image(id: number, userId: number, over: Partial<ImageRow> = {}): ImageRow {
   return {
@@ -477,6 +514,7 @@ describe('who can reach blob retraction, driven through the real block writers',
     await removeBlockedImages.run(ctx).result;
 
     expect(retractionFor(1), 'a moderator takedown stopped asking for retraction').toBe(true);
+    expect(persistFor(1), 'a moderator takedown stopped asking for persist').toBe(true);
   });
 
   // The main app's own single-image TOS takedown. It is `moderatorProcedure`-gated and per-image,
@@ -512,6 +550,7 @@ describe('who can reach blob retraction, driven through the real block writers',
       retractionFor(11),
       'the main-app TOS takedown stopped asking for retraction — check it still records ModActivity'
     ).toBe(true);
+    expect(persistFor(11), 'the main-app TOS takedown stopped asking for persist').toBe(true);
   });
 
   // 🔴 F1. The uploader owns `Image.metadata`, so anything the retraction decision reads out of it
@@ -939,6 +978,8 @@ describe('who can reach blob retraction, driven through the real block writers',
 
     expect(retractionFor(7)).toBe(true);
     expect(retractionFor(8)).toBe(false);
+    expect(persistFor(7)).toBe(true);
+    expect(persistFor(8)).toBe(false);
     // The purge itself is unchanged: both are still hard-deleted on schedule.
     expect(store.queue, 'the queue was not drained').toEqual([]);
   });

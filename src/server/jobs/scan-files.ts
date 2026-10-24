@@ -83,8 +83,15 @@ const SCAN_FALLBACK_RUN_BUDGET_MS = 180 * 1000;
  * Timestamp that re-opens a file for retry in ~SCAN_FALLBACK_RETRY_BACKOFF_MINUTES.
  * See SCAN_FALLBACK_RETRY_BACKOFF_MINUTES for why it is expressed this way.
  */
-const retryBackoffAt = () =>
-  dayjs().subtract(1, 'day').add(SCAN_FALLBACK_RETRY_BACKOFF_MINUTES, 'minute').toDate();
+const retryBackoffAt = (minutes = SCAN_FALLBACK_RETRY_BACKOFF_MINUTES) =>
+  dayjs().subtract(1, 'day').add(minutes, 'minute').toDate();
+
+/**
+ * A 429 asks us to come back after Retry-After, which is usually sooner than the failure back-off.
+ * Floored at one cron tick, since the job cannot retry sooner anyway.
+ */
+const rateLimitBackoffMinutes = (retryAfterSeconds: number) =>
+  Math.min(SCAN_FALLBACK_RETRY_BACKOFF_MINUTES, Math.max(5, Math.ceil(retryAfterSeconds / 60)));
 
 // Job key kept as `scan-files-fallback` for operational continuity with the
 // pre-deprecation cron registry. The legacy `scan-files` job was removed when
@@ -204,8 +211,19 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
           // stale-cutoff window on its own is too long for the transient
           // orchestrator outages that are the common case for submission
           // failures (vs. workflow-level failures handled by D4).
+          const retryAfter =
+            err instanceof ModelFileScanSubmissionError && err.status === 429
+              ? err.retryAfter
+              : undefined;
           await dbWrite.modelFile
-            .update({ where: { id: file.id }, data: { scanRequestedAt: retryBackoffAt() } })
+            .update({
+              where: { id: file.id },
+              data: {
+                scanRequestedAt: retryBackoffAt(
+                  retryAfter ? rateLimitBackoffMinutes(retryAfter) : undefined
+                ),
+              },
+            })
             .catch(() => null);
         }
         logToAxiom(

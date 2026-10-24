@@ -78,16 +78,13 @@ vi.mock('~/server/services/vault.service', () => ({
 }));
 vi.mock('~/server/services/referral.service', () => ({
   bindReferralCodeForUser: (...args: unknown[]) => mockBindReferralCodeForUser(...args),
-  recordMembershipPaymentReward: (...args: unknown[]) =>
-    mockRecordMembershipPaymentReward(...args),
+  recordMembershipPaymentReward: (...args: unknown[]) => mockRecordMembershipPaymentReward(...args),
 }));
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
-  recordSubscriptionAttribution: (...args: unknown[]) =>
-    mockRecordSubscriptionAttribution(...args),
+  recordSubscriptionAttribution: (...args: unknown[]) => mockRecordSubscriptionAttribution(...args),
 }));
 vi.mock('~/server/utils/subscription.utils', () => ({
-  invalidateSubscriptionCaches: (...args: unknown[]) =>
-    mockInvalidateSubscriptionCaches(...args),
+  invalidateSubscriptionCaches: (...args: unknown[]) => mockInvalidateSubscriptionCaches(...args),
 }));
 vi.mock('~/server/prom/client', () => ({
   userUpdateCounter: { inc: vi.fn() },
@@ -129,6 +126,8 @@ function fakeInvoice(over: Partial<Stripe.Invoice> = {}): Stripe.Invoice {
       data: [
         {
           price: { id: PRICE_ID, product: PRODUCT_ID },
+          amount: 1000,
+          proration: false,
           period: { start: 1_700_000_000, end: 1_702_592_000 },
         },
       ],
@@ -197,8 +196,6 @@ describe('manageInvoicePaid — zero-gross skip (🟡-2)', () => {
       fakeInvoice({ billing_reason: 'subscription_cycle', amount_paid: 0, total: 0 })
     );
     expect(mockRecordSubscriptionAttribution).not.toHaveBeenCalled();
-    // The Buzz grant still fires — only the attribution write is skipped.
-    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('amount_paid == 0 but total > 0 → still no row (amount_paid is the basis)', async () => {
@@ -234,7 +231,9 @@ describe('manageInvoicePaid — Checkout-Session race fallback is scoped to subs
   // Returns a stripe-client mock whose checkout.sessions.list is a tracked spy
   // resolving to `sessionMeta`, so a test can assert whether the fallback ran.
   function stripeClientWithSession(sessionMeta: Record<string, string> | undefined) {
-    const list = vi.fn().mockResolvedValue({ data: sessionMeta ? [{ metadata: sessionMeta }] : [] });
+    const list = vi
+      .fn()
+      .mockResolvedValue({ data: sessionMeta ? [{ metadata: sessionMeta }] : [] });
     mockGetServerStripe.mockResolvedValue({
       checkout: { sessions: { list } },
       charges: { retrieve: vi.fn() },
@@ -279,5 +278,99 @@ describe('manageInvoicePaid — Checkout-Session race fallback is scoped to subs
     expect(list).toHaveBeenCalledTimes(1);
     // Membership still provisioned.
     expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('manageInvoicePaid — membership bonus needs a billed month', () => {
+  const planLine = (amount: number, proration = false) => ({
+    price: { id: PRICE_ID, product: PRODUCT_ID },
+    amount,
+    proration,
+  });
+  const trialPush = {
+    billing_reason: 'subscription_update',
+    amount_paid: 0,
+    total: 0,
+    total_discount_amounts: [],
+    discount: null,
+    lines: { data: [planLine(0)] },
+  } as unknown as Partial<Stripe.Invoice>;
+
+  it('a trial_end push ($0, nothing discounted) grants no membership bonus', async () => {
+    await manageInvoicePaid(fakeInvoice(trialPush));
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(0);
+  });
+
+  it('a trial_end push pays the referrer no membership reward', async () => {
+    await manageInvoicePaid(fakeInvoice(trialPush));
+    expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(0);
+  });
+
+  it('a gifted month ($0 because a 100%-off coupon took the full price) keeps the bonus', async () => {
+    await manageInvoicePaid(
+      fakeInvoice({
+        billing_reason: 'subscription_cycle',
+        amount_paid: 0,
+        total: 0,
+        discount: { coupon: { id: 'gift_gift_1_m1', percent_off: 100 } },
+        total_discount_amounts: [{ amount: 1000, discount: 'di_gift' }],
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockCreateBuzzTransaction.mock.calls[0][0].amount).toBe(5000);
+    expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(1);
+  });
+
+  it('a renewal paid from customer balance (amount_paid 0, total > 0) keeps the bonus', async () => {
+    await manageInvoicePaid(fakeInvoice({ amount_paid: 0, total: 1000 }));
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(1);
+  });
+
+  it('a renewal whose proration credit takes the total below zero keeps the bonus', async () => {
+    await manageInvoicePaid(
+      fakeInvoice({
+        amount_paid: 0,
+        total: -1500,
+        lines: { data: [planLine(1000), planLine(-2500, true)] },
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('a plan switch invoice grants the renewed plan, whichever tier product sorts first', async () => {
+    mockDbRead.product.findMany.mockResolvedValue([
+      { id: 'prod_bronze', metadata: { tier: 'bronze', monthlyBuzz: 1000, buzzType: 'yellow' } },
+      { id: PRODUCT_ID, metadata: { tier: 'gold', monthlyBuzz: 5000, buzzType: 'yellow' } },
+    ]);
+    const bronzeCredit = {
+      price: { id: 'price_bronze', product: 'prod_bronze' },
+      amount: -500,
+      proration: true,
+    };
+    await manageInvoicePaid(
+      fakeInvoice({
+        total: 4700,
+        amount_paid: 4700,
+        lines: { data: [bronzeCredit, planLine(200, true), planLine(5000)] },
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockCreateBuzzTransaction.mock.calls[0][0].amount).toBe(5000);
+    expect(mockRecordMembershipPaymentReward.mock.calls[0][0].tier).toBe('gold');
+  });
+
+  // Support: a proration-only invoice (a mid-cycle plan change invoiced at once) used to grant a
+  // full month's bonus. It sells no month, so it grants nothing.
+  it('a proration-only invoice grants no bonus and writes no attribution', async () => {
+    await manageInvoicePaid(
+      fakeInvoice({
+        total: 700,
+        amount_paid: 700,
+        lines: { data: [planLine(700, true)] },
+      } as unknown as Partial<Stripe.Invoice>)
+    );
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(0);
+    expect(mockRecordSubscriptionAttribution).toHaveBeenCalledTimes(0);
   });
 });

@@ -4,8 +4,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
     displayName: 'Avatar blocked',
-    category: NotificationCategory.System,
-    toggleable: false,
+    category: NotificationCategory.Moderation,
     prepareMessage: () => ({
       message: 'Your avatar has been blocked.',
       url: '/user/account',
@@ -25,6 +24,7 @@ export const imageNotifications = createNotificationProcessor({
           'profile-picture-blocked' "type",
           '{}'::jsonb "details"
         FROM data
+        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" uns WHERE uns."userId" = data."userId" AND uns.type = 'profile-picture-blocked')
     `,
   },
 });

@@ -82,6 +82,16 @@ export const appendItemHistory = (
   history: [...(meta.history ?? []), entry].slice(-CREATOR_SHOP_HISTORY_LIMIT),
 });
 
+/**
+ * The version of an item a moderator is reviewing: the time of its last history entry. Every edit
+ * that changes anything appends one, so a verdict pinned to it can't approve artwork, a price or
+ * text the moderator never saw. A refund run's entry moves it too, which costs a reload.
+ */
+export const shopItemReviewVersion = (meta?: CosmeticShopItemMeta | null) => {
+  const history = meta?.history;
+  return history?.length ? history[history.length - 1].at : null;
+};
+
 // Rejection is terminal on every path a creator can reach — edit, list, archive,
 // restore. Only a moderator re-reviewing it can bring one back, so the message
 // says where that happens rather than implying nothing can. One wording, so each

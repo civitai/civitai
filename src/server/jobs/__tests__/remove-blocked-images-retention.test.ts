@@ -225,6 +225,18 @@ vi.mock('~/server/services/image.service', () => ({
   deleteImages: mockDeleteImages,
 }));
 vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(async () => []) }));
+// Hand-listed for the same reason: the takedown sync loads the CDN and edge-url clients, which
+// this file's env and logging stubs cannot boot. The job imports only this from it.
+const { mockPersistDeletedTakedowns } = vi.hoisted(() => ({
+  mockPersistDeletedTakedowns: vi.fn(async (_rows: { id: number }[]) => ({
+    sent: 0,
+    queued: 0,
+    skipped: 0,
+  })),
+}));
+vi.mock('~/server/services/cdn-access.service', () => ({
+  persistDeletedTakedowns: mockPersistDeletedTakedowns,
+}));
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
@@ -367,6 +379,13 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
     expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
+    // And persists exactly the rows it deleted, after deleting them.
+    expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
+      await mockDeleteImages.mock.results.at(-1)?.value
+    );
+    expect(mockPersistDeletedTakedowns.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      mockDeleteImages.mock.invocationCallOrder.at(-1) as number
+    );
   });
 
   // The option is the third argument; `updatePosts` is the second and must keep its value.

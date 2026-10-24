@@ -31,8 +31,10 @@ describe('text-scan flag notifications', () => {
     expect(m?.url).toBe('/bounties/9');
   });
 
-  it('is registered and cannot be toggled off', () => {
-    expect(notificationProcessors['model-text-scan-flagged']?.toggleable).toBe(false);
-    expect(notificationProcessors['bounty-text-scan-flagged']?.toggleable).toBe(false);
+  it('is registered as toggleable Moderation notifications', () => {
+    for (const type of ['model-text-scan-flagged', 'bounty-text-scan-flagged']) {
+      expect(notificationProcessors[type]?.toggleable).not.toBe(false);
+      expect(notificationProcessors[type]?.category).toBe('Moderation');
+    }
   });
 });
