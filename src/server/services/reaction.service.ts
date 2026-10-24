@@ -12,6 +12,52 @@ import {
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+
+// A second toggle on the same reaction this soon after the first is a client double-fire, not a
+// decision: double-fires land under 50 ms, while people clicking twice mostly take 300 ms or more.
+export const REVERSE_TOGGLE_WINDOW_MS = 150;
+const TOGGLE_GUARD_TIMEOUT_MS = 100;
+
+let toggleGuardErrorLogged = false;
+// False when another toggle on this tuple arrived inside the window. Fails open: a Redis error or
+// stall lets the toggle through, and the unique key and `deleted > 0` still prevent double counts.
+async function claimToggleWindow({
+  entityType,
+  entityId,
+  userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) {
+  const key =
+    `${REDIS_KEYS.REACTION.TOGGLE_GUARD}:${userId}:${entityType}:${entityId}:${reaction}` as const;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const set = await Promise.race([
+      redis.set(key, '1', { NX: true, PX: REVERSE_TOGGLE_WINDOW_MS }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timed out after ${TOGGLE_GUARD_TIMEOUT_MS}ms`)),
+          TOGGLE_GUARD_TIMEOUT_MS
+        );
+      }),
+    ]);
+    toggleGuardErrorLogged = false;
+    return set !== null;
+  } catch (error) {
+    // Logged once until the guard works again: while Redis is down every toggle lands here.
+    if (!toggleGuardErrorLogged)
+      logToAxiom({
+        type: 'error',
+        name: 'reaction-toggle-guard',
+        message: (error as Error).message,
+      }).catch(() => undefined);
+    toggleGuardErrorLogged = true;
+    return true;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export const toggleReaction = async ({
   entityType,
@@ -26,6 +72,8 @@ export const toggleReaction = async ({
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
 }) => {
+  if (!(await claimToggleWindow({ entityType, entityId, userId, reaction }))) return 'ignored';
+
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     const deleted = await deleteReaction({ entityType, entityId, userId, reaction });

@@ -1,5 +1,5 @@
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { cloneElement, useCallback, useMemo } from 'react';
+import { cloneElement, useCallback, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -96,22 +96,27 @@ export function ReactionButton({
   }, [hasReactedInitial, hasReacted, initialCount]);
 
   const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
+  // `isPending` lands a render late, so two clicks in one frame both passed it.
+  const inFlight = useRef(false);
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    const revert = () => toggleReaction({ entityType, entityId, reaction, value: hasReacted });
     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
     mutate(
+      { entityId, entityType, reaction },
       {
-        entityId,
-        entityType,
-        reaction,
+        onSuccess(result) {
+          if (result === 'ignored') revert();
+        },
+        onError: revert,
+        onSettled() {
+          inFlight.current = false;
+        },
       }
-      // {
-      //   onError(error) {
-      //     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-      //   },
-      // }
     );
   };
 
