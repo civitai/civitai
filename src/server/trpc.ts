@@ -31,8 +31,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import type { FeatureAccess, FeatureAccessContext } from '~/server/services/feature-flags.service';
+import { getFeatureFlags, getRequestFeatureFlag } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
 import {
   assertSessionOrFullUserKey,
@@ -394,10 +394,17 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
   });
 });
 
+// The one flag a guard names. Behind `trpcFlagGuardPerRequest`, only that flag is evaluated, once
+// per HTTP request; off, it is read out of the whole registry. Same answer per key either way.
+function guardFlagEnabled(ctx: FeatureAccessContext, flag: keyof FeatureAccess): boolean {
+  if (getRequestFeatureFlag(ctx, 'trpcFlagGuardPerRequest'))
+    return getRequestFeatureFlag(ctx, flag);
+  return !!getFeatureFlags(ctx)[flag];
+}
+
 export const isFlagProtected = (flag: keyof FeatureAccess) =>
   middleware(({ ctx, next }) => {
-    const features = getFeatureFlags(ctx);
-    if (!features[flag]) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });
@@ -434,13 +441,12 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  * for a curated non-mod cohort WITHOUT granting the mod REVIEW/curation powers
  * (those stay on `moderatorProcedure`).
  *
- * Fail-CLOSED: `getFeatureFlags` resolves `appBlocksAuthor` from Flipt when the
+ * Fail-CLOSED: the flag evaluator resolves `appBlocksAuthor` from Flipt when the
  * flag exists, else falls back to the static `availability: ['mod']` — so an
  * absent flag / Flipt-down yields mods only, never open-to-all.
  */
 const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
-  const features = getFeatureFlags(ctx);
-  if (!features.appBlocksAuthor)
+  if (!guardFlagEnabled(ctx, 'appBlocksAuthor'))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You do not have access to Apps authoring',
