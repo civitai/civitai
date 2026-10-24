@@ -152,8 +152,18 @@ export default ModEndpoint(
     try {
       await pickWinnersForChallenge(details, config);
     } catch (e) {
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-review-replay',
+        challengeId,
+        step: 'winners',
+        message: (e as Error).message,
+      }).catch(() => undefined);
       // Left Active on purpose: the hourly completion job's recovery picks it up from here.
-      return res.status(500).json({ error: (e as Error).message, status: ChallengeStatus.Active });
+      return res.status(500).json({
+        error: 'Winner pick failed; the error is logged to Axiom as challenge-review-replay',
+        status: ChallengeStatus.Active,
+      });
     }
 
     const [after] = await dbRead.$queryRaw<{ status: string }[]>`
