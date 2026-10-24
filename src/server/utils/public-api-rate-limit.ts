@@ -64,7 +64,7 @@ export type PublicApiRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-async function checkFixedWindow(
+export async function checkFixedWindow(
   key: string,
   max: number,
   windowSeconds: number

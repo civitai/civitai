@@ -162,6 +162,12 @@ const featureFlags = createFeatureFlags({
   // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
   // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
   shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // Browser site search through /api/search, which applies the viewer's and the site's rules on
+  // the server, instead of straight to Meilisearch with a per-viewer token. OFF = the direct path,
+  // unchanged, so this is also the kill switch while the proxy's load on the API pods is unknown.
+  // Ramp it by percentage in Flipt. `[]`, not `['mod']`: nobody gets it until the Flipt flag
+  // exists (see `reactionCountsUnknown`).
+  siteSearchProxy: { availability: [], fliptKey: 'site-search-proxy' },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
