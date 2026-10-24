@@ -10,17 +10,22 @@
 @layer shell {
   /* ---- Badge: Mantine `Badge` with civitai's theme defaults (`variant="light"`, `radius="sm"`) */
 
+  /* Defaults declared, not `var()` fallbacks: custom properties inherit into descendants. */
   .badge {
-    --badge-height: var(--ds-badge-height, 20px);
+    --ds-badge-height: 20px;
+    --ds-badge-fz: 11px;
+    --ds-badge-px: 10px;
+    --ds-badge-radius: var(--mantine-radius-sm);
+    --badge-height: var(--ds-badge-height);
     /* `globals.css` gives every `.mantine-Badge-root` this. */
     flex-shrink: 0;
     -webkit-tap-highlight-color: transparent;
-    font-size: var(--ds-badge-fz, 11px);
-    border-radius: var(--ds-badge-radius, var(--mantine-radius-sm));
+    font-size: var(--ds-badge-fz);
+    border-radius: var(--ds-badge-radius);
     height: var(--badge-height);
     line-height: calc(var(--badge-height) - calc(0.125rem * var(--mantine-scale)));
     text-decoration: none;
-    padding: 0 var(--ds-badge-px, 10px);
+    padding: 0 var(--ds-badge-px);
     display: inline-grid;
     align-items: center;
     justify-content: center;
@@ -60,7 +65,7 @@
 
   .badgeSm {
     --ds-badge-height: 18px;
-    --ds-badge-fz: 10px;
+    --ds-badge-fz: 11px;
     --ds-badge-px: 8px;
   }
 
@@ -144,10 +149,12 @@
   /* ---- Text: Mantine `Text` (`size`, `c="dimmed"`) and `Title order={1}` */
 
   .text {
+    --ds-text-fz: var(--mantine-font-size-md);
+    --ds-text-lh: var(--mantine-line-height-md);
     -webkit-tap-highlight-color: transparent;
     text-decoration: none;
-    font-size: var(--ds-text-fz, var(--mantine-font-size-md));
-    line-height: var(--ds-text-lh, var(--mantine-line-height-md));
+    font-size: var(--ds-text-fz);
+    line-height: var(--ds-text-lh);
     font-weight: normal;
     margin: 0;
     padding: 0;

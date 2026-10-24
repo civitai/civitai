@@ -5,12 +5,19 @@
    as they did over Mantine's layered rules. An unlayered utility would beat them. */
 
 @layer shell {
+  /* Each default is declared here, not left to a `var()` fallback: custom properties inherit, so a
+     nested stack or group would otherwise take its ancestor's gap. */
+  .stack,
+  .group {
+    --ds-gap: var(--mantine-spacing-md);
+  }
+
   .stack {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    gap: var(--ds-gap, var(--mantine-spacing-md));
+    gap: var(--ds-gap);
   }
 
   .group {
@@ -19,7 +26,7 @@
     flex-wrap: wrap;
     justify-content: flex-start;
     align-items: center;
-    gap: var(--ds-gap, var(--mantine-spacing-md));
+    gap: var(--ds-gap);
   }
 
   .nowrap {
