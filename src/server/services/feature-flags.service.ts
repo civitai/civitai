@@ -167,6 +167,17 @@ const featureFlags = createFeatureFlags({
   // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
   // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
   shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // SSR-CPU kill switch for the model page's above-the-fold UI (title row, version buttons, the
+  // version-details grid, action row and Details rows, trigger words, AIR, hash): the same
+  // `@civitai/components` markup as `shellDesignSystemMarkup`, in place of per-instance Mantine
+  // `Badge`/`Button`/`Tooltip`/`Group`/`Grid`/`Code`. Menus, popovers, hover cards and the accordion
+  // stay on Mantine. `[]`: dark and fails CLOSED, so the `model-page-design-system-markup` rollout
+  // is the only on-switch. The shared components it touches take a `ds` prop from the model page,
+  // so the flag changes nothing anywhere else.
+  modelPageDesignSystemMarkup: {
+    availability: [],
+    fliptKey: 'model-page-design-system-markup',
+  },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
