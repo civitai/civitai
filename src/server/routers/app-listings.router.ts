@@ -1240,6 +1240,20 @@ export const appListingsRouter = router({
   }),
 
   /**
+   * OWNER: each of the caller's on-platform apps' document-store usage (production namespace)
+   * against the per-app limits — the card on the `/apps/build` workbench. Owned apps only;
+   * a collaborator seat does not reach it (see the service header). `{ status: 'disabled' }`
+   * when document storage is off, so the client never shows a zero it did not measure.
+   */
+  getMyDocStoreUsage: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+    const { getMyDocStoreUsage } = await import(
+      '~/server/services/apps/doc-store-owner-usage.service'
+    );
+    return getMyDocStoreUsage(ctx.user.id);
+  }),
+
+  /**
    * AUTHOR: the authoring context for ONE listing — the read behind the canonical
    * `/apps/listing/<appListingId>/edit` page.
    *

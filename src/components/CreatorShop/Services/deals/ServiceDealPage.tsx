@@ -106,14 +106,25 @@ function DisputeWindow({ deal, until }: { deal: ServiceDealView; until: Date }) 
 }
 
 export function ServiceDealPage({ dealId }: { dealId: number }) {
-  const { deal, isLoading } = useServiceDeal(dealId);
+  const { deal, isLoading, error, refetch } = useServiceDeal(dealId);
   const features = useFeatureFlags();
-  const state = dealPageState({ isLoading, hasDeal: !!deal });
+  const state = dealPageState({ isLoading, hasDeal: !!deal, error });
 
   if (state.kind === 'loading')
     return (
       <Center py="xl">
         <Loader />
+      </Center>
+    );
+  if (state.kind === 'error')
+    return (
+      <Center py="xl">
+        <Stack align="center" gap="sm">
+          <Text>This deal could not be loaded.</Text>
+          <Button variant="default" onClick={() => refetch()}>
+            Try again
+          </Button>
+        </Stack>
       </Center>
     );
   if (state.kind === 'notFound' || !deal) return <NotFound />;

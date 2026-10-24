@@ -302,6 +302,8 @@ describe('only the doc-store module touches the appdata tables', () => {
   // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
   // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
   const EXPECTED = [
+    // The owner-usage router suite seeds usage_app rows with known byte and doc counts.
+    'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.

@@ -169,6 +169,26 @@ export class RunnerPreview {
     });
   }
 
+  /**
+   * Opens the preview again outside any reply: the page's Restart preview (`PreviewRestarter`), after
+   * a reload found none live. The same start as `start_preview`, for the same block, scopes and auth
+   * `openAfterDevServer` reads (the manifest in the directory the running dev server was started
+   * in, else the app's own key). Throws `DevServerNotRunningError` when the sandbox says its dev
+   * server is not running, as there would be nothing to show.
+   */
+  reopen(signal?: AbortSignal): Promise<StartedPreview> {
+    return this.#serial(async () => {
+      const app = this.#deps.sandbox.active;
+      if (this.#closed || !app || app.state !== 'running') throw new DevServerNotRunningError();
+      const status = await this.#deps.sandbox.call('dev_server_status', {}, signal);
+      const parsed = status.isError ? null : parseJson(status.text);
+      if ((parsed as { running?: unknown } | null)?.running !== true)
+        throw new DevServerNotRunningError();
+      const manifest = await this.#manifest(projectDirOf(parsed) ?? app.app, signal);
+      return this.#start(manifest, signal);
+    });
+  }
+
   /** What the start needs from the project's manifest; `{}` (the app's own key) when unreadable. */
   async #manifest(dir: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     let read: { text: string; isError: boolean };
@@ -252,7 +272,8 @@ export class RunnerPreview {
         signal
       );
     } catch (error) {
-      throw new Error(refusalMessage(error));
+      // The refusal itself goes with it: the page's Restart preview answers by its status.
+      throw new Error(refusalMessage(error), { cause: error });
     }
     const close = (sessionId: string) =>
       tunnels.stop(sessionId).catch((error) => this.#warn(error, 'closing a preview failed'));
@@ -367,6 +388,22 @@ export class RunnerPreview {
       { runId: this.#deps.runId, err: (error as Error)?.name, status, code },
       message
     );
+  }
+}
+
+/** The dev server is not running (or the sandbox would not say), so a preview would show nothing. */
+export class DevServerNotRunningError extends Error {
+  override name = 'DevServerNotRunningError';
+  constructor() {
+    super('The dev server is not running.');
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

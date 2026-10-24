@@ -53,11 +53,14 @@ describe('getModelsRaw official-checkpoint pin ids', () => {
 
   it('drops excludeModelIds', async () => {
     const q = await feedSql({ excludeModelIds: [10, 11] });
-    expect(bound(q, /mm\."modelId" != ALL\(\$(\d+)::int\[\]\)/g)).toEqual([[10, 11]]);
+    // One scalar parameter per id: this query path sent a bound array as a string (22P02 in prod).
+    expect(bound(q, /mm\."modelId" NOT IN \(\$(\d+),\$\d+\)/g)).toEqual([10]);
+    expect(bound(q, /mm\."modelId" NOT IN \(\$\d+,\$(\d+)\)/g)).toEqual([11]);
+    expect(q.values.some(Array.isArray)).toBe(false);
   });
 
   it('adds no id predicate without either', async () => {
     const { text } = await feedSql({});
-    expect(text).not.toMatch(/mm\."modelId" (IN|!= ALL)/);
+    expect(text).not.toMatch(/mm\."modelId" (NOT )?IN/);
   });
 });

@@ -1266,30 +1266,126 @@ describe('revokeMembershipGift', () => {
 });
 
 describe('keepGiftMembership', () => {
-  it('clears a scheduled cancellation when a payment method exists', async () => {
+  const card = (id: string) => ({ id, object: 'payment_method', type: 'card' });
+  const bankDebit = (id: string) => ({ id, object: 'payment_method', type: 'us_bank_account' });
+  const cancellingSub = (fields: Record<string, unknown>) => ({
+    ...stripeSub(),
+    cancel_at: dayjs().add(30, 'day').unix(),
+    default_payment_method: null,
+    default_source: null,
+    ...fields,
+  });
+
+  beforeEach(() => {
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
-    mockStripe.subscriptions.retrieve.mockResolvedValue({
-      ...stripeSub(),
-      cancel_at: dayjs().add(30, 'day').unix(),
-      customer: { id: 'cus_1', invoice_settings: { default_payment_method: 'pm_1' } },
-    });
+    mockStripe.checkout.sessions.create.mockResolvedValue({ url: 'https://checkout.stripe/setup' });
+  });
+
+  it('clears a scheduled cancellation and leaves a card default alone', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: { id: 'cus_1', invoice_settings: { default_payment_method: card('pm_card') } },
+      })
+    );
 
     expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
     const [, args] = mockStripe.subscriptions.update.mock.calls[0];
-    expect(args.cancel_at).toBe('');
-    expect(args.cancel_at_period_end).toBe(false);
+    expect(args).toEqual({ cancel_at: '', cancel_at_period_end: false });
   });
 
-  it('returns a billing-portal url when there is no way to pay', async () => {
-    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
-    mockStripe.subscriptions.retrieve.mockResolvedValue({
-      ...stripeSub(),
-      cancel_at: dayjs().add(30, 'day').unix(),
-      customer: { id: 'cus_1', invoice_settings: {} },
+  it('bills the customer default card when the subscription default is a bank debit', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        default_payment_method: bankDebit('pm_ach'),
+        customer: { id: 'cus_1', invoice_settings: { default_payment_method: card('pm_card') } },
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.default_payment_method).toBe('pm_card');
+    expect(args.cancel_at).toBe('');
+  });
+
+  it('bills a saved card when the customer default is a bank debit', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+      })
+    );
+    mockStripe.paymentMethods.list.mockResolvedValue({
+      data: [
+        { id: 'pm_expired_card', card: { exp_month: 1, exp_year: 2020 } },
+        { id: 'pm_saved_card', card: { exp_month: 12, exp_year: dayjs().year() + 2 } },
+      ],
     });
 
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    expect(mockStripe.paymentMethods.list.mock.calls[0][0]).toMatchObject({ type: 'card' });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args.default_payment_method).toBe('pm_saved_card');
+  });
+
+  it.each([
+    ['subscription', { default_source: { id: 'card_1', object: 'card' } }],
+    [
+      'customer',
+      {
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: null },
+          default_source: { id: 'src_1', object: 'source', type: 'card' },
+        },
+      },
+    ],
+  ])('keeps a legacy card source on the %s as it is', async (_, fields) => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+        ...fields,
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toEqual({ kept: true });
+    const [, args] = mockStripe.subscriptions.update.mock.calls[0];
+    expect(args).toEqual({ cancel_at: '', cancel_at_period_end: false });
+  });
+
+  it('keeps the cancellation and offers a card-only setup when only a bank debit is on file', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: bankDebit('pm_ach') },
+        },
+      })
+    );
+
     const result = await keepGiftMembership({ userId: 2 });
-    expect(result).toMatchObject({ kept: false, portalUrl: 'https://portal.stripe/x' });
+    expect(result).toEqual({ kept: false, portalUrl: 'https://checkout.stripe/setup' });
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    const [setup] = mockStripe.checkout.sessions.create.mock.calls[0];
+    expect(setup).toMatchObject({ mode: 'setup', payment_method_types: ['card'] });
+  });
+
+  it('treats a legacy bank-account source as not a card', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancellingSub({
+        customer: {
+          id: 'cus_1',
+          invoice_settings: { default_payment_method: null },
+          default_source: { id: 'ba_1', object: 'bank_account' },
+        },
+      })
+    );
+
+    expect(await keepGiftMembership({ userId: 2 })).toMatchObject({ kept: false });
     expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
   });
 });

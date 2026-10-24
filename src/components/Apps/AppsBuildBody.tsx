@@ -16,6 +16,7 @@ import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/li
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
+import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
   resolveAppsBuildSettled,
   resolveAppsBuildState,
@@ -268,6 +269,7 @@ export function AppsBuildBody() {
           </Button>
         </Group>
         <MyAppsBody />
+        <AppDocStoreUsageCard />
         <BuildResourcesStrip onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );

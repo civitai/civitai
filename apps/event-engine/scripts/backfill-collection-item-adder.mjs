@@ -27,6 +27,11 @@
  * would miss the daily views and the metric jobs. A partial match stops the run for a human.
  * An advisory lock keeps a second run (another ledger) from touching the same rows.
  *
+ * Rollback needs the ledger's `ids`, because a backfilled row looks like a bookmark made after the
+ * fix. For the ids still present: set addedById back to NULL and insert a -1 per row, as the
+ * handler would for a delete. Not the ledger's `events` negated: rows deleted since were already
+ * uncounted by CDC.
+ *
  * Events are one per (entityType, entityId, metricType, userId) per batch, valued at the row
  * count, and each batch has its own createdAt second, never in the past. A real event for the same
  * user and entity in the same second shares the raw table's key; the running sum still counts
@@ -281,7 +286,17 @@ async function main() {
       // Epoch seconds: a DateTime string would be read in the server's timezone.
       events = buildEvents(rows, stampMs / 1000);
       const { rows: txid } = await client.query('SELECT txid_current()::text AS xid');
-      ledger.write({ lo, hi, phase: 'pending', entity: ENTITY, xid: txid[0].xid, stampMs, events });
+      const ids = rows.map((r) => r.id);
+      ledger.write({
+        lo,
+        hi,
+        phase: 'pending',
+        entity: ENTITY,
+        xid: txid[0].xid,
+        stampMs,
+        ids,
+        events,
+      });
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
