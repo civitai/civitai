@@ -52,7 +52,8 @@ const evidenceHoldSql = () => {
   const slice = (from: string, to: string) => {
     const start = migration.indexOf(from);
     const end = migration.indexOf(to, start);
-    if (start < 0 || end < 0) throw new Error(`evidence_hold migration has no ${from}`);
+    if (start < 0) throw new Error(`evidence_hold migration has no ${from}`);
+    if (end < 0) throw new Error(`evidence_hold migration has no ${to} after ${from}`);
     return migration.slice(start, end + to.length);
   };
   return [
@@ -552,6 +553,7 @@ describe('post takedowns', () => {
 
   it('a csam-hold removal is not released by an earlier report about other images', async () => {
     await verifiedReport([900]);
+    await releaseMarkers();
     await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -576,6 +578,7 @@ describe('post takedowns', () => {
 
   it('a mature-underage violation unpublish is not released by an earlier report about other images', async () => {
     await verifiedReport([900]);
+    await releaseMarkers();
     await modelCascade(5, MOD, 'UnpublishedViolation', 'mature-underage');
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -810,6 +813,7 @@ describe('report coverage', () => {
   it('a takedown of a reported owner that no verified report covers is deny only', async () => {
     await image(1);
     await verifiedReport([2]);
+    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     await reconcileCdnAccess();
@@ -838,6 +842,7 @@ describe('report coverage', () => {
     await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details)
               VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'))`;
     await verifiedReport([1], OTHER_OWNER);
+    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
@@ -883,6 +888,7 @@ describe('report coverage', () => {
   it('a failed coverage lookup releases nothing', async () => {
     await image(1);
     await verifiedReport([1]);
+    await releaseMarkers();
     await moderatorBlock(1);
     await pg.db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN images TO "imagesAway"`);
     try {
@@ -897,6 +903,7 @@ describe('report coverage', () => {
     await image(1);
     await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt", details, images)
               VALUES (${OWNER}, now(), jsonb_build_object(${EVIDENCE_VERIFIED_KEY}::text, '2026-10-20T12:00:00Z'), '{"id": 1}'::jsonb)`;
+    await releaseMarkers();
     await moderatorBlock(1);
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['deny']);
@@ -985,6 +992,7 @@ describe('moderator-app deletes', () => {
   it('releases a delete flagged for CSAM review only once a verified report covers it', async () => {
     await queueDelete(1, GONE, { csamReview: true });
     await verifiedReport([900]);
+    await releaseMarkers();
     await syncCdnAccess();
     await reconcileCdnAccess();
     expect(callsFor(GONE)).toEqual(['deny']);
