@@ -313,6 +313,7 @@ describe('moveStorylineChapter within the run', () => {
     expect(await move(5, 2, { userId: 4, isModerator: true })).toEqual({
       chapterIds: [1, 2, 5, 3, 4, 6],
     });
+    await expectWellFormed([1, 2, 5, 3, 4, 6]);
   });
 });
 
@@ -357,6 +358,8 @@ describe('moveStorylineChapter refusals', () => {
     await refuses(() => move(3, 5), notInOneLine);
     await refuses(() => move(5, 3), notInOneLine);
     await refuses(() => move(4, 5), notInOneLine);
+    // Each chapter it touches has one way in, so nothing goes straight after the rejoined 4.
+    await refuses(() => move(6, 4), notInOneLine);
   });
 
   it('refuses chapter 1', async () => {

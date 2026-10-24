@@ -1457,11 +1457,10 @@ export async function moveStorylineChapter({
     const parentsOf = new Map<number, number[]>();
     const childrenOf = new Map<number, number[]>();
     for (const e of edgeRows) {
-      parentsOf.set(e.chapterId, [...(parentsOf.get(e.chapterId) ?? []), e.parentChapterId]);
-      childrenOf.set(e.parentChapterId, [
-        ...(childrenOf.get(e.parentChapterId) ?? []),
-        e.chapterId,
-      ]);
+      if (!parentsOf.has(e.chapterId)) parentsOf.set(e.chapterId, []);
+      if (!childrenOf.has(e.parentChapterId)) childrenOf.set(e.parentChapterId, []);
+      parentsOf.get(e.chapterId)?.push(e.parentChapterId);
+      childrenOf.get(e.parentChapterId)?.push(e.chapterId);
     }
     const parents = (id: number) => parentsOf.get(id) ?? [];
     const children = (id: number) => childrenOf.get(id) ?? [];
