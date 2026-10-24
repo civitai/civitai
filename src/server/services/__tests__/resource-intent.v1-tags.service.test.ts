@@ -620,6 +620,57 @@ describe('served v1_tags cache hit', () => {
   });
 });
 
+/**
+ * `tagIndex()` with ecosystem 1 renamed to a real base model whose add-on gate holds a sibling. Krea 2
+ * Turbo's ecosystem has two records, Krea 2 and Krea 2 Turbo, and generates checkpoints and LoRAs but
+ * no embeddings: so its LORA and Checkpoint gates are both names, its TextualInversion gate its own.
+ */
+function kreaIndex(): TagIndex {
+  const index = tagIndex();
+  index.ecosystems[1] = { ...index.ecosystems[1], name: 'Krea 2 Turbo' };
+  return index;
+}
+
+describe('🔴 the base-model filter of the v1 list, by kind and by who chose the ecosystem', () => {
+  beforeEach(() => mockTagResolve.mockResolvedValue(held(kreaIndex())));
+  const filterOf = (call = 0) =>
+    (mockV1Candidates.mock.calls[call][0] as { baseModel: unknown }).baseModel;
+
+  it("an add-on request's caller baseModel gates by its compatible base models, not its exact name", async () => {
+    mockStage1();
+    const result = await getResourceIntent({ prompt: PROMPT, baseModel: 'Krea 2 Turbo' }, V1);
+    expect(result).toMatchObject({ arm: 'v1_tags', v1Fallback: false });
+    expect(mockV1Candidates).toHaveBeenCalledTimes(1);
+    const filter = filterOf();
+    expect(filter).toBeInstanceOf(Map);
+    const byType = filter as Map<string, string[]>;
+    expect([...(byType.get('LORA') ?? [])].sort()).toEqual(['Krea 2', 'Krea 2 Turbo']);
+    expect(byType.get('TextualInversion')).toEqual(['Krea 2 Turbo']);
+  });
+
+  it('a checkpoint request with a caller baseModel still lists that exact name', async () => {
+    const input = { prompt: 'zephyr', baseModel: 'Krea 2 Turbo', kind: 'checkpoint' as const };
+    await getResourceIntent(input, { ...CTX, v1Shadow: true });
+    await flush();
+    expect(shadowRow()).toMatchObject({
+      kind: 'checkpoint',
+      shadowArm: 'v1_tags',
+      shadowReason: '',
+    });
+    expect(mockV1Candidates.mock.calls[0][0]).toMatchObject({ modelTypes: ['Checkpoint'] });
+    expect(filterOf()).toBe('Krea 2 Turbo');
+  });
+
+  it('a tag-chosen add-on ecosystem gates by the same compatible base models (unchanged)', async () => {
+    mockStage1();
+    const result = await getResourceIntent({ prompt: 'lantern' }, V1);
+    expect(result.ecosystems?.[0]).toBe('Krea 2 Turbo');
+    const byType = filterOf() as Map<string, string[]>;
+    expect([...(byType.get('LORA') ?? [])].sort()).toEqual(['Krea 2', 'Krea 2 Turbo']);
+    expect(byType.get('TextualInversion')).toEqual(['Krea 2 Turbo']);
+  });
+});
+
 describe('🔴 the shadow beside another arm', () => {
   const SHADOW = { ...CTX, poolMerge: true, v1Shadow: true };
 
