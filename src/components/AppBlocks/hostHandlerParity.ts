@@ -254,8 +254,7 @@ export const INVENTORY = {
     errorKeys: null,
     IframeHost:
       'activity report for the App Assistant preview keep-alive, read off the window there; fire-and-forget, nothing to do on a model slot',
-    PageBlockHost:
-      'activity report read off the window by the App Assistant preview keep-alive (previewKeepAlive.ts), not by the host; fire-and-forget, no reply',
+    PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   REQUEST_SIGN_IN: {
