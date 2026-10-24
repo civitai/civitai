@@ -876,7 +876,8 @@ export const getModelsRaw = async ({
   if (!!ids?.length) AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(ids, ',')})`);
   if (onlyModelIds?.length)
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(onlyModelIds, ',')})`);
-  if (excludeModelIds?.length) AND.push(Prisma.sql`mm."modelId" != ALL(${excludeModelIds}::int[])`);
+  if (excludeModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" NOT IN (${Prisma.join(excludeModelIds, ',')})`);
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
