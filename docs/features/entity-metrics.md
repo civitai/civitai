@@ -126,8 +126,10 @@ duplication is not by design; it’s an unfinished migration.
 
 Exception: `collectedCount` on Model, Article and Post (and Collection `itemCount`) is a ClickHouse
 sum written back into the Postgres `*Metric` row by the metric jobs, fed by the `CollectionItem` CDC
-handler. A row counts only if `addedById` is set. Bookmarks were once written without it;
-`apps/event-engine/scripts/backfill-collection-item-adder.mjs` repairs the bookmark rows, one entity per run.
+handler. A row counts only if `addedById` is set. Bookmarks were once written without it, but rows
+older than the November 2025 seed of the events table are counted anyway, by the seed's bulk events.
+`apps/event-engine/scripts/backfill-collection-item-adder.mjs` sets the missing adders and then
+reconciles each touched entity to its row count, one entity per run; a +1 per row would double count.
 
 Image is the one that reads tips from ClickHouse on the hot feed, and ClickHouse
 image tips also feed **search ranking** (`stats.tippedAmountCountAllTime:desc`)
