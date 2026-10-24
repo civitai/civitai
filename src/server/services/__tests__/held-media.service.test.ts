@@ -1,73 +1,58 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * Which images the main app's `/api/mod/held-media` serves past the public CDN. The legal-hold read
- * fails closed for deletion, counting an unreadable hold or a missing marker view as held; served
- * that way here it would open every image, so this pins the opposite direction.
+ * The main app's `/api/mod/held-media` runs the shared `heldImageSql` against real SQL here. The
+ * fragment's full set of cases is pinned in the moderator app's `held-media-eligibility.pglite.test.ts`;
+ * this pins that the main app runs it on the image it was asked for.
  */
 
-const findUnique = dbMock.dbRead.image.findUnique;
-const getAccountLegalHold = vi.hoisted(() => vi.fn());
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-vi.mock('~/server/services/legal-hold.service', () => ({ getAccountLegalHold }));
+let pg: PGlite;
 
-import { getHeldMedia } from '~/server/services/held-media.service';
-
-const row = (needsReview: string | null) => ({
-  url: 'key',
-  type: 'image',
-  mimeType: null,
-  needsReview,
-  userId: 9,
+beforeAll(async () => {
+  pg = new PGlite();
+  await pg.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, url text NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
+      "mimeType" text, "needsReview" text, "blockedFor" text, "userId" int NOT NULL
+    );
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb);
+    CREATE VIEW "EvidenceHeldUser" AS SELECT 0 AS "userId" WHERE false;
+    INSERT INTO "Image" (id, url, type, "mimeType", "needsReview", "userId") VALUES
+      (1, 'key-1', 'video', 'video/mp4', 'csam', 301),
+      (2, 'key-2', 'image', NULL, NULL, 302),
+      (3, 'key-3', 'image', NULL, NULL, 303),
+      (4, 'key-4', 'image', NULL, NULL, 301);
+    INSERT INTO "CsamReport" ("userId", details) VALUES (303, '{}');
+  `);
 });
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  dbMock.dbRead.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    return (await pg.query(flat.text, flat.values as unknown[])).rows;
+  }) as never);
+});
+
+const { getHeldMedia } = await import('~/server/services/held-media.service');
 
 describe('getHeldMedia', () => {
-  it('serves an image in the CSAM queue without reading the hold', async () => {
-    findUnique.mockResolvedValue(row('csam'));
-    expect(await getHeldMedia(1)).toEqual({ url: 'key', type: 'image', mimeType: null });
-    expect(getAccountLegalHold).not.toHaveBeenCalled();
+  it('serves the image asked for when it is flagged or its owner is reported', async () => {
+    expect(await getHeldMedia(1)).toEqual({ url: 'key-1', type: 'video', mimeType: 'video/mp4' });
+    expect(await getHeldMedia(3)).toEqual({ url: 'key-3', type: 'image', mimeType: null });
   });
 
-  it.each([
-    ['a report', { legs: ['report'], markerView: true }],
-    ['a reported image', { legs: ['reported-image'], markerView: false }],
-    ['a read hold marker', { legs: ['hold-marker'], markerView: true }],
-  ])('serves an image whose owner is held by %s', async (_name, hold) => {
-    findUnique.mockResolvedValue(row(null));
-    getAccountLegalHold.mockResolvedValue(hold);
-    expect(await getHeldMedia(1)).not.toBeNull();
-    expect(getAccountLegalHold).toHaveBeenCalledWith(9);
-  });
-
-  it.each([
-    ['no hold', async () => ({ legs: [], markerView: true })],
-    // The fail-closed marker leg: the view is missing, so the hold was assumed, not read.
-    ['an assumed marker hold', async () => ({ legs: ['hold-marker'], markerView: false })],
-    [
-      'an unreadable hold',
-      async () => {
-        throw new Error('db down');
-      },
-    ],
-  ])('refuses an ordinary image with %s', async (_name, hold) => {
-    findUnique.mockResolvedValue(row('minor'));
-    getAccountLegalHold.mockImplementation(hold);
-    expect(await getHeldMedia(1)).toBeNull();
-  });
-
-  it('never treats the placeholder owner as held, though its queued image is served', async () => {
-    findUnique.mockResolvedValue({ ...row(null), userId: -1 });
-    getAccountLegalHold.mockResolvedValue({ legs: ['report'], markerView: true });
-    expect(await getHeldMedia(1)).toBeNull();
-    findUnique.mockResolvedValue({ ...row('csam'), userId: -1 });
-    expect(await getHeldMedia(1)).not.toBeNull();
-  });
-
-  it('refuses a missing image', async () => {
-    findUnique.mockResolvedValue(null);
-    expect(await getHeldMedia(1)).toBeNull();
+  it('refuses an ordinary image, another image of a flagged one’s owner, and a missing id', async () => {
+    expect(await getHeldMedia(2)).toBeNull();
+    expect(await getHeldMedia(4)).toBeNull();
+    expect(await getHeldMedia(999)).toBeNull();
   });
 });

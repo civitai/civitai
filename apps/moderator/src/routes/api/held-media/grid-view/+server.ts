@@ -9,8 +9,10 @@ import { HELD_MEDIA_PAGE, recordHeldGridView } from '$lib/server/held-media';
 export const POST: RequestHandler = async ({ request, locals }) => {
   if (!locals.user) error(403, 'Not signed in.');
   requireAccess(locals.user, HELD_MEDIA_PAGE);
-  const count = heldGridCount(await request.json().catch(() => null));
-  if (count == null) error(400, 'Bad count.');
-  recordHeldGridView(locals.user.id, count);
+  const grid = heldGridCount(await request.json().catch(() => null));
+  if (!grid) error(400, 'Bad count.');
+  if (grid.clamped)
+    console.warn('[held-media] grid count clamped', { moderatorId: locals.user.id });
+  recordHeldGridView(locals.user.id, grid.count);
   return new Response(null, { status: 204 });
 };

@@ -136,10 +136,10 @@ type BountyEntryModActivity = {
   activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
-/** One CSAM report page of held media; `entityId` is how many items it showed. */
+/** The CSAM report page opened an account's held media; the activity carries how many items. */
 type HeldMediaGridModActivity = {
-  entityType: 'heldMediaGrid';
-  activity: 'heldMedia:grid';
+  entityType: 'user';
+  activity: `heldMedia:grid:${number}`;
 };
 
 type SiteAlertModActivity = {

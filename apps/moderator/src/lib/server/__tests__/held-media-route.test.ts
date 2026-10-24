@@ -26,7 +26,10 @@ const getGetUrl = vi.hoisted(() =>
     key: input.key ?? '',
   }))
 );
-const recordModActivity = vi.hoisted(() => vi.fn(async () => {}));
+const recordModActivity = vi.hoisted(() =>
+  vi.fn(async (_row: { entityType: string | null; entityId: number | null }) => {})
+);
+const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const grants = vi.hoisted(() => ({ paths: new Set<string>(['/images/csam']) }));
 
 vi.mock('$lib/server/db', async () => {
@@ -49,7 +52,7 @@ vi.mock('$lib/server/held-media', async (importOriginal) => ({
 }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
-vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
+vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 
 const { GET } = await import('../../../routes/api/held-media/[imageId]/+server');
 const { POST } = await import('../../../routes/api/held-media/grid-view/+server');
@@ -135,6 +138,7 @@ describe('response', () => {
       'x-content-type-options': 'nosniff',
       'cache-control': 'private, no-store',
       'accept-ranges': 'bytes',
+      'cross-origin-resource-policy': 'same-origin',
       'content-length': '5',
     });
     expect(await res!.text()).toBe('bytes');
@@ -215,6 +219,39 @@ describe('response', () => {
     expect((await call()).res!.headers.get('content-length')).toBeNull();
   });
 
+  it('gives up on a store that has not answered in 30 s, and not on a slow body', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) =>
+            init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+          )
+      );
+      const pending = call();
+      await vi.advanceTimersByTimeAsync(29_000);
+      let settled = false;
+      void pending.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(true);
+      expect((await pending).status).toBe(502);
+
+      // Answered in time: the timer is cleared, so a body still streaming at 30 s is not cut.
+      let signal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (_url: string, init: { signal: AbortSignal }) => {
+        signal = init.signal;
+        return upstream(200, { 'content-type': 'image/jpeg' });
+      });
+      expect((await call()).status).toBe(200);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(signal?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('maps an unreachable store to 502', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNRESET'));
     expect((await call()).status).toBe(502);
@@ -224,27 +261,67 @@ describe('response', () => {
 });
 
 describe('audit', () => {
-  it('records one row per full view, not per grid image or per seek', async () => {
-    await call('/api/held-media/7?view=full');
-    await call('/api/held-media/7?view=full', { range: 'bytes=0-' });
-    await call('/api/held-media/7?view=full', { range: 'bytes=5000-' });
-    await call('/api/held-media/7');
-    expect(recordModActivity.mock.calls).toEqual([
-      [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }],
-      [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }],
+  const serves = () =>
+    logToAxiom.mock.calls.map(([line]) => line).filter((line) => line.name === 'held-media-serve');
+
+  it('logs every response that carries bytes, with who, which image, how much and what range', async () => {
+    await call();
+    fetchMock.mockResolvedValue(
+      upstream(206, {
+        'content-type': 'image/jpeg',
+        'content-range': 'bytes 0-4/100',
+        'content-length': '5',
+      })
+    );
+    await call('/api/held-media/7', { range: 'bytes=0-4' });
+    expect(serves()).toEqual([
+      {
+        name: 'held-media-serve',
+        type: 'info',
+        moderatorId: 42,
+        imageId: 7,
+        status: 200,
+        range: null,
+        bytes: 5,
+      },
+      {
+        name: 'held-media-serve',
+        type: 'info',
+        moderatorId: 42,
+        imageId: 7,
+        status: 206,
+        range: 'bytes=0-4',
+        bytes: 5,
+      },
     ]);
+  });
+
+  it('logs no serve for a response that carries no held bytes', async () => {
+    getHeldMedia.mockResolvedValueOnce(null);
+    await call();
+    fetchMock.mockResolvedValueOnce(upstream(416, { 'content-range': 'bytes */100' }));
+    await call('/api/held-media/7', { range: 'bytes=500-' });
+    fetchMock.mockResolvedValueOnce(upstream(500));
+    await call();
+    expect(serves()).toEqual([]);
+  });
+
+  it('audits every serve from byte 0, whatever the request says it is for, and skips only mid-file ranges', async () => {
+    await call('/api/held-media/7');
+    await call('/api/held-media/7?view=grid');
+    await call('/api/held-media/7', { range: 'bytes=0-1' });
+    await call('/api/held-media/7', { range: 'bytes=2-' });
+    await call('/api/held-media/7', { range: 'bytes=5000-' });
+    const row = [{ userId: 42, entityType: 'image', entityId: 7, activity: 'heldMedia:view' }];
+    expect(recordModActivity.mock.calls).toEqual([row, row, row]);
+    // Every one of the five still left its serve line.
+    expect(serves()).toHaveLength(5);
   });
 
   it('records no view of an image it refused', async () => {
     getHeldMedia.mockResolvedValue(null);
-    await call('/api/held-media/7?view=full');
+    await call();
     expect(recordModActivity).not.toHaveBeenCalled();
-  });
-
-  it('counts one full view for Safari, whose first request is a two-byte probe', async () => {
-    await call('/api/held-media/7?view=full', { range: 'bytes=0-1' });
-    await call('/api/held-media/7?view=full', { range: 'bytes=0-99' });
-    expect(recordModActivity).toHaveBeenCalledTimes(1);
   });
 
   const gridView = async (body: unknown) => {
@@ -273,7 +350,15 @@ describe('audit', () => {
     grants.paths = new Set(['/images/minor']);
     expect(await gridView({ count: 3 })).toBe(403);
     grants.paths = new Set(['/images/csam']);
-    for (const count of [0, -1, 2.5, '3', 100_000]) expect(await gridView({ count })).toBe(400);
+    for (const count of [0, -1, 2.5, '3', null]) expect(await gridView({ count })).toBe(400);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('keeps the grid row of a page too large for the column, clamped', async () => {
+    expect(await gridView({ count: 5_000 })).toBe(204);
+    expect(await gridView({ count: 2 ** 40 })).toBe(204);
+    expect(recordModActivity.mock.calls.map(([row]) => row.entityId)).toEqual([
+      5_000, 2_147_483_647,
+    ]);
   });
 });

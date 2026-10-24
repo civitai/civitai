@@ -4,6 +4,37 @@
  * cannot disagree on what a browser is allowed to render from their origin.
  */
 
+/** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
+const PLACEHOLDER_OWNER_ID = -1;
+
+/**
+ * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
+ * is named on any CsamReport (subject or secondary user) or has an active evidence hold. The one
+ * definition both routes run, as plain SQL so each app wraps it in its own builder.
+ *
+ * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the
+ * placeholder owner, whose content a report naming it would otherwise open. Names the
+ * "EvidenceHeldUser" view, so a database without it fails the statement, which refuses.
+ */
+export function heldImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  const owner = `${image}."userId"`;
+  return `(
+    ${image}."needsReview" = 'csam'
+    OR ${image}."blockedFor" = 'CSAM'
+    OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
+      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
+      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${owner})
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+          AND (hs.details ->> 'secondaryUserId')::bigint = ${owner}
+      )
+      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${owner})
+    ))
+  )`;
+}
+
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot
  *  decode fires the element's `error`, which the grid renders as the placeholder. */
@@ -39,14 +70,10 @@ export function forwardableRange(header: string | null | undefined): string | nu
   return `bytes=${match[1]}-${match[2]}`;
 }
 
-/**
- * Whether this request opens a full view, so it is audited. A video player follows its first request
- * with a range per seek; only the one from byte 0 (or with no range) counts, so one view is one row.
- */
-export function isFullViewOpen(view: string | null | undefined, range: string | null): boolean {
-  if (view !== 'full') return false;
-  // `bytes=0-1` is Safari's probe ahead of its real first request.
-  return range == null || (range.startsWith('bytes=0-') && range !== 'bytes=0-1');
+/** Whether a served request gets its own audit row: every one that starts at byte 0. A video's
+ *  seeks are mid-file ranges of a view already recorded, and only those are skipped. */
+export function isAuditedServe(range: string | null): boolean {
+  return range == null || range.startsWith('bytes=0-');
 }
 
 /** The headers every held-media response carries. `withBody: false` for a response sent empty. */
@@ -61,6 +88,7 @@ export function heldMediaHeaders(
     'x-content-type-options': 'nosniff',
     'cache-control': 'private, no-store',
     'accept-ranges': 'bytes',
+    'cross-origin-resource-policy': 'same-origin',
   };
   const range = upstream.get('content-range');
   if (range) headers['content-range'] = range;
@@ -70,12 +98,66 @@ export function heldMediaHeaders(
   return headers;
 }
 
-const HELD_GRID_MAX = 1000;
+const INT_MAX = 2_147_483_647;
 
-/** The grid's own report of how many held items it showed: one audit row per page, no image ids. */
-export function heldGridCount(body: unknown): number | null {
+/** The grid's own report of how many items it showed, for its one summary row: a positive integer,
+ *  clamped to what the row's int column holds rather than refused. */
+export function heldGridCount(body: unknown): { count: number; clamped: boolean } | null {
   const count = (body as { count?: unknown } | null)?.count;
-  return Number.isInteger(count) && (count as number) > 0 && (count as number) <= HELD_GRID_MAX
-    ? (count as number)
-    : null;
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count <= 0) return null;
+  return { count: Math.min(count, INT_MAX), clamped: count > INT_MAX };
+}
+
+/** The header a refusal carries when the image is not held, as opposed to any other failure. Only
+ *  this answer may send a caller to the public CDN instead. */
+export const NOT_HELD_HEADER = 'x-held-media';
+export const NOT_HELD = 'not-held';
+
+/** Whether a route answer is that explicit not-held refusal, the only case for the CDN. */
+export const isNotHeldAnswer = (res: {
+  status: number;
+  headers: { get(name: string): string | null };
+}) => res.status === 404 && res.headers.get(NOT_HELD_HEADER) === NOT_HELD;
+
+const STORE_HEADERS_TIMEOUT_MS = 30_000;
+
+/** The stored object, forwarding `range`. The store has 30 s to answer; the body then streams for as
+ *  long as `signal` (the client) lasts, so a long video is never cut off by the timer. */
+export async function fetchHeldObject(
+  url: string,
+  range: string | null,
+  signal: AbortSignal
+): Promise<Response> {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), STORE_HEADERS_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      headers: range ? { range } : {},
+      signal: AbortSignal.any([signal, timeout.signal]),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The log line for one response that carries held bytes, written before the first byte leaves.
+ *  `bytes` is the length the store declared for this response, `null` when it sent none. */
+export function heldServeRecord(input: {
+  moderatorId: number;
+  imageId: number;
+  status: number;
+  range: string | null;
+  upstream: { get(name: string): string | null };
+}) {
+  const header = input.upstream.get('content-length');
+  const length = header ? Number(header) : NaN;
+  return {
+    name: 'held-media-serve',
+    type: 'info',
+    moderatorId: input.moderatorId,
+    imageId: input.imageId,
+    status: input.status,
+    range: input.range,
+    bytes: Number.isFinite(length) ? length : null,
+  };
 }

@@ -2,24 +2,32 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
+  fetchHeldObject,
   forwardableRange,
   heldMediaContentType,
   heldMediaHeaders,
-  isFullViewOpen,
+  heldServeRecord,
+  isAuditedServe,
 } from '@civitai/shared/held-media';
 import { requireIdParam } from '$lib/server/api-guard';
-import { getHeldMedia, HELD_MEDIA_PAGE, recordHeldFullView } from '$lib/server/held-media';
+import {
+  getHeldMedia,
+  HELD_MEDIA_PAGE,
+  recordHeldServe,
+  recordHeldView,
+} from '$lib/server/held-media';
 import { getStorage } from '$lib/server/storage';
 
 /**
- * A CSAM-queue image or video, from storage rather than the public CDN, for the review grid
- * (`?view=full` for the full-size view, which is audited per open).
+ * A CSAM-queue image or video, from storage rather than the public CDN, for the review grid and its
+ * full-size view. Every response that carries bytes is logged, and every one from byte 0 audited.
  *
  * The browser names an image id and nothing else: the key comes from this app's own read of the row,
- * and only for an image in the review queue or of a held owner, so this is no general way past the CDN.
+ * and only for an image `heldImageSql` holds, so this is no general way past the CDN.
  */
-export const GET: RequestHandler = async ({ params, locals, request, url }) => {
+export const GET: RequestHandler = async ({ params, locals, request }) => {
   const imageId = requireIdParam(locals, params.imageId, HELD_MEDIA_PAGE, 'image id');
+  // Narrows the type; `requireIdParam` has already refused a request without a user.
   if (!locals.user) error(403, 'Not signed in.');
 
   const media = await getHeldMedia(imageId);
@@ -34,10 +42,7 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
   if (!signed) error(502, 'Could not reach storage.');
 
   const range = forwardableRange(request.headers.get('range'));
-  const upstream = await fetch(signed.url, {
-    headers: range ? { range } : {},
-    signal: request.signal,
-  }).catch((e) => {
+  const upstream = await fetchHeldObject(signed.url, range, request.signal).catch((e) => {
     console.error('[held-media] fetch failed', e);
     return null;
   });
@@ -64,8 +69,16 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
     error(415, 'This video type does not play in a browser.');
   }
 
-  if (isFullViewOpen(url.searchParams.get('view'), range))
-    recordHeldFullView(locals.user.id, imageId);
+  recordHeldServe(
+    heldServeRecord({
+      moderatorId: locals.user.id,
+      imageId,
+      status: upstream.status,
+      range,
+      upstream: upstream.headers,
+    })
+  );
+  if (isAuditedServe(range)) recordHeldView(locals.user.id, imageId);
 
   return new Response(upstream.body, {
     status: upstream.status,

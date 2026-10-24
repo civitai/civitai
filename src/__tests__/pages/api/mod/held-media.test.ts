@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { Writable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `/api/mod/held-media/[imageId]`: the CSAM report page's media from storage, past the public CDN.
@@ -40,6 +41,10 @@ class FakeRes extends Writable {
   statusCode = 200;
   headers: Record<string, string> = {};
   body = '';
+  setHeader(name: string, value: string) {
+    this.headers[name.toLowerCase()] = value;
+    return this;
+  }
   status(code: number) {
     this.statusCode = code;
     return this;
@@ -91,10 +96,55 @@ describe('/api/mod/held-media', () => {
     expect(getHeldMedia).not.toHaveBeenCalled();
   });
 
-  it('refuses an image that is not held, and never touches storage', async () => {
+  it('refuses an image that is not held with the not-held answer, and never touches storage', async () => {
     getHeldMedia.mockResolvedValue(null);
-    expect((await call()).statusCode).toBe(404);
+    const res = await call();
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['x-held-media']).toBe('not-held');
+    expect(res.headers['cache-control']).toBe('private, no-store');
     expect(getGetUrlByKey).not.toHaveBeenCalled();
+  });
+
+  it('refuses a row whose url is not a storage key, as not held', async () => {
+    getHeldMedia.mockResolvedValue({
+      url: 'https://elsewhere.test/x.png',
+      type: 'image',
+      mimeType: null,
+    });
+    const res = await call();
+    expect(res.statusCode).toBe(404);
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+  });
+
+  it('answers a probe for a held image without serving it', async () => {
+    const res = await call({ imageId: '7', probe: '1' });
+    expect(res.statusCode).toBe(204);
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('gives no not-held answer for any other failure, so the page never falls back to the CDN', async () => {
+    fetchMock.mockImplementation(async () => new Response(null, { status: 500 }));
+    const failed = await call();
+    expect(failed.statusCode).toBe(502);
+    expect(failed.headers['x-held-media']).toBeUndefined();
+    fetchMock.mockImplementation(async () => new Response(null, { status: 404 }));
+    const missing = await call();
+    expect(missing.statusCode).toBe(404);
+    expect(missing.headers['x-held-media']).toBeUndefined();
+    getHeldMedia.mockRejectedValueOnce(new Error('db down'));
+    await expect(call()).rejects.toThrow('db down');
+  });
+
+  it('stops reading from the store when the client goes away', async () => {
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (_url: string, init: { signal: AbortSignal }) => {
+      signal = init.signal;
+      return new Response('bytes', { status: 200, headers: { 'content-type': 'image/png' } });
+    });
+    const res = await call();
+    res.emit('close');
+    expect(signal?.aborted).toBe(true);
   });
 
   it('fetches the key from the row, whatever key the request names', async () => {
@@ -175,20 +225,43 @@ describe('/api/mod/held-media', () => {
       await gridView(req, res as unknown as NextApiResponse);
       return res.statusCode;
     };
-    expect(await post({ count: 12, imageIds: [1, 2] })).toBe(204);
-    expect(await post({ count: 0 })).toBe(400);
+    expect(await post({ count: 12, userId: 9, imageIds: [1, 2] })).toBe(204);
+    expect(await post({ count: 5_000, userId: 9 })).toBe(204);
+    expect(await post({ count: 0, userId: 9 })).toBe(400);
+    expect(await post({ count: 12 })).toBe(400);
     flags.csamReports = false;
-    expect(await post({ count: 12 })).toBe(403);
+    expect(await post({ count: 12, userId: 9 })).toBe(403);
     expect(trackModActivity.mock.calls).toEqual([
-      [42, { entityType: 'heldMediaGrid', entityId: 12, activity: 'heldMedia:grid' }],
+      [42, { entityType: 'user', entityId: 9, activity: 'heldMedia:grid:12' }],
+      [42, { entityType: 'user', entityId: 9, activity: 'heldMedia:grid:5000' }],
     ]);
   });
 
-  it('records a full view once, and no grid image', async () => {
-    await call({ imageId: '7', view: 'full' });
-    await call({ imageId: '7' });
-    expect(trackModActivity.mock.calls).toEqual([
-      [42, { entityType: 'image', entityId: 7, activity: 'heldMedia:view' }],
+  it('logs every response that carries bytes, and none for a refusal', async () => {
+    await call();
+    getHeldMedia.mockResolvedValueOnce(null);
+    await call();
+    const serves = loggingMock.logToAxiom.mock.calls
+      .map(([line]: [Record<string, unknown>]) => line)
+      .filter((line: Record<string, unknown>) => line.name === 'held-media-serve');
+    expect(serves).toEqual([
+      {
+        name: 'held-media-serve',
+        type: 'info',
+        moderatorId: 42,
+        imageId: 7,
+        status: 200,
+        range: null,
+        bytes: null,
+      },
     ]);
+  });
+
+  it('audits every serve from byte 0 and skips only mid-file ranges', async () => {
+    await call();
+    await call({ imageId: '7' }, 'bytes=0-1');
+    await call({ imageId: '7' }, 'bytes=2-');
+    const row = [42, { entityType: 'image', entityId: 7, activity: 'heldMedia:view' }];
+    expect(trackModActivity.mock.calls).toEqual([row, row]);
   });
 });

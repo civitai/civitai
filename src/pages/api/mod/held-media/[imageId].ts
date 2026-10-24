@@ -5,10 +5,14 @@ import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import * as z from 'zod';
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
+  fetchHeldObject,
   forwardableRange,
   heldMediaContentType,
   heldMediaHeaders,
-  isFullViewOpen,
+  heldServeRecord,
+  isAuditedServe,
+  NOT_HELD,
+  NOT_HELD_HEADER,
 } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -23,12 +27,15 @@ export const config = { api: { responseLimit: false } };
 const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_483_647) });
 
 /**
- * A CSAM-queue image or video for the CSAM report page, from storage rather than the public CDN.
- * The browser names an image id and nothing else; the key comes from the row, and only for an image
- * in the review queue or of an owner under a legal hold. The moderator app's `/api/held-media` is the
- * same route for its review grid.
+ * A held image or video for the CSAM report page, from storage rather than the public CDN. The
+ * browser names an image id and nothing else; the key comes from the row, and only for an image
+ * `heldImageSql` holds. The moderator app's `/api/held-media` is the same route for its grid.
+ *
+ * `?probe=1` answers eligibility alone (204, or the not-held 404) and serves nothing, so the page can
+ * tell "not held, use the CDN" from any other failure without fetching the file again.
  */
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
+  res.setHeader('cache-control', 'private, no-store');
   if (!getFeatureFlags({ user, req }).csamReports)
     return void res.status(403).json({ error: 'Forbidden' });
 
@@ -37,8 +44,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const { imageId } = parsed.data;
 
   const media = await getHeldMedia(imageId);
-  if (!media || !isProbeableMediaKey(media.url))
+  if (!media || !isProbeableMediaKey(media.url)) {
+    res.setHeader(NOT_HELD_HEADER, NOT_HELD);
     return void res.status(404).json({ error: 'Not available here' });
+  }
+  if (req.query.probe === '1') return void res.status(204).end();
 
   let signedUrl: string;
   try {
@@ -50,13 +60,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   }
 
   const range = forwardableRange(req.headers.range);
+  // The response's close, not the request's: the body parser has consumed the request already.
   const abort = new AbortController();
-  req.on('close', () => abort.abort());
-  const upstream = await fetch(signedUrl, {
-    headers: range ? { range } : {},
-    signal: abort.signal,
-  }).catch((e) => {
-    console.error('[held-media] fetch failed', e);
+  res.on('close', () => abort.abort());
+  const upstream = await fetchHeldObject(signedUrl, range, abort.signal).catch((e) => {
+    if (!abort.signal.aborted) console.error('[held-media] fetch failed', e);
     return null;
   });
   if (!upstream) return void res.status(502).json({ error: 'Could not reach storage' });
@@ -84,17 +92,21 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     return void res.status(415).json({ error: 'This video type does not play in a browser' });
   }
 
-  const view = typeof req.query.view === 'string' ? req.query.view : null;
-  if (isFullViewOpen(view, range)) {
+  logToAxiom(
+    heldServeRecord({
+      moderatorId: user.id,
+      imageId,
+      status: upstream.status,
+      range,
+      upstream: upstream.headers,
+    })
+  ).catch(() => null);
+  if (isAuditedServe(range))
     void trackModActivity(user.id, {
       entityType: 'image',
       entityId: imageId,
       activity: 'heldMedia:view',
     }).catch((e) => console.error('[held-media] audit row failed', e));
-    logToAxiom({ type: 'info', name: 'held-media-view', moderatorId: user.id, imageId }).catch(
-      () => null
-    );
-  }
 
   res.writeHead(upstream.status, heldMediaHeaders(contentType, upstream.headers));
   await pipeline(Readable.fromWeb(upstream.body as NodeReadableStream), res).catch((e) => {

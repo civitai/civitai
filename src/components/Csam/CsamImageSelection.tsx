@@ -15,12 +15,12 @@ import {
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { CsamHeldMedia, useHeldGridReport } from '~/components/Csam/CsamHeldMedia';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { splitLinkedImages } from '~/components/Csam/csam-linked-image-ids';
@@ -59,16 +59,7 @@ export function CsamImageSelection({
     for (const image of linkedImages) store.seedSelected(userId, image.id);
   }, [linkedImages, userId]);
 
-  const shown = images?.length ?? 0;
-  useEffect(() => {
-    if (!shown) return;
-    fetch('/api/mod/held-media/grid-view', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ count: shown }),
-      keepalive: true,
-    }).catch(() => null);
-  }, [userId, shown]);
+  useHeldGridReport(userId, images?.length ?? 0);
 
   const hasSelected = useCsamImageSelectStore(
     useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
@@ -248,7 +239,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     >
       {inView && (
         <>
-          <HeldMedia image={image} onClick={toggleSelected} />
+          <CsamHeldMedia image={image} onClick={toggleSelected} />
           <Checkbox
             checked={checked}
             onChange={toggleSelected}
@@ -263,49 +254,5 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
         </>
       )}
     </MasonryCard>
-  );
-}
-
-/** From storage through `/api/mod/held-media`; the CDN only for an image that route will not serve,
- *  which is one it does not hold. */
-function HeldMedia({ image, onClick }: { image: ModerationImageModel; onClick: () => void }) {
-  const [refused, setRefused] = useState(false);
-  const src = `/api/mod/held-media/${image.id}`;
-  if (refused)
-    return (
-      <EdgeMedia
-        src={image.url}
-        name={image.name ?? image.id.toString()}
-        alt={image.name ?? undefined}
-        type={image.type}
-        width={450}
-        placeholder="empty"
-        style={{ width: '100%' }}
-        onClick={onClick}
-      />
-    );
-  if (image.type === 'video')
-    return (
-      <video
-        src={src}
-        muted
-        playsInline
-        preload="metadata"
-        style={{ width: '100%' }}
-        onClick={onClick}
-        onError={() => setRefused(true)}
-      />
-    );
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={image.name ?? ''}
-      loading="lazy"
-      decoding="async"
-      style={{ width: '100%' }}
-      onClick={onClick}
-      onError={() => setRefused(true)}
-    />
   );
 }
