@@ -676,7 +676,7 @@ export async function persistDeletedTakedowns(
   { budgetMs = DELETE_PERSIST_BUDGET_MS } = {}
 ) {
   const deadline = Date.now() + budgetMs;
-  const totals = { sent: 0, queued: 0, skipped: 0 };
+  const totals = { sent: 0, queued: 0, skipped: 0, notAttempted: 0 };
   await limitConcurrency(
     rows.map(({ id, url }) => async () => {
       try {
@@ -690,13 +690,18 @@ export async function persistDeletedTakedowns(
           totals.skipped++;
           return;
         }
-        if (Date.now() >= deadline) throw new Error('persist budget spent');
+        if (Date.now() >= deadline) {
+          totals.notAttempted++;
+          throw new Error('persist budget spent');
+        }
         await callCdnAccess(url, 'deny', { persist: true, attempts: 1 });
         totals.sent++;
         return;
       } catch (error) {
+        // Per row at warn: the retry is the remedy, and an outage would otherwise be one error per
+        // image. The budget running out is reported once, below.
         await logToAxiom({
-          type: 'error',
+          type: 'warning',
           name: 'takedown-persist-failed',
           message: 'takedown persist failed; retrying once',
           imageIds: [id],
@@ -709,6 +714,14 @@ export async function persistDeletedTakedowns(
     }),
     DELETE_PERSIST_CONCURRENCY
   );
+  if (totals.notAttempted)
+    await logToAxiom({
+      type: 'error',
+      name: 'takedown-persist-budget-spent',
+      message: 'takedown persist budget ran out; the rest were queued for retry without an attempt',
+      notAttempted: totals.notAttempted,
+      budgetMs,
+    }).catch(() => undefined);
   return totals;
 }
 

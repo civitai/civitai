@@ -308,10 +308,11 @@ const retryRows = async () =>
     await sql`SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageCdnPersistRetry'
               ORDER BY "entityId"`
   ).rows as { entityId: number; data: Record<string, unknown> }[];
-const errorLogs = (name: string) =>
+const logsOf = (type: string, name: string) =>
   loggingMock.logToAxiom.mock.calls
     .map((c) => c[0] as Record<string, unknown>)
-    .filter((x) => x.type === 'error' && x.name === name);
+    .filter((x) => x.type === type && x.name === name);
+const errorLogs = (name: string) => logsOf('error', name);
 
 /**
  * 🔴 Every scenario in this file doubles as a negative: a persist goes out only for a url this run
@@ -1410,7 +1411,7 @@ describe('persist after a takedown hard delete', () => {
         { id: 1, url: u(1) },
         { id: 2, url: u(2) },
       ])
-    ).toEqual({ sent: 2, queued: 0, skipped: 0 });
+    ).toEqual({ sent: 2, queued: 0, skipped: 0, notAttempted: 0 });
     expect(calls.map((c) => c.path)).toEqual([
       `/admin/invalidate?imageKey=${u(1)}&persist=true`,
       `/admin/invalidate?imageKey=${u(2)}&persist=true`,
@@ -1433,9 +1434,10 @@ describe('persist after a takedown hard delete', () => {
       queued: 1,
     });
     expect(calls).toHaveLength(1);
-    expect(errorLogs('takedown-persist-failed')).toEqual([
+    expect(logsOf('warning', 'takedown-persist-failed')).toEqual([
       expect.objectContaining({ imageIds: [1], imageKey: u(1) }),
     ]);
+    expect(errorLogs('takedown-persist-budget-spent')).toEqual([]);
     expect(await retryRows()).toEqual([
       { entityId: 1, data: { url: u(1), retract: true, purgeEdge: false } },
     ]);
@@ -1449,8 +1451,15 @@ describe('persist after a takedown hard delete', () => {
       sent: 0,
       queued: 30,
       skipped: 0,
+      notAttempted: 30,
     });
     expect(calls).toEqual([]);
+    // One error for the run, the rows at warn.
+    expect(errorLogs('takedown-persist-budget-spent')).toEqual([
+      expect.objectContaining({ notAttempted: 30 }),
+    ]);
+    expect(errorLogs('takedown-persist-failed')).toEqual([]);
+    expect(logsOf('warning', 'takedown-persist-failed')).toHaveLength(30);
     expect(await retryRows()).toHaveLength(30);
     expect(Date.now() - started).toBeLessThan(5_000);
   });

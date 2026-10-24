@@ -26,7 +26,8 @@ function asRequested(url: string) {
 /**
  * The CDN urls a client can have requested for this image: the original and every width on the
  * ladder, under each name it is served as (its key, its id, which clients use when it has no
- * name, and its own name), as `getEdgeUrl` spells them. Key-named urls come first: they are the ones no owner input shapes.
+ * name, and its own name), as `getEdgeUrl` spells them. Key-named urls come first: they are the
+ * ones no owner input shapes.
  */
 export function getImageEdgePurgeUrls({ url, id, name, type }: ImageEdgePurgeTarget): string[] {
   const types = [...new Set([MediaType.image, type ?? MediaType.image])];
