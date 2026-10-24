@@ -82,10 +82,12 @@ export function recordClusterDeadlineHit(now: number = Date.now()): void {
 export function recordClusterCommandSettle(
   durationMs: number,
   slowThresholdMs: number,
-  now: number = Date.now()
+  now?: number
 ): void {
+  // The clock is read only when a hit is recorded: this runs once per cluster command, and the
+  // common case records nothing.
   if (slowThresholdMs > 0 && durationMs >= slowThresholdMs) {
-    recordClusterDeadlineHit(now);
+    recordClusterDeadlineHit(now ?? Date.now());
   }
 }
 

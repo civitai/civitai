@@ -18,8 +18,9 @@
  * this one only stops the caller waiting and never touches the connection.
  *
  * `ms <= 0` (or falsy) disables the guard — returns the input promise unchanged, no timer. The
- * timer is always cleared in finally() (within `ms`), and Promise.race reaps any late rejection
- * from the orphaned command so it never surfaces as an unhandledRejection.
+ * timer is cleared when the command settles first, and the handler withTimeout keeps on the
+ * command reaps any late rejection from the orphaned command so it never surfaces as an
+ * unhandledRejection.
  *
  * NOTE (2026-07-06): this used to take an optional `onTimeout` hook that instrumentCommands wired
  * to recordClusterDeadlineHit — the self-heal wedge signal was sourced from the deadline REAP. That
@@ -35,8 +36,8 @@ export function withCommandDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /**
  * The generic race behind withCommandDeadline: settle `p`, or reject with `message` after `ms`.
- * `ms <= 0` (or falsy) returns `p` unchanged. The timer is always cleared, and Promise.race keeps
- * a handler on `p`, so a late rejection of the abandoned promise never surfaces as an
+ * `ms <= 0` (or falsy) returns `p` unchanged. The timer is cleared when `p` settles first, and a
+ * handler stays on `p`, so a late rejection of the abandoned promise never surfaces as an
  * unhandledRejection. It does NOT cancel `p` — the underlying work carries on in the background.
  *
  * Also used to bound the self-heal reconnects (a `connect()` that eagerly dials a dead node never
@@ -52,9 +53,13 @@ export function withTimeout<T>(
   onTimeout?: () => void
 ): Promise<T> {
   if (!ms || ms <= 0) return p;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
+  // One promise settled by whichever comes first, rather than Promise.race over a second deadline
+  // promise plus a finally(): this runs once per cluster command, and the race form allocated
+  // several promises and closures per call for the same outcome. The handlers attached to `p`
+  // keep a late rejection of the abandoned command handled, and a settle after the timer fired
+  // is a no-op (a promise settles once).
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
       try {
         onTimeout?.();
       } catch {
@@ -63,8 +68,15 @@ export function withTimeout<T>(
       }
       reject(new Error(message));
     }, ms);
-  });
-  return Promise.race([p, deadline]).finally(() => {
-    if (timer) clearTimeout(timer);
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
   });
 }

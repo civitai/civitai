@@ -74,9 +74,7 @@ function errText(err: unknown): string {
   }
   // Plain object / unknown — best-effort stringify of message-like fields.
   const anyErr = err as { name?: unknown; message?: unknown; code?: unknown };
-  return [anyErr.name, anyErr.code, anyErr.message]
-    .filter((x) => typeof x === 'string')
-    .join(': ');
+  return [anyErr.name, anyErr.code, anyErr.message].filter((x) => typeof x === 'string').join(': ');
 }
 
 /**
@@ -209,6 +207,19 @@ const DEFAULT_ENABLED = true;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_BACKOFF_MS = [50, 150];
 
+/** Fire the onResult hook. Module-level rather than a closure built per call: the guard wraps
+ * every cluster command, and the hook only runs on the rare retried ones. */
+function fireResult(
+  onResult: ClusterRoutingRetryOptions['onResult'],
+  result: ClusterRoutingRetryResult
+) {
+  try {
+    onResult?.(result);
+  } catch {
+    // A broken counter hook must never break the guard.
+  }
+}
+
 /**
  * Run `exec()`. On a TRANSIENT cluster-routing error (isTransientClusterRoutingError), wait a small
  * bounded backoff, fire a best-effort rediscover() NUDGE (fire-and-forget — see below), then retry,
@@ -244,14 +255,6 @@ export async function withClusterRoutingRetry<T>(
   const backoff = options.backoffMs ?? DEFAULT_BACKOFF_MS;
   const sleep = options.sleep ?? defaultSleep;
 
-  const fire = (result: ClusterRoutingRetryResult) => {
-    try {
-      options.onResult?.(result);
-    } catch {
-      // A broken counter hook must never break the guard.
-    }
-  };
-
   let attempt = 0;
   // Total attempts = 1 initial + maxRetries.
   for (;;) {
@@ -259,13 +262,13 @@ export async function withClusterRoutingRetry<T>(
       const value = await exec();
       // recovered === we succeeded on a RETRY (attempt > 0). The initial-attempt happy path is
       // unchanged and uncounted.
-      if (attempt > 0) fire('recovered');
+      if (attempt > 0) fireResult(options.onResult, 'recovered');
       return value;
     } catch (err) {
       // Non-transient OR retries exhausted → preserve today's behavior: re-throw the ORIGINAL.
       if (!isTransientClusterRoutingError(err)) throw err;
       if (attempt >= maxRetries) {
-        fire('exhausted');
+        fireResult(options.onResult, 'exhausted');
         throw err;
       }
 

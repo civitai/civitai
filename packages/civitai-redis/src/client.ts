@@ -12,7 +12,7 @@ import {
   reconnectDelayMs,
   createThrottle,
 } from './cluster-reconnect';
-import { withClusterRoutingRetry } from './cluster-routing-retry';
+import { withClusterRoutingRetry, type ClusterRoutingRetryOptions } from './cluster-routing-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -936,9 +936,11 @@ function parseClusterNodes(fallbackUrl: string): { url: string }[] {
 // this type at COMPILE time instead: see the `redisMetricsBridge` const in
 // `src/server/prom/client.ts`. Adding a field here without publishing it there is a type error.
 export type RedisMetricsBridge = {
+  // `value` is the step, default 1 (prom-client's Gauge signature): a batch of n commands moves
+  // the gauge with ONE inc(labels, n) / dec(labels, n) rather than n calls.
   redisCommandsInflight: {
-    inc: (labels: { client: string }) => void;
-    dec: (labels: { client: string }) => void;
+    inc: (labels: { client: string }, value?: number) => void;
+    dec: (labels: { client: string }, value?: number) => void;
   };
   // NOTE ON SCOPE: this histogram closes when the redis ROUND TRIP closes — inside the command
   // wrapper's done() below. It deliberately does NOT include the packed decode (msgpack unpack,
@@ -1163,27 +1165,35 @@ export interface InstrumentCommandsOptions {
   sysInflightCap?: number;
 }
 
+// The gauge labels, built once: startCommandAccounting runs for every command.
+const CLUSTER_COMMAND_LABELS = { client: 'cluster' } as const;
+const SYS_COMMAND_LABELS = { client: 'sys' } as const;
+
 /**
  * The per-command bookkeeping every instrumented command shares — the ONE place it lives, so a
  * routed command (instrumentCommands) and a pipelined batch (trackClusterCommands) cannot drift.
  * Counts `count` commands as started now, and returns `done`, which settles all of them.
+ *
+ * A batch of `count` is accounted exactly as `count` separate commands: the in-flight gauge and
+ * the local counter move by `count` (in ONE step each, not `count` steps of 1 — the gauge write
+ * hashes its labels every time, and a pipelined multi-key read can be hundreds of keys), and on
+ * settle there are `count` duration samples and `count` slow-settle observations, as before.
  */
 function startCommandAccounting(
   clientLabel: 'cluster' | 'sys',
   count: number,
   slowCommandMs: number
 ): () => void {
-  const labels = { client: clientLabel } as const;
+  const isCluster = clientLabel === 'cluster';
+  const labels = isCluster ? CLUSTER_COMMAND_LABELS : SYS_COMMAND_LABELS;
   // Capture the metric handles ONCE so inc/dec stay balanced even if the app's prom module loads
   // mid-flight (a dec without its inc would drive the gauge negative).
   const metrics = getRedisMetrics();
-  for (let i = 0; i < count; i++) {
-    metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
-    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
-    if (clientLabel === 'cluster') incClusterInflight();
-    else incSysInflight();
-  }
+  metrics?.redisCommandsInflight.inc(labels, count);
+  // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+  // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
+  if (isCluster) incClusterInflight(count);
+  else incSysInflight(count);
   const start = Date.now();
   let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
   return () => {
@@ -1192,20 +1202,22 @@ function startCommandAccounting(
       // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
       // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
       // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
-      // is what keeps the counter accurate post-heal so the watchdog can re-arm.
-      for (let i = 0; i < count; i++) {
-        if (clientLabel === 'cluster') decClusterInflight();
-        else decSysInflight();
-      }
+      // is what keeps the counter accurate post-heal so the watchdog can re-arm. One floored step
+      // of `count` lands where `count` floored steps of 1 would.
+      if (isCluster) decClusterInflight(count);
+      else decSysInflight(count);
       dec = true;
     }
+    metrics?.redisCommandsInflight.dec(labels, count);
+    const seconds = durationMs / 1000;
     for (let i = 0; i < count; i++) {
-      metrics?.redisCommandsInflight.dec(labels);
       // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
       // brotli-decompress on the compress-aware paths), which runs afterwards in
       // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
       // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
-      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // One sample per command: a histogram has no weighted observe, and its count is what the
+      // command-rate panels read.
+      metrics?.redisCommandDuration.observe(labels, seconds);
       // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
       // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
       // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
@@ -1216,9 +1228,40 @@ function startCommandAccounting(
       // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
       // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
       // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
-      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
+      if (isCluster) recordClusterCommandSettle(durationMs, slowCommandMs);
     }
   };
+}
+
+/**
+ * Run `done` when `p` settles, before the caller sees the outcome — `p.finally(done)` with one
+ * promise instead of the three (and three closures) finally() builds. As with finally(), a
+ * throwing `done` rejects the result with its error.
+ */
+function settleThen<T>(p: Promise<T>, done: () => void): Promise<T> {
+  return p.then(
+    (value) => {
+      done();
+      return value;
+    },
+    (err: unknown) => {
+      done();
+      throw err;
+    }
+  );
+}
+
+/**
+ * Call the wrapped node-redis method, turning a SYNCHRONOUS throw into a rejection. Hands back
+ * the method's own promise rather than wrapping it in another: `Promise.resolve` of a native
+ * promise is that promise.
+ */
+function callThrough(fn: (...a: any[]) => any, thisArg: unknown, args: any[]): Promise<any> {
+  try {
+    return Promise.resolve(fn.apply(thisArg, args));
+  } catch (err) {
+    return Promise.reject(err);
+  }
 }
 
 /**
@@ -1245,7 +1288,7 @@ export function trackClusterCommands<T>(
   } catch (err) {
     executed = Promise.reject(err);
   }
-  return withCommandDeadline(executed, deadlineMs).finally(done);
+  return settleThen(withCommandDeadline(executed, deadlineMs), done);
 }
 
 /**
@@ -1301,6 +1344,23 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  // The routing-retry options, built ONCE per client rather than per command (they depend only on
+  // the config above). The two hooks read their targets when they run, as before: the metrics
+  // bridge can be installed after this client is built. Undefined when the guard is off or this
+  // is not the cluster client — the command then runs once with no retry layer, which is what
+  // withClusterRoutingRetry's disabled pass-through did.
+  const routingRetryOptions: ClusterRoutingRetryOptions | undefined =
+    wrapWithDeadline && routingRetryEnabled
+      ? {
+          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here,
+          // resolved once above so instrumentCommands stays testable with injected opts).
+          enabled: true,
+          maxRetries: routingRetryMax,
+          backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
+          rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
+          onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        }
+      : undefined;
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1311,17 +1371,9 @@ export function instrumentCommands(
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
     // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
-    // retry guard below sees it uniformly with an async reject. Defined as a thunk so the routing
-    // guard can re-invoke it for a retry — safe because a transient routing error means the
-    // command NEVER reached a node (no double-execution).
-    const runOnce = () =>
-      new Promise<any>((resolve, reject) => {
-        try {
-          resolve(original.apply(this, args));
-        } catch (err) {
-          reject(err);
-        }
-      });
+    // retry guard below sees it uniformly with an async reject (callThrough). The routing guard
+    // gets it as a thunk so it can re-invoke it for a retry — safe because a transient routing
+    // error means the command NEVER reached a node (no double-execution).
 
     // Retry-after-rediscover for the TRANSIENT cluster-routing throw — CLUSTER client ONLY (the
     // topology-churn 500 wave #2665 doesn't cover; see cluster-routing-retry.ts). Sits AROUND
@@ -1329,21 +1381,13 @@ export function instrumentCommands(
     // attempts are SEQUENTIAL (await), never overlapping, so this is ONE inflight unit regardless
     // of retries (no double-count, done() fires exactly once). The sys client (wrapWithDeadline=
     // false) gets no routing guard. Default-on; the
-    // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch passes runOnce() straight through.
+    // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch runs the command once, unwrapped.
     // The `rediscover` hook is a FIRE-AND-FORGET nudge: triggerTopologyRediscovery returns
     // undefined (it does not await the rediscover promise), so the guard's backoff — not this call —
     // is what gives the in-flight slot-map refresh time to settle before the retry.
-    const executed: Promise<any> = wrapWithDeadline
-      ? withClusterRoutingRetry(runOnce, {
-          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here,
-          // resolved once above so instrumentCommands stays testable with injected opts).
-          enabled: routingRetryEnabled,
-          maxRetries: routingRetryMax,
-          backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
-          rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
-          onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
-        })
-      : runOnce();
+    const executed: Promise<any> = routingRetryOptions
+      ? withClusterRoutingRetry(() => callThrough(original, this, args), routingRetryOptions)
+      : callThrough(original, this, args);
 
     // Bound the cluster command so a never-settling `_execute` still reaches done()
     // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled. The sys
@@ -1373,7 +1417,7 @@ export function instrumentCommands(
           () => sysTimeouts?.recordTimeout()
         )
       : executed;
-    return settled.finally(done);
+    return settleThen(settled, done);
   };
 }
 
