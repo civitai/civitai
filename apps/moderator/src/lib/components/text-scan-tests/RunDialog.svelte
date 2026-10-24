@@ -10,14 +10,12 @@
   let {
     setId,
     prompts,
-    rules,
     label,
     disabled,
     onstarted,
   }: {
     setId: number;
     prompts: string;
-    rules: string;
     label: string;
     disabled: boolean;
     onstarted: () => void;
@@ -57,8 +55,7 @@
 <form method="POST" action="?/quoteRun" use:enhance={quoting.enhance}>
   <input type="hidden" name="setId" value={setId} />
   <input type="hidden" name="prompts" value={prompts} />
-  <input type="hidden" name="rules" value={rules} />
-  <Button type="submit" size="sm" disabled={disabled || quoting.submitting}>
+    <Button type="submit" size="sm" disabled={disabled || quoting.submitting}>
     {quoting.submitting ? 'Estimating…' : label}
   </Button>
 </form>
@@ -84,8 +81,7 @@
       <form method="POST" action="?/startRun" use:enhance={starting.enhance} class="space-y-3">
         <input type="hidden" name="setId" value={setId} />
         <input type="hidden" name="prompts" value={prompts} />
-        <input type="hidden" name="rules" value={rules} />
-        <input type="hidden" name="stamp" value={quote.stamp} />
+                <input type="hidden" name="stamp" value={quote.stamp} />
         {#if starting.error}
           <p class="whitespace-pre-wrap text-sm text-red-300">{starting.error}</p>
         {/if}

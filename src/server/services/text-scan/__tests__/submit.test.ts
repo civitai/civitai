@@ -90,6 +90,14 @@ describe('scanEntity', () => {
     });
   });
 
+  it('skips the retired ModelRules type without submitting a scan', async () => {
+    expect(await scanEntity({ entityType: 'ModelRules', entityId: 7 })).toEqual({
+      status: 'skipped',
+      reason: 'no-profile',
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('skips a missing entity', async () => {
     load.mockResolvedValue(new Map());
     expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({

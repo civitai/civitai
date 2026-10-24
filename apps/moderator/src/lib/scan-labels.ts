@@ -1,3 +1,4 @@
+import type { ScanLabelCard } from '$lib/server/scan-label.service';
 import { z } from 'zod';
 
 export const VOTES_PER_ITEM = 3;
@@ -126,3 +127,8 @@ export type QuotaRow = {
   onRoster: boolean;
   days: { day: string; votes: number; status: QuotaStatus }[];
 };
+
+/** The card as the page gets it: the claim token stands in for every internal id. */
+export function pageCard({ token, url, type, name, width, height, leaseExpiresAt }: ScanLabelCard) {
+  return { token, url, type, name, width, height, leaseExpiresAt };
+}

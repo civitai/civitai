@@ -151,14 +151,15 @@ describe('cleanupTextScanRows on csam holds', () => {
     status: string,
     decidedAt: string | null,
     decidedById: number | null,
-    meta: object
+    meta: object,
+    label = 'csam'
   ) =>
     db.pg.query(
       // The id is the entity id, so `supersededBy` can name a row.
       `INSERT INTO "TextScanHold" ("id","entityType","entityId","label","textHash","text","reason","status",
          "decidedAt","decidedById","meta","updatedAt")
-       VALUES ($1,'Comment',$1,'csam','h','held text','r',$2,$3,$4,$5::jsonb,now())`,
-      [entityId, status, decidedAt, decidedById, JSON.stringify(meta)]
+       VALUES ($1,'Comment',$1,$6,'h','held text','r',$2,$3,$4,$5::jsonb,now())`,
+      [entityId, status, decidedAt, decidedById, JSON.stringify(meta), label]
     );
   const held = async () =>
     (
@@ -185,6 +186,15 @@ describe('cleanupTextScanRows on csam holds', () => {
       { entityId: 2, text: 'held text', meta: { decision: 'dismiss' } },
       { entityId: 3, text: 'held text', meta: { decisionClaim: { by: 9 } } },
       { entityId: 4, text: 'held text', meta: { decision: 'remove' } },
+    ]);
+  });
+
+  it('never clears a dismissed hold of another label', async () => {
+    await hold(1, 'Dismissed', PAST, 9, { decision: 'dismiss', ruleIds: [7] }, 'modelRules');
+
+    expect((await sweep()).holdTextCleared).toBe(0);
+    expect(await held()).toEqual([
+      { entityId: 1, text: 'held text', meta: { decision: 'dismiss', ruleIds: [7] } },
     ]);
   });
 

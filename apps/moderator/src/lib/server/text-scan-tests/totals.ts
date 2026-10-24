@@ -14,7 +14,7 @@ export async function computeTotals(db: Db, runId: number): Promise<LabelSummary
   const rows = await db
     .selectFrom('text_scan_test_result as r')
     .innerJoin('text_scan_test_case as c', 'c.id', 'r.case_id')
-    .select(['r.status', 'r.output', 'r.literal_rule_ids', 'c.expected'])
+    .select(['r.status', 'r.output', 'c.expected'])
     .where('r.run_id', '=', String(runId))
     .execute();
   return summarise(
@@ -22,7 +22,6 @@ export async function computeTotals(db: Db, runId: number): Promise<LabelSummary
       scoreCase((r.expected ?? {}) as Expected, {
         status: r.status as ResultStatus,
         output: r.output,
-        literalRuleIds: (r.literal_rule_ids as number[] | null) ?? null,
       })
     )
   );
