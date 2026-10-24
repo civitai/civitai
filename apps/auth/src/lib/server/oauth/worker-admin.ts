@@ -122,8 +122,8 @@ export async function createWorkerClient(
 
 /**
  * Register a client whose only use is to call introspection, once its id is on
- * OAUTH_WORKER_INTROSPECTION_CLIENT_IDS. It has no grants, so the token route issues it nothing. Returns
- * the client secret, which is stored only as its hash: the caller shows it once.
+ * OAUTH_WORKER_INTROSPECTION_CLIENT_IDS. It holds no grants. Returns the client secret, which is stored
+ * only as its hash: the caller shows it once.
  */
 export async function createIntrospectorClient(
   db: Kysely<DB>,

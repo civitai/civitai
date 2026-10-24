@@ -207,19 +207,19 @@ beforeEach(() => {
   h.tables.WorkerClient = [
     {
       clientId: POOL,
-      provider: 'dp',
+      provider: 'Submodel',
       subjectTokenTypes: [DEVICE_ID_TYPE],
       saladContainerGroupIds: [],
     },
     {
       clientId: SALAD_POOL,
-      provider: 'salad',
+      provider: 'SaladML',
       subjectTokenTypes: [JWT_TYPE],
       saladContainerGroupIds: [SALAD_GROUP],
     },
     {
       clientId: OTHER_POOL,
-      provider: 'dp-other',
+      provider: 'RunPods',
       subjectTokenTypes: [DEVICE_ID_TYPE],
       saladContainerGroupIds: [],
     },
@@ -562,7 +562,7 @@ describe('worker token introspection', () => {
     expect(await introspect(token)).toEqual({
       active: true,
       client_id: POOL,
-      worker_provider: 'dp',
+      worker_provider: 'Submodel',
       device_id: DEVICE,
       device_issuer: 'self',
       scope: String(WORKER),
@@ -694,8 +694,13 @@ describe('introspector client made by createIntrospectorClient', () => {
         ...params,
       }),
     } as never);
+    // The token-exchange grant refuses a client with no WorkerClient row by the same error name, so
+    // the description is what shows the grants list refused it.
     expect(res.status).toBe(400);
-    expect(((await res.json()) as Record<string, unknown>).error).toBe('unauthorized_client');
+    expect(await res.json()).toEqual({
+      error: 'unauthorized_client',
+      error_description: 'Unauthorized client: `grant_type` is invalid',
+    });
     expect(rows('ApiKey')).toHaveLength(0);
   });
 });
