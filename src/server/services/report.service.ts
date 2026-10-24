@@ -598,12 +598,15 @@ export const createReport = async ({
       }
 
     if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
+      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
+      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
       await dbWrite.report.updateMany({
         where: {
           reason: { not: ReportReason.CSAM },
+          status: { not: ReportStatus.Actioned },
           image: { imageId: id },
         },
-        data: { status: ReportStatus.Actioned },
+        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
       });
       await dbWrite.image.update({
         where: { id },

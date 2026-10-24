@@ -25,8 +25,8 @@
     type FlagRef,
   } from '$lib/minor-flags/flagged-decision';
   import {
-    HASH_FLAG_REASON,
     flagPromptId,
+    hashFlagReason,
     hashSweepText,
     flagScanSource,
     textSinceFlag,
@@ -78,7 +78,9 @@
     flags.map(({ label, source, textHash }) => ({ label, source, textHash }))
   );
   const textScans = $derived(flags.filter((f) => f.source === 'text-scan'));
-  const hashFlag = $derived(flags.find((f) => f.source === 'hash') ?? null);
+  const hashFlags = $derived(flags.filter((f) => f.source === 'hash'));
+  // Minor first: with both labels hash-flagged, the window chip is the minor flag's.
+  const hashFlag = $derived(hashFlags[0] ?? null);
   const sources = $derived([...new Map(flags.map((f) => [f.source, f])).values()]);
   const labels = $derived([...new Set(flags.map((f) => f.label))]);
 
@@ -137,7 +139,7 @@
 {/snippet}
 
 {#snippet hashWhy(flag: FlaggedFlagItem)}
-  <FlagVerdictBlock label={flag.label} reason={HASH_FLAG_REASON}>
+  <FlagVerdictBlock label={flag.label} reason={hashFlagReason(flag.label)}>
     {#snippet provenance()}
       <span title={flag.flaggedAt ? dateTime(flag.flaggedAt) : undefined}
         >{hashSweepText(flag.flaggedAt, flag.daysLeft)}</span
@@ -169,10 +171,15 @@
   {/snippet}
 
   {#snippet info()}
-    {#if hashFlag}
-      <SharedFileCard {row} {civitaiUrl} status={{ label: 'under review', tone: 'blue' }} />
-    {/if}
-    {#if textScans.length || hashFlag}
+    {#each hashFlags as flag (flag.label)}
+      <SharedFileCard
+        {row}
+        {civitaiUrl}
+        label={flag.label}
+        status={{ label: 'under review', tone: 'blue' }}
+      />
+    {/each}
+    {#if textScans.length || hashFlags.length}
       <TriageCard dense title="Why it was flagged">
         <div class="space-y-3">
           {#each flags as flag (`${flag.label}:${flag.source}`)}

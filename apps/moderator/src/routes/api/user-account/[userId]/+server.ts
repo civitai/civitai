@@ -19,9 +19,9 @@ import {
 // Client-fetched: these lists are only wanted once an investigation is already underway, so keeping
 // them off the load means identity still renders immediately.
 //
-// Everything here resolves in about a second. Two things that did not have their own endpoints — the
-// Buzz balance and the reaction aggregate — because a `Promise.all` is only as fast as its slowest
-// member, and both were slow enough to make every other panel look broken.
+// Everything here resolves in about a second. Three things that did not have their own endpoints — the
+// Buzz balance, the reaction aggregate and the reviews' image counts — because a `Promise.all` is only
+// as fast as its slowest member, and each was slow enough to make every other panel look broken.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
