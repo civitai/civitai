@@ -8,6 +8,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `@typescript-eslint/consistent-type-imports` rejects an inline
 // `typeof import('...')` annotation, so the types have to arrive this way.
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as Trpc from '~/utils/trpc';
 
 /**
@@ -58,7 +59,20 @@ import type * as Trpc from '~/utils/trpc';
 
 // AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
 // scaffold mounts no CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// Signed in by default — the viewer `context.viewerUserId` describes. The
+// anonymous seam test sets it to null: IframeHost reads the live session from
+// this hook, and it decides whether an un-grantable REQUEST_CONSENT toasts or
+// offers sign-in.
+const session = vi.hoisted(() => ({
+  user: { id: 42, username: 'tester' } as null | { id: number; username: string },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => session.user }));
+
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
 
 // The REAL useFeatureFlags THROWS without a FeatureFlagsProvider, which this
 // scaffold does not mount, so every test that MOUNTS IframeHost would crash.
@@ -272,6 +286,8 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -372,6 +388,97 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
     }
   });
 
+  test('🔴 ANONYMOUS viewer: the mint-signed scopes reach BLOCK_INIT / TOKEN_REFRESH, and a REQUEST_CONSENT for a stripped gated scope is refused', async () => {
+    // The anon mint (`userId == null`) strips every consent-gated scope but reports
+    // `missingScopes: []` and `needsConsent: false`. Before the hook carried the
+    // mint's `scopes`, the host advertised `declared − []` — the gated scope too —
+    // and then treated a REQUEST_CONSENT for it as "already granted" and dropped it.
+    const EXEMPT = 'apps:storage:read';
+    const GATED = 'apps:storage:publish';
+    const anonInstall: BlockInstall = {
+      ...install,
+      blockInstanceId: 'inst_anon',
+      manifest: { ...install.manifest, scopes: [EXEMPT, GATED] },
+    };
+    respondWith(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            token: 'tok_anon',
+            expiresAt: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
+            kind: 'block',
+            scopes: [EXEMPT],
+            needsConsent: false,
+            missingScopes: [],
+            domain: 'blue',
+            maxBrowsingLevel: 3,
+          }),
+        } as unknown as Response)
+    );
+    session.user = null;
+    renderWithProviders(
+      <BlockHost
+        blockInstall={anonInstall}
+        slotContext={{ ...context, viewerUserId: null, viewerUsername: null }}
+      />
+    );
+    const el = await waitForIframe();
+    const posts = listenForPosts(el);
+    const postFromBlock = (type: string, payload: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type, payload },
+          origin: window.location.origin,
+          source: el.contentWindow,
+        })
+      );
+    try {
+      for (let i = 0; i < 200 && posts.of('BLOCK_INIT').length === 0; i++) await advance(5);
+      const init = posts.of('BLOCK_INIT');
+      expect(init.length).toBeGreaterThan(0);
+      expect((init[0].payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+        EXEMPT,
+      ]);
+
+      await driveToReady(el);
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
+      postFromBlock('REQUEST_TOKEN', {});
+      for (let i = 0; i < 200 && posts.of('TOKEN_REFRESH').length === refreshesBefore; i++) {
+        await advance(5);
+      }
+      const reply = posts.of('TOKEN_REFRESH').slice(refreshesBefore);
+      expect(reply.length).toBeGreaterThan(0);
+      for (const m of reply) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([EXEMPT]);
+      }
+
+      postFromBlock('REQUEST_CONSENT', { scopes: [GATED] });
+      for (let i = 0; i < 200 && posts.of('CONSENT_UNAVAILABLE').length === 0; i++) {
+        await advance(5);
+      }
+      expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1);
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: [GATED],
+      });
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('DISCRIMINATING CONTROL — the same seam with a fully-granted mint shows nothing', async () => {
     // Everything about this render is identical except the mint's verdict, so a pass
     // above cannot be "the notice renders unconditionally once ready".
@@ -408,6 +515,8 @@ describe('IframeHost consent backstop — the surface', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
   });
 
   afterEach(() => cleanup());
@@ -617,8 +726,38 @@ describe('IframeHost consent backstop — the surface', () => {
       // 🔴 NO "preview" CLAIM. The un-grantable state is reachable from an ordinary
       // mint clamp on a live model page, so the old page-host wording was false here.
       expect(toast.message).toBe('This app requested a permission that isn’t available here.');
+      // Signed in: the toast, never the sign-in popup.
+      expect(openLoginPopupSpy).not.toHaveBeenCalled();
       // No modal: there is nothing consent can add.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('the model slot is NOT a local preview: a document-store REQUEST_CONSENT still toasts, as before', async () => {
+    // INVARIANT GUARD, not regression coverage: this host passes the literal
+    // 'model-slot' and toasted here before the change too. Only the dev-tunnel
+    // surface serves the document store locally; the unit-test ledger over the
+    // whole surface record is the guard on the condition itself.
+    renderWithProviders(
+      <IframeHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage', 'apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
     } finally {
       posts.stop();
     }

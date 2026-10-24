@@ -1,12 +1,13 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { num } from '$lib/format';
   import { fetchBuzzBalance } from './buzz-balance';
 
   let { userId }: { userId: number } = $props();
 
   // Its own fetch, not a slice of the account payload — see `/api/user-buzz-balance`.
-  const balance = $derived(browser ? fetchBuzzBalance(userId) : null);
+  const balance = $derived(browser ? fetchBuzzBalance(userId) : SSR_PENDING);
 
   // Retool showed the three balances as coloured headings on the left and their lifetime totals on the
   // right, on both Buzz tabs — the colour IS the identifier a moderator reads by.

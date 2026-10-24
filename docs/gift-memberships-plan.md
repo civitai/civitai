@@ -13,7 +13,7 @@ A gift is now N months of a tier, **accepted by the recipient and consumed one m
 - **What accepting does** is decided from the holder's membership at that moment: no membership → a free subscription at the gift's tier that ends on its own; same tier → free months; lower tier → moved up with `proration_behavior: 'none'`, then free months; higher tier → the gift's monthly price comes off each of the next bills. Nothing moves a holder down.
 - **Not billed monthly** (annual plans): no tier move and no free months. The gift's cash value (the gift tier's monthly price × months) comes off the next renewal as one `amount_off` coupon covering as many whole months as that renewal can absorb; the rest stay on the gift for the renewal after.
 - **One month live in Stripe at a time**, as a `duration: 'once'` coupon with a deterministic id (`armNextGiftMonth`). A month counts as consumed on `invoice.paid` (`recordGiftMonthConsumed`), never when it is armed, and the next month is armed then. `sweepGiftArming` (job `gift-membership-arming`, hourly) is the backstop for a missed webhook.
-- **Changing plan mid-gift.** `createSubscribeSession` releases the armed month (`releaseArmedGiftMonth`) and clears the discount in the same `subscriptions.update` that changes the plan, so the month never lands on the plan-change invoice. The `customer.subscription.updated` webhook arms it again against the new plan.
+- **Changing plan mid-gift.** `createSubscribeSession` releases the armed month (`releaseArmedGiftMonth`) and clears the discount in the same `subscriptions.update` that changes the plan, so the month never lands on the plan-change invoice. The `customer.subscription.updated` webhook arms it again against the new plan. An upgrade held for payment (`pending_if_incomplete`) clears the discount immediately but changes the plan only when paid, so `armNextGiftMonth` does not arm while a plan change is pending.
 - **Cancelling mid-gift keeps the months.** On `customer.subscription.deleted`, `honorGiftResidualsForUser` turns the months still owed into a free subscription at the gift's tier.
 - **Statuses**: `Pending → Fulfilled` (paid, waiting) `→ Active` (accepted) `→ Completed`; `Refunded` / `Revoked` from a refund or chargeback.
 - **`holderId`** is who the gift belongs to. Every read goes through it; nothing writes it after creation, because transfer is deliberately not built.
@@ -136,7 +136,7 @@ model MembershipGift {
 
 ## Refunds / chargebacks
 
-Extend the existing `charge.refunded` / `charge.dispute.created` branch (`webhooks/stripe.ts:334`): look up `MembershipGift` by `stripePaymentIntentId` →
+Extend the existing `charge.refunded` / dispute branch in `webhooks/stripe.ts` (now: a full refund, or a dispute closed as `lost`): look up `MembershipGift` by `stripePaymentIntentId` →
 
 - Coupon not yet exhausted: delete the coupon / remove the discount from the subscription.
 - Gift-created sub (Case B): cancel it immediately.

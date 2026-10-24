@@ -1,9 +1,15 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getModelScore } from '~/server/jobs/update-user-score';
+import {
+  getModelScore,
+  scoreModelOwners,
+  selfGenerationsByModel,
+  writeSelfGenerations,
+} from '~/server/jobs/update-user-score';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { recordStatusAtDelete } from '~/server/services/model-status-at-delete';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 
 // Booting PGlite (WASM Postgres) can exceed the default hook timeout on a contended runner.
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -92,17 +98,20 @@ async function owner(userId: number, row: ModelRow) {
   return addModel(userId, row, { downloads: 100, reviews: 2, generations: 3 });
 }
 
-async function scores() {
+async function scores(options?: Parameters<typeof scoreModelOwners>[1]) {
   const result = new Map<number, number>();
-  await getModelScore({
-    pg,
-    jobContext: { on: () => undefined } as never,
-    scoreMultipliers: {
-      models: { reviews: 10, downloads: 1, generations: 1 },
-    } as never,
-    lastUpdate: CHECKPOINT,
-    setScore: (id, _category, score) => result.set(id, Number(score)),
-  });
+  await scoreModelOwners(
+    {
+      pg,
+      jobContext: { on: () => undefined } as never,
+      scoreMultipliers: {
+        models: { reviews: 10, downloads: 1, generations: 1 },
+      } as never,
+      lastUpdate: CHECKPOINT,
+      setScore: (id, _category, score) => result.set(id, Number(score)),
+    },
+    options
+  );
   return result;
 }
 
@@ -137,10 +146,18 @@ beforeAll(async () => {
     "generationCount" int NOT NULL DEFAULT 0,
     "updatedAt" timestamp(3) NOT NULL
   )`);
+  await q(`CREATE TABLE "ModelSelfGeneration" (
+    "modelId" int NOT NULL,
+    "userId" int NOT NULL,
+    "generationCount" bigint NOT NULL DEFAULT 0,
+    "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+    PRIMARY KEY ("modelId", "userId")
+  )`);
+  await q(`CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL)`);
 });
 
 beforeEach(async () => {
-  await q(`TRUNCATE "Model", "ModelMetric"`);
+  await q(`TRUNCATE "Model", "ModelMetric", "ModelSelfGeneration", "ModelVersion"`);
 });
 
 describe('which statuses count', () => {
@@ -290,6 +307,171 @@ describe('who is re-scored', () => {
     const all = await scores();
     expect(all.has(1)).toBe(true);
     expect(all.get(1)).toBe(0);
+  });
+});
+
+describe("the owner's own generations", () => {
+  // Stamped a day ahead so a stale row is never older than the write stamp: the replace must
+  // not depend on the clock.
+  const selfRow = (modelId: number, userId: number, generationCount: number) =>
+    q(
+      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount", "updatedAt")
+       VALUES ($1, $2, $3, now() + interval '1 day')`,
+      [modelId, userId, generationCount]
+    );
+
+  it('leaves out generations the owner made with their own model', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT - 2);
+  });
+
+  it('never takes a model below zero generations', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 50);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT - 3);
+  });
+
+  it('ignores a row for someone who no longer owns the model', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 2, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR + SUBJECT);
+  });
+
+  it('subtracts nothing from a model that does not count', async () => {
+    const modelId = await owner(1, { status: 'UnpublishedViolation' });
+    await selfRow(modelId, 1, 2);
+    expect((await scores()).get(1)).toBe(ANCHOR);
+  });
+
+  it('scores from rows passed in, instead of the table, for a dry run', async () => {
+    const modelId = await owner(1, { status: 'Published' });
+    await selfRow(modelId, 1, 1);
+    const all = await scores({ selfGenerations: [{ modelId, userId: 1, generationCount: 3 }] });
+    expect(all.get(1)).toBe(ANCHOR + SUBJECT - 3);
+  });
+
+  it('re-scores an owner named in alsoRescore whose models did not change', async () => {
+    await owner(1, { status: 'Published', updatedAt: BEFORE });
+    await owner(2, { status: 'Published', updatedAt: BEFORE });
+    const all = await scores({ alsoRescore: [1] });
+    expect(all.get(1)).toBe(ANCHOR + SUBJECT);
+    expect(all.has(2)).toBe(false);
+  });
+
+  it('writeSelfGenerations clears an owner who no longer has any', async () => {
+    await selfRow(10, 1, 5);
+    await selfRow(12, 2, 5);
+    await writeSelfGenerations(pg, [1], []);
+    const { rows } = await q(`SELECT "userId" FROM "ModelSelfGeneration"`);
+    expect(rows).toEqual([{ userId: 2 }]);
+  });
+
+  it('writeSelfGenerations replaces only the named owners rows', async () => {
+    await selfRow(10, 1, 5);
+    await selfRow(11, 1, 5);
+    await selfRow(12, 2, 5);
+    await writeSelfGenerations(pg, [1], [{ modelId: 10, userId: 1, generationCount: 7 }]);
+    const { rows } = await q(
+      `SELECT "modelId", "userId", "generationCount"::int AS n FROM "ModelSelfGeneration" ORDER BY 1`
+    );
+    expect(rows).toEqual([
+      { modelId: 10, userId: 1, n: 7 },
+      { modelId: 12, userId: 2, n: 5 },
+    ]);
+  });
+
+  it('writeSelfGenerations clears an owner left with none while rewriting another in the same call', async () => {
+    await selfRow(10, 1, 5);
+    await selfRow(11, 1, 5);
+    await selfRow(20, 2, 5);
+    await selfRow(21, 2, 5);
+    await writeSelfGenerations(pg, [1, 2], [{ modelId: 20, userId: 2, generationCount: 9 }]);
+    const { rows } = await q(
+      `SELECT "modelId", "userId", "generationCount"::int AS n FROM "ModelSelfGeneration" ORDER BY 1`
+    );
+    expect(rows).toEqual([{ modelId: 20, userId: 2, n: 9 }]);
+  });
+});
+
+describe('getModelScore (nightly self-generation refresh)', () => {
+  const INJECTED = allInjectableResourceIds[0];
+
+  /** Owner 1 generated with their own version 100; owner 3 with owner 1's version (not self). */
+  async function run(lifetime: { userId: number; modelVersionId: number; images: number }[]) {
+    const ownModel = await owner(1, { status: 'Published', updatedAt: BEFORE });
+    await q(`INSERT INTO "ModelVersion" (id, "modelId") VALUES (100, $1), ($2, $1)`, [
+      ownModel,
+      INJECTED,
+    ]);
+    const sql: string[] = [];
+    const params: unknown[][] = [];
+    const ch = {
+      $query: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        sql.push(strings.join('?'));
+        params.push(values);
+        return sql.length === 1
+          ? [
+              { userId: 1, modelVersionId: 100 },
+              { userId: 3, modelVersionId: 100 },
+              { userId: 1, modelVersionId: INJECTED },
+            ]
+          : lifetime;
+      },
+    };
+    const result = new Map<number, number>();
+    await getModelScore({
+      pg,
+      ch,
+      jobContext: { on: () => undefined },
+      scoreMultipliers: { models: { reviews: 10, downloads: 1, generations: 1 } },
+      lastUpdate: CHECKPOINT,
+      setScore: (id: number, _category: string, score: number) => result.set(id, Number(score)),
+    } as never);
+    return { ownModel, sql, params, result };
+  }
+
+  it('recounts self-generators over all time and re-scores them though their metrics did not change', async () => {
+    const { ownModel, sql, params, result } = await run([
+      { userId: 1, modelVersionId: 100, images: 2 },
+      { userId: 1, modelVersionId: INJECTED, images: 50 },
+    ]);
+    // The window reaches back a day before the checkpoint.
+    expect(params[0][0]).toEqual(new Date(CHECKPOINT.getTime() - 24 * 60 * 60 * 1000));
+    // Only the owner who generated with their own version is recounted.
+    expect(params[1][0]).toEqual([1]);
+    expect(sql[1]).toMatch(/sum\(coalesce\(blobsCount, 1\)\)/);
+    expect(sql[1]).toMatch(/ARRAY JOIN resourcesUsed AS r/);
+    expect(sql[1]).toMatch(/GROUP BY userId, r/);
+    const { rows } = await q(
+      `SELECT "modelId", "userId", "generationCount"::int AS n FROM "ModelSelfGeneration"`
+    );
+    // The injected version counts toward no score, so it is not subtracted either.
+    expect(rows).toEqual([{ modelId: ownModel, userId: 1, n: 2 }]);
+    expect(result.get(1)).toBe(ANCHOR + SUBJECT - 2);
+    expect(result.has(3)).toBe(false);
+  });
+});
+
+describe('selfGenerationsByModel', () => {
+  const owners = new Map([
+    [100, { modelId: 1, userId: 7 }],
+    [101, { modelId: 1, userId: 7 }],
+    [200, { modelId: 2, userId: 8 }],
+  ]);
+
+  it("sums a user's images per model, across its versions, only where they own it", () => {
+    expect(
+      selfGenerationsByModel(
+        [
+          { userId: 7, modelVersionId: 100, images: 4 },
+          { userId: 7, modelVersionId: 101, images: '2' as unknown as number },
+          { userId: 7, modelVersionId: 200, images: 9 }, // someone else's model
+          { userId: 7, modelVersionId: 300, images: 9 }, // unknown or injected version
+        ],
+        owners
+      )
+    ).toEqual([{ modelId: 1, userId: 7, generationCount: 6 }]);
   });
 });
 

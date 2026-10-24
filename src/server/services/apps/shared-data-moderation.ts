@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findBlockedUserContent, stripBenignPhrases } from '~/server/services/blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
@@ -36,7 +36,8 @@ import {
  *   path, and record what WOULD have been blocked. Never rejects, never files a report, never emits
  *   an abuse alert, never counts toward a mute.
  * - `app-blocks-shared-data-moderation-enforce` (ENFORCE): scan inline before the write, and reject
- *   a hit with the same consequences as a `title`/`body` hit.
+ *   a hit — on the legacy surface with the same consequences as a `title`/`body` hit; the document
+ *   store refuses it and raises the block alert, filing no Report.
  *
  * 🔴 ENFORCE IMPLIES SCAN. With enforce on and shadow off, the scan still runs (inline) and still
  * records its hits and its denominator — otherwise turning shadow off after the enforce flip would
@@ -46,6 +47,12 @@ import {
  * shadow-mode scans. So the modes are
  * `off` (both off — no scan, no record, behaviour identical to before this existed), `shadow`
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
+ *
+ * Both shared-write surfaces follow the mode: the legacy shared-storage router
+ * (`apps-shared.router.ts`) and the document store's REST layer (`doc-store-api.ts`). Both run
+ * their shadow scans through `scheduleSharedDataShadow` and decide which enforce hit refuses a write
+ * through `enforcedBlockingHit`. What an enforce refusal then costs the writer (report, alert) is
+ * still decided by each surface.
  *
  * ## Evaluation — per APP, not per user
  *
@@ -299,7 +306,7 @@ export async function scanCounterKey(
 
 /**
  * The hit a rejection is attributed to: the highest-priority category present. A `pattern` hit
- * counts only when `enforcePatterns` — see `sharedTextBlockingHit` in the router for why.
+ * counts only when `enforcePatterns` — see `enforcedBlockingHit` below for why.
  */
 export function blockingHit(
   scan: SharedTextScan,
@@ -313,10 +320,63 @@ export function blockingHit(
   return null;
 }
 
+/**
+ * The hit an ENFORCE scan is refused for, or `null` to let the write through.
+ *
+ * 🔴 A PATTERN-list hit counts only while `user-content-pattern-enforce` is on — the same rule the
+ * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
+ * enforced until that flag flips. Otherwise enforcing a `data` scan would enforce the pattern list on
+ * `data` while the same row's title is only recorded. The flag is read only when a pattern hit exists.
+ * Shared by the legacy shared-storage router and the document store, so the two cannot diverge on
+ * which hit refuses a write.
+ */
+export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
+  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
+    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
+    : false;
+  return blockingHit(scan, { enforcePatterns });
+}
+
+/**
+ * The alert a blocked shared write raises, by policy: minor/POI → the legal-block channel
+ * (`type:error`), a general audit block → the content-block channel (`type:warning`), anything
+ * else (link, pattern, size, overflow) → none. METADATA ONLY, never the text; fire-and-forget.
+ * Shared by the legacy shared-storage router and the document store.
+ */
+export function emitSharedBlockAlert(
+  ctx: { appBlockId: string; uid: number; slug?: string },
+  block: { policy: string; category: string; field?: string }
+): void {
+  const { policy } = block;
+  const alert =
+    policy === 'minor' || policy === 'poi'
+      ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
+      : policy === 'audit'
+      ? { name: 'app-blocks-shared-storage-content-block', type: 'warning' }
+      : null;
+  if (!alert) return;
+  logToAxiom(
+    {
+      ...alert,
+      category: block.category,
+      ...(block.field ? { field: block.field } : {}),
+      userId: ctx.uid,
+      ...(ctx.slug !== undefined ? { slug: ctx.slug } : {}),
+      appBlockId: ctx.appBlockId,
+    },
+    'block-audit'
+  ).catch(() => undefined);
+}
+
 // ── Recording ─────────────────────────────────────────────────────────────────
 
 /** ClickHouse table holding the per-leaf hit list (30-day TTL — see its migration). */
 export const SHARED_DATA_HITS_TABLE = 'appBlocksSharedDataHits';
+/**
+ * ClickHouse table holding the per-write DENOMINATOR: one count-only row per scanned write, in both
+ * modes, hits or not (same TTL as the hit list — see its migration).
+ */
+export const SHARED_DATA_SCANS_TABLE = 'appBlocksSharedDataScans';
 /** Leaf text (shadow-mode rows only) is kept for review, cut to this many UTF-8 bytes. */
 export const SHARED_DATA_HIT_TEXT_MAX_BYTES = 1024;
 /** The leaf path is cut too, because it is made of user-authored keys. */
@@ -425,6 +485,26 @@ export function sharedDataHitRows(
   }));
 }
 
+/**
+ * The DENOMINATOR row: one per scanned write, in both modes, hits or not (see its migration).
+ *
+ * 🔴 NO USER TEXT IN ANY COLUMN, IN EITHER MODE — an id, platform values and counts only. No row
+ * key, no path, no leaf, no matched term. The same fields as the `...-moderation-scan` log event.
+ */
+function sharedDataScanRow(scan: SharedTextScan, ctx: SharedDataScanContext) {
+  return {
+    time: formatClickhouseDateTime64(new Date()),
+    appBlockId: ctx.appBlockId,
+    surface: ctx.surface,
+    mode: ctx.mode,
+    blocked: ctx.blocked ? 1 : 0,
+    leafCount: scan.leafCount,
+    hitCount: scan.hits.length,
+    ...categoryCounts(scan),
+    overflowKind: scan.overflow ?? '',
+  };
+}
+
 function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, number> {
   const counts: Record<SharedDataHitCategory, number> = {
     minor: 0,
@@ -439,15 +519,20 @@ function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, num
 }
 
 /**
- * Record one scan: a count-only Axiom event (the denominator — one per scanned write, hits or not)
- * and, when there are hits, one ClickHouse row per hit.
+ * Record one scan: the DENOMINATOR — one ClickHouse row in `SHARED_DATA_SCANS_TABLE` per scanned
+ * write, hits or not (`sharedDataScanRow`) — and, when there are hits, one ClickHouse row per hit in
+ * `SHARED_DATA_HITS_TABLE`. The two tables share a TTL, so every hit rate can be read against its
+ * denominator over the whole window. The same counts also go out as a log event; that event is not
+ * a durable store, so the table is the denominator of record.
  *
- * 🔴 USER TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN (enforce rows carry none
- * in any column — see `sharedDataHitRows`). It is user content, and the hit table is the one sink
- * here with a retention this repo enforces (a TTL in its DDL). The Axiom event carries ids, counts
- * and platform values — not the text, not a key, not the matched term — and so does every failure
- * log below.
+ * 🔴 USER TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN INTO THE HIT TABLE
+ * (enforce hit rows carry none in any column — see `sharedDataHitRows`). It is user content, and
+ * the hit table is the one sink here with a retention this repo enforces (a TTL in its DDL). The
+ * denominator row and the log event carry ids, counts and platform values — not the text, not a
+ * key, not the matched term — and so does every failure log below.
  * With no ClickHouse client (dev, build) the rows are dropped, never re-routed to a log.
+ *
+ * The two inserts are independent: one failing does not cost the other its rows.
  *
  * Never throws: a recording failure must not change the outcome of a write.
  */
@@ -465,8 +550,8 @@ export async function recordSharedDataScan(
       mode: ctx.mode,
       blocked: ctx.blocked,
       leafCount: scan.leafCount,
-      // `depth` | `leaves` | `chars` | `audit_budget`, or empty. The per-category counts below
-      // include `overflow` as a NUMBER, hence the different name.
+      // `depth` | `leaves` | `chars` | `audit_budget` | `leaf_length`, or empty. The per-category
+      // counts below include `overflow` as a NUMBER, hence the different name.
       overflowKind: scan.overflow ?? '',
       hitCount: scan.hits.length,
       ...counts,
@@ -474,27 +559,33 @@ export async function recordSharedDataScan(
     'block-audit'
   ).catch(() => undefined);
 
-  if (!scan.hits.length || !clickhouse) return;
-  try {
-    await clickhouse.insert({
-      table: SHARED_DATA_HITS_TABLE,
-      values: sharedDataHitRows(scan, ctx),
-      format: 'JSONEachRow',
-    });
-  } catch (error) {
-    await logToAxiom(
-      {
-        name: 'app-blocks-shared-data-moderation-record-failed',
-        type: 'error',
-        appBlockId: ctx.appBlockId,
-        hitCount: scan.hits.length,
-        // The error NAME only: a ClickHouse parse error can quote the row it rejected, and the
-        // row carries the leaf text this function promises never to log.
-        error: error instanceof Error ? error.name : typeof error,
-      },
-      'block-audit'
-    ).catch(() => undefined);
-  }
+  const client = clickhouse;
+  if (!client) return;
+  // `rows` is a thunk, built INSIDE the try: a throw while building rows must be logged and
+  // swallowed like a failed insert — the enforce caller does not await or catch this function.
+  const insert = async (table: string, rows: () => unknown[]) => {
+    try {
+      await client.insert({ table, values: rows(), format: 'JSONEachRow' });
+    } catch (error) {
+      await logToAxiom(
+        {
+          name: 'app-blocks-shared-data-moderation-record-failed',
+          type: 'error',
+          table,
+          appBlockId: ctx.appBlockId,
+          hitCount: scan.hits.length,
+          // The error NAME only: a ClickHouse parse error can quote the row it rejected, and a hit
+          // row carries the leaf text this function promises never to log.
+          error: error instanceof Error ? error.name : typeof error,
+        },
+        'block-audit'
+      ).catch(() => undefined);
+    }
+  };
+  await Promise.all([
+    scan.hits.length ? insert(SHARED_DATA_HITS_TABLE, () => sharedDataHitRows(scan, ctx)) : null,
+    insert(SHARED_DATA_SCANS_TABLE, () => [sharedDataScanRow(scan, ctx)]),
+  ]);
 }
 
 /**

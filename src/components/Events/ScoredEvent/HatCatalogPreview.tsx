@@ -4,6 +4,8 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { MysteryBoxCatalogCard } from '~/components/MysteryBox/MysteryBoxCatalogCard';
+import { useEventMysteryBoxCatalog } from '~/components/MysteryBox/useEventMysteryBoxes';
 import { trpc } from '~/utils/trpc';
 
 const SHOWN = 12;
@@ -16,13 +18,17 @@ export function HatCatalogPreview({
   event,
   onJoin,
   joining,
+  showBoxes = true,
 }: {
   event: string;
   onJoin: () => void;
   joining: boolean;
+  /** False while it isn't yet known that the viewer is not on a team. */
+  showBoxes?: boolean;
 }) {
   const teamColor = useTeamColor();
   const { data: designs } = trpc.event.getHatCatalog.useQuery({ event });
+  const boxes = useEventMysteryBoxCatalog(event, showBoxes);
   if (!designs?.length) return null;
   const teamCount = Math.max(...designs.map((d) => d.hats.length));
 
@@ -31,8 +37,11 @@ export function HatCatalogPreview({
       <EventSectionHeading
         icon={IconHanger}
         title={`${designs.length} hats to collect`}
-        subtitle={`Every design comes in all ${teamCount} team colours. Join to shop for yours.`}
+        subtitle={`Every design comes in all ${teamCount} team colors. Join to shop for yours.`}
       />
+      {boxes.map((box) => (
+        <MysteryBoxCatalogCard key={box.boxDefinitionId} box={box} />
+      ))}
       <SimpleGrid cols={{ base: 3, sm: 4, md: 6 }} spacing="sm" data-testid="hat-catalog">
         {designs.slice(0, SHOWN).map((d, i) => {
           const hat = d.hats[i % d.hats.length];

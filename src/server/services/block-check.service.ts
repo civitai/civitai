@@ -45,6 +45,7 @@ export const threadContentSelect = {
   challengeId: true,
   appListingId: true,
   crucibleId: true,
+  storylineId: true,
 } as const;
 
 type ThreadContent = {
@@ -64,6 +65,7 @@ type ThreadContent = {
   challengeId: number | null;
   appListingId: number | null;
   crucibleId: number | null;
+  storylineId: number | null;
 };
 
 async function ownerOfThreadContent(thread: ThreadContent | null): Promise<number | undefined> {
@@ -164,6 +166,13 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
     return (
       await guardDb.crucible.findUnique({
         where: { id: thread.crucibleId },
+        select: { userId: true },
+      })
+    )?.userId;
+  if (thread.storylineId)
+    return (
+      await guardDb.storyline.findUnique({
+        where: { id: thread.storylineId },
         select: { userId: true },
       })
     )?.userId;
@@ -449,6 +458,13 @@ export async function getBlockCheckOwnerIds({
       });
       return r ? [r.userId] : [];
     }
+    case 'storyline': {
+      const r = await guardDb.storyline.findUnique({
+        where: { id: entityId },
+        select: { userId: true },
+      });
+      return r ? [r.userId] : [];
+    }
     case 'comment':
       return ownersForCommentV2(entityId, 'authorOnly');
     default:
@@ -472,7 +488,12 @@ export async function throwIfBlockedByOwners({
   if (isModerator) return;
   for (const ownerId of ownerIds) {
     if (!ownerId || ownerId === userId) continue;
-    const blocked = await amIBlockedByUser({ userId, targetUserId: ownerId });
+    // A write path: confirm a cache "not blocked" on the primary.
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: ownerId,
+      confirmOnPrimary: true,
+    });
     if (blocked) throw throwNotFoundError();
   }
 }

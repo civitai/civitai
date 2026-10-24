@@ -2,8 +2,8 @@
  * App Store Listings (W13 post-approval mgmt, P2) — the MOD MANAGEMENT TABLE view
  * model (pure, React-free). The per-row lifecycle ACTION SET, computed from a
  * listing's `status` + `kind` (+ whether a pending publish request exists), plus
- * the human labels. Extracted so the correctness gate lives in the blocking node
- * `unit` project (the civitai browser-mode suites are report-only), mirroring the
+ * the human labels. Extracted so the correctness gate lives in the node
+ * `unit` project, mirroring the
  * sibling `appListingModerationView` (the report-queue view model).
  *
  * KIND-AWARENESS (from the merged Phase 1 procs + the #3165 onsite reset backend):

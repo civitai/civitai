@@ -6,6 +6,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
+import {
+  MyHatsLivePoints,
+  useEventTeamsLivePoints,
+} from '~/components/Events/ScoredEvent/event-points-live';
 import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { JoinEventButton } from '~/components/Events/ScoredEvent/JoinEventButton';
@@ -19,11 +23,13 @@ import {
   scoredEventHomeBlockCopy,
   scoredEventHomeBlockView,
 } from '~/components/HomeBlocks/scored-event-home-block.utils';
+import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import styles from './ScoredEventHomeBlock.module.scss';
@@ -38,13 +44,13 @@ const LAYOUT = {
   join: {
     grid: '@sm:h-[212px] @sm:grid-cols-[minmax(0,1fr)_340px]',
     art: 'h-[130px] order-first @sm:order-none @sm:h-auto',
-    fade: 'bg-gradient-to-t @sm:bg-gradient-to-r',
+    fade: '[mask-image:linear-gradient(to_top,transparent,#000_55%)] @sm:[mask-image:linear-gradient(to_right,transparent,#000_45%)]',
     divider: '@sm:border-l',
   },
   wide: {
     grid: '@md:h-[212px] @md:grid-cols-[300px_240px_minmax(0,1fr)_260px]',
     art: 'h-[130px] order-first @md:order-none @md:h-auto',
-    fade: 'bg-gradient-to-t @md:bg-gradient-to-r',
+    fade: '[mask-image:linear-gradient(to_top,transparent,#000_55%)] @md:[mask-image:linear-gradient(to_right,transparent,#000_45%)]',
     divider: '@md:border-l',
   },
 } as const;
@@ -87,6 +93,13 @@ export function ScoredEventHomeBlock({
 
   const copy = scoredEventHomeBlockCopy(data, promo?.homeBlock);
   const view = scoredEventHomeBlockView({ data, standings, team, hats });
+  // A member's points move live while the full block is on screen, as on the event page; frozen
+  // once ended, so the winner it names is the settled one. `liveTotals` is off
+  // while the scoring engine's kill switch is off, which also stops the block following anything,
+  // without a release.
+  const { ref: liveRef, inView } = useInView();
+  const live = inView && !collapsed && view.state === 'joined' && !!standings?.liveTotals;
+  useEventTeamsLivePoints(event, standings?.teamsTopicId, live);
   const eventHref = `/events/${event}`;
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
   const hatOf = (t: string) => standings?.teamHats.find((h) => h.team === t)?.url ?? undefined;
@@ -135,6 +148,7 @@ export function ScoredEventHomeBlock({
   const layout = view.state === 'join' ? LAYOUT.join : LAYOUT.wide;
   const ended = view.state === 'ended';
   const video = data.page?.heroVideo;
+  const art = data.page?.homeImage ?? data.page?.heroImage;
   const openVideo = () =>
     video &&
     dialogStore.trigger({
@@ -151,9 +165,10 @@ export function ScoredEventHomeBlock({
       ) : (
         <>
           {copy.title}{' '}
+          {/* Its own line, and never broken, so no word of it is left alone on a line. */}
           {copy.accent && (
             <span
-              className={styles.accent}
+              className={clsx(styles.accent, 'block w-fit whitespace-nowrap')}
               style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
             >
               {copy.accent}
@@ -177,6 +192,7 @@ export function ScoredEventHomeBlock({
 
   return (
     <div
+      ref={liveRef}
       // Capped so the stretching column cannot leave a wide empty band on large screens.
       className={clsx(styles.party, 'mx-auto grid max-w-[1400px] rounded-[18px]', layout.grid)}
       data-testid="event-home-block"
@@ -272,10 +288,11 @@ export function ScoredEventHomeBlock({
             label="Your hats"
             aside={
               <span style={{ color: teamColor(view.team) }}>
-                {numberWithCommas(view.points)} points
+                <AnimatedCount value={view.points} abbreviate={false} /> points
               </span>
             }
           >
+            <MyHatsLivePoints event={event} topicIds={hats.map((h) => h.topicId)} inView={live} />
             <HatTiles
               event={event}
               hats={hats}
@@ -336,31 +353,30 @@ export function ScoredEventHomeBlock({
       )}
 
       <div className={clsx('relative overflow-hidden', layout.art)}>
-        {data.page?.heroImage && (
+        {/* Faded out by its own alpha rather than painted over, so it melts into whatever the
+            surface's gradient is behind it. */}
+        {art && (
           <EdgeMedia
-            src={data.page.heroImage}
+            src={art}
             width={640}
-            className="absolute inset-0 size-full object-cover object-[78%_45%]"
+            className={clsx(
+              'absolute inset-0 size-full object-cover object-[75%_45%]',
+              layout.fade
+            )}
             alt=""
           />
         )}
-        <div
-          aria-hidden
-          className={clsx(
-            'absolute inset-0 z-[1] from-[#1f1c36] via-transparent to-transparent',
-            layout.fade
-          )}
-        />
         {video && (
           <UnstyledButton
             onClick={openVideo}
             aria-label={`Watch the ${video.title} video`}
+            // Centered on the art, and see-through so the art still reads behind it.
             className="group absolute left-1/2 top-1/2 z-[3] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1.5"
           >
-            <span className="flex size-[52px] items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110">
+            <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
               <IconPlayerPlayFilled size={22} />
             </span>
-            <span className="rounded-full bg-dark-9/70 px-2.5 py-0.5 text-xs font-bold text-white">
+            <span className="rounded-full bg-dark-9/40 px-2.5 py-0.5 text-xs font-bold text-white backdrop-blur-md">
               {Number.isFinite(video.duration) && Math.round(video.duration ?? 0) > 0
                 ? `Watch · ${filmLength(video.duration ?? 0)}`
                 : 'Watch'}
@@ -439,7 +455,9 @@ function Positions({
           <span className="font-bold" style={{ color: teamColor(t.team) }}>
             {t.team}
           </span>
-          <span className="font-extrabold tabular-nums">{abbreviateNumber(t.score)}</span>
+          <span className="font-extrabold tabular-nums">
+            <AnimatedCount value={t.score} abbreviate={false} resetKey={t.team} />
+          </span>
         </div>
       ))}
     </div>
@@ -464,10 +482,11 @@ function HatTiles({
   const tile = clsx(styles.tile, 'relative w-[104px] shrink-0 rounded-[11px]');
 
   return (
-    <div
-      className="flex gap-2.5 overflow-x-auto pt-3 @md:overflow-visible @md:pt-0"
-      style={{ '--event-decoration-allowance': '8px' } as CSSProperties}
-    >
+    // Worn on each tile's corner as on a feed card, with the feed card's room past it (36px) once
+    // the block is wide enough for four tiles (about 1320px). A narrower block scrolls the row
+    // rather than run it under the art: the scroller crops at the column's padding, so the hats get
+    // that much room and hold still on hover.
+    <div className="mx-[-22px] flex gap-5 overflow-x-auto px-[22px] pt-6 [--event-decoration-allowance:22px] [--event-decoration-grow:1] @[82.5rem]:mx-0 @[82.5rem]:overflow-visible @[82.5rem]:px-0 @[82.5rem]:[--event-decoration-allowance:36px] @[82.5rem]:[--event-decoration-grow:initial]">
       {hats.slice(0, shown).map((hat) => (
         <div
           key={`${hat.cosmeticId}:${hat.claimKey}`}
@@ -528,17 +547,21 @@ function HatTiles({
         </NextLink>
       ) : (
         shown < HOME_BLOCK_HAT_TILES && (
+          // Laid out like a hat tile, a plus for its picture and two short lines for its name and
+          // points, so the words fit its width without wrapping.
           <NextLink
             href={`/events/${event}#team-hats`}
-            className="grid w-[104px] shrink-0 place-items-center rounded-[11px] border-[1.5px] border-dashed border-white/25 p-2 text-center text-xs font-bold text-white no-underline"
+            className="flex w-[104px] shrink-0 flex-col rounded-[11px] border-[1.5px] border-dashed border-white/25 text-white no-underline"
             data-testid="event-home-block-get-hat"
           >
-            <span>
-              <IconPlus size={20} className="mx-auto block text-gray-4" />
-              Get another hat
-              <span className="block text-[11px] font-medium text-gray-5">
-                One more post scoring
+            <span className="grid h-[86px] place-items-center border-0 border-b-[1.5px] border-dashed border-white/15">
+              <span className="grid size-[34px] place-items-center rounded-full bg-white/10">
+                <IconPlus size={20} className="text-gray-4" />
               </span>
+            </span>
+            <span className="block px-2 pb-1.5 pt-1 text-[11px]">
+              <span className="block truncate font-bold">Another hat</span>
+              <span className="block truncate font-medium text-gray-5">+1 post scoring</span>
             </span>
           </NextLink>
         )

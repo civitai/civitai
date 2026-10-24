@@ -3,6 +3,7 @@ import { comicNotifications } from '~/server/notifications/comics.notifications'
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
+import { creatorServiceNotifications } from '~/server/notifications/creator-service.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
@@ -19,6 +20,10 @@ import { commentNotifications } from '~/server/notifications/comment.notificatio
 import { crucibleNotifications } from '~/server/notifications/crucible.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import {
+  storylineNotifications,
+  storylineOwnerNotifications,
+} from '~/server/notifications/storyline.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
@@ -56,6 +61,7 @@ export const notificationProcessors = {
   ...textScanFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
+  ...creatorServiceNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,
@@ -67,6 +73,8 @@ export const notificationProcessors = {
   ...featuredNotifications,
   ...bountyNotifications,
   ...placementNotifications,
+  ...storylineNotifications,
+  ...storylineOwnerNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

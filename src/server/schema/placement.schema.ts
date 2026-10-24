@@ -18,6 +18,7 @@ import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
+  STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
 
 export const placementSurfaceSchema = z.enum(
@@ -110,6 +111,9 @@ export const placementSpaceSchema = z
       .object({
         maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
         contentRule: z.enum(['atOrBelow', 'any']),
+        // At least one: switching every type off is the mode's "No stickers", and
+        // a second way to say it would leave two states that mean the same thing.
+        mediaTypes: z.array(z.enum(STICKER_MEDIA_TYPES)).min(1),
       })
       .partial()
       .optional(),
@@ -378,4 +382,47 @@ export const getPendingStickerPlacementsSchema = z.object({
 /** Same marking rule as the owner queue: the placer's own band, not a filter. */
 export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+const storylineSpaceModeSchema = z.enum(['off', 'review']);
+
+export const storylineIdSchema = z.object({ storylineId: z.number().int().positive() });
+
+/**
+ * `price`: `undefined` keeps, `null` inherits the creator's default, a number
+ * sets it. Zero is a real price here; the creator's score/tier cap is applied
+ * at read.
+ */
+export const setStorylineSpaceSchema = z.object({
+  storylineId: z.number().int().positive(),
+  mode: storylineSpaceModeSchema,
+  price: z.number().int().min(0).nullable().optional(),
+});
+
+export const storylineContinuePriceSchema = z.object({
+  parentPostId: z.number().int().positive(),
+});
+
+export const storylineContinuationCursorSchema = z.object({
+  cursor: z.string().nullish(),
+});
+
+export const actOnStorylineContinuationSchema = z.object({
+  placementId: z.number().int().positive(),
+  action: z.enum(['approve', 'decline']),
+});
+
+/**
+ * 🔴 `expectedPrice` is required, unlike the remix gallery's. A storyline is
+ * free by default, so without it an owner who starts charging while someone
+ * is deciding would charge a contributor who was shown "free".
+ */
+export const submitStorylineContinuationSchema = z.object({
+  parentPostId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+  expectedPrice: z.number().int().min(0),
+});
+
+export const storylinePlacementIdSchema = z.object({
+  placementId: z.number().int().positive(),
 });

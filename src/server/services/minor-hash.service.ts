@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -11,8 +12,8 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import {
-  loadTextScanTextHash,
-  queueTextScanRescan,
+  loadGrantTextHash,
+  settleFlagAppealsAfterModeratorLift,
   stampModeratorTextScanRuling,
 } from '~/server/services/text-scan/actions/appeal-text-hash';
 import {
@@ -23,11 +24,11 @@ import {
 import {
   hasOpenTextScanFlag,
   hasTextScanVerdict,
-  readTextScanFlags,
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -484,9 +485,13 @@ export async function getMinorHashMatchDetail({
     LEFT JOIN "User" u ON u.id = m."userId"
     LEFT JOIN "Model" mm ON mm.id = ${minorModelId}::int
     LEFT JOIN "User" mu ON mu.id = mm."userId"
-    LEFT JOIN "ModActivity" ma
-      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId}::int
-        AND ma.activity = 'setMinor'
+    -- The latest flag only: the log is append-only, so a re-flagged seed has one row per flag.
+    LEFT JOIN LATERAL (
+      SELECT "createdAt", "userId" FROM "ModActivity"
+      WHERE "entityType" = 'model' AND "entityId" = ${minorModelId}::int AND activity = 'setMinor'
+      ORDER BY "createdAt" DESC, id DESC
+      LIMIT 1
+    ) ma ON true
     LEFT JOIN "User" fu ON fu.id = ma."userId"
     WHERE m.id = ${modelId}
   `;
@@ -602,9 +607,19 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
 export async function confirmMinorHashAutoFlag({
   modelId,
   userId,
+  reason,
+  note,
+  textHash,
+  recordTextScanRuling = true,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
+  /** Stamp the ruling only while the flag still carries the text the moderator saw. */
+  textHash?: string;
+  /** False when the caller has already recorded the ruling and only wants the sign-off. */
+  recordTextScanRuling?: boolean;
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model" m
@@ -630,22 +645,73 @@ export async function confirmMinorHashAutoFlag({
     entityId: modelId,
     activity: 'setMinor',
   });
+
+  if (!recordTextScanRuling) return { hadVerdict: true, stamped: true };
+
+  // Affirming the flag is a ruling on the text-scan verdict too. A hash-only flag has no verdict to
+  // rule on, and the sign-off above has already happened, so a failed stamp is only logged.
+  let hadVerdict = false;
+  try {
+    const model = await dbWrite.model.findUnique({
+      where: { id: modelId },
+      select: { meta: true },
+    });
+    hadVerdict = hasTextScanVerdict(model?.meta, 'minor');
+    let stamped = hadVerdict;
+    if (hadVerdict) {
+      const changed = await stampModelTextScanAppeal({
+        modelId,
+        userId,
+        decision: 'appealUpheld',
+        labels: ['minor'],
+        via: 'moderator',
+        reason,
+        note,
+        expectTextHash: textHash,
+      });
+      if (textHash) stamped = changed > 0;
+    }
+    return { hadVerdict, stamped };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded on confirm',
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => null);
+    return { hadVerdict, stamped: false };
+  }
 }
 
 export async function revertMinorHashAutoFlag({
   modelId,
   userId,
   recordTextScanRuling,
+  reason,
+  note,
+  textHash,
 }: {
   modelId: number;
   userId: number;
+  reason?: string;
+  note?: string;
   /** A moderator's direct revert; an appeal records its own grant instead. */
   recordTextScanRuling?: boolean;
+  /** The flagged text the moderator ruled on; stamped instead of the model's current text. */
+  textHash?: string;
 }) {
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
   if (
     recordTextScanRuling &&
-    !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' }))
+    !(await stampModeratorTextScanRuling({
+      modelId,
+      userId,
+      label: 'minor',
+      reason,
+      note,
+      textHash,
+    }))
   )
     logToAxiom({
       type: 'error',
@@ -665,6 +731,16 @@ export async function revertMinorHashAutoFlag({
     entityId: modelId,
     activity: 'rollbackMinorAutoHash',
   });
+
+  // After the lift, and only for a moderator's own revert: an appeal's revert is followed by its
+  // own resolution, which must not be pre-empted.
+  if (recordTextScanRuling)
+    await settleFlagAppealsAfterModeratorLift({
+      modelId,
+      userId,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
 
   return report;
 }
@@ -714,7 +790,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
-    WHERE a."entityType" = 'Model'
+    WHERE a."entityType" = 'Model' AND a.category IS NULL
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -738,11 +814,15 @@ export async function resolveMinorFlagAppeal({
   uphold,
   userId,
   labels,
+  resolvedReason,
+  internalNotes,
 }: {
   modelId: number;
   uphold: boolean;
   userId: number;
   labels?: Partial<Record<AppealLabel, AppealLabelDecision>>;
+  resolvedReason?: string;
+  internalNotes?: string;
 }) {
   // Read from the primary: a revert inside replication lag is exactly the race the uphold
   // guard exists for, and the replica would still answer "flagged". One PK lookup.
@@ -753,7 +833,9 @@ export async function resolveMinorFlagAppeal({
   const meta = (model?.meta ?? null) as ModelMeta | null;
   const flagged: AppealLabel[] = [];
   if (model?.minor) flagged.push('minor');
-  if (model?.poi && hasOpenTextScanFlag(meta, 'poi')) flagged.push('poi');
+  const poiTextScan = !!model?.poi && hasOpenTextScanFlag(meta, 'poi');
+  const poiHash = !!model?.poi && !!meta?.poiFlagSnapshot;
+  if (poiTextScan || poiHash) flagged.push('poi');
 
   for (const label of Object.keys(labels ?? {}) as AppealLabel[])
     if (!flagged.includes(label))
@@ -767,17 +849,41 @@ export async function resolveMinorFlagAppeal({
   const decide = (label: AppealLabel) => labels?.[label] ?? (uphold ? 'uphold' : 'overturn');
   const upheld = flagged.filter((label) => decide(label) === 'uphold');
   const overturned = flagged.filter((label) => decide(label) === 'overturn');
+  const approved = labels ? overturned.length > 0 : !uphold;
 
-  let currentHash: string | null = null;
-  if (overturned.length) {
-    currentHash = await loadTextScanTextHash('Model', modelId);
-    if (!currentHash)
+  // Checked against the verdict this ruling writes: a per-label ruling also decides flagged labels it
+  // does not name.
+  if (resolvedReason) {
+    const ruledOn = approved ? overturned : flagged;
+    const invalid = resolutionReasonError(
+      'flagAppeal',
+      approved ? 'Approved' : 'Rejected',
+      resolvedReason,
+      internalNotes,
+      ruledOn.length ? ruledOn : undefined
+    );
+    if (invalid) throw throwBadRequestError(invalid);
+  }
+
+  const grantHashes: Record<string, string> = {};
+  for (const label of overturned) {
+    // A hash-only real-person flag has no text verdict to grant against.
+    if (label === 'poi' && !poiTextScan) continue;
+    const hash = await loadGrantTextHash('Model', modelId, label);
+    if (!hash)
       throw throwBadRequestError(
         "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
       );
+    grantHashes[label] = hash;
   }
 
-  if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
+  // The sign-off only: the appeal's own upheld stamp below is the ruling.
+  if (upheld.includes('minor'))
+    await confirmMinorHashAutoFlag({ modelId, userId, recordTextScanRuling: false });
+  // Call-site import: poi-hash.service imports this module.
+  const loadPoiHash = () => import('~/server/services/poi-hash.service');
+  if (upheld.includes('poi') && poiHash)
+    await (await loadPoiHash()).confirmPoiHashAutoFlag({ modelId, userId });
   const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
   if (upheldVerdicts.length)
     await stampModelTextScanAppeal({
@@ -795,7 +901,7 @@ export async function resolveMinorFlagAppeal({
       userId,
       decision: 'appealGranted',
       labels: ['minor'],
-      currentHash,
+      grantHashes,
     });
     const snapshot = meta?.minorFlagSnapshot;
     const origin = snapshot?.confirmedFrom ?? snapshot?.source;
@@ -804,23 +910,25 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, currentHash });
+  // With both flags, the text-scan grant lifts the flag, restores its own pre-state and drops the
+  // hash snapshot.
+  if (overturned.includes('poi') && poiTextScan)
+    await grantModelTextScanPoi({ modelId, userId, grantHash: grantHashes.poi });
+  else if (overturned.includes('poi'))
+    await (await loadPoiHash()).revertPoiHashAutoFlag({ modelId, userId, fromAppeal: true });
 
-  const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
     ids: [modelId],
     entityType: EntityType.Model,
     status: approved ? AppealStatus.Approved : AppealStatus.Rejected,
+    resolvedReason,
+    internalNotes,
     userId,
   });
 
-  const flags = readTextScanFlags(meta);
-  const rescanQueued = overturned.some((label) => {
-    const flaggedHash = flags[label]?.textHash;
-    return !!flaggedHash && flaggedHash !== currentHash;
-  });
-  if (rescanQueued) await queueTextScanRescan('Model', modelId);
-  return { rescanQueued };
+  // The grants cover the current text, so there is nothing to rescan. The moderator app still reads
+  // the flag.
+  return { rescanQueued: false };
 }
 
 export async function dismissMinorHashMatch({
@@ -832,7 +940,7 @@ export async function dismissMinorHashMatch({
 }) {
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = COALESCE(meta, '{}'::jsonb)
+    SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object('minorHashDismissed', jsonb_build_object('at', now(), 'by', ${userId}))
     WHERE id = ${modelId}
   `;
@@ -1067,9 +1175,11 @@ export async function rollbackMinorHashAutoFlags({
 // The 30-day window hides an unreviewed flag from the queue; this makes that
 // durable. Kept as `source: 'auto'` on purpose — moderatorMinorSeedPredicate
 // excludes 'auto', so a flag no human ever looked at never becomes the seed for
-// further automated flags. No status filter on the Appeal check: any appeal at
-// all means a human already looked, so sweeping it up as "nobody objected"
-// would overwrite that decision with a presumption.
+// further automated flags. No status filter for an in-app appeal: any one at all
+// means a human already looked, so sweeping it up as "nobody objected" would
+// overwrite that decision with a presumption. A site-form appeal (category set) is
+// decided in a queue that rules on the unpublish, not the flag, so it holds the
+// sweep only while Pending.
 export async function acceptExpiredMinorAutoFlags({
   dryRun,
   limit,
@@ -1089,13 +1199,14 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
     `;
     return { accepted: row?.count ?? 0 };
   }
 
   const accepted = await dbWrite.$executeRaw`
-    UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb)
+    UPDATE "Model" SET meta = ${asJsonbObjectSql('meta')}
       || jsonb_build_object(${MINOR_HASH_ACCEPTED_KEY}, jsonb_build_object('at', now()))
     WHERE id IN (
       SELECT m.id
@@ -1108,6 +1219,7 @@ export async function acceptExpiredMinorAutoFlags({
         AND NOT EXISTS (
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
+            AND (a.category IS NULL OR a.status = 'Pending')
         )
       ORDER BY m.id
       LIMIT ${limit}

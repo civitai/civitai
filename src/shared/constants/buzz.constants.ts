@@ -1,4 +1,4 @@
-import { BuzzClientAccount } from '@civitai/client';
+import { BuzzClientAccount } from '@civitai/orchestration-client';
 import {
   buzzApiAccountTypes,
   clientToApiAccountType,
@@ -78,6 +78,14 @@ export enum TransactionType {
    * query that sums this type alone overstates net by every reversal.
    */
   AppAuthorFee = 28,
+  /**
+   * Creator Services escrow, every leg: buyer → account 0 on hold, account 0 → seller on
+   * release, account 0 → buyer on refund.
+   *
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS `'unknown_29'`, as `AppAuthorFee` does. Use
+   * `clickhouseTransactionTypePredicate`, never a hand-written `type = …`.
+   */
+  ServiceEscrow = 29,
 }
 
 /** Ledger queries prefix-match stored rows on this, so changing it orphans every existing author-fee row. */

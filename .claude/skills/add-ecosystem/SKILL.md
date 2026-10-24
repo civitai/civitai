@@ -61,12 +61,11 @@ Ask the user for the model name and a reference link (HuggingFace page, official
 
 Read the current state of [basemodel.constants.ts](src/shared/constants/basemodel.constants.ts) to determine the next available IDs. Use Read with offsets — don't load the whole file.
 
-- **`ECO.<Name>`**: next available ecosystem ID. Groupings in `ECO`:
-  - Image models: 1-50 range (first come, first served; find next gap)
-  - Video models: 47-66 range
-  - Utility: 66+
+- **`ECO.<Name>`**: ECO IDs are one global namespace; the media-type comments in the block are not
+  ranges. Take the next unused number above the highest root ID (the `Root ecosystems` blocks), and
+  never enter a child range: 100-199 is SDXL children, 200+ AuraFlow children. When the next root
+  number would be 100 or above, ask the user to pick a new root block.
   - Child ecosystems (`parentEcosystemId` set): 100+ for SDXL children, 200+ for AuraFlow children
-  - Pick the next unused number within the appropriate block
 - **`BM.<Name>`**: next available base model ID. Read the `BM` constant block, find the next unused number.
 - **Family ID**: try to match an existing family in `ecosystemFamilies`. If none match, propose creating a new one (confirm with user).
 - **License ID**: try to match an existing license in `licenses` by name/URL. If none match, create a new entry (confirm with user).
@@ -184,3 +183,4 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
 - **Ernie** (Baidu, image): new family, new license; ECO.Ernie = 67, BM.Ernie = 83, familyId 17, licenseId 13 (Apache 2.0 — matched existing).
 - **Seedance** (ByteDance, video): family 12 (ByteDance — existed), licenseId 23 (Seedream — shared with Seedream since ByteDance uses the same agreement).
 - **Flux 3 Video / Flux.3** (BFL): ECO.Flux3Video = 79, BM.Flux3Video = 98; ECO.Flux3 = 92, BM.Flux3 = 112 (display "Flux.3"); both family 1, licenseId 39 (BFL ToS, new with Video, shared by Image). A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems. Video took a modality-suffixed key; the Image release took the bare `Flux3` to match Flux.1/Flux.2 naming, so a third sibling needs its own suffix (e.g. `Flux3Dev`). Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.
+- **MOSS Image** (OpenMOSS): the merge cost, measured. Base and SFT shipped as two weight releases and were split on the rule above (ECO 96/97, BM 117/118), then merged into the one `MossImage` ecosystem three days after launch once their LoRAs proved interchangeable. By then the community had published dozens of versions against `MOSS Image Base`, so the merge was a prod relabel of every one of them (`ModelVersion.baseModel`, coverage row, generation presets, cache busts) and an AIR rename. Check compatibility with the provider before the split when the weights are a base/fine-tune pair of the same model.

@@ -4,6 +4,12 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+/** Hand-made team assignments, as sysRedis answers getUserTeam's per-user field read. */
+const assignTeams = (teams: Record<string, string>) =>
+  redisMock.sysRedis.hGet.mockImplementation(
+    async (_key: string, field: string) => teams[field] ?? null
+  );
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   BIRTHDAY_2026_EVENT,
@@ -92,7 +98,7 @@ beforeEach(async () => {
   `);
   // Cache miss, so the join cosmetic is resolved by the real data lookup against this database.
   redisMock.redis.hGet.mockResolvedValue(null);
-  redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue' });
+  assignTeams({ '7': 'Blue' });
 });
 
 async function hats(userId: number) {
@@ -120,7 +126,7 @@ describe('join grant', () => {
 
   it('grants nothing more after a manual team reassignment', async () => {
     await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
+    assignTeams({ '7': 'Pink' });
     const again = await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
 
     expect(again).toEqual({ team: 'Blue', cosmeticId: HATS.Blue, joined: false });

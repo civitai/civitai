@@ -50,6 +50,10 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appListingModerationEvent: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The civitai.red-override clone `beginListingRevision` runs: its probe reads "no table"
+    // here (no row), so it issues nothing else — the state before the overrides existed.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]) => 0),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -58,6 +62,12 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   mockWrite.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
+
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));

@@ -483,6 +483,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
             </AlertWithIcon>
           )}
+          {article.scheduledAt && isOwner && (
+            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
+              <div>
+                This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your
+                time. It stays hidden until then.
+              </div>
+            </AlertWithIcon>
+          )}
           {article.status === ArticleStatus.UnpublishedViolation && (
             <ArticleUnpublishedAlert
               reason={article.metadata?.unpublishedReason}

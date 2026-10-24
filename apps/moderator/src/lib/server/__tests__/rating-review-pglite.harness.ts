@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -31,20 +32,20 @@ CREATE TABLE "AppPageAccess" ("app" TEXT NOT NULL, "path" TEXT NOT NULL, "roles"
 CREATE TABLE "JobQueue" ("type" "JobQueueType" NOT NULL, "entityType" "EntityType" NOT NULL, "entityId" INTEGER NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, "status" "EntityModerationStatus" NOT NULL DEFAULT 'Pending', "blocked" BOOLEAN, "triggeredLabels" TEXT[] NOT NULL DEFAULT '{}', "nsfwLevel" INTEGER, "result" JSONB, "contentHash" TEXT, UNIQUE ("entityType", "entityId"));
 
-CREATE TABLE "Image" ("id" SERIAL PRIMARY KEY, "url" TEXT, "type" TEXT, "postId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned');
+CREATE TABLE "Image" ("id" SERIAL PRIMARY KEY, "url" TEXT, "type" TEXT, "postId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "index" INTEGER, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER NOT NULL, "entityId" INTEGER NOT NULL, "entityType" TEXT NOT NULL);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "reason" "ReportReason" NOT NULL, "status" "ReportStatus" NOT NULL);
 CREATE TABLE "ArticleReport" ("articleId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 
-CREATE TABLE "Article" ("id" SERIAL PRIMARY KEY, "title" TEXT NOT NULL DEFAULT 'a', "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "userNsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "coverId" INTEGER, "cover" TEXT, "updatedAt" TIMESTAMP(3));
-CREATE TABLE "Model" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'm', "userId" INTEGER, "nsfw" BOOLEAN NOT NULL DEFAULT false, "poi" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false, "sfwOnly" BOOLEAN NOT NULL DEFAULT false, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "deletedAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3));
-CREATE TABLE "ModelVersion" ("id" SERIAL PRIMARY KEY, "modelId" INTEGER NOT NULL);
-CREATE TABLE "Post" ("id" SERIAL PRIMARY KEY, "title" TEXT, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
-CREATE TABLE "Bounty" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'b', "userId" INTEGER, "nsfw" BOOLEAN NOT NULL DEFAULT false, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
-CREATE TABLE "BountyEntry" ("id" SERIAL PRIMARY KEY, "bountyId" INTEGER NOT NULL DEFAULT 1, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
-CREATE TABLE "Collection" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'col', "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "metadata" JSONB NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
-CREATE TABLE "Crucible" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'cr', "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "textNsfw" BOOLEAN NOT NULL DEFAULT false, "status" TEXT NOT NULL DEFAULT 'Pending', "startAt" TIMESTAMP(3), "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
-CREATE TABLE "Challenge" ("id" SERIAL PRIMARY KEY, "title" TEXT NOT NULL DEFAULT 'ch', "createdById" INTEGER, "source" TEXT NOT NULL DEFAULT 'User', "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "allowedNsfwLevel" INTEGER NOT NULL DEFAULT 1, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "collectionId" INTEGER, "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Article" ("id" SERIAL PRIMARY KEY, "title" TEXT NOT NULL DEFAULT 'a', "content" TEXT, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "userNsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "coverId" INTEGER, "cover" TEXT, "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Model" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'm', "description" TEXT, "userId" INTEGER, "nsfw" BOOLEAN NOT NULL DEFAULT false, "poi" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false, "sfwOnly" BOOLEAN NOT NULL DEFAULT false, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "deletedAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3));
+CREATE TABLE "ModelVersion" ("id" SERIAL PRIMARY KEY, "modelId" INTEGER NOT NULL, "name" TEXT NOT NULL DEFAULT 'v', "description" TEXT, "trainedWords" TEXT[] NOT NULL DEFAULT '{}', "status" TEXT NOT NULL DEFAULT 'Published', "index" INTEGER, "publishedAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Post" ("id" SERIAL PRIMARY KEY, "title" TEXT, "detail" TEXT, "userId" INTEGER, "modelVersionId" INTEGER, "publishedAt" TIMESTAMP(3), "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Bounty" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'b', "description" TEXT, "userId" INTEGER, "nsfw" BOOLEAN NOT NULL DEFAULT false, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
+CREATE TABLE "BountyEntry" ("id" SERIAL PRIMARY KEY, "description" TEXT, "bountyId" INTEGER NOT NULL DEFAULT 1, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Collection" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'col', "description" TEXT, "userId" INTEGER, "imageId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "metadata" JSONB NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Crucible" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'cr', "description" TEXT, "userId" INTEGER, "imageId" INTEGER, "heroImageId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "textNsfw" BOOLEAN NOT NULL DEFAULT false, "status" TEXT NOT NULL DEFAULT 'Pending', "startAt" TIMESTAMP(3), "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Challenge" ("id" SERIAL PRIMARY KEY, "title" TEXT NOT NULL DEFAULT 'ch', "theme" TEXT, "description" TEXT, "invitation" TEXT, "metadata" JSONB, "createdById" INTEGER, "source" TEXT NOT NULL DEFAULT 'User', "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "allowedNsfwLevel" INTEGER NOT NULL DEFAULT 1, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "collectionId" INTEGER, "coverImageId" INTEGER, "updatedAt" TIMESTAMP(3));
 `;
 
 export async function applyRatingReviewMigration(db: PGlite): Promise<void> {
@@ -53,7 +54,7 @@ export async function applyRatingReviewMigration(db: PGlite): Promise<void> {
 
 /** Prelude + the old table's real migration, WITHOUT the migration under test. */
 export async function freshPreMigrationDb(): Promise<PGlite> {
-  const db = await PGlite.create();
+  const db = await freshPglite();
   await db.exec(PRELUDE);
   await db.exec(migration('20260522120000_article_rating_review'));
   return db;

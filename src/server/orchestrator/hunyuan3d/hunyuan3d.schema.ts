@@ -17,7 +17,7 @@
  * scheduler / resolution / shift fields.
  */
 
-import type { Hunyuan3dImageTo3dComfyPolyGenInput } from '@civitai/client';
+import type { Hunyuan3dImageTo3dComfyPolyGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 

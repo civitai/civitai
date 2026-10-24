@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
@@ -12,12 +13,22 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 // PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, recordModActivity, applyBlockSideEffects } = vi.hoisted(() => ({
-  dbHandle: { current: null as unknown },
-  recordModActivity: vi.fn(async () => undefined),
-  applyBlockSideEffects: vi.fn(async () => undefined),
-}));
+const { dbHandle, recordModActivity, applyBlockSideEffects, trackImageRestore } = vi.hoisted(
+  () => ({
+    dbHandle: { current: null as unknown },
+    recordModActivity: vi.fn(async () => undefined),
+    applyBlockSideEffects: vi.fn(async () => undefined),
+    trackImageRestore: vi.fn(async () => undefined),
+  })
+);
 
+vi.mock('../removal-hold', () => ({
+  // No approved appeals here; the hold itself is covered by image-removal-confirmation.pglite.test.ts.
+  holdRemovals: vi.fn(async (requests: { imageId: number }[]) => ({
+    held: [],
+    proceed: requests.map((r) => r.imageId),
+  })),
+}));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -35,6 +46,7 @@ vi.mock('../image-moderation-effects', () => ({
   refundAppealFee: vi.fn(async () => undefined),
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
+  trackImageRestore,
 }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
@@ -65,6 +77,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -76,7 +89,8 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT,
   "resolvedReason" TEXT,
   "internalNotes" TEXT,
-  "buzzTransactionId" TEXT
+  "buzzTransactionId" TEXT,
+  "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
@@ -90,7 +104,7 @@ let db: PGlite;
 
 // One instance per file: a fresh PGlite per case is what times out under a full-suite run.
 beforeAll(async () => {
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -98,6 +112,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   recordModActivity.mockClear();
   applyBlockSideEffects.mockClear();
+  trackImageRestore.mockClear();
   await db.exec(`TRUNCATE "Image", "Appeal", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
@@ -159,12 +174,25 @@ describe('an image removed with only the review flag left', () => {
     await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).toHaveBeenCalledWith({ imageId: FLAGGED_REMOVED, actorUserId: 2 });
   });
 
   it('is accepted like any other image while it is still live', async () => {
     await acceptImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
+  });
+
+  it('logs no restore for a scanner block, which was never logged as a removal', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (54, 7, 'tag', 'AiNotVerified', 'Blocked', 32)`
+    );
+    await acceptImage({ imageId: 54, userId: 2 });
+
+    expect(await imageRow(54)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(trackImageRestore).not.toHaveBeenCalled();
   });
 
   it('is not removed a second time', async () => {

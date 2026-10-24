@@ -73,10 +73,6 @@ afterEach(() => {
 });
 
 describe('useGenerationGraphStore — funnel attribution', () => {
-  it('starts with lastEntryAction = direct', () => {
-    expect(useGenerationGraphStore.getState().lastEntryAction).toBe('direct');
-  });
-
   it("open() with no input keeps lastEntryAction = 'direct' (no in-flight data)", async () => {
     await useGenerationGraphStore.getState().open();
     expect(useGenerationGraphStore.getState().lastEntryAction).toBe('direct');

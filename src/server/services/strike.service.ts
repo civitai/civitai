@@ -333,6 +333,24 @@ export async function getUserStandings(input: GetUserStandingsInput) {
 export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted';
 
 /**
+ * The User row is not locked during escalation, so this decides in the statement itself: `jsonb_set`,
+ * not a spread of the `meta` read earlier (which would restore a `muteReason` a concurrent unmute had
+ * just removed), and the points re-summed, so a strike committed since the caller's read keeps its flag.
+ * Same rule as `voidScamCaseStrikes`; keep the active-strike predicate in step with it.
+ */
+async function clearReviewFlag(tx: Prisma.TransactionClient, userId: number) {
+  await tx.$executeRaw`
+    UPDATE "User" u
+    SET meta = jsonb_set(COALESCE(u.meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
+    WHERE u.id = ${userId}
+      AND COALESCE((
+        SELECT SUM(points) FROM "UserStrike"
+        WHERE "userId" = u.id AND status = ${StrikeStatus.Active}::"StrikeStatus" AND "expiresAt" > now()
+      ), 0) < ${REVIEW_MUTE_POINTS}
+  `;
+}
+
+/**
  * Evaluate strike escalation for a user based on their total active points.
  * Handles both escalation (mute/flag) and de-escalation (unmute when points drop).
  */
@@ -424,7 +442,12 @@ export async function evaluateStrikeEscalation(
         // Muting happens ONLY when a strike is issued. Voiding, expiry and the daily sweep re-evaluate
         // to RELEASE, never to re-apply — otherwise a moderator's manual unmute is silently undone by
         // the next job run, which is what happened before this flag existed.
-        if (!allowMute) return { totalPoints, action: 'none', notify: false };
+        if (!allowMute) {
+          // The mute stands, but the review flag still follows the points: a void from 3 to 2 must
+          // take the account out of the moderators' review queue.
+          if (currentMeta.strikeFlaggedForReview) await clearReviewFlag(tx, userId);
+          return { totalPoints, action: 'none', notify: false };
+        }
 
         const alreadyHeld = user.muted && !moderatorMuted;
 
@@ -470,6 +493,11 @@ export async function evaluateStrikeEscalation(
           muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null,
         });
       }
+
+      // The release below clears the flag with the mute; a mute it will not lift (a moderator's) or
+      // none at all must not leave the account flagged with nothing left to review.
+      if (currentMeta.strikeFlaggedForReview && (!user.muted || moderatorMuted))
+        await clearReviewFlag(tx, userId);
 
       // De-escalation: release a mute STRIKES applied, once the points no longer justify it. Two ways
       // out of the 2-point tier and this is the backstop one — the strikes expire, the daily job
@@ -541,11 +569,6 @@ export async function evaluateStrikeEscalation(
  *
  * Writes the acceptance timestamp ITSELF: the modal fires its own settings write without awaiting it,
  * so acceptance is not guaranteed recorded by the time this returns.
- *
- * The release reads and decides INSIDE a write transaction that first locks the account row, the row
- * strike escalation writes. Deciding on the replica, or before the lock, loses whatever happened in
- * between — a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale
- * `meta` write, leaving the account unmuted at three points and absent from the review queue.
  */
 export async function acceptTosAfterMute({
   userId,
@@ -564,6 +587,18 @@ export async function acceptTosAfterMute({
       : { tosLastSeenDate: now, tosAcceptedHash: resolveTosHash(tos.hash) }),
   });
 
+  return releaseStrikeMuteOnTosAcceptance(userId);
+}
+
+/**
+ * Reads and decides INSIDE a write transaction that first locks the account row, the row strike
+ * escalation writes. Deciding on the replica, or before the lock, loses whatever happened in between —
+ * a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale `meta`
+ * write, leaving the account unmuted at three points and absent from the review queue.
+ */
+export async function releaseStrikeMuteOnTosAcceptance(
+  userId: number
+): Promise<{ unmuted: boolean; reason?: string }> {
   const result = await dbWrite.$transaction(
     async (tx): Promise<{ unmuted: boolean; reason?: string }> => {
       // Locked before anything is read, so a strike landing mid-call waits and is counted.

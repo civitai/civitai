@@ -14,6 +14,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
+  enqueueImageIngestion: vi.fn(),
 }));
 // `importOriginal` keeps the rest of the module real: this suite's import graph
 // reaches prom collectors it never names, and a hand-listed mock silently breaks
@@ -27,7 +28,12 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
-import { getSectionById, getShopSectionsWithItems } from '../cosmetic-shop.service';
+import {
+  addShopItemToSection,
+  getSectionById,
+  getShopSectionsWithItems,
+  upsertCosmeticShopSection,
+} from '../cosmetic-shop.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
@@ -64,8 +70,10 @@ const sectionRow = {
   items: [officialItem],
 };
 
-const capturedShopItemWhere = () =>
-  mocks.sectionFindMany.mock.calls[0][0].select.items.where.shopItem;
+// The section read, not the event-tag lookup that runs before it with no `items` select.
+const mainSectionsCall = () =>
+  mocks.sectionFindMany.mock.calls.find(([args]) => args?.select?.items)![0];
+const capturedShopItemWhere = () => mainSectionsCall().select.items.where.shopItem;
 // Packs have no cosmetic, so the viewer gating moved into an OR whose second
 // branch carries every cosmetic condition. These read that branch, so the
 // assertions below still describe the same rules.
@@ -131,9 +139,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
       [[3, 11]],
     ]);
     // Mocks ignore `select`, so only this sees a whole-table `_count` re-added here.
-    expect(
-      mocks.sectionFindMany.mock.calls[0][0].select.items.select.shopItem.select._count
-    ).toBeUndefined();
+    expect(mainSectionsCall().select.items.select.shopItem.select._count).toBeUndefined();
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {
@@ -201,6 +207,14 @@ describe('getShopSectionsWithItems viewer gating', () => {
     ]);
   });
 
+  it('signed-out viewer with the flag (the homepage block): creator items stay, no block lookup', async () => {
+    await getShopSectionsWithItems({ creatorShopEnabled: true });
+
+    expect(capturedCosmeticWhere()).not.toHaveProperty('createdById');
+    expect(capturedShopItemWhere().status).toBe('Published');
+    expect(mocks.getBlockedPairIds).not.toHaveBeenCalled();
+  });
+
   it('skips the block lookup for anonymous, unflagged, and moderator viewers', async () => {
     await getShopSectionsWithItems({ creatorShopEnabled: true });
     await getShopSectionsWithItems({ userId: 1 });
@@ -226,12 +240,12 @@ describe('getShopSectionsWithItems viewer gating', () => {
 
   it('only queries hub sections for viewers with the creatorShop flag', async () => {
     await getShopSectionsWithItems({});
-    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([{ items: { some: {} } }]);
+    expect(mainSectionsCall().where.OR).toEqual([{ items: { some: {} } }]);
 
     mocks.sectionFindMany.mockClear();
     mocks.sectionFindMany.mockResolvedValue([sectionRow]);
     await getShopSectionsWithItems({ creatorShopEnabled: true });
-    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([
+    expect(mainSectionsCall().where.OR).toEqual([
       { items: { some: {} } },
       { meta: { path: ['communityHub'], equals: true } },
     ]);
@@ -264,5 +278,128 @@ describe('getSectionById serves the row count too', () => {
       dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mock.calls.at(-1)?.[0].select.items.select
         .shopItem.select._count
     ).toBeUndefined();
+  });
+});
+
+// A mystery box listing has no cosmetic, so the section would render it as a pack, without the box's
+// flag, region and event checks, from an edge-cached read.
+describe('mystery box listings stay out of shop sections', () => {
+  beforeEach(() => {
+    mocks.sectionFindMany.mockReset();
+    mocks.sectionFindMany.mockResolvedValue([sectionRow]);
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+  });
+
+  it.each([
+    ['anonymous', {}],
+    ['moderator', { isModerator: true, creatorShopEnabled: true }],
+  ])('the pack branch excludes them (%s)', async (_label, flags) => {
+    await getShopSectionsWithItems(flags);
+
+    expect(capturedPackBranch()).toEqual({ cosmeticId: null, itemDefinitionId: null });
+  });
+
+  it('the editor refuses one before writing anything', async () => {
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValueOnce(1);
+
+    await expect(
+      upsertCosmeticShopSection({ id: 5, title: 'Boxes', items: [7, 2671], userId: 1 })
+    ).rejects.toThrow('Mystery box listings cannot be placed in a shop section');
+    expect(dbMock.dbWrite.cosmeticShopItem.count).toHaveBeenLastCalledWith({
+      where: { id: { in: [7, 2671] }, itemDefinitionId: { not: null } },
+    });
+    expect(dbMock.dbWrite.cosmeticShopSection.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.cosmeticShopSectionItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('the editor still saves a section of cosmetics (control)', async () => {
+    dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mockResolvedValue({ id: 5, items: [] });
+
+    await upsertCosmeticShopSection({ id: 5, title: 'Badges', items: [7], userId: 1 });
+
+    expect(dbMock.dbWrite.cosmeticShopSectionItem.deleteMany).toHaveBeenCalled();
+  });
+});
+
+// The review drawer's picker reaches every item in the creator queue, including ones the section
+// editor's search never offers: items still in review, creator packs, mystery boxes.
+describe('adding one item to a section from the review drawer', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValue(0);
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.cosmeticShopSectionItem.findMany.mockResolvedValue([]);
+    // The section editor's tests above write through it too.
+    dbMock.dbWrite.$executeRaw.mockClear();
+  });
+
+  it.each([
+    ['in review', { status: 'PendingReview', archivedAt: null }],
+    ['archived', { status: 'Published', archivedAt: new Date() }],
+  ])('refuses an item that is %s, writing nothing', async (_label, row) => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce(row);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'Only published items can be placed in a shop section'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("refuses a creator cosmetic whose creator hasn't allowed resale", async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+    dbMock.dbWrite.cosmeticShopItem.findMany.mockResolvedValueOnce([{ title: 'Pumpkin hat' }]);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'These creator items are not published resellable cosmetics: Pumpkin hat'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    // The mock returns the row whatever it is asked, so the consent rule is pinned here.
+    expect(dbMock.dbWrite.cosmeticShopItem.findMany).toHaveBeenLastCalledWith({
+      where: {
+        id: { in: [7] },
+        cosmetic: { createdById: { not: null } },
+        OR: [
+          { status: { not: 'Published' } },
+          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+        ],
+      },
+      select: { title: true },
+    });
+  });
+
+  it('refuses a mystery box', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+    dbMock.dbWrite.cosmeticShopItem.count.mockResolvedValueOnce(1);
+
+    await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
+      'Mystery box listings cannot be placed in a shop section'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('places a published item the rules allow (control)', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+
+    await addShopItemToSection({ shopItemId: 7, sectionId: 5 });
+
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    expect(values).toEqual([5, 7, 5]);
+    // Appended after the section's last index, and a second add of the same item is a no-op
+    // rather than a unique-violation error.
+    expect(strings.map((s: string) => s.replace(/\s+/g, ' ').trim())).toEqual([
+      'INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index") SELECT',
+      ',',
+      ', COALESCE(MAX("index") + 1, 0) FROM "CosmeticShopSectionItem" WHERE "shopSectionId" =',
+      'ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING',
+    ]);
   });
 });

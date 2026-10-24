@@ -79,7 +79,7 @@ const SINGLE_ROW_MAX_HEIGHT = 40;
 //   50px  the value this test shipped with (#4034) — measured off-CI
 //   57px  the CI browser, measured 2026-08-17 on two independent runs
 //
-// It shipped red for that reason: `preview / component-tests` is report-only, and
+// It shipped red for that reason: `preview / component-tests` was report-only, and
 // no component-tests status was ever posted on #4034, so nothing said so.
 //
 // The bound sits above the largest observed value rather than ON it, because the

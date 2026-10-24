@@ -641,13 +641,16 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
       before: {
         status: 'approved',
         assets: {
-          v: 1,
+          v: 2,
           iconId: ICON_ID,
           coverId: COVER_ID,
           screenshots: [
             { imageId: SHOT_ID, caption: 'a demo' },
             { imageId: 44, caption: null },
           ],
+          // No civitai.red overrides table on this mock: recorded as none.
+          redIconId: null,
+          redCoverId: null,
         },
       },
     });
@@ -661,10 +664,12 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
     await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
 
     expect(eventData().before.assets).toEqual({
-      v: 1,
+      v: 2,
       iconId: null,
       coverId: null,
       screenshots: [],
+      redIconId: null,
+      redCoverId: null,
     });
   });
 

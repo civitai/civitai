@@ -28,8 +28,10 @@ import {
  *
  * That matters because `hostHandlerParity`'s coverage gate is ONE-DIRECTIONAL by
  * design: the inventory MAY carry keys ahead of the published dist, and **25 of its
- * 47 keys are ahead today** — measured against the installed
- * `@civitai/app-sdk@0.14.0`, whose block→host union declares 22 members. Running
+ * 47 keys were ahead when this was written** — measured against the then-installed
+ * `@civitai/app-sdk@0.14.0`, whose block→host union declares 22 members. (Re-measured
+ * at the `@civitai/app-sdk@0.65.1` bump: 0 of 50 ahead. The installed dist only moves
+ * when `package.json` is bumped, so the count drifts back up between bumps.) Running
  * ahead is therefore the NORM here, not a curiosity, so the documented,
  * gate-satisfying way to track an upstream rename is to ADD the new key and leave
  * the old one until the published dist catches up. In exactly that state this

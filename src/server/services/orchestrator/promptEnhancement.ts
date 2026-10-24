@@ -1,13 +1,15 @@
-import type { PromptEnhancementStepTemplate } from '@civitai/client';
+import type { PromptEnhancementStepTemplate } from '@civitai/orchestration-client';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { buildInstruction } from '~/server/services/orchestrator/promptInstruction';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { getAirEcosystem } from '~/shared/utils/air';
+import {
+  PROMPT_ENHANCEMENT_STEP_NAME,
+  PROMPT_ENHANCEMENT_TAGS,
+} from '~/shared/constants/prompt-enhancement.constants';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
-
-const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
 
 export { buildInstruction };
 
@@ -119,7 +121,7 @@ export async function enhancePrompt({
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['prompt-enhancement'],
+      tags: PROMPT_ENHANCEMENT_TAGS,
       metadata: {
         userInstruction: input.instruction ?? undefined,
         preserveTriggerWords: input.preserveTriggerWords ?? undefined,

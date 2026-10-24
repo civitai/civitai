@@ -9,12 +9,15 @@ import {
   CrucibleEngagementType,
   CrucibleIngestionStatus,
   CrucibleStatus,
+  HomeBlockType,
   ImageIngestionStatus,
   MediaType,
   ModelStatus,
   ModelType,
   PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { Flags } from '~/shared/utils/flags';
@@ -46,6 +49,7 @@ import type {
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
+  SetCrucibleEventTagsSchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
@@ -83,7 +87,7 @@ import {
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
-import { sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -107,11 +111,14 @@ import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
+  getCrucibleLiveMinVotes,
   getCrucibleMinVotes,
+  getCrucibleTimeAdjustedMinVotes,
   baseModelMakesMediaType,
   getAverageFinishTopPercent,
   getCreatorFinish,
   getCruciblePrizeWinners,
+  isPaidPrize,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
   type CrucibleNameScan,
@@ -126,17 +133,15 @@ import {
   type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
-import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
-import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   matureBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   exceedsModelBrowsingLevelLimit,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { settleSkippedCrucibleScan } from '~/server/services/text-scan/actions/crucible';
@@ -160,12 +165,13 @@ const sendCrucibleNotification = (notification: Parameters<typeof createNotifica
   );
 };
 
-/** The host and every placed entrant get their own ending notification; this reaches the rest. */
-const notifyCrucibleFollowersOfResults = async ({
+const notifyCrucibleFollowers = async ({
+  type,
   crucible,
   crucibleName,
   excludeUserIds,
 }: {
+  type: 'crucible-results' | 'crucible-starting';
   crucible: { id: number; userId: number } & Parameters<typeof isCrucibleHiddenByScan>[0];
   crucibleName: string | null;
   excludeUserIds: Iterable<number>;
@@ -201,9 +207,9 @@ const notifyCrucibleFollowersOfResults = async ({
     const userIds = candidates.filter((id) => !blockedIds.has(id));
     if (!userIds.length) return;
     sendCrucibleNotification({
-      type: 'crucible-results',
+      type,
       category: NotificationCategory.Update,
-      key: `crucible-results:${crucibleId}`,
+      key: `${type}:${crucibleId}`,
       userIds,
       details: { crucibleId, crucibleName },
     });
@@ -212,11 +218,36 @@ const notifyCrucibleFollowersOfResults = async ({
       type: 'error',
       name: 'crucible-notification-failed',
       message: error instanceof Error ? error.message : String(error),
-      notificationType: 'crucible-results',
+      notificationType: type,
       crucibleId,
     });
   }
 };
+
+/** The host and every placed entrant get their own ending notification; this reaches the rest. */
+const notifyCrucibleFollowersOfResults = (
+  args: Omit<Parameters<typeof notifyCrucibleFollowers>[0], 'type'>
+) => notifyCrucibleFollowers({ type: 'crucible-results', ...args });
+
+const crucibleStartNotificationSelect = {
+  id: true,
+  userId: true,
+  name: true,
+  textNsfw: true,
+  ingestion: true,
+  image: { select: { ingestion: true } },
+} satisfies Prisma.CrucibleSelect;
+
+/** Call only from the write that moved the crucible out of Pending, so it is sent once. */
+const notifyCrucibleFollowersOfStart = (
+  crucible: Prisma.CrucibleGetPayload<{ select: typeof crucibleStartNotificationSelect }>
+) =>
+  notifyCrucibleFollowers({
+    type: 'crucible-starting',
+    crucible,
+    crucibleName: getCruciblePublishableName(crucible),
+    excludeUserIds: [crucible.userId],
+  });
 
 /**
  * Generate a unique transaction prefix for crucible setup fees
@@ -364,7 +395,6 @@ export const createCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  if (!isModerator) assertSfwCrucibleText([name, description ?? ''], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
@@ -626,16 +656,6 @@ const entryVisibleToViewerSql = (viewerId: number | undefined, visibleImage: Pri
     viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty
   } (${visibleImage}))`;
 
-// throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
-function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
-  const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
-  if (isSfwOnly && getProfanityFilter().isProfane(texts.join(' '))) {
-    throw throwBadRequestError(
-      "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
-    );
-  }
-}
-
 async function assertPublishedModelVersions(versionIds: number[]) {
   const ids = [...new Set(versionIds)];
   if (!ids.length) return;
@@ -734,6 +754,8 @@ export const updateCrucible = async ({
       seededPrizePool: true,
       buzzTransactionId: true,
       seedTransactionId: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
     },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
@@ -810,7 +832,6 @@ export const updateCrucible = async ({
     isModerator,
     surface: 'crucible',
   });
-  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription ?? ''], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
   const addedResources = next.allowedResources.filter(
     (versionId) => !current.allowedResources.includes(versionId)
@@ -895,12 +916,23 @@ export const updateCrucible = async ({
       const startAt =
         changes.startAt === undefined ? crucible.startAt ?? now : changes.startAt ?? now;
       const startsNow = startAt <= now;
+      // As activateScheduledCrucibles: it opens only once both scans pass, so one still under
+      // review stays Pending with its start passed and the job opens it then.
+      const coverIngestion =
+        imageId && imageId !== crucible.imageId
+          ? (await dbRead.image.findUnique({ where: { id: imageId }, select: { ingestion: true } }))
+              ?.ingestion
+          : crucible.image?.ingestion;
+      const reviewed =
+        !textChanged &&
+        crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+        coverIngestion === ImageIngestionStatus.Scanned;
       Object.assign(data, {
         startAt: startsNow ? now : startAt,
         endAt: dayjs(startsNow ? now : startAt)
           .add(next.duration, 'hours')
           .toDate(),
-        status: startsNow ? CrucibleStatus.Active : CrucibleStatus.Pending,
+        status: startsNow && reviewed ? CrucibleStatus.Active : CrucibleStatus.Pending,
       });
     }
 
@@ -930,14 +962,35 @@ export const updateCrucible = async ({
     if (settlement) Object.assign(data, settlement.data);
   }
 
-  let updated: Awaited<ReturnType<typeof dbWrite.crucible.update>>;
+  let updated: Omit<Awaited<ReturnType<typeof dbWrite.crucible.update>>, 'eventTags'>;
+  // On the status read above: a cancel since then has already refunded the creator, and writing
+  // the status back would revive a crucible whose seed is gone.
+  // The row goes back to the creator, and event tags are moderator data.
+  const write = (where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {}) =>
+    dbWrite.crucible.update({
+      where: { id, status: crucible.status, ...where },
+      data,
+      omit: { eventTags: true },
+    });
+  const isNotFound = (error: unknown) =>
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
   try {
-    // On the status read above: a cancel since then has already refunded the creator, and writing
-    // the status back would revive a crucible whose seed is gone.
-    updated = await dbWrite.crucible.update({ where: { id, status: crucible.status }, data });
+    // The scans are re-checked in the write: an edit since the read may have reset one, and then
+    // it waits for the job like any other crucible still under review.
+    updated =
+      data.status === CrucibleStatus.Active
+        ? await write({
+            ingestion: CrucibleIngestionStatus.Scanned,
+            image: { ingestion: ImageIngestionStatus.Scanned },
+          }).catch((error) => {
+            if (!isNotFound(error)) throw error;
+            data.status = CrucibleStatus.Pending;
+            return write();
+          })
+        : await write();
   } catch (error) {
     await settlement?.rollback();
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+    if (isNotFound(error))
       throw throwBadRequestError(
         'This crucible changed while you were editing it. Reload the page and try again.'
       );
@@ -945,6 +998,25 @@ export const updateCrucible = async ({
   }
 
   if (textChanged) await scanCrucible(id);
+
+  // The update is conditional on the status read above, so only this edit made the crossing.
+  if (crucible.status === CrucibleStatus.Pending && updated.status === CrucibleStatus.Active) {
+    // The edit is saved, so a failed read must not fail it.
+    const started = await dbWrite.crucible
+      .findUnique({ where: { id }, select: crucibleStartNotificationSelect })
+      .catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'crucible-notification-failed',
+          message: error instanceof Error ? error.message : String(error),
+          notificationType: 'crucible-starting',
+          crucibleId: id,
+        });
+        return null;
+      });
+    if (started) await notifyCrucibleFollowersOfStart(started);
+  }
+
   return updated;
 };
 
@@ -1082,9 +1154,34 @@ export async function getPaidEntryCounts(crucibleIds: number[], db: typeof dbRea
   return counts;
 }
 
-export async function withPaidEntryCount<T extends { id: number }>(rows: T[]) {
-  const counts = await getPaidEntryCounts(rows.map(({ id }) => id));
-  return rows.map((row) => ({ ...row, paidEntryCount: counts.get(row.id) ?? 0 }));
+/**
+ * Distinct entrants per crucible, host excluded. The same definition as the "10+ entrants"
+ * creator milestone (`competeWinsSource`): every entry row counts, whatever became of its media.
+ */
+export async function getEntrantCounts(crucibleIds: number[], db: typeof dbRead = dbRead) {
+  const counts = new Map(crucibleIds.map((id) => [id, 0]));
+  if (!crucibleIds.length) return counts;
+
+  const rows = await db.$queryRaw<{ crucibleId: number; entrants: number }[]>`
+    SELECT e."crucibleId", count(DISTINCT e."userId")::int AS entrants
+    FROM "CrucibleEntry" e
+    JOIN "Crucible" c ON c.id = e."crucibleId"
+    WHERE e."crucibleId" = ANY(${crucibleIds}::int[])
+      AND e."userId" <> c."userId"
+    GROUP BY e."crucibleId"
+  `;
+  for (const { crucibleId, entrants } of rows) counts.set(crucibleId, entrants);
+  return counts;
+}
+
+export async function withEntryCounts<T extends { id: number }>(rows: T[]) {
+  const ids = rows.map(({ id }) => id);
+  const [paid, entrants] = await Promise.all([getPaidEntryCounts(ids), getEntrantCounts(ids)]);
+  return rows.map((row) => ({
+    ...row,
+    paidEntryCount: paid.get(row.id) ?? 0,
+    entrantCount: entrants.get(row.id) ?? 0,
+  }));
 }
 
 export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
@@ -1094,6 +1191,7 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
 
 export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
+  entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
   /** Entries whose image was deleted or withdrawn don't count, as in `submitEntry`'s limit. */
@@ -1150,21 +1248,24 @@ export const getCrucibleDetail = async ({
   if (!crucible || isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
     return null;
 
-  const [paidEntryCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all([
-    getPaidEntryCounts([id]),
-    userId
-      ? dbRead.crucibleEntry
-          .findMany({
-            where: { crucibleId: id, userId },
-            select: crucibleEntrySelect,
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          })
-          .then((entries) => ({
-            viewerEntries: entries.filter(hasEntryImage),
-            viewerEntriesSoFar: entries.length,
-          }))
-      : { viewerEntries: [], viewerEntriesSoFar: 0 },
-  ]);
+  const [paidEntryCounts, entrantCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all(
+    [
+      getPaidEntryCounts([id]),
+      getEntrantCounts([id]),
+      userId
+        ? dbRead.crucibleEntry
+            .findMany({
+              where: { crucibleId: id, userId },
+              select: crucibleEntrySelect,
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            })
+            .then((entries) => ({
+              viewerEntries: entries.filter(hasEntryImage),
+              viewerEntriesSoFar: entries.length,
+            }))
+        : { viewerEntries: [], viewerEntriesSoFar: 0 },
+    ]
+  );
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
   const prizeWinners =
@@ -1183,12 +1284,14 @@ export const getCrucibleDetail = async ({
           ])
         )
           .get(id)
-          ?.map(({ userId, ...prize }) => prize) ?? []
+          ?.filter(isPaidPrize)
+          .map(({ userId, ...prize }) => prize) ?? []
       : [];
 
   return {
     ...crucible,
     paidEntryCount,
+    entrantCount: entrantCounts.get(id) ?? 0,
     viewerEntries,
     viewerEntryCount: viewerEntries.length,
     viewerEntriesSoFar,
@@ -1246,9 +1349,11 @@ export const getCrucibleEntries = async ({
     viewerId: userId,
     visibleImage: visibleEntryImageSql(crucible.nsfwLevel, viewerLevel),
   };
-  const rows = rankingsFinal
-    ? await getRankedEntries(page)
-    : await getShuffledEntries({ ...page, seed });
+  const [rows, visibleCount] = await Promise.all([
+    rankingsFinal ? getRankedEntries(page) : getShuffledEntries({ ...page, seed }),
+    // Once per list: the first page carries it, a later page has no use for it.
+    cursor ? undefined : countListedEntries(page),
+  ]);
 
   // The row fetched past the page opens the next one, so both page queries compare with `>=`.
   const nextCursor = rows.length > limit ? rows.pop()?.id : undefined;
@@ -1271,7 +1376,7 @@ export const getCrucibleEntries = async ({
         })
       : [];
 
-  return { items, nextCursor, podium };
+  return { items, nextCursor, podium, visibleCount };
 };
 
 const PODIUM_PLACES = 3;
@@ -1338,6 +1443,27 @@ type EntryPageArgs = {
   visibleImage: Prisma.Sql;
 };
 
+/** The entries the grid lists, as `ce`: the one place the list and its count decide what is hidden. */
+const listedEntriesSql = ({
+  crucibleId,
+  viewerId,
+  visibleImage,
+}: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>) => Prisma.sql`
+  FROM "CrucibleEntry" ce
+  JOIN "Image" i ON i.id = ce."imageId"
+  WHERE ce."crucibleId" = ${crucibleId}
+    AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+`;
+
+const countListedEntries = async (
+  args: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'>
+) => {
+  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT count(*)::int AS count ${listedEntriesSql(args)}
+  `;
+  return count;
+};
+
 const loadEntriesInOrder = async (ids: { id: number }[]) => {
   if (!ids.length) return [];
   const byId = new Map(
@@ -1373,10 +1499,7 @@ const getRankedEntries = async ({
 }: EntryPageArgs) => {
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (${rankKeySql('ce')}) >= (SELECT ${rankKeySql(
@@ -1405,10 +1528,7 @@ const getShuffledEntries = async ({
   const salt = `:${seed}`;
   const ids = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."crucibleId" = ${crucibleId}
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
+    ${listedEntriesSql({ crucibleId, viewerId, visibleImage })}
       ${
         cursor
           ? Prisma.sql`AND (md5(ce.id::text || ${salt}), ce.id) >= (md5(${cursor}::int::text || ${salt}), ${cursor}::int)`
@@ -1430,6 +1550,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator = false,
   viewerId,
   isGreen = false,
+  eventTag,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
@@ -1437,8 +1558,11 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isModerator?: boolean;
   viewerId?: number;
   isGreen?: boolean;
+  /** Server-side only: event tags are moderator data, so no public input may filter on them. */
+  eventTag?: string;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
+  if (eventTag !== undefined) where.eventTags = { has: eventTag };
 
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
@@ -1551,6 +1675,52 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     rows.length > take ? (rows.pop() as { id: number } & (typeof rows)[number]).id : undefined;
 
   return { items: rows, nextCursor };
+};
+
+export const getCrucibleEventTags = async (id: number) => {
+  const crucible = await dbRead.crucible.findUnique({ where: { id }, select: { eventTags: true } });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  return crucible.eventTags;
+};
+
+export const setCrucibleEventTags = async ({ id, eventTags }: SetCrucibleEventTagsSchema) => {
+  const exists = await dbWrite.crucible.findUnique({ where: { id }, select: { id: true } });
+  if (!exists) throw throwNotFoundError('Crucible not found');
+  const updated = await dbWrite.crucible.update({
+    where: { id },
+    data: { eventTags },
+    select: { eventTags: true },
+  });
+  // The tags are saved by now, so a failed bust must not report the save as failed; the block's
+  // own TTL clears it.
+  try {
+    await bustCrucibleFeedBlocks();
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-event-tags-bust-failed',
+      message: e instanceof Error ? e.message : String(e),
+      crucibleId: id,
+    });
+  }
+  return updated.eventTags;
+};
+
+/**
+ * A crucibles Feed block caches its slice for 10 minutes, empty ones included, so without this a
+ * newly tagged crucible would not reach the homepage until that expired. Clones share their source's
+ * entry, so the system blocks are all there is to clear.
+ */
+const bustCrucibleFeedBlocks = async () => {
+  const blocks = await dbRead.homeBlock.findMany({
+    where: { userId: -1, type: HomeBlockType.Feed },
+    select: { id: true, metadata: true },
+  });
+  await Promise.all(
+    blocks
+      .filter((block) => (block.metadata as HomeBlockMetaSchema)?.feed?.entity === 'crucibles')
+      .map((block) => homeBlockCacheBust(HomeBlockType.Feed, block.id))
+  );
 };
 
 /**
@@ -3261,15 +3431,17 @@ export type FinalizeCrucibleResult = {
 };
 
 /**
- * An entry whose image was blocked, held for review, flagged, unpublished, or re-rated outside the
- * crucible's levels can't place; its fee stays in the pool. A scan still in progress doesn't
- * disqualify.
+ * An entry by a banned entrant, or whose image was blocked, held for review, flagged, unpublished,
+ * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
+ * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
+ * is finalized holds the prize instead (see `prize.service`).
  */
 const rankableEntryWhere = (
   crucibleId: number,
   nsfwLevel: number
 ): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
+  user: { bannedAt: null },
   image: {
     ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
@@ -3332,6 +3504,9 @@ export const getCrucibleMinVotesToPlace = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      startAt: true,
+      endAt: true,
+      timeAdjustedPlacement: true,
       image: { select: { ingestion: true } },
     },
   });
@@ -3342,6 +3517,21 @@ export const getCrucibleMinVotesToPlace = async ({
     isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
+
+  if (crucible.timeAdjustedPlacement && crucible.endAt) {
+    const entries = await dbRead.crucibleEntry.findMany({
+      where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
+      select: { voteCount: true, createdAt: true },
+    });
+    return {
+      minVotes: getCrucibleLiveMinVotes({
+        entries,
+        startAt: crucible.startAt,
+        endAt: crucible.endAt,
+        now: new Date(),
+      }),
+    };
+  }
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
     where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
@@ -3408,7 +3598,9 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       seededPrizePool: true,
       seedTransactionId: true,
       prizePositions: true,
+      startAt: true,
       endAt: true,
+      timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
         select: { entries: true },
@@ -3551,6 +3743,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
+    timeWindow:
+      crucible.timeAdjustedPlacement && crucible.endAt
+        ? { startAt: crucible.startAt, endAt: crucible.endAt }
+        : null,
   });
   // Written only if no run has written one, under the crucible's row lock: an earlier attempt may
   // have paid part of its ranking before failing, and an overlapping run would pay a second one.
@@ -3595,7 +3791,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Filter entries that have a prize amount > 0
   const prizeWinners = finalizedEntries.filter(
     (entry): entry is FinalizedEntry & { position: number; prizePlace: number } =>
-      entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
+      entry.position !== null && entry.prizePlace !== null && isPaidPrize(entry)
   );
 
   // Awarded, not paid: each winner claims theirs and picks the currency. The key is the one this
@@ -3619,6 +3815,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         }))
       );
       log(`Awarded ${prizes.length} prizes for crucible ${crucibleId}`);
+      await bustUserBuzzWon(prizeWinners.map((winner) => winner.userId));
     } catch (error) {
       // Still Active, so the next run retries; the insert is keyed per entry and place.
       logToAxiom({
@@ -3741,7 +3938,13 @@ function rankEntries(
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
-  }: PrizeContext & { redisElos: Record<number, number>; redisVoteCounts: Record<number, number> }
+    timeWindow,
+  }: PrizeContext & {
+    redisElos: Record<number, number>;
+    redisVoteCounts: Record<number, number>;
+    /** Set for crucibles whose placement bar follows the time each entry was live. */
+    timeWindow: { startAt: Date | null; endAt: Date } | null;
+  }
 ): FinalizedEntry[] {
   // Redis can lose a crucible's hashes (a reset or redeploy); the last sync is the fallback.
   const entriesWithElo = entries.map((entry) => ({
@@ -3752,17 +3955,20 @@ function rankEntries(
     createdAt: entry.createdAt,
   }));
 
+  const minVotesByEntry = timeWindow
+    ? getCrucibleTimeAdjustedMinVotes(entriesWithElo, timeWindow)
+    : null;
   const minVotes = getCrucibleMinVotes({
     totalVotes: entriesWithElo.reduce((sum, entry) => sum + entry.voteCount, 0),
     entryCount: entriesWithElo.length,
   });
+  const isPlaced = (entry: (typeof entriesWithElo)[number], index: number) =>
+    entry.voteCount >= (minVotesByEntry?.[index] ?? minVotes);
   const byScoreThenEntryTime = (a: (typeof entriesWithElo)[number], b: typeof a) =>
     b.finalScore - a.finalScore || a.createdAt.getTime() - b.createdAt.getTime();
-  const placedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount >= minVotes)
-    .sort(byScoreThenEntryTime);
+  const placedEntries = entriesWithElo.filter(isPlaced).sort(byScoreThenEntryTime);
   const unplacedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount < minVotes)
+    .filter((entry, index) => !isPlaced(entry, index))
     .sort(byScoreThenEntryTime);
 
   return withPrizes(
@@ -3892,16 +4098,31 @@ const refundUnawardedSeed = async (
  * Opens every scheduled crucible whose start time has passed.
  */
 export const activateScheduledCrucibles = async (): Promise<number> => {
-  const { count } = await dbWrite.crucible.updateMany({
-    where: {
-      status: CrucibleStatus.Pending,
-      startAt: { lte: new Date() },
-      ingestion: CrucibleIngestionStatus.Scanned,
-      image: { ingestion: ImageIngestionStatus.Scanned },
-    },
-    data: { status: CrucibleStatus.Active },
+  const ready = {
+    status: CrucibleStatus.Pending,
+    startAt: { lte: new Date() },
+    ingestion: CrucibleIngestionStatus.Scanned,
+    image: { ingestion: ImageIngestionStatus.Scanned },
+  } satisfies Prisma.CrucibleWhereInput;
+  const due = await dbWrite.crucible.findMany({
+    where: ready,
+    select: crucibleStartNotificationSelect,
+    // The job runs every minute, so any past this open on the next run.
+    take: 100,
   });
-  return count;
+  let activated = 0;
+  for (const crucible of due) {
+    // Re-checked per row: an edit since the read may have moved the start or reset a scan, and a
+    // retry or an overlapping run finds it no longer Pending, so it can't notify twice.
+    const { count } = await dbWrite.crucible.updateMany({
+      where: { id: crucible.id, ...ready },
+      data: { status: CrucibleStatus.Active },
+    });
+    if (count !== 1) continue;
+    activated++;
+    await notifyCrucibleFollowersOfStart(crucible);
+  }
+  return activated;
 };
 
 const UNSCANNED_VOID_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -4041,11 +4262,7 @@ export type CancelCrucibleResult = {
   failedRefunds: Array<{ entryId: number | null; userId: number; error: string }>;
 };
 
-/**
- * Buzz keys refunds on `externalTransactionIdPrefix`: a second refund of one returns 409, and a
- * prefix matching nothing returns 404. Neither means money is owed, so tolerating both is what
- * makes cancelling safe to re-run — the same tolerance as `refundChallengeFundsByPrefix`.
- */
+/** Safe to re-run: legs an earlier attempt reversed are reported as already settled. */
 async function refundCrucibleTransactionOnce({
   externalTransactionIdPrefix,
   description,
@@ -4059,25 +4276,18 @@ async function refundCrucibleTransactionOnce({
   label: string;
   reason?: string;
 }): Promise<'refunded' | 'already-settled'> {
-  try {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix,
-      description,
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-        reason,
-      },
-    });
-    return 'refunded';
-  } catch (error) {
-    const status = getBuzzApiStatus(error);
-    if (status === 404 || status === 409) {
-      log(`Refund for ${label} already settled (buzz ${status}); nothing moved`);
-      return 'already-settled';
-    }
-    throw error;
-  }
+  const { refundedLegs } = await refundAllLegsByPrefix({
+    externalTransactionIdPrefix,
+    description,
+    details: {
+      entityId: crucibleId,
+      entityType: 'Crucible',
+      reason,
+    },
+  });
+  if (refundedLegs > 0) return 'refunded';
+  log(`Refund for ${label} already settled; nothing moved`);
+  return 'already-settled';
 }
 
 const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
@@ -4537,70 +4747,70 @@ export const cancelCrucible = async ({
 // User Crucible Stats
 // ============================================================================
 
+const userBuzzWonKey = (userId: number) =>
+  `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
+
 /**
- * Get user's crucible stats for the discovery page welcome section
+ * Awarded prizes count toward Buzz Won before they are claimed, so finalize drops the cache.
+ * `redis.del` (forced refetch) is deliberate, not `bustFetchThroughCache` (stale-while-revalidate).
+ */
+const bustUserBuzzWon = (userIds: number[]) =>
+  Promise.all([...new Set(userIds)].map((id) => redis.del(userBuzzWonKey(id)))).catch((error) =>
+    log(`Failed to bust Buzz Won cache: ${error instanceof Error ? error.message : String(error)}`)
+  );
+
+/**
+ * Get user's crucible stats for the discovery page welcome section.
  *
- * Stats include:
- * - Total crucibles entered (not created)
- * - Total Buzz won from crucible prizes
- * - Best placement (lowest position number)
- * - Average finish, as the top percent of the field
- * - Prizes won (crucibles where the user took a prize)
+ * Participation counts every crucible the user entered while it was running or has ended;
+ * results (Buzz won, win rate, finishes) come from ended crucibles only. Cancelled crucibles are
+ * refunded and pending ones are not open for entries, so neither counts.
  */
 export const getUserCrucibleStats = async ({
   userId,
 }: {
   userId: number;
 }): Promise<{
-  totalCrucibles: number;
+  cruciblesEntered: number;
+  /** Ended crucibles entered: the denominator of the win rate. */
+  cruciblesEnded: number;
+  /** Ended crucibles in which the user took a prize of more than 0 Buzz. */
+  cruciblesWon: number;
   buzzWon: number;
-  bestPlacement: number | null;
+  bestFinish: { position: number; fieldSize: number } | null;
   avgFinishTopPercent: number | null;
-  prizesWon: number;
+  votesCast: number;
 }> => {
-  // Get all entries for this user in completed crucibles
-  const entries = await dbRead.crucibleEntry.findMany({
-    where: {
-      userId,
-      crucible: {
-        status: CrucibleStatus.Completed,
+  const [entries, votesCast, buzzWon] = await Promise.all([
+    dbRead.crucibleEntry.findMany({
+      where: {
+        userId,
+        crucible: { status: { in: [CrucibleStatus.Active, CrucibleStatus.Completed] } },
       },
-    },
-    select: {
-      id: true,
-      position: true,
-      crucibleId: true,
-      crucible: {
-        select: {
-          prizePositions: true,
-          entryFee: true,
-          seededPrizePool: true,
+      select: {
+        id: true,
+        position: true,
+        crucibleId: true,
+        crucible: {
+          select: {
+            status: true,
+            prizePositions: true,
+            entryFee: true,
+            seededPrizePool: true,
+          },
         },
       },
-    },
-  });
+    }),
+    getUserVoteCount(userId),
+    getUserBuzzWon(userId),
+  ]);
 
-  if (entries.length === 0) {
-    return {
-      totalCrucibles: 0,
-      buzzWon: 0,
-      bestPlacement: null,
-      avgFinishTopPercent: null,
-      prizesWon: 0,
-    };
-  }
-
-  // Calculate unique crucibles entered
-  const uniqueCrucibleIds = new Set(entries.map((e) => e.crucibleId));
-  const totalCrucibles = uniqueCrucibleIds.size;
-
-  // Calculate best placement (lowest non-null position)
-  const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
-  const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
-
-  const cruciblesById = new Map(entries.map((e) => [e.crucibleId, e.crucible]));
+  const cruciblesEntered = new Set(entries.map((e) => e.crucibleId)).size;
+  const ended = entries.filter((e) => e.crucible.status === CrucibleStatus.Completed);
+  const cruciblesById = new Map(ended.map((e) => [e.crucibleId, e.crucible]));
+  const cruciblesEnded = cruciblesById.size;
   const placedCrucibleIds = [
-    ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
+    ...new Set(ended.filter((e) => e.position !== null).map((e) => e.crucibleId)),
   ];
   const [placed, paidEntryCounts] = placedCrucibleIds.length
     ? await Promise.all([
@@ -4615,7 +4825,7 @@ export const getUserCrucibleStats = async ({
     else placedByCrucible.set(row.crucibleId, [row]);
   }
 
-  let prizesWon = 0;
+  let cruciblesWon = 0;
   const finishes: { rank: number; field: number }[] = [];
   for (const crucibleId of placedCrucibleIds) {
     const crucible = cruciblesById.get(crucibleId);
@@ -4630,38 +4840,47 @@ export const getUserCrucibleStats = async ({
         seededPrizePool: crucible?.seededPrizePool ?? 0,
       }),
     });
-    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0)) prizesWon++;
+    if (winners.some((winner) => winner.userId === userId && isPaidPrize(winner))) cruciblesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);
   }
-  const avgFinishTopPercent = getAverageFinishTopPercent(finishes);
 
-  // Calculate total Buzz won from crucible prizes
-  // Uses externalTransactionId prefix which is more specific and potentially better indexed
-  // Results are cached since prize totals only change when new crucibles complete
-  const cacheKey = `${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${userId}` as RedisKeyTemplateCache;
-  const buzzWon = await fetchThroughCache(
-    cacheKey,
-    async () => {
-      const buzzWonResult = await dbRead.$queryRaw<[{ total: bigint }]>`
-        SELECT COALESCE(SUM(amount), 0) as total
-        FROM "BuzzTransaction"
-        WHERE "toUserId" = ${userId}
-          AND "externalTransactionId" LIKE 'crucible-prize-%'
-      `;
-      return Number(buzzWonResult[0]?.total ?? 0);
-    },
-    { ttl: CacheTTL.hour }
+  // Best rank wins; between equal ranks the bigger field is the better result.
+  const best = finishes.reduce<{ rank: number; field: number } | null>(
+    (top, finish) =>
+      !top || finish.rank < top.rank || (finish.rank === top.rank && finish.field > top.field)
+        ? finish
+        : top,
+    null
   );
 
   return {
-    totalCrucibles,
+    cruciblesEntered,
+    cruciblesEnded,
+    cruciblesWon,
     buzzWon,
-    bestPlacement,
-    avgFinishTopPercent,
-    prizesWon,
+    bestFinish: best ? { position: best.rank, fieldSize: best.field } : null,
+    avgFinishTopPercent: getAverageFinishTopPercent(finishes),
+    votesCast,
   };
 };
+
+/**
+ * Gross prize Buzz from the Prize table, claimed or not. Buzz transactions live in an external
+ * service, so there is no ledger table to sum. Cached; finalize busts it.
+ */
+const getUserBuzzWon = (userId: number) =>
+  fetchThroughCache(
+    userBuzzWonKey(userId),
+    async () => {
+      const { _sum } = await dbRead.prize.aggregate({
+        where: { userId, sourceType: PrizeSourceType.Crucible, voidedAt: null },
+        _sum: { amount: true },
+      });
+      return _sum.amount ?? 0;
+    },
+    { ttl: CacheTTL.hour }
+  );
 
 // ============================================================================
 // User Active Crucibles
@@ -4703,9 +4922,12 @@ function formatTimeRemaining(endAt: Date): string {
 export const getUserActiveCrucibles = async ({
   userId,
   blockedCreatorIds,
+  site,
 }: {
   userId: number;
   blockedCreatorIds?: number[];
+  /** Required so no caller can serve green without its ceiling. */
+  site: { isGreen: boolean; isModerator: boolean };
 }): Promise<
   Array<{
     id: number;
@@ -4737,9 +4959,14 @@ export const getUserActiveCrucibles = async ({
           entryFee: true,
           seededPrizePool: true,
           endAt: true,
+          nsfwLevel: true,
+          textNsfw: true,
+          ingestion: true,
           image: {
             select: {
               url: true,
+              nsfwLevel: true,
+              ingestion: true,
             },
           },
           _count: {
@@ -4780,7 +5007,12 @@ export const getUserActiveCrucibles = async ({
   >();
 
   for (const entry of entries) {
-    if (isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds })) continue;
+    if (
+      isCrucibleBlockedForViewer(entry.crucible, { blockedCreatorIds }) ||
+      isCrucibleHiddenByScan(entry.crucible, { viewerId: userId }) ||
+      isCrucibleOffSite(entry.crucible, { viewerId: userId, ...site })
+    )
+      continue;
     const crucibleId = entry.crucibleId;
     const existing = crucibleMap.get(crucibleId);
 
@@ -4812,7 +5044,11 @@ export const getUserActiveCrucibles = async ({
         timeRemaining,
         endAt: entry.crucible.endAt,
         position: newBestPosition,
-        imageUrl: entry.crucible.image?.url ?? null,
+        // On green the ceiling holds for the host too, as on the crucible's own cards.
+        imageUrl:
+          site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image?.nsfwLevel, userId)
+            ? null
+            : entry.crucible.image?.url ?? null,
       });
     }
   }
@@ -5044,7 +5280,7 @@ export const getJudgingSuggestions = async ({
     .slice(0, limit);
   if (!ids.length) return [];
 
-  const suggestions = await withPaidEntryCount(
+  const suggestions = await withEntryCounts(
     await dbRead.crucible.findMany({
       where: { id: { in: ids } },
       select: crucibleListSelect,

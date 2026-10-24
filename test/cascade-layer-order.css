@@ -13,4 +13,4 @@
  * — Tailwind preflight would start winning over Mantine, or Mantine over CSS
  * modules, and every geometry number would move for a reason nothing reports.
  */
-@layer tailwind-preflight, theme, mantine, modules;
+@layer tailwind-preflight, theme, mantine, civitai.components, modules;

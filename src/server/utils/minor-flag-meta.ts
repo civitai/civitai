@@ -31,7 +31,7 @@ export function resolvePoiFlagged({
   poi: boolean | null | undefined;
   meta: ModelMeta | null | undefined;
 }): boolean {
-  return !!isOwner && !!poi && hasOpenTextScanFlag(meta, 'poi');
+  return !!isOwner && !!poi && (!!meta?.poiFlagSnapshot || hasOpenTextScanFlag(meta, 'poi'));
 }
 
 // The enforced privacy boundary for the appeal: whatever the caller passes in
@@ -62,8 +62,13 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorHashDismissed: _dismissed,
     minorHashCleared: _cleared,
     minorHashAccepted: _accepted,
+    poiFlagSnapshot: _poiSnapshot,
+    poiHashMatch: _poiMatch,
+    poiHashCleared: _poiCleared,
     textModeration: _textModeration,
     textScanFlags: _textScanFlags,
+    modelRules: _modelRules,
+    modelRulesCleared: _modelRulesCleared,
     ...rest
   } = meta;
 
@@ -86,10 +91,37 @@ const MODERATION_OWNED_META_KEYS = [
   'minorHashDismissed',
   'minorHashCleared',
   'minorHashAccepted',
+  'poiFlagSnapshot',
+  'poiHashMatch',
+  'poiHashCleared',
   'textModeration',
   'textScanFlags',
+  'modelRules',
+  'modelRulesCleared',
   'profanityMatches',
   'profanityEvaluation',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+/**
+ * Meta keys written only by moderation and system flows (takedown, unpublish, decline, archive,
+ * promotion/publish bans). Unlike `MODERATION_OWNED_META_KEYS` they are shown to the owner, so
+ * `stripMinorHashMeta` does not hide them; an owner still must not author or clear them through
+ * `model.upsert`, where a form that echoes `meta` back would otherwise overwrite the stored value.
+ */
+export const MODERATION_FLOW_META_KEYS = [
+  'cannotPublish',
+  'cannotPromote',
+  'unpublishedReason',
+  'unpublishedAt',
+  'unpublishedBy',
+  'customMessage',
+  'needsReview',
+  'declinedReason',
+  'declinedAt',
+  'takenDownAt',
+  'takenDownBy',
+  'archivedAt',
+  'archivedBy',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /**
@@ -108,8 +140,30 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
 
   const rest = { ...meta } as ModelMeta;
   for (const key of MODERATION_OWNED_META_KEYS) delete rest[key];
+  for (const key of MODERATION_FLOW_META_KEYS) delete rest[key];
 
   return rest as T;
+}
+
+/**
+ * Server-only marker, outside `ModelMeta`: set by `privateModelFromTraining` when a moderator's
+ * `cannotPromote` was in force before the private cycle forced it on, and consumed by
+ * `publishPrivateModel` to put that value back.
+ */
+export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
+
+/**
+ * Meta of a model that is Private after a moderator's `cannotPromote` decision: the flag stays forced
+ * on while private, and the decision is kept in the restore marker for `publishPrivateModel`.
+ * `banned: true` records it; `false` drops the marker so publish makes the model promotable.
+ */
+export function withPrivateCannotPromote<T extends object>(meta: T, banned: boolean): T {
+  const { [RESTORE_CANNOT_PROMOTE_KEY]: _marker, ...rest } = meta as Record<string, unknown>;
+  return {
+    ...rest,
+    cannotPromote: true,
+    ...(banned && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+  } as T;
 }
 
 /**
@@ -124,20 +178,40 @@ export const SERVER_OWNED_META_KEYS = [
   'trainingStudioModerationApproved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
+const SERVER_ONLY_META_KEYS: readonly string[] = [
+  ...SERVER_OWNED_META_KEYS,
+  RESTORE_CANNOT_PROMOTE_KEY,
+];
+
 export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {
   if (!meta) return meta;
-  const rest = { ...meta } as ModelMeta;
-  for (const key of SERVER_OWNED_META_KEYS) delete rest[key];
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of SERVER_ONLY_META_KEYS) delete rest[key];
   return rest as T;
+}
+
+function pickKeys(meta: ModelMeta | null | undefined, keys: readonly string[]): ModelMeta {
+  const picked: Record<string, unknown> = {};
+  if (!meta) return picked as ModelMeta;
+  const source = meta as Record<string, unknown>;
+  for (const key of keys) if (source[key] !== undefined) picked[key] = source[key];
+  return picked as ModelMeta;
 }
 
 /** The server-owned keys of a stored meta, to carry across a write that replaces meta wholesale. */
 export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
-  const picked: ModelMeta = {};
-  if (!meta) return picked;
-  for (const key of SERVER_OWNED_META_KEYS)
-    if (meta[key] !== undefined) (picked as Record<string, unknown>)[key] = meta[key];
-  return picked;
+  return pickKeys(meta, SERVER_ONLY_META_KEYS);
+}
+
+/** The moderation-owned and moderation-flow keys of a stored meta, for a wholesale meta write by a non-moderator. */
+export function pickModerationOwnedMeta(
+  meta: ModelMeta | null | undefined,
+  { includeFlowKeys = true }: { includeFlowKeys?: boolean } = {}
+): ModelMeta {
+  return pickKeys(meta, [
+    ...MODERATION_OWNED_META_KEYS,
+    ...(includeFlowKeys ? MODERATION_FLOW_META_KEYS : []),
+  ]);
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {

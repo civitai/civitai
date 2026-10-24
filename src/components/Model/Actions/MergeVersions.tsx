@@ -233,11 +233,20 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
   const handleMerge = () => {
     if (!targetVersionId || selectedSourceIds.size === 0 || mergeMutation.isPending) return;
 
+    // A version unticked after its files were edited leaves mappings behind; the server refuses
+    // mappings for files outside the merge, so send only those of the versions being merged.
+    const mergedFileIds = new Set(
+      versions
+        .filter((v) => v.id === targetVersionId || selectedSourceIds.has(v.id))
+        .flatMap((v) => (v.files ?? []).map((f) => f.id))
+    );
+    const mappings = fileTypeMappings.filter((m) => mergedFileIds.has(m.fileId));
+
     mergeMutation.mutate({
       modelId,
       targetVersionId,
       sourceVersionIds: Array.from(selectedSourceIds),
-      fileTypeMappings: fileTypeMappings.length > 0 ? fileTypeMappings : undefined,
+      fileTypeMappings: mappings.length > 0 ? mappings : undefined,
       appendDescriptions,
     });
   };

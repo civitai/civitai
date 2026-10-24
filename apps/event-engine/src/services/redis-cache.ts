@@ -1,4 +1,4 @@
-import { createCluster, RedisClusterType } from 'redis'
+import { createEngineCluster, type EngineRedisCluster } from '@/services/redis-cluster-client'
 import { CacheUpdate, MetricEvent } from '@/types/events'
 import { logger } from '@/utils/logger'
 import { cacheKeys } from '@/common/utils/cache-keys'
@@ -13,7 +13,7 @@ import type { ExcludedUserLookup } from '@/services/metric-excluded-users'
  * Manages Redis cache updates for real-time metrics
  */
 export class RedisCache {
-  private client: RedisWithHelpers<RedisClusterType> | null = null
+  private client: RedisWithHelpers<EngineRedisCluster> | null = null
   private isConnected: boolean = false
 
   constructor(private redisUrl: string, private excludedUsers: ExcludedUserLookup) {}
@@ -26,13 +26,7 @@ export class RedisCache {
 
     try {
       const url = new URL(this.redisUrl);
-      const redis: RedisClusterType = createCluster({
-        rootNodes: [{url: `${url.protocol}//${url.host}`}],
-        defaults: {
-          username: url.username === '' ? undefined : url.username,
-          password: url.password
-        }
-      })
+      const redis = createEngineCluster(url)
       this.client = withRedisHelpers(redis)
 
       this.client.on('error', (err) => {
@@ -64,7 +58,7 @@ export class RedisCache {
   /**
    * Get the Redis client instance
    */
-  async getClient(): Promise<RedisWithHelpers<RedisClusterType>> {
+  async getClient(): Promise<RedisWithHelpers<EngineRedisCluster>> {
     if (!this.client || !this.isConnected) {
       await this.connect()
     }

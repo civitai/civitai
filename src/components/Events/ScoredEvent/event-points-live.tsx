@@ -36,6 +36,7 @@ const HAT_COUNT_KEYS = Object.keys({
   comments: true,
   stickers: true,
   remixes: true,
+  modelLikes: true,
 } satisfies Record<keyof HatCounts, true>) as (keyof HatCounts)[];
 export type HatPushCounts = Partial<HatCounts>;
 

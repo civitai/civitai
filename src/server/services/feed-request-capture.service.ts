@@ -128,6 +128,7 @@ export type CapturableSearchInput = {
   useCombinedNsfwLevel?: boolean;
   limit?: number;
   cursor?: unknown;
+  jumpTo?: string;
   tags?: number[];
   excludedTagIds?: number[];
   excludedUserIds?: number[];
@@ -141,6 +142,9 @@ export type CapturableSearchInput = {
   /** Resolved by the primary path only; `newCreators` without it is not servable. */
   newCreatorUserIds?: number[];
   postId?: number;
+  postIds?: number[];
+  /** Server-only: the caller takes a post's images in the requested sort, not the author's order. */
+  postIdsInRequestedSort?: boolean;
   collectionId?: number;
   hubId?: number;
   /**

@@ -1,6 +1,9 @@
 import { fail } from '@sveltejs/kit';
-import type { Actions, PageServerLoad, RequestEvent } from './$types';
+import { z } from 'zod';
+import type { Actions, PageServerLoad } from './$types';
 import { getBountyPoiAppeals, resolveBountyPoiAppeal } from '$lib/server/bounty-poi.service';
+import { parseForm } from '$lib/server/query';
+import { rulingReasonFromForm } from '$lib/server/resolution-reason';
 
 const LIMIT = 100;
 
@@ -9,17 +12,23 @@ export const load: PageServerLoad = async () => {
   return { items, hasMore, limit: LIMIT };
 };
 
-const run = async (event: RequestEvent, uphold: boolean) => {
-  const form = await event.request.formData();
-  const bountyId = Number(form.get('bountyId'));
-  if (!(bountyId > 0)) return fail(400, { error: 'Missing bounty id.' });
+export const actions = {
+  resolve: async ({ request }) => {
+    const form = await request.formData();
+    const input = parseForm(
+      z.object({
+        bountyId: z.coerce.number().int().positive({ error: 'Missing bounty id.' }),
+        status: z.enum(['Approved', 'Rejected'], { error: 'Pick a verdict.' }),
+      }),
+      form
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const reason = rulingReasonFromForm('flagAppeal', input.status, form, ['poi']);
+    if (typeof reason === 'string') return fail(400, { error: reason, bountyId: input.bountyId });
 
-  const result = await resolveBountyPoiAppeal(bountyId, uphold);
-  if (!result.ok) return fail(400, { error: result.error, bountyId });
-  return { success: true, bountyId, rescanQueued: result.rescanQueued };
-};
-
-export const actions: Actions = {
-  uphold: (event) => run(event, true),
-  overturn: (event) => run(event, false),
-};
+    const uphold = input.status === 'Rejected';
+    const result = await resolveBountyPoiAppeal(input.bountyId, uphold, reason);
+    if (!result.ok) return fail(400, { error: result.error, bountyId: input.bountyId });
+    return { success: true, bountyId: input.bountyId, rescanQueued: result.rescanQueued };
+  },
+} satisfies Actions;

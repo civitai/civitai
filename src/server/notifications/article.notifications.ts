@@ -8,6 +8,73 @@ import {
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
 const articleLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 
+export const NEW_ARTICLE_FROM_FOLLOWING_TYPE = 'new-article-from-following';
+
+/**
+ * How far behind its cursor each run re-reads. `publishedAt` is stamped by the app before the row
+ * commits, and the job takes its next cursor before querying the replica, so an article stamped just
+ * before a run but not yet visible to it would otherwise fall behind the cursor for good. Re-reading
+ * is safe: the key is per article and the notifications worker skips a recipient who already has it.
+ */
+const PUBLISHED_LOOKBACK = '5 minutes';
+
+export function newArticleFromFollowingMessage(details: {
+  username?: string;
+  articleCategory?: string | null;
+  articleTitle?: string;
+}) {
+  const kind = details.articleCategory ? `new ${details.articleCategory} article` : 'new article';
+  return `${details.username} published a ${kind}: "${details.articleTitle}"`;
+}
+
+export function newArticleFromFollowingQuery({ lastSent }: { lastSent: string }) {
+  return `
+      WITH new_article AS (
+        SELECT DISTINCT
+          ue."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'articleId', a.id,
+            'articleTitle', a.title,
+            'username', u.username,
+            'articleCategory', ac.name
+          ) "details"
+        FROM "Article" a
+        -- LEFT: an article published before its author picks a category still reaches followers,
+        -- and adding the category later cannot, because the cursor has already passed it.
+        LEFT JOIN LATERAL (
+          SELECT t.name
+          FROM "TagsOnArticle" toa
+          JOIN "Tag" t ON t.id = toa."tagId"
+          WHERE toa."articleId" = a.id
+            AND EXISTS (
+              SELECT 1
+              FROM "TagsOnTags" tt
+              JOIN "Tag" f ON f.id = tt."fromTagId"
+              WHERE tt."toTagId" = t.id AND f.name = 'article category'
+            )
+          ORDER BY t.name
+          LIMIT 1
+        ) ac ON true
+        JOIN "User" u ON u.id = a."userId"
+        JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
+        WHERE a."publishedAt" > '${lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'
+          AND a."publishedAt" <= now()
+          AND a.status = 'Published'
+          AND NOT a."tosViolation"
+          AND u."bannedAt" IS NULL
+          AND NOT u.muted
+          AND ${notBlockedBetween('ue."userId"', 'a."userId"')}
+      )
+      SELECT
+        CONCAT('${NEW_ARTICLE_FROM_FOLLOWING_TYPE}:', details->>'articleId') "key",
+        "ownerId"    "userId",
+        '${NEW_ARTICLE_FROM_FOLLOWING_TYPE}' "type",
+        details
+      FROM new_article
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = '${NEW_ARTICLE_FROM_FOLLOWING_TYPE}')
+    `;
+}
+
 export const articleNotifications = createNotificationProcessor({
   'article-view-milestone': {
     displayName: 'Article view milestones',
@@ -116,52 +183,13 @@ export const articleNotifications = createNotificationProcessor({
     `,
   },
   // Moveable
-  'new-article-from-following': {
+  [NEW_ARTICLE_FROM_FOLLOWING_TYPE]: {
     displayName: 'New articles from followed users',
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `${details.username} published a new ${details.articleCategory} article: "${details.articleTitle}"`,
+      message: newArticleFromFollowingMessage(details),
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH article_categories AS (
-        SELECT
-          t.id,
-          t.name
-        FROM "Tag" t
-        JOIN "TagsOnTags" tt ON tt."toTagId" = t.id
-        JOIN "Tag" f ON f.id = tt."fromTagId"
-        WHERE f.name = 'article category'
-      ), new_article AS (
-        SELECT DISTINCT
-          ue."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'articleId', a.id,
-            'articleTitle', a.title,
-            'username', u.username,
-            'articleCategory', ac.name
-          ) "details"
-        FROM "Article" a
-        JOIN (
-          SELECT
-            toa."articleId",
-            ac.name,
-            row_number() OVER (PARTITION BY toa."articleId") row
-          FROM article_categories ac
-          JOIN "TagsOnArticle" toa ON toa."tagId" = ac.id
-        ) ac ON ac."articleId" = a.id AND ac.row = 1
-        JOIN "User" u ON u.id = a."userId"
-        JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
-        WHERE a."publishedAt" > '${lastSent}'
-          AND ${notBlockedBetween('ue."userId"', 'a."userId"')}
-      )
-      SELECT
-        CONCAT('new-article-from-following:', details->>'articleId') "key",
-        "ownerId"    "userId",
-        'new-article-from-following' "type",
-        details
-      FROM new_article
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following')
-    `,
+    prepareQuery: newArticleFromFollowingQuery,
   },
 });

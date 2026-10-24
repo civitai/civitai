@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import { onReadyAttributeWrite } from '../../../test/commitWindow';
 // Type-only namespace import for the `importActual` generic below.
 // `@typescript-eslint/consistent-type-imports` rejects an inline
@@ -401,6 +402,12 @@ describe('IframeHost status gates — commit→passive-effect window (model.side
       requestId: 'rq_buzz_early',
       purchased: false,
     });
+    expectReplyKeys(
+      'OPEN_BUZZ_PURCHASE',
+      'success',
+      ['purchased'],
+      replies.last('BUZZ_PURCHASE_RESULT')!.payload
+    );
     replies.stop();
   });
 

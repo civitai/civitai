@@ -1,9 +1,15 @@
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
-// web-component host (direct @civitai/client calls — $lib/element/backend).
+// web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type {
+  ArchiveKind,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { EpochArchive, TrainingWhatIfInput } from '$lib/orchestrator-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
 import type { SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
@@ -42,20 +48,22 @@ export interface StudioBackend {
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
   rename(workflowId: string, name: string): Promise<void>;
-  /** A signed streaming URL for a zip of every ready checkpoint (weights + samples). */
-  epochArchive(workflowId: string): Promise<EpochArchive>;
+  /** Signed streaming URLs for zips of every ready checkpoint's weights, or its sample images — usually
+   *  one zip, more when one would overflow the archive URL. */
+  epochArchive(workflowId: string, kind: ArchiveKind): Promise<EpochArchive[]>;
   /** Refused unless `canDeleteRun` holds for the run's current state. */
   deleteTraining(workflowId: string): Promise<void>;
   continueQuote(
     workflowId: string,
     fromEpoch: number,
-    addEpochs: number
+    addEpochs: number,
+    currencies: string[]
   ): Promise<{ cost: number | null; steps?: number }>;
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies?: string[]
+    currencies: string[]
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
@@ -65,4 +73,6 @@ export interface StudioBackend {
   quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
+  /** The training service status moderators set on the main app; null when the host can't read it. */
+  getServiceStatus(): Promise<TrainingServiceStatus | null>;
 }

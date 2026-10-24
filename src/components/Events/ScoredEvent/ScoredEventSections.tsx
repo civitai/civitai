@@ -42,7 +42,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const now = new Date();
   const ended = data.endDate < now;
 
-  const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
+  const { data: eventCosmetic, isFetched: eventCosmeticFetched } = trpc.event.getCosmetic.useQuery(
     { event },
     { enabled: !!currentUser }
   );
@@ -125,7 +125,13 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     shop: team ? (
       <TeamHatShelf event={event} team={team} />
     ) : (
-      <HatCatalogPreview event={event} onJoin={handleJoin} joining={equipping} />
+      <HatCatalogPreview
+        event={event}
+        onJoin={handleJoin}
+        joining={equipping}
+        // A joined viewer's team arrives with their event cosmetic; until then this is not theirs.
+        showBoxes={!currentUser || eventCosmeticFetched}
+      />
     ),
     topHats: standings && (
       <div ref={topHatsView.ref}>

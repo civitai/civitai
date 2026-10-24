@@ -31,6 +31,8 @@ export type HatStatCounts = {
   /** Counted from scoring v2 on; until the server sends one, its tile shows a dash, not a 0. */
   comments?: number;
   remixes?: number;
+  /** A hat on a model scores thumbs-up reviews; they show in the hearts tile with reactions. */
+  modelLikes?: number;
 };
 
 /**
@@ -91,7 +93,11 @@ export function HatStats({
       </div>
       <div className="grid min-w-0 grid-cols-2 gap-1.5">
         <WayStat way="views" value={stats.impressions} compact={compact} />
-        <WayStat way="reactions" value={stats.reactions} compact={compact} />
+        <WayStat
+          way="reactions"
+          value={stats.reactions + (stats.modelLikes ?? 0)}
+          compact={compact}
+        />
         <WayStat way="comments" value={stats.comments} compact={compact} />
         <WayStat way="remixes" value={stats.remixes} compact={compact} />
       </div>

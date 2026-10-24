@@ -3,6 +3,8 @@ import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
+import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -13,6 +15,7 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
+import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -32,6 +35,7 @@ type ImageProps = {
   type: MediaType;
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
+  eventDecoration?: WornDecoration;
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
@@ -89,6 +93,7 @@ export function ImageDetailCarousel({
   next,
   previous,
   onSettle,
+  loop = true,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
   index: number;
@@ -97,6 +102,8 @@ export function ImageDetailCarousel({
   previous: () => void;
   onSettle?: (index: number) => void;
   canNavigate: boolean;
+  /** Read once at mount, like every other embla option here; remount to change it. */
+  loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   const emblaRef = useRef<EmblaCarouselType | null>(null);
@@ -199,7 +206,7 @@ export function ImageDetailCarousel({
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
-        loop
+        loop={loop}
         watchDrag={canNavigate && watchTouchDrag}
         withKeyboardEvents={false}
       >
@@ -215,7 +222,7 @@ export function ImageDetailCarousel({
                     isn't mounted yet, so a drag started in that window reveals it late;
                     the fallback timer above bounds how long that can last. */}
                 {() =>
-                  (i === index || isAdjacent(i, settledIndex, images.length)) && (
+                  (i === index || isAdjacent(i, settledIndex, images.length, loop)) && (
                     <ImageContent
                       image={image}
                       active={index === i}
@@ -231,13 +238,6 @@ export function ImageDetailCarousel({
       </Embla>
     </div>
   );
-}
-
-// the carousel loops, so the neighbors of the first/last slide wrap around
-function isAdjacent(i: number, index: number, length: number) {
-  if (length < 2) return i === index;
-  const distance = Math.abs(i - index);
-  return Math.min(distance, length - distance) <= 1;
 }
 
 function ImageContent({
@@ -345,7 +345,9 @@ function ImageContent({
               }}
             />
           )}
-          {safe && <ImageStickerOverlay imageId={image.id} width={width} height={height} />}
+          {/* The hat before the stickers, so stickers paint and take the pointer above it. */}
+          <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>

@@ -7,11 +7,10 @@ import { describe, expect, it } from 'vitest';
  * claim no height of its own. Node `unit` project — the suite that EXECUTES this
  * assertion (report-only on a pull request via `continue-on-error`, an honest
  * verdict on a push to `main` or a `workflow_dispatch`). The `.browser.test.tsx`
- * component suites DO run in CI, as the report-only `preview / component-tests`
- * status (`pnpm run test:component`), so a break there is visible but is only ever
- * an annotation. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
- * all in this repo. The coupling is pinned here so that it is at least visible on
- * `main`, and only MEASURED in `PageBlockHostScrollFit.browser.test.tsx`.
+ * component suites DO run in CI, as the `Component tests` check
+ * (`pnpm run test:component`), so a break there turns that check red. NEITHER TIER BLOCKS A MERGE:
+ * `main` requires no status check at all in this repo. The coupling is pinned here so that it is at
+ * least visible on `main`, and only MEASURED in `PageBlockHostScrollFit.browser.test.tsx`.
  *
  * WHAT BROKE. The route shipped a bare `export default function AppPage`, so it
  * inherited `AppLayout`'s default `scrollable: true` — a `ScrollArea` with
@@ -505,7 +504,7 @@ describe('the run page and its host agree on who owns the height', () => {
    * strands content behind `overflow-hidden`; too high and the page grows a
    * scrollbar beside the block's own on ordinary phones, which is THIS PR'S BUG
    * in a narrower window. Both guards on it were in
-   * `PageBlockHostScrollFit.browser.test.tsx` — and that suite is REPORT-ONLY
+   * `PageBlockHostScrollFit.browser.test.tsx` — and that suite was REPORT-ONLY
    * (`preview / component-tests`) and historically ~16% flaky, i.e. exactly the
    * combination that trains people to click through. Measured: with the floor set
    * to 0, this node-tier file was 9/9 GREEN and only the browser tier went red.

@@ -8,9 +8,8 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 /**
  * 🔴 REACHABILITY GUARD, not a unit test of a filter.
  *
- * `remove-blocked-images` is the one job allowed to ask the image-cache service to destroy the
- * SHARED, content-addressed stored object behind an image — which removes the full-resolution
- * original for every byte-identical image of every other owner. It first asked for that on the
+ * `remove-blocked-images` asks the image-cache service to retract an image's public copies on a
+ * moderator takedown. It first asked for that on the
  * reasoning that "Blocked, still Blocked, not AiNotVerified, and past the retention window" made
  * every image it deletes a moderation takedown.
  *
@@ -152,10 +151,13 @@ function candidates(within: (deletedAt: Date) => boolean, direction: 'asc' | 'de
 }
 
 async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  const sql = strings.join('?');
+  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  const sql = Array.isArray(strings)
+    ? strings.join('?')
+    : (strings as unknown as { sql: string }).sql;
 
-  // remove-blocked-images: open CSAM reports. None in this fixture.
-  if (sql.includes('FROM "CsamReport"') && sql.includes('GROUP BY')) return [];
+  // remove-blocked-images: users under a legal hold. None in this fixture.
+  if (sql.includes('FROM "CsamReport"')) return [];
 
   // remove-deleted-user-images: the two account-state re-reads. They differ by whether the
   // predicate also inspects the stored removal choice.
@@ -206,6 +208,10 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     }
     return touched;
   }
+
+  // The legal-hold marker objects (`holdMarkerViewExists` / `holdMarkerTableExists`): both exist, as
+  // on prod. The marker holds nobody (below).
+  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
 
   // remove-deleted-user-images: does the account still own anything the grace pass has not hidden?
   if (sql.includes('AS "hasPending"')) {
@@ -259,6 +265,14 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .map((i) => ({ id: i.id, needsReview: i.needsReview }));
   }
 
+  // remove-blocked-images: the blocked images of users under a legal hold.
+  if (sql.includes('FROM "Image"') && sql.includes('"userId" = ANY')) {
+    const owners = (values.find(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => owners.includes(i.userId) && i.ingestion === 'Blocked')
+      .map((i) => ({ id: i.id }));
+  }
+
   // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
   if (sql.includes('FROM "Image"') && sql.includes('id = ANY')) {
     const ids = (values.find(Array.isArray) as number[] | undefined) ?? [];
@@ -266,6 +280,11 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .filter((i) => ids.includes(i.id) && i.ingestion === 'Blocked')
       .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
+
+  // remove-blocked-images: owners under a hold marker or any other account hold. This fixture
+  // holds no one.
+  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
+  if (sql.includes('SELECT c."userId" FROM')) return [];
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
 }
@@ -401,13 +420,12 @@ describe('self-service account deletion never reaches blob retraction', () => {
     expect(retractionFor(GRACE_IMAGE)).not.toBeUndefined();
     expect(retractionFor(MODERATED_IMAGE)).not.toBeUndefined();
 
-    // 🔴 THE REGRESSION. Nothing about this image was moderated, so destroying the shared stored
-    // object — and with it the original of every byte-identical image of every other owner — is
-    // not something this flow may ask for.
+    // 🔴 THE REGRESSION. Nothing about this image was moderated, so retracting its public copies
+    // is not something this flow may ask for.
     expect(
       retractionFor(GRACE_IMAGE),
       'an account-deletion grace block reached the retracting call: a user deleting their own ' +
-        'account must not destroy other owners’ stored bytes'
+        'account is not a takedown'
     ).toBe(false);
 
     // Both directions. Turning retraction off wholesale would satisfy the assertion above while

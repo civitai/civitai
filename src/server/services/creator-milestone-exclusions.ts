@@ -1,4 +1,5 @@
 import { constants } from '~/server/common/constants';
+import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 
 export const SYSTEM_USER_ID = constants.system.user.id;
 
@@ -34,9 +35,10 @@ export const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' 
 
 /**
  * SQL predicate on a "User" row (aliased `alias`) whose milestones may be celebrated in public. That
- * is stricter than the grant filter: muted, leaderboard-excluded, metric-suppressed and actively struck
- * accounts keep their badges but are not put on show. `excludedUserIds` and `now` are the bind
- * placeholders (e.g. `$2`) for the metric-suppressed ids and a `toUtcTimestamp` value.
+ * is stricter than the grant filter: muted, leaderboard-excluded, metric-suppressed and accounts with
+ * `MUTE_POINTS` active strike points keep their badges but are not put on show. The points are summed
+ * as strike escalation sums them, so one first strike (a warning) hides no one. `excludedUserIds` and
+ * `now` are the bind placeholders (e.g. `$2`) for the metric-suppressed ids and a `toUtcTimestamp` value.
  */
 export function milestoneShowableUserSql(
   alias: string,
@@ -46,8 +48,8 @@ export function milestoneShowableUserSql(
       AND NOT ${alias}.muted
       AND NOT ${alias}."excludeFromLeaderboards"
       AND ${alias}.id <> ALL(${excludedUserIds}::int[])
-      AND NOT EXISTS (
-        SELECT 1 FROM "UserStrike" s
+      AND COALESCE((
+        SELECT SUM(s.points) FROM "UserStrike" s
         WHERE s."userId" = ${alias}.id AND s.status = 'Active' AND s."expiresAt" > ${now}::timestamp
-      )`;
+      ), 0) < ${MUTE_POINTS}`;
 }

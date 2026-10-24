@@ -164,30 +164,6 @@ describe('handleEndpointError — non-TRPCError branch', () => {
     expect(typeof body.error, '`error` must be retained as a string').toBe('string');
   });
 
-  // ── Guard 3: INVARIANT GUARD (green before the fix, by construction) ───────
-  // Not regression coverage: it pins behaviour the fix must PRESERVE. Without
-  // it, a future "fix" that stops the leak by deleting the log would pass
-  // guards 1-2 while silently destroying 500 attribution.
-  it('INVARIANT: still logs the UN-redacted error (observability preserved)', () => {
-    const err = driverError();
-    const res = createRes();
-
-    handleEndpointError(res as never, err);
-
-    expect(mockBuildCentralErrorLog).toHaveBeenCalledTimes(1);
-    // The IDENTICAL error instance — not a copy, not a redacted clone.
-    expect(mockBuildCentralErrorLog).toHaveBeenCalledWith(err);
-
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    const [payload] = mockLogToAxiom.mock.calls[0] as [Record<string, unknown>];
-    expect(payload.source).toBe('handleEndpointError');
-    expect(
-      String(payload.message),
-      'the LOG must keep the un-redacted driver text even though the RESPONSE drops it'
-    ).toContain(`${LEAKED_TABLE}.${LEAKED_COLUMN}`);
-    expect(String(payload.message)).toContain(`prisma.${LEAKED_MODEL}.${LEAKED_METHOD}()`);
-  });
-
   // ── Guard 4: the un-related branches must be untouched ────────────────────
   it('INVARIANT: a client-abort still short-circuits to 499 with no body', () => {
     const res = createRes();

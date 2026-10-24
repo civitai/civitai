@@ -15,6 +15,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventHatTile } from '~/components/Events/ScoredEvent/EventHatTile';
+import { MysteryBoxCard } from '~/components/MysteryBox/MysteryBoxCard';
+import { useEventMysteryBoxes } from '~/components/MysteryBox/useEventMysteryBoxes';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -28,6 +30,7 @@ import { trpc } from '~/utils/trpc';
 export function TeamHatShelf({ event, team }: { event: string; team: string }) {
   const teamColor = useTeamColor();
   const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
+  const boxes = useEventMysteryBoxes(event);
   const [price, setPrice] = useState('all');
   const [buzzType] = useAvailableBuzz();
 
@@ -61,7 +64,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
         icon={IconShoppingBag}
         title={`Team ${team} hats`}
         color={teamColor(team)}
-        subtitle="Every design in your colour. Pick one to preview and buy it."
+        subtitle="Every design in your color. Pick one to preview and buy it."
       >
         <Group gap="sm">
           {leavesAt && (
@@ -88,6 +91,14 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
           )}
         </Group>
       </EventSectionHeading>
+      {boxes.map((box) => (
+        <MysteryBoxCard
+          key={box.boxDefinitionId}
+          event={event}
+          view={box}
+          color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
+        />
+      ))}
       {isLoading ? (
         <Center py="xl">
           <Loader />

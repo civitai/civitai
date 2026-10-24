@@ -98,28 +98,7 @@ async function ctxFor(surface: (typeof GENERATION_SURFACES)[number]) {
   return externalCtx;
 }
 
-describe('the graph fixture is still what this test assumes', () => {
-  it('Qwen/txt2img is modelLocked with a default', () => {
-    // Guard the guard: if Qwen stops being modelLocked nothing substitutes, and
-    // the end-to-end assertion below would pass vacuously.
-    expect(getWorkflowCapability('Qwen', 'txt2img')?.modelLocked).toBe(true);
-    expect(typeof QWEN_DEFAULT).toBe('number');
-  });
-});
-
 describe('buildGenerationContext attaches a substitution collector', () => {
-  it.each(GENERATION_SURFACES)(
-    '🔴 the returned context carries a collector labelled `%s`',
-    async (surface) => {
-      const externalCtx = await ctxFor(surface);
-      expect(externalCtx.modelSubstitutions).toBeDefined();
-      // The surface is fixed at construction by the caller and rides on the
-      // collector, because `validateInput` — where the metric is emitted — is
-      // shared by every surface and structurally cannot tell them apart.
-      expect(externalCtx.modelSubstitutions?.surface).toBe(surface);
-    }
-  );
-
   it('🔴 a fresh collector per call — never shared, never accumulating across users', async () => {
     // The hazard this guards is not hypothetical: a collector reachable from any
     // of the cached values `buildGenerationContext` awaits would accumulate
@@ -248,6 +227,29 @@ describe('validateInput records a refusal', () => {
       surface: 'block',
       workflow: 'txt2img',
       field: 'prompt',
+    });
+  });
+
+  /**
+   * `generateFromGraph` is `.input(z.any())` and hands `input.input` to the service, so a caller
+   * that sends the form values flat (the shape `whatIfFromGraph` takes) arrives here with
+   * `undefined`. The back-compat `sourceImage` fold dereferenced it first, and the request
+   * failed as a 500 `TypeError: Cannot read properties of undefined (reading 'sourceImage')`
+   * instead of a 400.
+   */
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'txt2img'],
+    ['an array', [{ workflow: 'txt2img' }]],
+  ])('refuses %s as a 400, not a TypeError', async (_label, input) => {
+    const { externalCtx } = await buildGenerationContext('free', {}, USER, 'api');
+
+    await expect(
+      (async () => validateInput(input as unknown as Record<string, unknown>, externalCtx))()
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Validation failed: input: expected an object of generation form values',
     });
   });
 

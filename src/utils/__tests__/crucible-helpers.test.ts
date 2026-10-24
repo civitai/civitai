@@ -11,6 +11,9 @@ import {
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
+  getCrucibleLiveMinVotes,
+  getCrucibleTimeAdjustedMinVotes,
+  CRUCIBLE_MIN_VOTES_FLOOR,
   getCruciblePrizeAmount,
   getCruciblePrizeWinners,
   getCrucibleRatingLabel,
@@ -720,5 +723,184 @@ describe('getContentLevelRange', () => {
 
   it('returns nothing for no displayable level', () => {
     expect(getContentLevelRange(0)).toBeNull();
+  });
+});
+
+describe('getCrucibleTimeAdjustedMinVotes', () => {
+  const HOUR = 3_600_000;
+  const startAt = new Date('2026-01-01T00:00:00Z');
+  const endAt = new Date(startAt.getTime() + 100 * HOUR);
+  const at = (hours: number) => new Date(startAt.getTime() + hours * HOUR);
+
+  it('asks less of a late entry than an early one', () => {
+    // Exposures 100h and 20h: expected 500 and 100 of 600 votes. The early entry's 375 is capped
+    // at the old bar, 75% of the 300 average.
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 500, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(80) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars).toEqual([225, 75]);
+  });
+
+  it('never asks more than the old bar of an entry that was live longer than the rest', () => {
+    const entries = [
+      { voteCount: 32, createdAt: at(0) },
+      { voteCount: 14, createdAt: at(90) },
+      { voteCount: 14, createdAt: at(90) },
+    ];
+    const oldBar = getCrucibleMinVotes({ totalVotes: 60, entryCount: 3 });
+    const bars = getCrucibleTimeAdjustedMinVotes(entries, { startAt, endAt });
+    // The early entry's share alone would be 38.
+    expect(bars[0]).toBe(oldBar);
+    expect(Math.max(...bars)).toBeLessThanOrEqual(oldBar);
+  });
+
+  it('floors a last-hour entry at the minimum', () => {
+    const [early, late] = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 990, createdAt: at(0) },
+        { voteCount: 10, createdAt: at(99) },
+      ],
+      { startAt, endAt }
+    );
+    expect(early).toBeGreaterThan(CRUCIBLE_MIN_VOTES_FLOOR);
+    expect(late).toBe(CRUCIBLE_MIN_VOTES_FLOOR);
+  });
+
+  it('never makes the floor stricter than the old bar in a low-vote crucible', () => {
+    const entries = [
+      { voteCount: 6, createdAt: at(0) },
+      { voteCount: 4, createdAt: at(99) },
+    ];
+    const bars = getCrucibleTimeAdjustedMinVotes(entries, { startAt, endAt });
+    const oldBar = getCrucibleMinVotes({ totalVotes: 10, entryCount: 2 });
+    expect(oldBar).toBeLessThan(CRUCIBLE_MIN_VOTES_FLOOR);
+    expect(bars[1]).toBe(oldBar);
+  });
+
+  it('falls back to the old bar when nobody was live', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 80, createdAt: at(100) },
+        { voteCount: 40, createdAt: at(120) },
+      ],
+      { startAt, endAt }
+    );
+    const oldBar = getCrucibleMinVotes({ totalVotes: 120, entryCount: 2 });
+    expect(bars).toEqual([oldBar, oldBar]);
+  });
+
+  it('counts an entry created before the start from the start', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 200, createdAt: at(-50) },
+        { voteCount: 200, createdAt: at(0) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars[0]).toBe(bars[1]);
+  });
+
+  it('does not round an exact 75% up', () => {
+    // Equal exposure: each expects 100 of 200 votes, so exactly 75.
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 100, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(0) },
+      ],
+      { startAt, endAt }
+    );
+    expect(bars).toEqual([75, 75]);
+  });
+
+  it('treats a missing start as the entry time', () => {
+    const bars = getCrucibleTimeAdjustedMinVotes(
+      [
+        { voteCount: 100, createdAt: at(0) },
+        { voteCount: 100, createdAt: at(50) },
+      ],
+      { startAt: null, endAt }
+    );
+    // Exposures 100h and 50h: expected 133.33 and 66.67 of 200 votes, 75% of each is 100 and 50;
+    // the first is capped at the old bar, 75.
+    expect(bars).toEqual([75, 50]);
+  });
+
+  it('returns nothing for no entries', () => {
+    expect(getCrucibleTimeAdjustedMinVotes([], { startAt, endAt })).toEqual([]);
+  });
+});
+
+describe('getCrucibleLiveMinVotes', () => {
+  const HOUR = 3_600_000;
+  const startAt = new Date('2026-01-01T00:00:00Z');
+  const endAt = new Date(startAt.getTime() + 100 * HOUR);
+  const at = (hours: number) => new Date(startAt.getTime() + hours * HOUR);
+
+  it('projects the vote rate so far over the time left', () => {
+    // 400 votes over 50 entry-hours so far is 8/h; 50h left expects 400, 75% is 300.
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 400, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(50),
+      })
+    ).toBe(300);
+  });
+
+  it('asks less the later it is', () => {
+    const entries = [{ voteCount: 400, createdAt: at(0) }];
+    const early = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(50) });
+    const late = getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(75) });
+    expect(late).toBeLessThan(early);
+  });
+
+  it('never asks more than the old bar early in the run', () => {
+    // 10h in, 90h left would project 3600 votes, but the old bar is 75% of the 400 so far.
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 400, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(10),
+      })
+    ).toBe(getCrucibleMinVotes({ totalVotes: 400, entryCount: 1 }));
+  });
+
+  it('floors at the minimum when little time is left', () => {
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 1000, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(99),
+      })
+    ).toBe(CRUCIBLE_MIN_VOTES_FLOOR);
+  });
+
+  it('caps the floor at the old bar when votes are scarce', () => {
+    expect(
+      getCrucibleLiveMinVotes({
+        entries: [{ voteCount: 4, createdAt: at(0) }],
+        startAt,
+        endAt,
+        now: at(99),
+      })
+    ).toBe(getCrucibleMinVotes({ totalVotes: 4, entryCount: 1 }));
+  });
+
+  it('returns the old bar when no entry has been live yet', () => {
+    const entries = [{ voteCount: 40, createdAt: at(10) }];
+    expect(getCrucibleLiveMinVotes({ entries, startAt, endAt, now: at(10) })).toBe(
+      getCrucibleMinVotes({ totalVotes: 40, entryCount: 1 })
+    );
+  });
+
+  it('is zero with no entries', () => {
+    expect(getCrucibleLiveMinVotes({ entries: [], startAt, endAt, now: at(10) })).toBe(0);
   });
 });

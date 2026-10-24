@@ -251,6 +251,7 @@ describe('getHatTotals', () => {
       [COUNT_BASE_MARK]: '1',
       [`view:${field}`]: '20',
       [`remix:${field}`]: '40',
+      [`modelLike:${field}`]: '43',
     });
     fake.hashes.set(keys.live(NOW_BUCKET, 'hat'), { [field]: '6' });
     fake.hashes.set(keys.live(NOW_BUCKET, 'count'), {
@@ -258,6 +259,7 @@ describe('getHatTotals', () => {
       [`reaction:${field}`]: '3',
       [`comment:${field}`]: '5',
       [`sticker:${field}`]: '7',
+      [`modelLike:${field}`]: '2',
     });
     const result = await getHatTotals(
       EVENT,
@@ -268,7 +270,15 @@ describe('getHatTotals', () => {
     expect(result).toEqual({
       points: { [field]: 36 },
       counts: {
-        [field]: { impressions: 21, reactions: 3, comments: 5, stickers: 7, remixes: 40 },
+        [field]: {
+          impressions: 21,
+          reactions: 3,
+          comments: 5,
+          stickers: 7,
+          remixes: 40,
+          // A hat on a model scores thumbs-up reviews; without them its card showed 1 heart.
+          modelLikes: 45,
+        },
       },
     });
   });

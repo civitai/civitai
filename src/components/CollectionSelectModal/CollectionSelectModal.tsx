@@ -10,7 +10,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconCloudOff, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import React, { useContext, useEffect, useRef } from 'react';
@@ -26,7 +26,6 @@ import { searchIndexMap } from '~/components/Search/search.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import searchClasses from '~/components/Search/SearchLayout.module.scss';
-import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';
@@ -264,11 +263,7 @@ function CollectionSelectCard({ data }: { data: SearchIndexDataMap['collections'
   );
 }
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
 // Wrapped so a Meili outage degrades to empty results instead of an uncaught
 // `MeiliSearchCommunicationError`. Fails quietly (modal picker, no banner).

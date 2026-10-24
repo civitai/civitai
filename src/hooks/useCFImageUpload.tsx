@@ -31,6 +31,10 @@ type UploadResult = {
   id: string;
   objectUrl: string;
   type: MediaType;
+  width: number;
+  height: number;
+  hash?: string;
+  mimeType: string;
 };
 
 type UploadToCF = (
@@ -212,6 +216,10 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       id: resolvedId,
       objectUrl: imageData.objectUrl,
       type: imageData.type,
+      width: imageData.width,
+      height: imageData.height,
+      hash: imageData.hash,
+      mimeType: imageData.mimeType,
     };
   };
 

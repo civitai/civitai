@@ -11,6 +11,9 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: vi.fn(async () => undefined),
+}));
 vi.mock('~/utils/s3-utils', () => ({
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
   getB2S3Client: vi.fn(),
@@ -69,6 +72,8 @@ const givenTrainingRow = (trainingDetailsExtra: Record<string, unknown>, fileMet
       modelVersionMetadata: {},
     },
   ]);
+  // The dataset record read above is still there after the claim.
+  dbMock.dbWrite.modelFile.count.mockResolvedValue(1);
 };
 
 const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
@@ -260,5 +265,23 @@ describe('createTrainingWorkflow single submission per version', () => {
     await expect(submit()).rejects.toThrow('db down');
     expect(submitWorkflow).toHaveBeenCalledOnce();
     expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  // A new dataset upload replaces the training-data record with a new id and is refused once the
+  // version is claimed. One that landed between the read above and the claim would leave a paid run
+  // reporting to a record that no longer exists, so the submit checks before it pays.
+  it('refuses before paying, and releases the claim, when the dataset was replaced', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.modelFile.count.mockResolvedValue(0);
+
+    await expect(submit()).rejects.toThrow('Your training data changed while submitting');
+    expect(dbMock.dbWrite.modelFile.count).toHaveBeenCalledWith({
+      where: { id: MODEL_FILE_ID, url: 'https://example.com/data.zip' },
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenLastCalledWith({
+      where: { id: MODEL_VERSION_ID, trainingStatus: 'Submitted' },
+      data: { trainingStatus: 'Pending' },
+    });
   });
 });

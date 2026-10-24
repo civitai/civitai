@@ -17,10 +17,9 @@ import { placeListedJoiner } from '~/server/events/team-balance';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { EventPromoIcon } from '~/shared/constants/nav-banner.constants';
 
-// Disable pod memory keeping for now... We might not need it.
-// const manualAssignments: Record<string, Record<string, string>> = {};
-async function getManualAssignments(event: string, { strict = false } = {}) {
-  // if (manualAssignments[event]) return manualAssignments[event];
+// One user's field, not the whole hash: a balanced event places up to its list size (5,000 for
+// birthday2026) in it, and this runs on every cosmetic resolution during the event.
+async function getManualAssignment(event: string, userId: number, { strict = false } = {}) {
   // Fail open: called via getUserTeam → getUserCosmeticId on every
   // user-cosmetic resolution during active events. A sysRedis outage
   // shouldn't 500 every cosmetic lookup — degrade to "no manual
@@ -29,19 +28,18 @@ async function getManualAssignments(event: string, { strict = false } = {}) {
     // Wall-clock deadline: this read is on the per-request cosmetic-resolution
     // path during active events; the try/catch only covers a fast DOWN, so a
     // silent half-open would park it ~11min.
-    const assignments = await withSysReadDeadline(
-      sysRedis.hGetAll(
-        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+    return await withSysReadDeadline(
+      sysRedis.hGet(
+        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`,
+        userId.toString()
       )
     );
-    // manualAssignments[event] = assignments;
-    return assignments;
   } catch (err) {
     // Strict callers decide something that must not use a guessed team (selling
     // a team-coloured item), so they get the failure instead of the fallback.
     if (strict) throw err;
-    logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
-    return {} as Record<string, string>;
+    logSysRedisFailOpen('read-degraded', 'getManualAssignment', err, { event });
+    return undefined;
   }
 }
 export async function addManualAssignments(event: string, team: string, users: string[]) {
@@ -84,8 +82,8 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     await redis.del(`${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`);
   }
   async function getUserTeam(userId: number, opts?: { strict?: boolean }) {
-    const manualAssignment = await getManualAssignments(name, opts);
-    if (manualAssignment[userId.toString()]) return manualAssignment[userId.toString()];
+    const manualAssignment = await getManualAssignment(name, userId, opts);
+    if (manualAssignment) return manualAssignment;
     const random = new Rand(name + userId.toString(), PRNG.sfc32);
     const number = random.next();
     const index = Math.floor(number * definition.teams.length);
@@ -265,6 +263,9 @@ export type EventPageCopy = {
   headlineAccent?: string;
   // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
   heroImage?: string;
+  // CDN image id for the home block's art, composed for its short, nearly square slot; the block
+  // falls back to the hero. The left side fades into the block and carries the play button.
+  homeImage?: string;
   // A short film about the event, as a CDN video id. The hero puts a play button on its art that
   // opens it; `title` names it in the button's label and the player's heading. `duration` is the
   // file's length in seconds, as its own header states it; the button shows it, or just "Watch".

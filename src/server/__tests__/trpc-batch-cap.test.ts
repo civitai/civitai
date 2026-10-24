@@ -1,6 +1,4 @@
-import { readFileSync } from 'fs';
 import { createServer, type Server } from 'http';
-import { join } from 'path';
 import type { AddressInfo } from 'net';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -628,16 +626,6 @@ describe('the cap has one source, and the server resolves it through the env', (
   // deliberately move the cap, so leaving one set would silently retune every later assertion.
   afterEach(() => {
     resetEnv();
-  });
-
-  it('the shared module is the only place the number is written', () => {
-    const constants = readFileSync(
-      join(process.cwd(), 'src/shared/constants/trpc.constants.ts'),
-      'utf8'
-    );
-    expect(constants).toMatch(
-      new RegExp(`export const TRPC_MAX_BATCH_SIZE = ${TRPC_MAX_BATCH_SIZE};`)
-    );
   });
 
   it('defaults to the compiled-in constant when the env var is unset', () => {

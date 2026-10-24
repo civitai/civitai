@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 // One candidate slot, in stable orchestrator order. Either:
 //  - clean (downloaded to S3, picker may select it), or
@@ -24,6 +25,11 @@ export type CandidateSlot =
       blurredPreviewUrl?: string | null;
       nsfwLevel?: number | null;
     };
+
+/** A capped slot stays hidden whatever is paid: the unlock never lifts the workflow's rating cap. */
+export function isUnlockableSlot(slot: CandidateSlot): boolean {
+  return !!slot.requiresUnlock && slot.blockedReason !== NSFW_CAPPED;
+}
 
 function isCandidateMature(slot: CandidateSlot): boolean {
   // Locked slots always render as mature (they ARE mature — that's why
@@ -93,7 +99,7 @@ export function CandidateImageModal({
 
   const effectiveSelection = selectedKey ?? currentImageUrl;
   const hasNewSelection = selectedKey != null && selectedKey !== currentImageUrl;
-  const hasLocked = candidates.some((c) => c.requiresUnlock);
+  const hasUnlockable = candidates.some(isUnlockableSlot);
   const hasMature = useMemo(() => candidates.some(isCandidateMature), [candidates]);
   // CTA selection is driven by the parent's domain — `onUnlock` is
   // populated only on red, `unlockHref` only on green. We never combine
@@ -123,7 +129,7 @@ export function CandidateImageModal({
             </>
           )}
         </Text>
-        {hasLocked && (
+        {hasUnlockable && (
           <div
             className="rounded-md p-3 mb-md flex flex-col items-center gap-2 mb-2"
             style={{
@@ -214,7 +220,9 @@ export function CandidateImageModal({
                         Mature — Locked
                       </Badge>
                       <Text size="xs" c="white" ta="center">
-                        Use the unlock button above to reveal.
+                        {isUnlockableSlot(slot)
+                          ? 'Use the unlock button above to reveal.'
+                          : NSFW_CAPPED_MESSAGE}
                       </Text>
                     </div>
                   </div>

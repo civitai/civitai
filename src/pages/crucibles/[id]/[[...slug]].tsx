@@ -58,6 +58,7 @@ import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleDiscussion } from '~/components/Crucible/CrucibleDiscussion';
+import { CrucibleEventTagsPanel } from '~/components/Crucible/CrucibleEventTagsPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import {
@@ -250,7 +251,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
-  const entryCount = crucible._count?.entries ?? 0;
+  // What the grid lists, not the raw row count: entries hidden from this viewer are not claimed.
+  const entryCount = entriesData?.pages[0]?.visibleCount ?? crucible._count?.entries ?? 0;
   const { paidEntryCount } = crucible;
   const entryFeePool = crucible.entryFee * paidEntryCount;
   const totalPrizePool = getCrucibleTotalPrizePool({
@@ -418,6 +420,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         {/* Hero Section */}
         <CrucibleHeader
           className="-mt-3"
+          entryCount={entryCount}
           crucible={{
             id: crucible.id,
             name: crucible.name,
@@ -435,6 +438,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             heroImage: crucible.heroImage,
             _count: crucible._count,
             paidEntryCount,
+            entrantCount: crucible.entrantCount,
           }}
         />
 
@@ -689,6 +693,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   { label: 'Ties', value: 'The earlier entry ranks higher' },
                 ]}
               />
+
+              {isModerator && <CrucibleEventTagsPanel crucibleId={crucible.id} />}
 
               {(canEdit || canCancel) && (
                 <Paper className="rounded-lg p-6" bg="dark.6">

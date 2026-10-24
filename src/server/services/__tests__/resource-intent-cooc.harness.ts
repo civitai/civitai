@@ -18,14 +18,18 @@ export const MIGRATION_SQL = readFileSync(
  * `timestamp(3)` (no zone) read as UTC and a UTC session, as the app's database runs; PGlite's
  * default would read it in the test host's local zone and shift every date.
  */
-export async function freshDb() {
+export async function utcPglite(...migrations: string[]) {
   const db = new PGlite({
     parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
   });
   await db.exec(`SET TIME ZONE 'UTC'`);
-  await db.exec(MIGRATION_SQL);
-  const statements: string[] = [];
-  const sql: CoocSql = {
+  for (const m of migrations) await db.exec(m);
+  return db;
+}
+
+/** A `CoocSql` over PGlite that records each statement's text. */
+export function pgliteSql(db: PGlite, statements: string[] = []): CoocSql {
+  return {
     query: async <T>(s: Prisma.Sql) => {
       statements.push(s.text);
       return (await db.query<T>(s.text, s.values as unknown[])).rows;
@@ -35,7 +39,12 @@ export async function freshDb() {
       return (await db.query(s.text, s.values as unknown[])).affectedRows ?? 0;
     },
   };
-  return { db, sql, statements };
+}
+
+export async function freshDb() {
+  const db = await utcPglite(MIGRATION_SQL);
+  const statements: string[] = [];
+  return { db, sql: pgliteSql(db, statements), statements };
 }
 
 const DAY = 86_400_000;

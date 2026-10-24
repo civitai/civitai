@@ -9,6 +9,7 @@ export enum UploadType {
 export type UploadTypeUnion = `${UploadType}`;
 
 export enum ModelSort {
+  Hot = 'Hot',
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
@@ -366,6 +367,7 @@ export enum BanReasonCode {
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
+  Chargeback = 'Chargeback',
   Other = 'Other',
 }
 

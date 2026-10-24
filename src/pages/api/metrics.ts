@@ -9,6 +9,10 @@ import '~/server/prom/challenge.metrics';
 // Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
+// Side-effect import: registers the v1 tag index's metrics: the holder's load counters (seeded at 0)
+// and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
+// ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
+import '~/server/prom/resource-intent-tags.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
@@ -62,9 +66,15 @@ import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.
 // otherwise indistinguishable from an unloaded module.
 import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
+import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+// Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
+// Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
+// that module's graph never loads the redis client.
+import '~/server/prom/ingestion-gauge-store';
+import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -72,6 +82,7 @@ seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -205,6 +216,7 @@ async function collectRegistryMetrics(
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
+  await seedAppBlockSharedStorageMetrics();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

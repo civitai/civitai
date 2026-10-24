@@ -1,4 +1,4 @@
-import { Button, Progress } from '@mantine/core';
+import { Button, Progress, Text } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -9,8 +9,8 @@ import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import type { PostDetailEditable } from '~/server/services/post.service';
@@ -24,8 +24,6 @@ import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { isPickSnapshot } from '~/utils/unreadable-pick';
-
-const max = POST_IMAGE_LIMIT;
 
 export function PostImageDropzone({
   showProgress = true,
@@ -41,10 +39,11 @@ export function PostImageDropzone({
     state.images,
     state.setImages,
   ]);
+  const { maxItems } = useMediaUploadSettingsContext();
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
   const showCreatePostError = useShowCreatePostError();
-  const { src, modelVersionId, model3dId, tag, collectionId } = params;
+  const { src, modelVersionId, model3dId, storyline, continues, tag, collectionId } = params;
   // #endregion
 
   // #region [mutations]
@@ -136,7 +135,14 @@ export function PostImageDropzone({
     if (post) upload(fileData);
     else {
       createPostMutation.mutate(
-        { modelVersionId, model3dId, tag, collectionId },
+        {
+          modelVersionId,
+          model3dId,
+          storylineId: storyline,
+          parentChapterId: continues,
+          tag,
+          collectionId,
+        },
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
@@ -245,6 +251,9 @@ export function PostImageDropzone({
       >
         Import from Generator
       </Button>
+      <Text size="sm" c={remaining === 0 ? 'orange' : 'dimmed'} ta="center" aria-live="polite">
+        {images.length} / {maxItems} files
+      </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && <UploadNotice />}
     </div>

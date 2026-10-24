@@ -39,14 +39,14 @@ import {
   useDeleteTextToImageRequest,
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
+import type { TransactionInfo, WorkflowStatus } from '@civitai/orchestration-client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import {
   orchestratorCompletedStatuses,
@@ -62,6 +62,12 @@ import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import {
+  GenerationSummaryStrip,
+  OutputActions,
+  workflowDisplays,
+  type OutputAction,
+} from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -79,6 +85,8 @@ import type {
   ImageBlob,
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
+import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
+import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
   DownloadBoostPanel,
@@ -126,7 +134,6 @@ export function QueueItem({
 
   const { copied, copy } = useClipboard();
 
-  const { status } = request;
   const params = request.params;
   const resources = request.resources;
   const sourceLineageStep = request.sourceLineageStep;
@@ -140,7 +147,16 @@ export function QueueItem({
   // on the detail page (workstream D + G).
   const isPolyGen = request.steps.some((s) => s.$type === 'polyGen');
 
-  const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
+  // A succeeded FBX-only mesh (Tripo quad) is the whole result: its chained
+  // model3DPreview step can't render one, so the orchestrator cancels it (older
+  // workflows left it queued until it expired). Don't let that step make the
+  // card look failed or still running.
+  const fbxOnlyDelivered = isFbxOnlyDelivered(request.steps);
+  const status: WorkflowStatus = fbxOnlyDelivered ? 'succeeded' : request.status;
+
+  const stepErrors = request.steps
+    .filter((s) => !(fbxOnlyDelivered && s.$type === 'model3DPreview'))
+    .flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
     ? stepErrors.join(',\n')
     : allImages.find((x) => !x.available && x.blockedReason)?.blockedReason;
@@ -149,7 +165,7 @@ export function QueueItem({
   const pending = orchestratorPendingStatuses.includes(status);
   const canceled = status === 'canceled';
 
-  const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
+  const cancellable = PENDING_PROCESSING_STATUSES.includes(request.status);
 
   const handleCopy = () => {
     copy(request.id);
@@ -234,6 +250,9 @@ export function QueueItem({
     !!sourceLineageStep;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+  const hideDetails = !!workflowDefinition?.hideDetails;
+  const display = workflowDisplays[params.workflow as string];
+  const summary = inView ? display?.summary?.(request) : undefined;
 
   // PolyGen workflows don't always carry `params.workflow` consistently
   // (the orchestrator-side step is the source of truth), so derive the
@@ -279,7 +298,7 @@ export function QueueItem({
             <div className="flex flex-wrap items-center gap-1">
               {!!allImages.length && (
                 <GenerationStatusBadge
-                  status={request.status}
+                  status={status}
                   complete={completedCount}
                   processing={processingCount}
                   quantity={allImages.length}
@@ -347,7 +366,7 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
-              <SubmitBlockedImagesForReviewButton request={request} />
+              <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
               {currentUser?.isModerator && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
@@ -385,14 +404,20 @@ export function QueueItem({
         <div className="flex flex-col gap-3 py-3 @container">
           {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
           {failureReason && <Alert color="red">{failureReason}</Alert>}
-          <Model3DQueueCardOutputs request={request} pending={pending} processing={processing} />
+          <Model3DQueueCardOutputs
+            request={request}
+            status={status}
+            fbxOnly={fbxOnlyDelivered}
+            pending={pending}
+            processing={processing}
+          />
         </div>
       )}
 
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+            {prompt && !hideDetails && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -405,6 +430,8 @@ export function QueueItem({
                 ))}
               </div>
             )}
+
+            {summary && <GenerationSummaryStrip summary={summary} />}
 
             {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
@@ -432,6 +459,7 @@ export function QueueItem({
                         queuePosition={queuePosition}
                         waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
+                        outputActions={display?.outputActions}
                       />
                     </div>
                   );
@@ -446,13 +474,14 @@ export function QueueItem({
                 queuePosition={queuePosition}
                 waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
+                outputActions={display?.outputActions}
               />
             )}
           </div>
         </>
       )}
 
-      {inView && (
+      {inView && !hideDetails && (
         <Card.Section withBorder className="-mx-2">
           <GenerationDetails
             label="Additional Details"
@@ -470,7 +499,7 @@ function ResourceRow({
   resource,
   download,
 }: {
-  resource: GenerationResource;
+  resource: GenerationResourceValue;
   download?: DownloadRow;
 }) {
   const { unstableResources } = useGenerationConfig();
@@ -590,6 +619,7 @@ function StepOutputs({
   queuePosition,
   waitingOnDownloads,
   markerTags,
+  outputActions,
 }: {
   step: StepData | null;
   request: WorkflowData;
@@ -600,6 +630,7 @@ function StepOutputs({
   /** The download panel stands in for the pending tile. */
   waitingOnDownloads?: boolean;
   markerTags?: string[];
+  outputActions?: readonly OutputAction[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
@@ -610,6 +641,9 @@ function StepOutputs({
     .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
+  const pendingRating = (step ? step.pendingRatingOutput : request.pendingRatingOutput).filter(
+    (img) => matchesMarkerTags(img, markerTags)
+  );
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
@@ -629,10 +663,27 @@ function StepOutputs({
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
             <SiteRestrictedBlock key={image.id} image={image} />
+          ) : outputActions && image.type === 'image' && image.available && !image.blockedReason ? (
+            <div key={image.id} className="flex flex-col gap-1.5">
+              <GeneratedOutput image={image} />
+              <OutputActions output={image} actions={outputActions} />
+            </div>
           ) : (
             <GeneratedOutput key={image.id} image={image} />
           )
         )}
+        {pendingRating.map((image) => (
+          <TwCard
+            key={image.id}
+            className="items-center justify-center border"
+            style={{ aspectRatio: image.aspect ?? 1 }}
+          >
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Rating
+            </Text>
+          </TwCard>
+        ))}
         <BlockedBlocks
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
@@ -756,9 +807,18 @@ function CancelOrDeleteWorkflow({
   );
 }
 
-function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData }) {
+function SubmitBlockedImagesForReviewButton({
+  request,
+  hideDetails,
+}: {
+  request: WorkflowData;
+  hideDetails: boolean;
+}) {
   const currentUser = useCurrentUser();
   if (!request.blockedCount || !currentUser?.username) return null;
+
+  const prompt = hideDetails ? '' : (request.params?.prompt as string) ?? '';
+  const negativePrompt = hideDetails ? '' : (request.params?.negativePrompt as string) ?? '';
 
   return (
     <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
@@ -771,10 +831,8 @@ function SubmitBlockedImagesForReviewButton({ request }: { request: WorkflowData
         color="orange"
         href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
           currentUser.username
-        )}&Prompt=${encodeURIComponent(
-          (request.params?.prompt as string) ?? ''
-        )}&Negative%20Prompt=${encodeURIComponent(
-          (request.params?.negativePrompt as string) ?? ''
+        )}&Prompt=${encodeURIComponent(prompt)}&Negative%20Prompt=${encodeURIComponent(
+          negativePrompt
         )}&Workflow%20ID=${request.id}`}
       >
         <IconFlagQuestion size={20} />
@@ -795,6 +853,8 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
     'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
   // the following keys are managed in generationRequestHooks.ts
   privateGen: 'Private Generation is limited to PG and PG-13 content.',
+  [NSFW_CAPPED]:
+    "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
   siteRestricted: 'Images with mature ratings are unavailable on this site',
   enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,
@@ -1048,10 +1108,16 @@ const Model3DVariantViewerDynamic = dynamic(
  */
 function Model3DQueueCardOutputs({
   request,
+  status,
+  fbxOnly,
   pending,
   processing,
 }: {
   request: WorkflowData;
+  /** Workflow status as the card should present it — see `fbxOnlyDelivered` in QueueItem. */
+  status: WorkflowStatus;
+  /** See `isFbxOnlyDelivered`: no GLB to view and no preview render to wait for. */
+  fbxOnly: boolean;
   pending: boolean;
   processing: boolean;
 }) {
@@ -1065,12 +1131,29 @@ function Model3DQueueCardOutputs({
     .flatMap((s) => s.output)
     .find((blob) => blob?.type === 'model3d');
   const blob = model3dBlob?.type === 'model3d' ? model3dBlob : null;
-  const modelUrl = blob?.url ?? null;
 
   // Same NSFW gates as the image grid — the mesh inherits its rating from the
   // preview render server-side, so a mature result must resolve its block
   // (yellow-Buzz unlock / enable NSFW / site restriction) before the
   // thumbnail, viewer, or downloads are exposed.
+  // An FBX-only mesh has no preview render, so it waits on its auto-thumbnail's rating.
+  if (blob?.pendingRating) {
+    return (
+      <div
+        className={clsx(classes.grid, {
+          [classes.asSidebar]: !features.largerGenerationImages,
+        })}
+      >
+        <TwCard className="flex aspect-square flex-col items-center justify-center gap-2 border p-3">
+          <Loader size={24} />
+          <Text c="dimmed" size="xs" align="center">
+            Checking your 3D model…
+          </Text>
+        </TwCard>
+      </div>
+    );
+  }
+
   if (blob?.blockedReason) {
     return (
       <div
@@ -1104,6 +1187,7 @@ function Model3DQueueCardOutputs({
   // preview step is terminal (failed/expired/canceled/succeeded) or absent.
   const previewPending =
     !!previewStep &&
+    !fbxOnly &&
     (!previewStep.status || !orchestratorCompletedStatuses.includes(previewStep.status));
   const thumbnailUrl =
     previewImage?.previewUrl ??
@@ -1119,12 +1203,11 @@ function Model3DQueueCardOutputs({
   // Terminal failure states — workflow won't produce a thumbnail. The
   // orchestrator auto-refunds spent buzz on these, so surface that to the
   // user instead of the ambiguous "No preview available yet".
-  const isFailed =
-    request.status === 'failed' || request.status === 'expired' || request.status === 'canceled';
+  const isFailed = status === 'failed' || status === 'expired' || status === 'canceled';
   const failureLabel =
-    request.status === 'expired'
+    status === 'expired'
       ? 'Generation expired'
-      : request.status === 'canceled'
+      : status === 'canceled'
       ? 'Generation canceled'
       : 'Generation failed';
   const isComplete = !pending && !processing && !isFailed;
@@ -1203,7 +1286,7 @@ function Model3DQueueCardOutputs({
                 guarantees full coverage on any future non-square sources. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={thumbnailUrl} alt="3D model thumbnail" className="size-full object-cover" />
-              {modelUrl && (
+              {viewableVariants.length > 0 && (
                 <>
                   <Tooltip label="Expand to full screen" withinPortal position="left">
                     <LegacyActionIcon
@@ -1234,6 +1317,13 @@ function Model3DQueueCardOutputs({
                 </>
               )}
             </>
+          ) : fbxOnly && isComplete ? (
+            <div className="flex flex-col items-center gap-2 px-4 text-center">
+              <IconCube size={32} stroke={1.5} className="text-dimmed" />
+              <Text size="sm" fw={600}>
+                FBX model ready
+              </Text>
+            </div>
           ) : showSpinner ? (
             <div className="flex flex-col items-center gap-2">
               <Loader size={24} />
@@ -1257,6 +1347,13 @@ function Model3DQueueCardOutputs({
             </Text>
           )}
         </TwCard>
+
+        {fbxOnly && isComplete && (
+          <Text size="xs" c="dimmed">
+            Quad meshes are delivered as FBX, which can&apos;t be previewed in the browser. Download
+            it to open in Blender, Maya or another 3D tool.
+          </Text>
+        )}
 
         <Model3DOutputActions blob={blob} workflowId={request.id} isComplete={isComplete} />
       </div>

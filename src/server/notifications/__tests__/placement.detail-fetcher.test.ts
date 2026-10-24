@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { placementDetailFetcher } from '~/server/notifications/detail-fetchers/placement.detail-fetcher';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import { storylineNotifications } from '~/server/notifications/storyline.notifications';
+
+/** Storyline continuations are placements, named the same way. */
+const fetchedProcessors = { ...placementNotifications, ...storylineNotifications };
 
 const fakeDb = (users: { id: number; username: string }[]) => {
   const findMany = vi.fn(async ({ where }: { where: { id: { in: number[] } } }) =>
@@ -78,7 +82,7 @@ describe('the avatar on a placement notification', () => {
   // Registered against the processor's own keys, so a placement type added later
   // is covered without being listed here a second time.
   it('covers every placement notification type', () => {
-    expect(placementDetailFetcher.types.sort()).toEqual(Object.keys(placementNotifications).sort());
+    expect(placementDetailFetcher.types.sort()).toEqual(Object.keys(fetchedProcessors).sort());
     expect(placementDetailFetcher.types.length).toBeGreaterThan(1);
   });
 
@@ -94,7 +98,7 @@ describe('the avatar on a placement notification', () => {
    */
   it('has exactly one party to name in every processor', async () => {
     const emitted = await Promise.all(
-      Object.entries(placementNotifications).map(async ([type, processor]) => {
+      Object.entries(fetchedProcessors).map(async ([type, processor]) => {
         const query = await processor.prepareQuery?.({
           lastSent: '2026-01-01',
           category: 'Creator',
@@ -107,7 +111,7 @@ describe('the avatar on a placement notification', () => {
       })
     );
 
-    expect(emitted.length).toBe(Object.keys(placementNotifications).length);
+    expect(emitted.length).toBe(Object.keys(fetchedProcessors).length);
     for (const { type, ids } of emitted) expect([type, ids]).toEqual([type, [expect.any(String)]]);
   });
 });

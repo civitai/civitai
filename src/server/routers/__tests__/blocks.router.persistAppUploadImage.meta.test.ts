@@ -22,7 +22,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksPostCreationEnabled,
   mockGetSessionUser,
-  mockCheckPublishRate,
+  mockCheckUploadAppRate,
   mockS3Send,
   parserOverride,
 } = vi.hoisted(() => ({
@@ -32,7 +32,7 @@ const {
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsAppBlocksPostCreationEnabled: vi.fn(),
   mockGetSessionUser: vi.fn(),
-  mockCheckPublishRate: vi.fn(),
+  mockCheckUploadAppRate: vi.fn(),
   mockS3Send: vi.fn(),
 }));
 
@@ -55,7 +55,7 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof BlockCatalogRateLimit>()),
-  checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
+  checkBlockUploadAppRateLimit: (...a: unknown[]) => mockCheckUploadAppRate(...a),
 }));
 vi.mock('~/utils/metadata', async (importOriginal) => {
   const actual = await importOriginal<typeof Metadata>();
@@ -153,7 +153,7 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockIsAppBlocksPostCreationEnabled.mockResolvedValue(true);
   mockGetSessionUser.mockResolvedValue({ id: VIEWER_ID });
-  mockCheckPublishRate.mockResolvedValue({ allowed: true });
+  mockCheckUploadAppRate.mockResolvedValue({ allowed: true });
   dbMock.dbWrite.image.create.mockResolvedValue({ id: IMAGE_ID } as never);
 });
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
 /**
@@ -69,7 +70,7 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
 const roster = vi.hoisted(() => ({ member: vi.fn() }));
 vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
 
-const { toggleBan } = await import('~/server/services/user.service');
+const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
 const USER_ID = 5501;
@@ -264,5 +265,179 @@ describe('toggleBan -> model takedown', () => {
       .filter((sql) => sql.includes('UPDATE "Model" SET'));
     expect(modelUpdates).toHaveLength(1);
     expect(modelUpdates[0]).toContain('"updatedAt" = now() WHERE id IN');
+  });
+});
+
+// Minor-safety bans always remove media: a moderator cannot opt out with `removeMedia: false`.
+// Every other reason keeps media opt-in.
+describe('toggleBan -> removeMedia', () => {
+  const ban = (reasonCode: string, removeMedia?: boolean) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode,
+      userId: ACTOR_ID,
+      isModerator: true,
+      removeMedia,
+    } as Parameters<typeof toggleBan>[0]);
+
+  // The Moderated block's own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
+  const moderatedBlocks = () =>
+    imageUpdateMany.mock.calls.filter(
+      ([args]) =>
+        JSON.stringify(args?.where) ===
+          JSON.stringify({ userId: USER_ID, ingestion: { not: 'Blocked' } }) &&
+        args?.data?.blockedFor === 'moderated'
+    ).length;
+
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  const minorSafetyCodes = ['SexualMinor', 'SexualMinorGenerator', 'SexualMinorTraining'];
+  it.each(
+    minorSafetyCodes.flatMap((code) => [false, undefined, true].map((rm) => [code, rm] as const))
+  )('a %s ban blocks the media with removeMedia=%s', async (code, removeMedia) => {
+    await ban(code, removeMedia);
+    expect(moderatedBlocks(), `${code} ban with removeMedia=${removeMedia} left media up`).toBe(1);
+  });
+
+  it.each([
+    [false, 0],
+    [undefined, 0],
+    [true, 1],
+  ] as const)('a Harassment ban with removeMedia=%s blocks media %i time(s)', async (rm, n) => {
+    await ban('Harassment', rm);
+    expect(moderatedBlocks()).toBe(n);
+  });
+
+  // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
+  // block right after `toggleBan`, so a Moderated block first is a wasted write over the whole
+  // library. It skips it with `mediaBlockedByCaller`, which no request input can set.
+  it('softDeleteUser skips the Moderated block because it CSAM-blocks the media itself', async () => {
+    const { softDeleteUser } = await import('~/server/services/user.service');
+    await softDeleteUser({ id: USER_ID, userId: ACTOR_ID }).catch(() => undefined);
+
+    expect(moderatedBlocks()).toBe(0);
+    expect(
+      imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
+      'positive control: softDeleteUser never reached its own CSAM block'
+    ).toBe(true);
+  });
+});
+
+describe('toggleBan -> profile links', () => {
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  it('deletes the profile links of a banned account', async () => {
+    await call();
+
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+  });
+
+  it('keeps them when the caller asks to', async () => {
+    await toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      keepProfileLinks: true,
+    } as Parameters<typeof toggleBan>[0]);
+
+    expect(userUpdate).toHaveBeenCalled();
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// The ban has committed by then: a sign-out failure must neither undo it nor skip what follows.
+describe('toggleBan with a failing session store', () => {
+  it('keeps a moderator ban and runs the rest of it, logging the user', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: 'someone@example.com',
+    });
+    mockInvalidateSession.mockRejectedValueOnce(new Error('session store unavailable'));
+
+    await expect(call()).resolves.toBeDefined();
+
+    expect(userUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bannedAt: expect.any(Date) }) })
+    );
+    expect(mockRemoveContent).toHaveBeenCalledTimes(1);
+    expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-invalidate-session', userId: USER_ID })
+    );
+  });
+});
+
+describe('toggleBan onlyBan', () => {
+  const banOnly = (banActivity?: string) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      onlyBan: true,
+      banActivity,
+    } as Parameters<typeof toggleBan>[0]);
+  const primaryFindUnique = dbMock.dbWrite.user.findUnique;
+  const userUpdateMany = dbMock.dbWrite.user.updateMany;
+  const modActivityCreate = dbMock.dbWrite.modActivity.create;
+  const unbanned = { bannedAt: null, meta: {}, username: 'someone', email: null };
+
+  beforeEach(() => {
+    primaryFindUnique.mockResolvedValue(unbanned);
+    userUpdateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID });
+  });
+
+  it('bans from the primary even while the replica still shows a lifted ban', async () => {
+    userFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+
+    await banOnly('chargeback:dp_1:banned');
+
+    expect(userUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: USER_ID, bannedAt: null },
+        data: expect.objectContaining({ bannedAt: expect.any(Date) }),
+      })
+    );
+    expect(modActivityCreate).toHaveBeenCalledWith({
+      data: {
+        userId: ACTOR_ID,
+        entityType: 'user',
+        entityId: USER_ID,
+        activity: 'chargeback:dp_1:banned',
+      },
+    });
+  });
+
+  it('refuses, and writes nothing, on an account the primary shows banned', async () => {
+    primaryFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+
+    await expect(banOnly()).rejects.toBeInstanceOf(AlreadyBannedError);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(userUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and records nothing, when a ban lands between the read and the write', async () => {
+    userUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(banOnly('chargeback:dp_1:banned')).rejects.toBeInstanceOf(AlreadyBannedError);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(modActivityCreate).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
   });
 });

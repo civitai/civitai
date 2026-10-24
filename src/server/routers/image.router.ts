@@ -39,6 +39,7 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getApprovedImageAppeal } from '~/server/services/image-removal-hold.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   getEntitiesCoverImageHandler,
@@ -101,6 +102,9 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(setTosViolationSchema).mutation(setTosViolationHandler),
+  getApprovedAppeal: moderatorProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getApprovedImageAppeal(input.id)),
   getDetail: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

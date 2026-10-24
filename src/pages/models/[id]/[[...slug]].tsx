@@ -51,6 +51,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -97,6 +98,7 @@ import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -104,10 +106,15 @@ import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
+import { siteAppealHref } from '~/components/SiteAppeal/site-appeal-href';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  modelVersionAccessInput,
+  toModelVersionPermissionData,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -144,6 +151,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
+  AppealCategory,
   Availability,
   CollectionType,
   CosmeticEntity,
@@ -180,6 +188,14 @@ import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookup
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
+
+const NOT_FOUND = Symbol('model-not-found');
+
+const isNotFoundError = (error: unknown) => {
+  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
+  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
+  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
+};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -274,14 +290,19 @@ export const getServerSideProps = createServerSideProps({
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
       // bookmarks land here often; bailing early saves ~5 DB roundtrips.
-      const model = await ssg.model.getById
+      const fetched = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
-        .catch(() => null);
+        .catch((error) => (isNotFoundError(error) ? NOT_FOUND : null));
+      // `getById` is viewer-scoped, so this is a 404 for exactly the viewers it refuses; any
+      // other failure still renders and lets the client retry.
+      if (fetched === NOT_FOUND) return { notFound: true };
+      const model = fetched;
 
       if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
-          nsfw: model.nsfw,
+          // A complete .com face is what civitai.com shows; it is not the mature listing.
+          nsfw: model.nsfw && !model.hasSfwFace,
         };
         suppressAds = model.status !== ModelStatus.Published;
       }
@@ -314,10 +335,9 @@ export const getServerSideProps = createServerSideProps({
         [
           ssg.hiddenPreferences.getHidden.prefetch(),
           modelVersionIdParsed
-            ? ssg.common.getEntityAccess.prefetch({
-                entityId: modelVersionIdParsed as number,
-                entityType: 'ModelVersion',
-              })
+            ? ssg.common.getEntityAccess.prefetch(
+                modelVersionAccessInput(modelVersionIdParsed as number)
+              )
             : null,
           ssg.model.getCollectionShowcase.prefetch({ id }),
           // Creator-card CLS fix: SSR-prefetch user.getCreator (the SmartCreatorCard
@@ -325,6 +345,10 @@ export const getServerSideProps = createServerSideProps({
           // rank, links, badges — instead of rendering the zeroed fallback and
           // growing once the client fetch lands. Simple key, no middleware to
           // mismatch; fail-soft on miss.
+          // Kept under `modelPageDeferBelowFold` too: there the card renders client-side only
+          // (see ModelVersionDetails), and this prefetch lets it mount from the dehydrated
+          // cache with the real creator, so the page shifts once (placeholder → card) rather
+          // than twice (placeholder → zeroed fallback → card).
           model?.user?.id
             ? ssg.user.getCreator.prefetch({ id: model.user.id }).catch(() => null)
             : null,
@@ -465,7 +489,12 @@ export default function ModelDetailsV2({
     ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id,
+      // The version is already on hand from model.getById — don't refetch it via modelVersion.getById.
+      modelVersion:
+        model && selectedVersion ? toModelVersionPermissionData(model, selectedVersion) : undefined,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -573,7 +602,8 @@ export default function ModelDetailsV2({
     }
   };
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess() {
+    async onSuccess(result) {
+      notifyIfPublishHeld(result);
       await queryUtils.model.getById.invalidate({ id });
     },
     onError(error) {
@@ -866,7 +896,7 @@ export default function ModelDetailsV2({
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw}
+      nsfw={model.nsfw && !model.hasSfwFace}
       bypassRating={isOwner}
       suppressAds={!published}
       meta={{
@@ -875,7 +905,7 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
         description: truncate(removeTags(model.description ?? ''), { length: 150 }),
         images: versionImages,
-        ogEndpoint: `/api/og?type=model&id=${model.id}`,
+        ogEndpoint: modelOgEndpoint(model),
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
@@ -1457,6 +1487,11 @@ export default function ModelDetailsV2({
                 <ModelUnpublishedAlert
                   reason={model.meta?.unpublishedReason}
                   customMessage={model.meta?.customMessage}
+                  appealHref={
+                    isCreator && features.siteAppealForm
+                      ? siteAppealHref(true, { category: AppealCategory.Model, id: model.id })
+                      : undefined
+                  }
                 />
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AuditModule from '~/utils/metadata/audit';
+import type * as PromptOriginModule from '~/server/services/orchestrator/prompt-origin';
 
 /**
  * `classifyPromptServer` is the DECISION half of `auditPromptServer`, split out so a caller can
@@ -25,11 +26,15 @@ const {
   mockAuditPromptEnriched,
   mockModeratePrompt,
   mockApplyPendingReviewMute,
+  mockBuildPromptOrigin,
+  mockAttachPromptOrigin,
 } = vi.hoisted(() => ({
   mockStripBenignPhrases: vi.fn(async (text?: string) => text),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockApplyPendingReviewMute: vi.fn(async () => undefined),
+  mockBuildPromptOrigin: vi.fn(),
+  mockAttachPromptOrigin: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -49,6 +54,10 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() })
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
+vi.mock('~/server/services/orchestrator/prompt-origin', () => ({
+  buildPromptOrigin: mockBuildPromptOrigin,
+  attachPromptOrigin: mockAttachPromptOrigin,
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
@@ -57,6 +66,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 import type { PromptTrigger, PromptTriggerCategory } from '~/utils/metadata/audit';
 import {
   auditPromptServer,
+  classifyPromptExternally,
   classifyPromptServer,
 } from '~/server/services/orchestrator/promptAuditing';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -102,6 +112,10 @@ const expectNoSideEffects = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockBuildPromptOrigin.mockReset();
+  mockBuildPromptOrigin.mockResolvedValue(undefined);
+  mockAttachPromptOrigin.mockReset();
+  mockAttachPromptOrigin.mockResolvedValue(undefined);
   mockAuditPromptEnriched.mockReturnValue({ blockedFor: [], triggers: [], success: true });
   // `mockReset`, not just the clear above: a `mockResolvedValueOnce` a failing test never consumed
   // would otherwise leak into the next test and fail it for the wrong reason.
@@ -329,6 +343,20 @@ describe('classifyPromptServer — INVARIANT GUARDS: no side effects on any verd
   });
 });
 
+describe('auditPromptServer — stored entry id', () => {
+  it('carries the id key exactly as the origin script’s needle expects', async () => {
+    flagWith(HARD);
+    await auditPromptServer({ prompt: PROMPT, userId: 9, isGreen: false }).catch(() => undefined);
+    const [, entryJson] = sysRedis.lPush.mock.calls[0] as [string, string];
+    const { id } = JSON.parse(entryJson) as { id: string };
+    const { blockedEntryIdNeedle } = await vi.importActual<typeof PromptOriginModule>(
+      '~/server/services/orchestrator/prompt-origin'
+    );
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(entryJson).toContain(blockedEntryIdNeedle(id));
+  });
+});
+
 describe('auditPromptServer — still produces today’s side effects', () => {
   const track = { prohibitedRequest: vi.fn(async () => undefined), userActivity: vi.fn() };
   const base = {
@@ -359,6 +387,8 @@ describe('auditPromptServer — still produces today’s side effects', () => {
       remixOfId: 11,
       inputImages: ['img-a'],
       inputVideo: 'vid-a',
+      id: expect.any(String),
+      origin: { incomplete: true },
       time: expect.any(String),
     });
     expect(track.prohibitedRequest).toHaveBeenCalledTimes(1);
@@ -442,5 +472,103 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     await expect(auditPromptServer({ ...base, isGreen: false })).resolves.toBeUndefined();
     expectNoSideEffects();
     expect(track.prohibitedRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('auditPromptServer — prompt origin is attached after the block', () => {
+  const base = { prompt: PROMPT, userId: 9, isGreen: false };
+  const storedEntry = () => {
+    const [, entryJson] = sysRedis.lPush.mock.calls[0] as [string, string];
+    return JSON.parse(entryJson);
+  };
+
+  it('stores the entry at once as incomplete with a unique id, without building the origin', async () => {
+    mockBuildPromptOrigin.mockReturnValue(new Promise(() => undefined));
+    flagWith(HARD);
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+    expect(mockBuildPromptOrigin).not.toHaveBeenCalled();
+    expect(storedEntry().origin).toEqual({ incomplete: true });
+    expect(storedEntry().id).toEqual(expect.any(String));
+  });
+
+  it('gives each blocked entry its own id', async () => {
+    flagWith(HARD);
+    await auditPromptServer(base).catch(() => undefined);
+    await auditPromptServer(base).catch(() => undefined);
+    const ids = sysRedis.lPush.mock.calls.map((c) => JSON.parse(c[1] as string).id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('schedules the attach once, after the entry is stored, with the stored entry', async () => {
+    flagWith(HARD);
+    await expect(
+      auditPromptServer({ ...base, sourceImageIds: [7], remixOfId: 11, orchestratorToken: 'tok' })
+    ).rejects.toThrow(/flagged/);
+    expect(mockAttachPromptOrigin).toHaveBeenCalledTimes(1);
+    expect(mockAttachPromptOrigin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 9,
+        entry: storedEntry(),
+        redisKey: expect.stringContaining(':9'),
+        sourceImageIds: [7],
+        remixOfId: 11,
+        token: 'tok',
+      })
+    );
+    expect(sysRedis.lPush.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAttachPromptOrigin.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not wait for the attach, and a rejected attach does not fail the block', async () => {
+    mockAttachPromptOrigin.mockReturnValue(new Promise(() => undefined));
+    flagWith(HARD);
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+    mockAttachPromptOrigin.mockRejectedValue(new Error('boom'));
+    await expect(auditPromptServer(base)).rejects.toThrow(/flagged/);
+  });
+
+  it.each([
+    ['a moderator', () => flagWith(HARD), { isModerator: true }],
+    ['a soft block', () => flagWith(SOFT), {}],
+    ['a green request', () => flagWith(HARD), { isGreen: true }],
+    ['a pass', () => undefined, {}],
+  ])('schedules no attach for %s', async (_, arrange, extra) => {
+    arrange();
+    await auditPromptServer({ ...base, ...extra }).catch(() => undefined);
+    expect(mockAttachPromptOrigin).not.toHaveBeenCalled();
+  });
+});
+
+describe('classifyPromptExternally', () => {
+  beforeEach(() => mockModeratePrompt.mockClear());
+
+  it('returns the categories of a flag, and nothing for an unflagged verdict', async () => {
+    externalFlags('cat-a', 'cat-b');
+    expect(await classifyPromptExternally(PROMPT)).toEqual({
+      categories: ['cat-a', 'cat-b'],
+      externalError: null,
+    });
+    mockModeratePrompt.mockResolvedValueOnce({ flagged: false, categories: ['cat-a'] });
+    expect(await classifyPromptExternally(PROMPT)).toEqual({ categories: [], externalError: null });
+  });
+
+  it('fails open on a classifier error, reporting it', async () => {
+    mockModeratePrompt.mockRejectedValueOnce(new Error('down'));
+    expect(await classifyPromptExternally(PROMPT)).toEqual({
+      categories: [],
+      externalError: { message: 'down' },
+    });
+    expectNoSideEffects();
+  });
+
+  it('sends the benign-stripped copy, and nothing for blank text', async () => {
+    mockStripBenignPhrases.mockResolvedValueOnce('stripped');
+    await classifyPromptExternally(PROMPT, 'other');
+    expect(mockModeratePrompt).toHaveBeenCalledWith('stripped', 'other');
+
+    mockModeratePrompt.mockClear();
+    await classifyPromptExternally('   ');
+    expect(mockModeratePrompt).not.toHaveBeenCalled();
   });
 });

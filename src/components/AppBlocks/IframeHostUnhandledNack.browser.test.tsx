@@ -257,6 +257,26 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
     replies.stop();
   });
 
+  test('OPEN_MEDIA_UPLOAD gets a MEDIA_UPLOAD_RESULT error on the model slot, not a hang', async () => {
+    expect(INVENTORY.OPEN_MEDIA_UPLOAD.IframeHost).not.toBe('required');
+    const replies = await mountAndReady();
+    postFromBlock('OPEN_MEDIA_UPLOAD', {
+      requestId: 'rq_media',
+      kind: 'audio',
+      purpose: 'generationSource',
+    });
+    await vi.waitFor(
+      () => {
+        if (replies.of('MEDIA_UPLOAD_RESULT').length === 0) throw new Error('no reply yet');
+      },
+      { timeout: 1000, interval: 5 }
+    );
+    expect(replies.of('MEDIA_UPLOAD_RESULT').map((m) => m.payload)).toEqual([
+      { requestId: 'rq_media', error: 'unsupported on this host' },
+    ]);
+    replies.stop();
+  });
+
   test('a message with NO requestId is not answered — there is nothing to correlate to', async () => {
     // 🔴 NOT AN INVARIANT GUARD, despite passing at `origin/main` (where NOTHING
     // is answered). It DISCRIMINATES a real mutation of the new code: remove the

@@ -20,6 +20,30 @@ export enum FLIPT_FEATURE_FLAGS {
   // missing, a hub stays on Meilisearch while every other shape follows the flag above.
   FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
+  // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
+  // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
+  // DEFAULT-OFF: `isFlipt` returns false for an unknown flag or an unreachable Flipt, which keeps
+  // the Prisma path. Both paths read the same replica and return the same rows.
+  //
+  // 🔴 BOOLEAN ONLY. Evaluated once per call with no entityId and no context (a single cached key,
+  // so the gate adds no per-user cache churn on a hot path); a percentage rollout hashes the literal
+  // 'global' and is 0% or 100%, and a segment rule matches nothing.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false is fine) BEFORE THIS CODE SERVES TRAFFIC,
+  // and must not be deleted while it does. A MISSING key makes `evaluateBoolean` throw; the throw
+  // bypasses the eval cache and the default `onEvalError` console.errors — on every call of a
+  // read issued on every signed-in image feed page. It still answers false (Prisma), but the log
+  // flood and the uncached wasm eval also inflate the "off" baseline this flag exists to measure.
+  //
+  // 🔴 ON MOVES THE READ OFF PRISMA'S POOL ONTO THE SHARED `pgDbRead` POOL (kyselyRead is built
+  // over it, src/server/db/kyselyDb.ts). Two properties of the ON state to check before flipping:
+  //  - That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`, whose default is 0 = WAIT FOREVER
+  //    (packages/civitai-db/src/env.ts). Prisma's pool times out instead. So the environment must
+  //    set a non-zero DATABASE_CONNECTION_TIMEOUT, or a saturated pool hangs these requests.
+  //  - Failures surface as pg errors, not Prisma P2024/P1008, so `prismaErrorToTrpcCode` no longer
+  //    maps a pool timeout to TIMEOUT.
+  // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
+  KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -71,6 +95,8 @@ export enum FLIPT_FEATURE_FLAGS {
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
+  // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
+  CDN_ACCESS_SYNC = 'cdn-access-sync',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -93,6 +119,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
   // rollback stays usable after the switch is thrown.
   MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // The real-person counterpart of MINOR_HASH_AUTO_FLAG: the scan hook and the nightly sweep that
+  // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
+  // either can be thrown without the other.
+  POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
+  // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
+  // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
+  // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
+  DUPLICATE_MODEL_HASH_BLOCK = 'duplicate-model-hash-block',
+  // Turns on the bounty entry file check: the job that hashes model-bounty entry files, and the
+  // award and download gates that read its result. DEFAULT-OFF; all three ship dark together,
+  // since the award gate refuses files the job has not hashed yet.
+  BOUNTY_ENTRY_FILE_CHECK = 'bounty-entry-file-check',
   // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
   // modelId so a percentage rollout picks a deterministic, sticky subset of content.
   // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.
@@ -102,8 +140,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
-  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys, in SHADOW: scan
-  // after the write commits and record what would have been blocked, without rejecting anything.
+  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys — the legacy
+  // shared-storage surface and the document store's shared writes alike — in SHADOW: scan after
+  // the write commits and record what would have been blocked, without rejecting anything.
   // Same submit/apply split as the XGuard pair above. DEFAULT-OFF.
   //
   // 🔴 EVALUATED PER APP — entityId = the app block id, NO context — so ramp by boolean, by
@@ -111,7 +150,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // context-reading segment (moderators, testers, any cohort) matches nothing here and returns the
   // base value. See `shared-data-moderation.ts`.
   APP_BLOCKS_SHARED_DATA_MODERATION = 'app-blocks-shared-data-moderation',
-  // ENFORCE: reject a hit inline, with the title/body belt's consequences. Implies the scan — with
+  // ENFORCE: reject a hit inline (legacy surface: with the title/body belt's consequences; document
+  // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
@@ -181,6 +221,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 
+  // Records image-scan flags in the moderator label queue. DEFAULT-OFF: leave it off until the queue's
+  // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
+  SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
+
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
@@ -198,6 +242,24 @@ export enum FLIPT_FEATURE_FLAGS {
   // the section, so a rolled-back pod would find the production snapshot unservable.
   // Boolean only.
   RESOURCE_INTENT_COOC_CHECKPOINT_SECTION = 'resource-intent-cooc-checkpoint-section',
+
+  // Runs build-resource-intent-tag-index (the weekly v1 content-tag index build). DEFAULT-OFF. Turn
+  // it on only after the ResourceIntentVocabulary and ResourceIntentTagIndexSnapshot migrations, and
+  // 20261106120000_resource_intent_tag_index_snapshot_payload_cap (without it every production build
+  // refuses before reading anything), are applied in that environment, a vocabulary is frozen, and the
+  // build's env and grants are in place (docs/resource-intent-primitive.md, "v1 content tags").
+  // Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_BUILD = 'resource-intent-tag-index-build',
+
+  // Lets a pod hold the v1 tag index in memory (resource-intent-tags/holder.ts). DEFAULT-OFF: off,
+  // an unknown flag or an unreachable Flipt holds nothing, reads no snapshot, and drops one already
+  // held. On, each pod whose request path asks for the index downloads and keeps the newest ready
+  // snapshot (about 780 MiB per pod decoded at full coverage, October 2026, and about twice that
+  // while reloading; docs/resource-intent-primitive.md, "Holder"), so turn it
+  // on only once a ready snapshot exists and the pods that will serve it have
+  // RESOURCE_INTENT_TAG_INDEX_BUCKET, its RESOURCE_INTENT_TAG_INDEX_B2_* credentials and the memory.
+  // Boolean only.
+  RESOURCE_INTENT_TAG_INDEX_HOLDER = 'resource-intent-tag-index-holder',
 
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
@@ -267,6 +329,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // config poll alone. Evaluated once per model-file scan and once per nightly
   // job run — nowhere near hot enough for the cache to be worth the extra lag.
   FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  FLIPT_FEATURE_FLAGS.POI_HASH_AUTO_FLAG,
+  // Same shape: thrown when the duplicate-hash unpublish misfires, read once per model-file scan.
+  FLIPT_FEATURE_FLAGS.DUPLICATE_MODEL_HASH_BLOCK,
   // The stop button for a sweep that can permanently double production counters
   // — nothing takes a counter back down. Evaluated about ten times per
   // five-minute tick, so the cache saves nothing measurable and the staleness is
@@ -357,6 +422,10 @@ export const getFliptCacheStats = flipt.getCacheStats;
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
 export const getFliptClientSync = flipt.getClientSync;
+// A `FLIPT_LOCAL_OVERRIDES` value for one flag (never set in production), for a gate that reads the
+// SDK client directly and would otherwise not see it.
+export const getFliptLocalOverride = (flag: string): string | undefined =>
+  flipt.config.localOverrides[flag];
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

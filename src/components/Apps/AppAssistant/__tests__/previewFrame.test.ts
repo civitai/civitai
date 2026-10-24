@@ -12,6 +12,18 @@ describe('fetchPreviewFrame', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/apps/assistant/preview?blockId=my%20app');
   });
 
+  it('reports a preview that is still coming online, with nothing to frame', async () => {
+    expect(await fetchPreviewFrame('my-app', respond(200, { preparing: true }))).toEqual({
+      preparing: true,
+    });
+  });
+
+  it('does not read `preparing` off an error response', async () => {
+    await expect(fetchPreviewFrame('my-app', respond(500, { preparing: true }))).rejects.toThrow(
+      'The preview is unavailable'
+    );
+  });
+
   it("surfaces the route's reason", async () => {
     await expect(
       fetchPreviewFrame(

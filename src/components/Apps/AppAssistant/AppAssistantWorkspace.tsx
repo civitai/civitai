@@ -1,45 +1,85 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  Badge,
   Button,
   Center,
-  Drawer,
   Group,
   Loader,
   Paper,
-  ScrollArea,
+  Popover,
   SegmentedControl,
   Stack,
   Text,
   Title,
+  UnstyledButton,
 } from '@mantine/core';
+import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import type { ChatMcpServer } from '@civitai/components-chat/civitai-chat';
+import type {
+  BeforeSendDetail,
+  ChatMcpServer,
+  ChatToolResult,
+  CivitaiChat,
+  QueuedMessage,
+  ReplyResumeDetail,
+} from '@civitai/components-chat/civitai-chat';
 import { AppAssistantChat } from '~/components/Apps/AppAssistant/AppAssistantChat';
 import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistantPreview';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
+import {
+  CREATE_APP,
+  NO_APP_REFUSAL,
+  createAppTools,
+} from '~/components/Apps/AppAssistant/appTools';
+import {
+  BUILD_IT_MESSAGE,
+  SANDBOX_SERVER_ID,
+  SET_CHECKLIST,
+  createAssistantGate,
+} from '~/components/Apps/AppAssistant/assistantGate';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
+import { APP_ASSISTANT_SUBAGENTS } from '~/components/Apps/AppAssistant/assistantSubagents';
 import {
   AssistantTokenError,
   createAssistantTokenProvider,
 } from '~/components/Apps/AppAssistant/assistantToken';
+import { isDictating, messageBoxText } from '~/components/Apps/AppAssistant/chatAdapter';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
-import { createPreviewTools } from '~/components/Apps/AppAssistant/previewTools';
+import {
+  createPreviewTools,
+  runnerPreviewAction,
+} from '~/components/Apps/AppAssistant/previewTools';
+import { appAssistantRemoteRunnerFor } from '~/components/Apps/AppAssistant/remoteRunner';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import {
   createSandboxClient,
   isSandboxServiceUrl,
 } from '~/components/Apps/AppAssistant/sandboxClient';
-import { SandboxError, SandboxPanel } from '~/components/Apps/AppAssistant/SandboxPanel';
 import { useSandboxes } from '~/components/Apps/AppAssistant/useSandboxes';
+import {
+  APP_STATUS,
+  AppError,
+  appsError,
+  YourAppsList,
+} from '~/components/Apps/AppAssistant/YourApps';
+import {
+  ForkSetupCard,
+  ForkStatus,
+  useAppFork,
+} from '~/components/Apps/AppAssistant/AppAssistantFork';
 import { APP_ASSISTANT_DAILY_BUZZ_CAP } from '~/shared/constants/app-assistant.constants';
+import { FORK_SETUP_MESSAGE } from '~/shared/constants/app-fork.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './AppAssistant.module.scss';
 
 const NO_MCP_SERVERS: ChatMcpServer[] = [];
+/** The app's tools are added only once it runs, so a message sent before then would go without them. */
+export const APP_STARTING_HOLD = 'Your app is starting…';
+
+/** How long the page keeps its record of a held message: the chat's own `QUEUE_TIMEOUT_MS` (3 minutes). */
+export const HELD_RECORD_MS = 3 * 60_000;
 
 function EnableCard({
   onEnable,
@@ -56,10 +96,11 @@ function EnableCard({
         <Stack gap="sm">
           <Title order={3}>Turn on App Assistant</Title>
           <Text size="sm">
-            The assistant builds your app in a sandbox of your own, and can make images and other
-            media for it with your Buzz, up to {numberWithCommas(APP_ASSISTANT_DAILY_BUZZ_CAP)} Buzz
-            a day. You can change that limit or turn the assistant off at any time under connected
-            apps in your account settings.
+            Describe an app in your own words and the assistant builds it for you, in a private
+            workspace of your own. It can make images and other media for your app with your Buzz,
+            up to {numberWithCommas(APP_ASSISTANT_DAILY_BUZZ_CAP)} Buzz a day. You can change that
+            limit or turn the assistant off at any time under connected apps in your account
+            settings.
           </Text>
           {!!error && (
             <Alert color="red" variant="light">
@@ -67,7 +108,7 @@ function EnableCard({
             </Alert>
           )}
           <Group justify="flex-end">
-            <Button onClick={onEnable} loading={pending}>
+            <Button onClick={onEnable} loading={pending} className="min-h-11">
               Turn on App Assistant
             </Button>
           </Group>
@@ -77,13 +118,95 @@ function EnableCard({
   );
 }
 
+/**
+ * How long the app has to run when a failed reply is asked for again (Retry, or the chat by itself),
+ * and the chat as long again to take the ask once it does; past that the ask is given up. On purpose
+ * the same 3 minutes as a held message's wait (`HELD_RECORD_MS`), but its own constant: it bounds the
+ * page's own ask, which the chat knows nothing of.
+ */
+export const RESUME_ASK_TIMEOUT_MS = 3 * 60_000;
+
+/** How long the page waits for its app list when the chat asks for a failed reply by itself. */
+export const APP_LIST_REFRESH_TIMEOUT_MS = 10_000;
+
+/**
+ * Sends `text` as the user's. A copy the chat keeps back in a box that was empty (while it holds, or
+ * on a refused grant) is hidden while the user dictates, and their words would be joined to it: such a
+ * copy is taken back out, so the caller can give the message back instead.
+ */
+export async function sendNotJoined(
+  chat: Pick<CivitaiChat, 'send' | 'compose'>,
+  text: string,
+  box: () => string,
+  dictating: () => boolean,
+  went: () => boolean
+): Promise<void> {
+  const empty = !box();
+  await chat.send(text);
+  if (empty && !went() && dictating() && box() === text) await chat.compose('');
+}
+
+type RetryChat = Pick<
+  CivitaiChat,
+  'canSend' | 'retryReply' | 'updateComplete' | 'addEventListener' | 'removeEventListener'
+>;
+
+/**
+ * Asks the chat for its failed reply again (`retryReply()`), once, as soon as it can send: tools just
+ * handed to it start listing in its next update, and `canSend` reads true until then, so this waits for
+ * that update first. Asks nothing once `signal` aborts or the chat goes; whether it asked.
+ */
+export async function retryWhenReady(
+  chatRef: { current: RetryChat | null },
+  signal: AbortSignal
+): Promise<boolean> {
+  const chat = chatRef.current;
+  if (!chat || signal.aborted) return false;
+  let woken = false;
+  let resume: (() => void) | undefined;
+  const wake = () => {
+    woken = true;
+    resume?.();
+  };
+  chat.addEventListener('can-send-change', wake);
+  signal.addEventListener('abort', wake);
+  try {
+    await chat.updateComplete;
+    while (!signal.aborted && chatRef.current === chat) {
+      woken = false;
+      if (chat.canSend) return await chat.retryReply();
+      if (!woken) await new Promise<void>((resolve) => (resume = resolve));
+      resume = undefined;
+    }
+    return false;
+  } finally {
+    chat.removeEventListener('can-send-change', wake);
+    signal.removeEventListener('abort', wake);
+  }
+}
+
+/** The app the user worked on last, to open on a visit with none open; none when no app says when. */
+export function mostRecentApp(apps: Sandbox[]): Sandbox | null {
+  const at = (s: Sandbox) => Date.parse(s.lastActivityAt ?? s.createdAt ?? '') || 0;
+  return apps.reduce<Sandbox | null>((best, s) => (at(s) > (best ? at(best) : 0) ? s : best), null);
+}
+
 export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
+  subagents = false,
+  remoteRunner = false,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
   sandboxUrl: string | null;
+  /** The assistant may start read-only subagents. */
+  subagents?: boolean;
+  /**
+   * Replies run on the server runner (`appAssistantRemoteRunner`), so they keep going while the user
+   * is away. Off, they run in the browser exactly as before.
+   */
+  remoteRunner?: boolean;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -118,34 +241,121 @@ export function AppAssistantWorkspace({
     [sandboxUrl, tokens, access.isSuccess, revoked]
   );
   const sandboxes = useSandboxes(sandboxClient);
+  const apps = sandboxes.list.data ?? [];
 
   const [activeName, setActiveName] = useState<string | null>(null);
-  const active = sandboxes.list.data?.find((s) => s.name === activeName) ?? null;
+  const active = apps.find((s) => s.name === activeName) ?? null;
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [tab, setTab] = useState<'chat' | 'preview'>('chat');
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const shownTab = session ? tab : 'chat';
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherTitleId = useId();
+  const chatRef = useRef<CivitaiChat | null>(null);
+  // A message sent while the open app was paused: the chat shows it waiting (`queue()`) while the app
+  // resumes, and sends it once released. `started` once the app was seen starting.
+  type Held = { message: QueuedMessage; app: string; chatId: string | null; started: boolean };
+  const [held, setHeld] = useState<Held | null>(null);
+  // A held message let go once its app ran: the chat may still be waiting to send it (listing the
+  // app's tools, or a reply ending), so it is called back if the user moves to another app, the app
+  // stops running or its tools go, or the user leaves the page. (Another chat: the chat itself gives
+  // it back.) Calling back one that already went does nothing.
+  const released = useRef<QueuedMessage | null>(null);
+  const boxText = useCallback(() => messageBoxText(chatRef.current), []);
+  const dictating = useCallback(() => isDictating(chatRef.current), []);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const chatIdRef = useRef(chatId);
+  const previewShown = useRef(false);
+  const pickedOnLoad = useRef(false);
+
+  // FORKABLE APPS — `?fork=<slug>`: the fork's app is created with its files (or, if it exists,
+  // opened), and a fresh one gets a new chat once the chat has started. See `AppAssistantFork`.
+  const [chatReady, setChatReady] = useState(false);
+  const newChatFor = useRef<string | null>(null);
+  const fork = useAppFork({
+    sandboxes,
+    active,
+    onOpened: (sandbox, fresh) => {
+      if (fresh) newChatFor.current = sandbox.name;
+      setActiveName(sandbox.name);
+    },
+  });
+  useEffect(() => {
+    if (!chatReady || !newChatFor.current || newChatFor.current !== activeName) return;
+    newChatFor.current = null;
+    chatRef.current?.newChat();
+  }, [chatReady, activeName]);
+  const dismissForkSetup = fork.dismissSetup;
 
   const startDevTunnel = trpc.blocks.startDevTunnel.useMutation();
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
   // The chat reads tools and instructions through these on every call, so neither has to be rebuilt.
-  const live = useRef({ active, session, canPreview });
-  live.current = { active, session, canPreview };
+  const live = useRef({ active, session, canPreview, apps: sandboxes.list.data });
+  live.current = { active, session, canPreview, apps: sandboxes.list.data };
   const stopRef = useRef(stopDevTunnel.mutateAsync);
   stopRef.current = stopDevTunnel.mutateAsync;
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
+  const openRef = useRef(sandboxes.open.mutateAsync);
+  openRef.current = sandboxes.open.mutateAsync;
 
+  // A preview the server runner started has no id here: it is hidden, and civitai lets it idle out.
   const stopPreview = useCallback(() => {
     const current = live.current.session;
     if (!current) return;
+    live.current.session = null;
     setSession(null);
-    stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
+    if (current.sessionId) stopRef.current({ sessionId: current.sessionId }).catch(() => undefined);
   }, []);
+  /** Shows a preview that (re)started: the first one of an app moves a phone to the Preview tab. */
+  const showPreview = useCallback((next: PreviewSession | null) => {
+    live.current.session = next;
+    setSession(next);
+    // A reconnect (the tunnel dropped) leaves the user on the tab they chose.
+    if (next && !previewShown.current) {
+      previewShown.current = true;
+      setTab('preview');
+    }
+  }, []);
+  // Each preview the server runner starts gets its own frame, even on the same host.
+  const runnerViews = useRef(0);
+
+  const appTools = useMemo(
+    () =>
+      createAppTools({
+        apps: () => live.current.apps,
+        current: () => live.current.active,
+        open: async (app) => {
+          const opened = await openRef.current(app);
+          // set_checklist can arrive before the next render, so the beforeToolCall gate reads live.current.
+          live.current.active = opened.sandbox;
+          setActiveName(opened.sandbox.name);
+          return opened;
+        },
+      }),
+    []
+  );
+  const gate = useMemo(
+    () =>
+      createAssistantGate({
+        refuse: (name) =>
+          // Features are planned for an app, so not before one exists.
+          name === SET_CHECKLIST && !live.current.active ? NO_APP_REFUSAL : appTools.refusal(name),
+        onReply: appTools.newReply,
+        onBuild: () => void buildRef.current(),
+        currentApp: () => live.current.active?.name ?? null,
+      }),
+    [appTools]
+  );
+  // What was verified belongs to the sandbox it was verified in, and so does a checklist's Build it.
+  useEffect(() => {
+    gate.reset();
+    gate.appChanged(activeName);
+  }, [activeName, gate]);
 
   const tools = useMemo(
-    () =>
-      createPreviewTools({
+    () => ({
+      ...createPreviewTools({
         canPreview,
         currentSandbox: () => live.current.active?.name ?? null,
         defaultBlockId: () => {
@@ -155,23 +365,55 @@ export function AppAssistantWorkspace({
         startDevTunnel: (input) => startRef.current(input),
         stopDevTunnel: (input) => stopRef.current(input),
         getSession: () => live.current.session,
-        setSession: (next) => {
-          live.current.session = next;
-          setSession(next);
-          if (next) setTab('preview');
-        },
+        setSession: showPreview,
       }),
-    [canPreview]
+      ...appTools.tools,
+      ...gate.tools,
+    }),
+    [canPreview, gate, appTools, showPreview]
   );
 
   const instructions = useCallback(
     () =>
       buildAssistantInstructions({
         sandbox: live.current.active,
+        apps: (live.current.apps ?? []).map((s) => s.app),
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
+        ...(remoteRunner ? { runner: 'remote' as const } : {}),
       }),
-    []
+    [remoteRunner]
+  );
+
+  // The server runner holds the tools and the gate; the page tells it which app is open, and signs
+  // each request (a viewer token) and each start (a run grant). Read once, as the chat starts.
+  const runner = useMemo(
+    () =>
+      appAssistantRemoteRunnerFor(remoteRunner, () => ({
+        app: live.current.active?.app ?? null,
+      })),
+    [remoteRunner]
+  );
+  // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
+  // the runner's start_preview says only which block it shows and where (never the tunnel's id):
+  // the pane fetches that block's frame, which civitai finds by the user's live tunnel.
+  const onToolResult = useCallback(
+    (result: ChatToolResult) => {
+      gate.onToolResult(result);
+      if (!remoteRunner || result.isError) return;
+      const preview = runnerPreviewAction(result);
+      if (preview && 'show' in preview)
+        return showPreview({ ...preview.show, sessionId: null, view: ++runnerViews.current });
+      if (preview) return stopPreview();
+      if (result.name !== CREATE_APP) return;
+      const app = (result.output as { app?: unknown } | null)?.app;
+      if (typeof app !== 'string') return;
+      void refetchRef.current().then(({ data }) => {
+        const opened = data?.find((s) => s.app === app);
+        if (opened) setActiveName(opened.name);
+      });
+    },
+    [gate, remoteRunner, showPreview, stopPreview]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
@@ -184,9 +426,9 @@ export function AppAssistantWorkspace({
       mcpUrl
         ? [
             {
-              id: 'sandbox',
+              id: SANDBOX_SERVER_ID,
               url: mcpUrl,
-              label: 'Sandbox',
+              label: 'your app',
               token: () => tokens.getToken({ purpose: 'sandbox' }),
             },
           ]
@@ -194,9 +436,178 @@ export function AppAssistantWorkspace({
     [mcpUrl, tokens]
   );
 
+  // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
+  // so a paused app would not be woken and the reply would go on without its tools. The ask is held
+  // instead, the app woken, and the reply asked for once its tools are handed to the chat.
+  // - `auto`: the chat asked by itself, as the page woke or came back online. The app list did not
+  //   refresh while the page slept, so the page first asks for it again (`checking`) and decides on
+  //   that: running with its tools, the reply is asked for; paused, the app is woken; else none.
+  // - `started` once the app was seen starting; `asking` once it runs with its tools and the ask
+  //   waits on the chat.
+  type ResumeAsk = {
+    app: string;
+    chatId: string | null;
+    key: string;
+    auto: boolean;
+    checking: boolean;
+    started: boolean;
+    asking: boolean;
+    stop: AbortController;
+  };
+  const [resumeAsk, setResumeAsk] = useState<ResumeAsk | null>(null);
+  const resumeAskRef = useRef(resumeAsk);
+  // Per app and chat, until the user's next message there (a new turn). The chat asks by itself again
+  // on every wake until it gets through: once the page gave such an ask up, it keeps the next ones back
+  // and does nothing, and it wakes the app by itself once at most, so it never loops. Retry, which the
+  // user presses, is always followed.
+  const autoGaveUp = useRef(new Set<string>());
+  const autoWoke = useRef(new Set<string>());
+  const finishResumeAsk = useCallback((asked: boolean) => {
+    const ask = resumeAskRef.current;
+    ask?.stop.abort();
+    if (ask?.auto && !asked) autoGaveUp.current.add(ask.key);
+    resumeAskRef.current = null;
+    setResumeAsk(null);
+  }, []);
+  const endResumeAsk = useCallback(() => finishResumeAsk(false), [finishResumeAsk]);
+  const refetchRef = useRef(sandboxes.list.refetch);
+  refetchRef.current = sandboxes.list.refetch;
+  const wakeForAsk = useCallback(
+    (app: string) =>
+      resumeRef.current(app, {
+        // Unless the user moved on meanwhile.
+        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+          if (resumeAskRef.current?.app === sandbox.app) setActiveName(sandbox.name);
+        },
+        onError: endResumeAsk,
+      }),
+    [endResumeAsk]
+  );
+  /** The chat asked by itself: decide on the app list as it is now, not as it was before the page slept. */
+  const checkAutoAsk = useCallback(
+    async (ask: ResumeAsk) => {
+      // One refresh, bounded; one that fails or runs out gives the ask up.
+      let fresh: Sandbox[] | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          refetchRef.current(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timed out')), APP_LIST_REFRESH_TIMEOUT_MS);
+          }),
+        ]);
+        fresh = result.isError ? undefined : result.data;
+      } catch {
+        fresh = undefined;
+      } finally {
+        clearTimeout(timer);
+      }
+      // Ended meanwhile (or the page went away), or taken over by Retry, which is followed as is.
+      const now = resumeAskRef.current;
+      if (!now || now.stop !== ask.stop || ask.stop.signal.aborted) return;
+      // Retry, pressed by the user, falls back to the list the page has when the refresh failed.
+      if (!fresh && !now.auto) fresh = live.current.apps;
+      const app = fresh?.find((s) => s.app === ask.app);
+      const paused = app?.state === 'suspended';
+      // Waking it pauses whichever other app runs: not without the user asking.
+      const pausesAnother = fresh?.some((s) => s.app !== ask.app && s.state !== 'suspended');
+      if (
+        !app ||
+        (app.state !== 'running' && !paused && (now.auto || app.state !== 'starting')) ||
+        (paused && now.auto && (pausesAnother || autoWoke.current.has(ask.key)))
+      )
+        return endResumeAsk();
+      resumeAskRef.current = { ...now, checking: false };
+      setResumeAsk(resumeAskRef.current);
+      if (!paused) return;
+      if (now.auto) autoWoke.current.add(ask.key);
+      wakeForAsk(ask.app);
+    },
+    [endResumeAsk, wakeForAsk]
+  );
+  const onReplyResume = useCallback(
+    (trigger: ReplyResumeDetail['trigger']) => {
+      const app = live.current.active;
+      if (!app) return false;
+      const auto = trigger !== 'retry';
+      const current = resumeAskRef.current;
+      if (current) {
+        // Retry pressed while the page refreshes the list for the chat's own ask: it is the user's.
+        if (!auto && current.auto) {
+          resumeAskRef.current = { ...current, auto: false };
+          setResumeAsk(resumeAskRef.current);
+        }
+        return true;
+      }
+      // Retry: the user pressed it now, so the list is current.
+      if (!auto && app.state !== 'suspended' && app.state !== 'starting') return false;
+      const key = `${app.app}\n${chatIdRef.current}`;
+      if (auto && autoGaveUp.current.has(key)) return true;
+      const ask: ResumeAsk = {
+        app: app.app,
+        chatId: chatIdRef.current,
+        key,
+        auto,
+        checking: auto,
+        started: app.state === 'starting',
+        asking: false,
+        stop: new AbortController(),
+      };
+      resumeAskRef.current = ask;
+      setResumeAsk(ask);
+      if (auto) void checkAutoAsk(ask);
+      else if (app.state === 'suspended') wakeForAsk(app.app);
+      return true;
+    },
+    [checkAutoAsk, wakeForAsk]
+  );
+  useEffect(() => {
+    if (!resumeAsk) return;
+    // The app was closed, another opened, or another chat opened meanwhile.
+    if (!active || active.app !== resumeAsk.app || chatId !== resumeAsk.chatId)
+      return endResumeAsk();
+    if (resumeAsk.checking) return;
+    if (resumeAsk.asking) {
+      if (active.state !== 'running' || !mcpServers.length) endResumeAsk();
+      return;
+    }
+    // Paused again once it had started.
+    if (active.state === 'suspended') {
+      if (resumeAsk.started) endResumeAsk();
+      return;
+    }
+    if (active.state === 'starting') {
+      if (!resumeAsk.started) {
+        resumeAskRef.current = { ...resumeAsk, started: true };
+        setResumeAsk(resumeAskRef.current);
+      }
+      return;
+    }
+    // Running, but its tools are not handed to the chat: asking would go on without them.
+    if (!mcpServers.length) return endResumeAsk();
+    const asking: ResumeAsk = { ...resumeAsk, asking: true };
+    resumeAskRef.current = asking;
+    setResumeAsk(asking);
+    void retryWhenReady(chatRef, asking.stop.signal).then((asked) => {
+      if (resumeAskRef.current === asking) finishResumeAsk(asked);
+    });
+  }, [resumeAsk, active, chatId, mcpServers, endResumeAsk, finishResumeAsk]);
+  // The app has RESUME_ASK_TIMEOUT_MS to run, and the chat as long again to take the ask once it does.
+  const resuming = !!resumeAsk;
+  const waitingOnChat = !!resumeAsk?.asking;
+  useEffect(() => {
+    if (!resuming) return;
+    const timer = setTimeout(endResumeAsk, RESUME_ASK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [resuming, waitingOnChat, endResumeAsk]);
+  useEffect(() => () => resumeAskRef.current?.stop.abort(), []);
+
   // A preview belongs to the sandbox it was started from; tear it down when that changes or the
   // page goes away. The tunnel also expires on its own.
-  useEffect(() => stopPreview, [activeName, stopPreview]);
+  useEffect(() => {
+    previewShown.current = false;
+    return stopPreview;
+  }, [activeName, stopPreview]);
   // `session` too: a preview start already in flight can land after the suspend or revoke.
   useEffect(() => {
     if (session && (active?.state === 'suspended' || revoked)) stopPreview();
@@ -204,16 +615,190 @@ export function AppAssistantWorkspace({
   useEffect(() => {
     if (activeName && sandboxes.list.isSuccess && !active) setActiveName(null);
   }, [activeName, active, sandboxes.list.isSuccess]);
+  // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
+  // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
+  // commit with the pre-fork `activeName`, would otherwise open the recent app over it.
+  const forkClaimsActiveApp = fork.claimsActiveApp;
+  useEffect(() => {
+    if (pickedOnLoad.current || !sandboxes.list.data) return;
+    pickedOnLoad.current = true;
+    if (activeName || forkClaimsActiveApp) return;
+    const recent = mostRecentApp(sandboxes.list.data);
+    if (recent) setActiveName(recent.name);
+  }, [sandboxes.list.data, activeName, forkClaimsActiveApp]);
 
-  const openSandbox = (sandbox: Sandbox) => {
+  const resumeRef = useRef(sandboxes.open.mutate);
+  resumeRef.current = sandboxes.open.mutate;
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  // Build it: a send the chat could not take now (a reply still ending, or a hold) comes back to the
+  // user to send instead, so it is never pressed twice. The chat puts it in an empty box, or offers it
+  // back beside what the user has there.
+  const buildWent = useRef(false);
+  const buildRef = useRef(async () => {
+    buildWent.current = false;
+    const chat = chatRef.current;
+    if (!chat) return;
+    await sendNotJoined(chat, BUILD_IT_MESSAGE, boxText, dictating, () => buildWent.current);
+    if (buildWent.current) return;
+    chat.giveBack(BUILD_IT_MESSAGE);
+    gate.answered();
+  });
+  // The held message comes back to the user (the chat puts it back in the box, or offers it back).
+  const giveBackHeld = useCallback(() => {
+    const message = heldRef.current;
+    heldRef.current = null;
+    setHeld(null);
+    message?.message.cancel();
+  }, []);
+  const onBeforeSend = useCallback(
+    (text: string, queue: BeforeSendDetail['queue']) => {
+      gate.answered();
+      if (text === BUILD_IT_MESSAGE) buildWent.current = true;
+      const app = live.current.active;
+      if (app?.state !== 'suspended') return;
+      // The chat shows the message at once, waiting, and holds while the app resumes (so no other
+      // message reaches here meanwhile; one whose wait the chat ended by itself is simply replaced).
+      heldRef.current = {
+        message: queue(APP_STARTING_HOLD),
+        app: app.app,
+        chatId: chatIdRef.current,
+        started: false,
+      };
+      setHeld(heldRef.current);
+      resumeRef.current(app.app, {
+        // Unless the user moved on meanwhile.
+        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+          if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
+        },
+        onError: giveBackHeld,
+      });
+    },
+    [gate, giveBackHeld]
+  );
+  // A released message belongs to the app it was written for, and to this page.
+  useEffect(() => {
+    released.current?.cancel();
+    released.current = null;
+  }, [activeName]);
+  useEffect(
+    () => () => {
+      released.current?.cancel();
+      heldRef.current?.message.cancel();
+    },
+    []
+  );
+  useEffect(() => {
+    if (!held) return;
+    // The app was closed, another opened, or another chat opened meanwhile.
+    if (!active || active.app !== held.app || chatId !== held.chatId) return giveBackHeld();
+    // Paused again once it had started (paused by hand, or from another tab).
+    if (active.state === 'suspended') {
+      if (held.started) giveBackHeld();
+      return;
+    }
+    if (active.state === 'starting') {
+      if (!held.started) {
+        heldRef.current = { ...held, started: true };
+        setHeld(heldRef.current);
+      }
+      return;
+    }
+    // Running, but its tools are not handed to the chat (an address outside the sandbox service).
+    if (!mcpServers.length) return giveBackHeld();
+    // Running with its tools handed over: the chat sends it once it can (after listing them).
+    heldRef.current = null;
+    setHeld(null);
+    released.current = held.message;
+    held.message.release();
+  }, [held, active, chatId, mcpServers, giveBackHeld]);
+  // Paused (or its tools gone) after the release but before the chat sent it: it would go without the
+  // app's tools, and nothing would wake the app. It comes back to the user instead.
+  const runningWithTools = active?.state === 'running' && mcpServers.length > 0;
+  // Set up: one fixed message, as the user's, once (the card goes as it is pressed).
+  const forkSetUp = () => {
+    const chat = chatRef.current;
+    if (!chat) return;
+    dismissForkSetup();
+    void chat.send(FORK_SETUP_MESSAGE);
+  };
+  useEffect(() => {
+    if (runningWithTools || !released.current) return;
+    released.current.cancel();
+    released.current = null;
+  }, [runningWithTools]);
+  // The chat gives a held message back by itself after QUEUE_TIMEOUT_MS (or on its Edit) and says
+  // nothing, so the page's record of it ends then too: the app's status stops reading "starting" if
+  // the resume never got it going. Cancelling one the chat already gave back does nothing.
+  const holding = !!held;
+  useEffect(() => {
+    if (!holding) return;
+    const timer = setTimeout(giveBackHeld, HELD_RECORD_MS);
+    return () => clearTimeout(timer);
+  }, [holding, giveBackHeld]);
+
+  const onChatChange = useCallback(
+    (id: string | null) => {
+      gate.answered();
+      chatIdRef.current = id;
+      setChatId(id);
+    },
+    [gate]
+  );
+
+  // A failed reply waiting on its app is not asked for after a message of the user's, nor in another
+  // chat: at once, as the chat can say it can send before the next render.
+  const onSend = useCallback(
+    (text: string, queue: BeforeSendDetail['queue']) => {
+      // Before the message may be kept back: a resume ask and a waiting message never both act.
+      endResumeAsk();
+      // A message of the user's (or Set up itself) answers the fork's Set up card.
+      dismissForkSetup();
+      // A new turn: the chat's own asks for a reply after it start afresh.
+      const chat = `\n${chatIdRef.current}`;
+      for (const keys of [autoGaveUp.current, autoWoke.current])
+        keys.forEach((key) => key.endsWith(chat) && keys.delete(key));
+      onBeforeSend(text, queue);
+    },
+    [endResumeAsk, onBeforeSend, dismissForkSetup]
+  );
+  const onChatReady = useCallback(() => setChatReady(true), []);
+  const onChatOpened = useCallback(
+    (id: string | null) => {
+      if (id !== chatIdRef.current) endResumeAsk();
+      onChatChange(id);
+    },
+    [endResumeAsk, onChatChange]
+  );
+
+  const starting = held || (sandboxes.open.isPending && sandboxes.open.variables === active?.app);
+  const status = active && (starting ? APP_STATUS.starting : APP_STATUS[active.state]);
+  // Picking a paused app starts it, which pauses the one that runs.
+  const selectApp = (sandbox: Sandbox) => {
     setActiveName(sandbox.name);
-    setDrawerOpen(false);
+    setSwitcherOpen(false);
+    if (sandbox.state === 'suspended')
+      sandboxes.open.mutate(sandbox.app, {
+        // Unless the user moved on meanwhile; a deleted app comes back under a new name.
+        onSuccess: ({ sandbox: opened }: { sandbox: Sandbox }) => {
+          if (live.current.active?.app === opened.app) setActiveName(opened.name);
+        },
+      });
+  };
+  const onRemoved = (name: string) => {
+    appTools.forget(name);
+    if (name === activeName) setActiveName(null);
+  };
+  const startNewApp = () => {
+    setActiveName(null);
+    chatRef.current?.newChat();
+    setSwitcherOpen(false);
   };
 
   if (!sandboxUrl)
     return (
       <Alert color="yellow" variant="light">
-        Sandboxes are not configured on this deployment, so App Assistant can’t build apps here yet.
+        App Assistant can’t build apps on this deployment yet.
       </Alert>
     );
   if (access.isPending)
@@ -244,6 +829,7 @@ export function AppAssistantWorkspace({
             size="compact-sm"
             variant="light"
             color="red"
+            className="min-h-11"
             loading={access.isFetching}
             onClick={() => void access.refetch()}
           >
@@ -253,84 +839,87 @@ export function AppAssistantWorkspace({
       </Alert>
     );
 
-  const panel = (
-    <SandboxPanel
-      sandboxes={sandboxes}
-      activeName={activeName}
-      onOpened={openSandbox}
-      onRemoved={(name) => {
-        if (name === activeName) setActiveName(null);
-      }}
-    />
-  );
-
   return (
     <div className={clsx('flex flex-col gap-3', classes.workspace)}>
-      <Group justify="space-between" wrap="nowrap" gap="sm" className="shrink-0">
-        {active ? (
-          <Group gap="xs" wrap="nowrap" className="min-w-0">
-            <Text fw={600} truncate>
-              {active.app}
+      {(active || apps.length > 0) && (
+        <Popover
+          opened={switcherOpen}
+          onChange={setSwitcherOpen}
+          position="bottom-start"
+          width="min(360px, calc(100vw - 32px))"
+          trapFocus
+          returnFocus
+          shadow="md"
+        >
+          <Popover.Target>
+            <UnstyledButton
+              className="flex min-h-11 min-w-0 max-w-full shrink-0 items-center gap-2 self-start rounded-md px-2"
+              aria-label={`Switch app: ${active ? `${active.app}, ${status}` : 'no app open'}`}
+              onClick={() => setSwitcherOpen((open) => !open)}
+            >
+              <div className="min-w-0">
+                <Text fw={600} truncate>
+                  {active ? active.app : 'No app open'}
+                </Text>
+                <Text size="xs" c="dimmed" truncate>
+                  {active ? status : 'Open one of yours, or describe a new one'}
+                </Text>
+              </div>
+              <IconSelector size={16} className="shrink-0" />
+            </UnstyledButton>
+          </Popover.Target>
+          <Popover.Dropdown aria-labelledby={switcherTitleId}>
+            <Text id={switcherTitleId} size="xs" fw={600} c="dimmed" tt="uppercase" mb="xs">
+              Apps
             </Text>
-            <Badge size="sm" variant="light" color={active.state === 'running' ? 'green' : 'gray'}>
-              {active.state}
-            </Badge>
-          </Group>
-        ) : (
-          <Text size="sm" c="dimmed">
-            Open a sandbox to start building.
-          </Text>
-        )}
-        <Group gap={6} wrap="nowrap">
-          {active && active.state !== 'suspended' && (
-            <Button
-              size="compact-sm"
-              variant="default"
-              loading={sandboxes.suspend.isPending}
-              onClick={() => sandboxes.suspend.mutate(active.name)}
-            >
-              Suspend
-            </Button>
-          )}
-          {active?.state === 'suspended' && (
-            <Button
-              size="compact-sm"
-              loading={sandboxes.open.isPending}
-              onClick={() => sandboxes.open.mutate(active.app)}
-            >
-              Resume
-            </Button>
-          )}
-          <Button size="compact-sm" variant="light" onClick={() => setDrawerOpen(true)}>
-            Sandboxes
-          </Button>
-        </Group>
-      </Group>
-      {/* With a sandbox open the panel lives in the closed drawer, so header actions report here. */}
-      {active && !drawerOpen && (
-        <div className="shrink-0">
-          <SandboxError error={sandboxes.open.error ?? sandboxes.suspend.error} />
-        </div>
+            <YourAppsList
+              sandboxes={sandboxes}
+              activeName={activeName}
+              onOpen={selectApp}
+              onRemoved={onRemoved}
+              onNewApp={startNewApp}
+            />
+          </Popover.Dropdown>
+        </Popover>
       )}
-
-      <SegmentedControl
-        className="shrink-0 md:hidden"
-        fullWidth
-        value={tab}
-        onChange={(value) => setTab(value as 'chat' | 'preview')}
-        data={[
-          { value: 'chat', label: 'Chat' },
-          { value: 'preview', label: active ? 'Preview' : 'Sandboxes' },
-        ]}
+      {!switcherOpen && <AppError error={appsError(sandboxes)} />}
+      <ForkStatus
+        creating={fork.creating}
+        problem={fork.problem}
+        retry={fork.retry}
+        retrying={fork.retrying}
       />
+      {fork.setup && active?.app === fork.setup.app && (
+        <ForkSetupCard
+          parentName={fork.setup.parentName}
+          ready={runningWithTools}
+          onSetUp={forkSetUp}
+        />
+      )}
+      {session && (
+        <SegmentedControl
+          className="shrink-0 md:hidden"
+          fullWidth
+          size="md"
+          classNames={{ label: 'min-h-11 flex items-center justify-center' }}
+          value={shownTab}
+          onChange={(value) => setTab(value as 'chat' | 'preview')}
+          data={[
+            { value: 'chat', label: 'Chat' },
+            { value: 'preview', label: 'Preview' },
+          ]}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1 gap-3">
         <Paper
           withBorder
           radius="md"
+          data-testid="app-assistant-chat-pane"
           className={clsx(
-            'min-h-0 flex-col overflow-hidden md:flex md:w-5/12 md:shrink-0',
-            tab === 'chat' ? 'flex w-full' : 'hidden'
+            'min-h-0 flex-col overflow-hidden',
+            session ? 'md:flex md:w-5/12 md:shrink-0' : 'w-full',
+            shownTab === 'chat' ? 'flex w-full' : 'hidden'
           )}
         >
           <AppAssistantChat
@@ -338,35 +927,32 @@ export function AppAssistantWorkspace({
             tools={tools}
             instructions={instructions}
             mcpServers={mcpServers}
+            holdReason={active?.state === 'starting' ? APP_STARTING_HOLD : undefined}
+            beforeToolCall={gate.beforeToolCall}
+            onToolResult={onToolResult}
+            chatRef={chatRef}
+            onBeforeSend={onSend}
+            onReplyResume={onReplyResume}
+            onChatChange={onChatOpened}
+            subagents={subagents ? APP_ASSISTANT_SUBAGENTS : undefined}
+            remoteRunner={runner}
+            onReady={onChatReady}
           />
         </Paper>
-        <Paper
-          withBorder
-          radius="md"
-          className={clsx(
-            'min-h-0 flex-1 flex-col overflow-hidden md:flex',
-            tab === 'preview' ? 'flex' : 'hidden'
-          )}
-        >
-          {active ? (
+        {session && (
+          <Paper
+            withBorder
+            radius="md"
+            data-testid="app-assistant-preview-pane"
+            className={clsx(
+              'min-h-0 flex-1 flex-col overflow-hidden md:flex',
+              shownTab === 'preview' ? 'flex' : 'hidden'
+            )}
+          >
             <AppAssistantPreview canPreview={canPreview} session={session} />
-          ) : (
-            <ScrollArea className="h-full" p="md">
-              {panel}
-            </ScrollArea>
-          )}
-        </Paper>
+          </Paper>
+        )}
       </div>
-
-      <Drawer
-        opened={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        position="right"
-        title="Sandboxes"
-        size="md"
-      >
-        {panel}
-      </Drawer>
     </div>
   );
 }

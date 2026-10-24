@@ -5,19 +5,13 @@ import type * as ReportService from '~/server/services/report.service';
 import type * as AppealTextHash from '~/server/services/text-scan/actions/appeal-text-hash';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
 
-const {
-  mockQueueUpdate,
-  mockCreateNotification,
-  mockResolveEntityAppeal,
-  mockLoadTextScanTextHash,
-  mockQueueTextScanRescan,
-} = vi.hoisted(() => ({
-  mockQueueUpdate: vi.fn(),
-  mockCreateNotification: vi.fn(),
-  mockResolveEntityAppeal: vi.fn(),
-  mockLoadTextScanTextHash: vi.fn(),
-  mockQueueTextScanRescan: vi.fn(),
-}));
+const { mockQueueUpdate, mockCreateNotification, mockResolveEntityAppeal, mockLoadGrantTextHash } =
+  vi.hoisted(() => ({
+    mockQueueUpdate: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    mockResolveEntityAppeal: vi.fn(),
+    mockLoadGrantTextHash: vi.fn(),
+  }));
 
 vi.mock('~/server/search-index/SearchIndexUpdate', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndexUpdateModule>()),
@@ -34,8 +28,7 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOriginal) => ({
   ...(await importOriginal<typeof AppealTextHash>()),
-  loadTextScanTextHash: mockLoadTextScanTextHash,
-  queueTextScanRescan: mockQueueTextScanRescan,
+  loadGrantTextHash: mockLoadGrantTextHash,
 }));
 
 const { applyBountyPoi, resolveBountyPoiAppeal } = await import(
@@ -70,7 +63,7 @@ const run = (o: TextScanOutcome) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockLoadTextScanTextHash.mockResolvedValue('h-text');
+  mockLoadGrantTextHash.mockResolvedValue('h-text');
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 9, name: 'B', userId: 42 }]);
 });
 
@@ -152,7 +145,7 @@ describe('resolveBountyPoiAppeal', () => {
   };
 
   beforeEach(() => {
-    mockLoadTextScanTextHash.mockResolvedValue('h-current');
+    mockLoadGrantTextHash.mockResolvedValue('h-current');
     dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
       poi: true,
       meta: { textScanFlags: { poi: poiEntry } },
@@ -171,12 +164,12 @@ describe('resolveBountyPoiAppeal', () => {
     );
     expect(text).toContain(`ARRAY['poi']::text[]`);
     expect(text).toContain(`'appealGranted'`);
-    expect(text).toContain(`'textHash', COALESCE(b.meta->?->'poi'->>'textHash', `);
+    expect(text).toContain(`'textHash', ?::text,`);
     expect(text).toContain(`'via', 'appeal'`);
-    // The current hash is only the fallback bind; the flagged hash stays in the row.
+    // The grant covers the scanned text; the flagged hash is not carried over.
     expect(call.slice(1)).toContain('h-current');
     expect(call.slice(1)).not.toContain('h-flagged');
-    expect(mockLoadTextScanTextHash).toHaveBeenCalledWith('Bounty', 9);
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Bounty', 9, 'poi');
     expect(mockQueueUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ items: [{ id: 9, action: 'Update' }] })
     );
@@ -185,12 +178,22 @@ describe('resolveBountyPoiAppeal', () => {
     );
   });
 
-  it('uphold stamps the decision and rejects the appeal', async () => {
-    await resolveBountyPoiAppeal({ bountyId: 9, uphold: true, userId: 3 });
+  it("uphold stamps the decision and rejects the appeal with the moderator's reason", async () => {
+    await resolveBountyPoiAppeal({
+      bountyId: 9,
+      uphold: true,
+      userId: 3,
+      resolvedReason: 'flag-confirmed',
+      internalNotes: 'a named actor',
+    });
     expect(sqlOf(dbMock.dbWrite.$executeRaw.mock.calls[0])).toContain(`'appealUpheld'`);
     expect(mockQueueUpdate).not.toHaveBeenCalled();
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'Rejected' })
+      expect.objectContaining({
+        status: 'Rejected',
+        resolvedReason: 'flag-confirmed',
+        internalNotes: 'a named actor',
+      })
     );
   });
 
@@ -215,7 +218,7 @@ describe('resolveBountyPoiAppeal', () => {
 
   // Review Focus 2.
   it('refuses to overturn, leaving the appeal open, when the text hash is unknown', async () => {
-    mockLoadTextScanTextHash.mockResolvedValue(null);
+    mockLoadGrantTextHash.mockResolvedValue(null);
     await expect(
       resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -223,23 +226,9 @@ describe('resolveBountyPoiAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
-  // Review Focus 2.
-  it('queues a rescan after resolving when the text changed while the appeal was pending', async () => {
-    expect(await resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).toEqual({
-      rescanQueued: true,
-    });
-    expect(mockQueueTextScanRescan).toHaveBeenCalledWith('Bounty', 9);
-    expect(mockResolveEntityAppeal).toHaveBeenCalled();
-    expect(mockResolveEntityAppeal.mock.invocationCallOrder[0]).toBeLessThan(
-      mockQueueTextScanRescan.mock.invocationCallOrder[0]
-    );
-  });
-
-  it('queues no rescan when the text is unchanged', async () => {
-    mockLoadTextScanTextHash.mockResolvedValue('h-flagged');
+  it('reports no rescan, because the grant covers the scanned text', async () => {
     expect(await resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).toEqual({
       rescanQueued: false,
     });
-    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
   });
 });

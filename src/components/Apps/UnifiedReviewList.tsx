@@ -27,6 +27,7 @@ import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
 import {
   compactRelativeTime,
   REVIEW_RELATIVE_TICK_MS,
@@ -505,12 +506,20 @@ function UnifiedReviewRowView({
             interactive child in a whole-row-clickable cell, i.e. a second thing one click
             could do. */}
         <Group gap="sm" wrap="nowrap">
-          <ListingIconThumb
-            url={row.iconUrl}
-            name={row.title}
-            imgTestId={`apps-unified-review-icon-${row.key}`}
-            placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
-          />
+          {/* Blurred, without the overlay, when it is above SFW on civitai.com: 40px cannot
+              carry the reveal button, and the row opens the review, which reveals it. */}
+          <ReviewMediaReveal
+            image={row.reviewMedia?.icon}
+            explain={false}
+            testId={`apps-unified-review-icon-reveal-${row.key}`}
+          >
+            <ListingIconThumb
+              url={row.iconUrl}
+              name={row.title}
+              imgTestId={`apps-unified-review-icon-${row.key}`}
+              placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
+            />
+          </ReviewMediaReveal>
           <Stack gap={0} style={{ minWidth: 0 }}>
             {row.slug && <Code>{row.slug}</Code>}
             {row.title && row.title !== row.slug && (

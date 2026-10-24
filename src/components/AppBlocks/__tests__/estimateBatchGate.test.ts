@@ -9,6 +9,7 @@ import { resolveEstimateBatchRequest } from '../pageBlockHostLogic';
 import { buildBridgeNackReply } from '../bridgeNackReply';
 import { BRIDGE_NACK_NO_HANDLER, nackReplyTypeFor } from '../bridgeTelemetry';
 import { INVENTORY } from '../hostHandlerParity';
+import { expectReplyKeys } from '../../../../test/expectReplyKeys';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { blockEstimateBatchInputSchema } from '~/server/schema/blocks/workflow.schema';
 
@@ -133,6 +134,12 @@ describe('handleEstimateBatch — decide, call, reply once', () => {
         },
       },
     ]);
+    expectReplyKeys(
+      'ESTIMATE_WORKFLOW_BATCH',
+      'success',
+      ['aggregate', 'snapshots'],
+      sent[0].payload
+    );
   });
 
   it('a per-cell failure is a SUCCESSFUL reply — the failed cell rides beside the priced ones', async () => {
@@ -178,6 +185,7 @@ describe('handleEstimateBatch — decide, call, reply once', () => {
         payload: { requestId: 'r1', error: 'Rate limit exceeded, please retry shortly.' },
       },
     ]);
+    expectReplyKeys('ESTIMATE_WORKFLOW_BATCH', 'error', ['error'], sent[0].payload);
   });
 
   it('refuses a malformed list WITHOUT calling the server', async () => {

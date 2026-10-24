@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -19,7 +20,7 @@ import {
 import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 
@@ -170,20 +171,74 @@ async function getTrackerEvent(
       }
       break;
     case 'bountyEntry':
-      const bountyEntry = await dbRead.answer.findFirst({
+      const bountyEntry = await dbRead.bountyEntry.findFirst({
         where: { id: input.entityId },
         select: { userId: true },
       });
-      if (bountyEntry) {
+      // `userId` is nullable (SetNull when the author is deleted). An ownerless entry has no
+      // owner to record, and no owner the reactor could be, so it gets no tracker row.
+      if (bountyEntry?.userId != null) {
         return {
           type: `BountyEntry_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          ownerId: bountyEntry?.userId,
+          ownerId: bountyEntry.userId,
+          ...shared,
+        };
+      }
+      break;
+    case 'resourceReview':
+      const review = await dbRead.resourceReview.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (review) {
+        return {
+          type: `Review_${action}`,
+          nsfw: NsfwLevelDeprecated.None,
+          ownerId: review.userId,
           ...shared,
         };
       }
       break;
   }
+}
+
+/**
+ * Whether the user already holds this exact reaction. Asked only for a value the entity type
+ * no longer allows creating, to tell removing a legacy reaction (allowed) from creating one
+ * (refused). Reads the primary: a lagging replica would refuse a legitimate removal.
+ */
+async function holdsReaction({
+  entityType,
+  entityId,
+  userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) {
+  const where = { userId, reaction };
+  // The return annotation makes a missing entity type a compile error rather than a refusal.
+  const count = await ((): Promise<number> => {
+    switch (entityType) {
+      case 'question':
+        return dbWrite.questionReaction.count({ where: { ...where, questionId: entityId } });
+      case 'answer':
+        return dbWrite.answerReaction.count({ where: { ...where, answerId: entityId } });
+      case 'commentOld':
+        return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
+      case 'comment':
+        return dbWrite.commentV2Reaction.count({ where: { ...where, commentId: entityId } });
+      case 'image':
+        return dbWrite.imageReaction.count({ where: { ...where, imageId: entityId } });
+      case 'post':
+        return dbWrite.postReaction.count({ where: { ...where, postId: entityId } });
+      case 'resourceReview':
+        return dbWrite.resourceReviewReaction.count({ where: { ...where, reviewId: entityId } });
+      case 'article':
+        return dbWrite.articleReaction.count({ where: { ...where, articleId: entityId } });
+      case 'bountyEntry':
+        return dbWrite.bountyEntryReaction.count({ where: { ...where, bountyEntryId: entityId } });
+    }
+  })();
+  return count > 0;
 }
 
 const reactionMetricMap: { [p in ReviewReactions]?: EntityMetric_MetricType_Type } = {
@@ -201,6 +256,16 @@ export const toggleReactionHandler = async ({
   input: ToggleReactionInput;
 }) => {
   try {
+    // A value no longer allowed is still accepted when the user holds it, so it can be removed.
+    if (
+      !isReactionAllowedForEntity(input.entityType, input.reaction) &&
+      !(await holdsReaction({ ...input, userId: ctx.user.id }))
+    ) {
+      throw throwBadRequestError(
+        `The ${input.reaction} reaction is not available for this ${input.entityType}.`
+      );
+    }
+
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
@@ -309,10 +374,7 @@ export const toggleReactionHandler = async ({
 
 // Exported for tests: the property that matters is that an unavailable exclusion
 // list still produces a notification, and that is only observable here.
-export const createReactionNotification = async ({
-  entityType,
-  entityId,
-}: ToggleReactionInput) => {
+export const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
   if (entityType === 'image') {
     // Every displayed count filters reaction-farm accounts; a raw Postgres count did
     // not, so the milestone fired on numbers no display agreed with. An empty list

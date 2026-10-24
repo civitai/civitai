@@ -12,6 +12,7 @@ import {
   summarizeListingRating,
   type ListingRatingDisplayAsset,
 } from '~/shared/utils/listing-rating-display';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 import { trpc } from '~/utils/trpc';
 
 const ratingLabel = (rating: string | null) => (rating ? offsiteContentRatingLabel(rating) : '—');
@@ -64,9 +65,12 @@ export function RatingMismatchAlert({
 export function OnsiteApproveRatingWarning({
   listingId,
   declaredRating,
+  mediaSplit = false,
 }: {
   listingId: string;
   declaredRating: string | null;
+  /** The moderator chose a media split, so only the civitai.com-eligible images floor the rating. */
+  mediaSplit?: boolean;
 }) {
   // Always re-read: the author can swap an image between two opens of the same request.
   const { data, isError } = trpc.appListings.getAssets.useQuery(
@@ -76,7 +80,8 @@ export function OnsiteApproveRatingWarning({
   if (isError)
     return (
       <Text size="xs" c="dimmed" data-testid="apps-onsite-rating-unchecked">
-        Could not load the listing’s image ratings — check them before approving.
+        Could not load the listing’s image ratings, so approve is unavailable. Close and reopen this
+        request to retry.
       </Text>
     );
   if (!data)
@@ -87,7 +92,7 @@ export function OnsiteApproveRatingWarning({
     );
   const { derived, projected, drivingAssets } = summarizeListingRating({
     declaredRating,
-    assets: listingRatingAssetsFromView(data),
+    assets: ratingFloorAssets(listingRatingAssetsFromView(data), mediaSplit),
   });
   if (!projected.raised) return null;
   return (

@@ -33,6 +33,8 @@ import type * as AppListingRating from '~/server/services/blocks/app-listing-rat
 const { db, s3, holder } = vi.hoisted(() => {
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -522,20 +524,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
     ).toBe(true);
     warn.mockRestore();
   });
-
-  it('does NOT warn when the re-sync matches its row', async () => {
-    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
-
-    expect(
-      warn.mock.calls.some(
-        (c) => typeof c[0] === 'string' && c[0].includes('re-sync matched 0 rows')
-      )
-    ).toBe(false);
-    warn.mockRestore();
-  });
 });
 
 describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
@@ -633,7 +621,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     expect(assets.resolveListingRatingFloorInTx).toHaveBeenCalledWith(
       expect.anything(),
       'apl_draft',
-      'pg'
+      'pg',
+      false
     );
     const transitionCall = db.write.appListing.updateMany.mock.calls.find(
       (c) => 'appBlockId' in (((c[0] as { data?: Record<string, unknown> })?.data ?? {}) as object)

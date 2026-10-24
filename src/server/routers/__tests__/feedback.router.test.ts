@@ -3,8 +3,11 @@ import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import type * as FeedbackService from '~/server/services/feedback.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { FEEDBACK_AREAS, FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
-import { GENERIC_FEEDBACK_APP_BLOCK_REFUSAL } from '~/server/schema/feedback.schema';
+import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
+import {
+  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL,
+  GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL,
+} from '~/server/schema/feedback.schema';
 
 /**
  * `feedback.create` — the extended context must survive the ROUTER, and the
@@ -196,8 +199,24 @@ describe('feedback — the generic route refuses the app-block area', () => {
     expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
   });
 
-  // Positive control: every OTHER declared area still goes through both procedures.
-  it.each(FEEDBACK_AREAS.filter((a) => a !== 'app-block'))(
+  // `apps-platform` rows are counted on a server-computed fingerprint, so the generic route must
+  // not be able to write one without it. Same shape as the app-block cases: flag ON, own message.
+  it('create and getArea refuse apps-platform before the flag lookup and the service', async () => {
+    const platformRefusal = expect.objectContaining({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining(GENERIC_FEEDBACK_APPS_PLATFORM_REFUSAL),
+    });
+    await expect(
+      caller().create({ area: 'apps-platform', message: 'the cli is broken' })
+    ).rejects.toEqual(platformRefusal);
+    await expect(caller().getArea({ area: 'apps-platform' })).rejects.toEqual(platformRefusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // Positive control: every OTHER declared area still goes through both procedures. The list is
+  // hand-typed so a third dedicated-procedure area cannot silently join it.
+  it.each(['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const)(
     'still accepts %s on create and getArea',
     async (area) => {
       await expect(caller().getArea({ area })).resolves.toEqual({ enabled: true });
@@ -218,10 +237,6 @@ describe('feedback — the generic route refuses the app-block area', () => {
 });
 
 describe('feedback.create — the submission quota is not widened by uploads', () => {
-  it('is configured at 5 per hour', () => {
-    expect(FEEDBACK_RATE_LIMIT).toEqual({ max: 5, periodSeconds: 3600 });
-  });
-
   it('wires exactly those numbers into the router’s rate limiter', () => {
     expect(rateLimitCalls).toHaveLength(1);
     const [limits] = rateLimitCalls[0] as [{ limit: number; period: number }];

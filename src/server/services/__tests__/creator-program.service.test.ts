@@ -1,3 +1,5 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -7,6 +9,8 @@ import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constant
 import {
   PEAK_EARNING_PREDICATE_SQL,
   PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
@@ -70,8 +74,13 @@ const {
   };
 });
 
+const { mockGetTransactionByExternalId } = vi.hoisted(() => ({
+  mockGetTransactionByExternalId: vi.fn(),
+}));
+
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
+  getTransactionByExternalId: mockGetTransactionByExternalId,
   createBuzzTransaction: mockCreateBuzzTransaction,
   createMultiAccountBuzzTransaction: vi.fn(),
   getCounterPartyBuzzTransactions: mockGetCounterPartyBuzzTransactions,
@@ -122,6 +131,7 @@ import {
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
@@ -250,6 +260,58 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
   });
 
+  // Pinned whole: a wrong join key or window still returns a plausible peak. The sent leg has no
+  // upper date bound, so Buzz sent back this month still nets an earlier month.
+  it('nets out of each month what the creator sent the users who paid them', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+      const since = `toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), 12))`;
+      const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+      expect(squash(sql)).toBe(
+        squash(`SELECT id, month, gross - returned AS earned
+        FROM (
+          SELECT toAccountId as id, toStartOfMonth(date) as month, SUM(amount) as gross
+          FROM buzzTransactions
+          WHERE ${PEAK_EARNING_PREDICATE_SQL}
+          AND toAccountType IN (${bankable})
+          AND toAccountId IN (${userId})
+          AND ${since}
+          AND toStartOfMonth(date) < toStartOfMonth(now())
+          GROUP BY month, toAccountId
+        ) AS earnings
+        LEFT JOIN (
+          SELECT received.id AS id, received.month AS month, SUM(least(received.amount, sent.amount)) AS returned
+          FROM (
+            SELECT toAccountId AS id, toStartOfMonth(date) AS month, fromAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${PEAK_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
+            AND toAccountType IN (${bankable})
+            AND toAccountId IN (${userId})
+            AND ${since}
+            AND toStartOfMonth(date) < toStartOfMonth(now())
+            GROUP BY id, month, counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT fromAccountId AS id, toAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${SENT_TO_USER_SQL}
+            AND fromAccountId IN (${userId})
+            AND ${since}
+            GROUP BY id, counterparty
+          ) AS sent ON sent.id = received.id AND sent.counterparty = received.counterparty
+          GROUP BY id, month
+        ) AS netted USING (id, month)
+        ORDER BY earned DESC
+        LIMIT 1 BY id;`)
+      );
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
+  });
+
   it('derives the cap from the peak month returned by ClickHouse', async () => {
     const month = new Date('2026-01-01T00:00:00Z');
     const { result } = await runLookup([userId], [{ id: userId, month, earned: 800000 }]);
@@ -290,6 +352,32 @@ describe('getCreatorRequirements', () => {
 
     expect(result.membership).toBe('founder');
     expect(result.validMembership).toBe(false);
+  });
+
+  // The sum's arithmetic runs against Postgres in creator-score-grant.behavior.test.ts; this pins
+  // that the statement sent is GREATEST(that sum, the stored total).
+  it('scores the larger of every category summed and the stored total', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ score: 1, membership: 'silver' }]);
+
+    await getCreatorRequirements(userId);
+
+    const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls.at(-1) as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sent = strings
+      .reduce((sql, part, i) => {
+        const value = values[i - 1] as { sql?: string } | undefined;
+        return sql + (typeof value?.sql === 'string' ? value.sql : '?') + part;
+      })
+      .replace(/--[^\n]*/g, '')
+      .replace(/\s+/g, ' ');
+    expect(sent).toContain(
+      `GREATEST( ${creatorScoreCategorySumSql(
+        'u.meta'
+      )}, COALESCE((meta->'scores'->'total')::numeric, 0) ) as score`
+    );
+    expect(sent).toContain(`COALESCE((u.meta->'scores'->>'staffAwarded')::numeric, 0)`);
   });
 });
 
@@ -363,16 +451,6 @@ describe('joinCreatorsProgram', () => {
     await expect(joinCreatorsProgram(userId)).resolves.not.toThrow();
     // The bitmask really was written — that is what makes a 500 here a lie rather than a warning.
     expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
-  });
-
-  it('logs the failed bust rather than swallowing it', async () => {
-    armJoin();
-    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
-
-    await joinCreatorsProgram(userId);
-
-    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
-    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe('cache redis unreachable');
   });
 
   it('STILL fails when the join write itself fails — the guard is narrow', async () => {
@@ -469,8 +547,8 @@ describe('bankBuzz', () => {
     });
 
     function mockBankableLedger({ snapshot, earned }: { snapshot: number; earned: number }) {
-      mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-        const sql = parts.join('');
+      mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+        const sql = typeof parts === 'string' ? parts : parts.join('');
         if (sql.includes('AS balance')) return [{ balance: String(snapshot) }];
         if (sql.includes('AS consumed')) return [{ earned: String(earned), consumed: '0' }];
         return [{ balance: 35000 }];
@@ -517,7 +595,7 @@ describe('bankBuzz', () => {
       const releasedAt = evalScript.mock.invocationCallOrder[release];
 
       const bankableReads = mockClickhouse.$query.mock.calls.flatMap(([parts], i) =>
-        (parts as string[]).join('').includes('AS consumed')
+        (typeof parts === 'string' ? parts : (parts as string[]).join('')).includes('AS consumed')
           ? [mockClickhouse.$query.mock.invocationCallOrder[i]]
           : []
       );
@@ -655,8 +733,9 @@ describe('after the bankable-amount cutover, with ClickHouse failing', () => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
     mockCapCache();
     mockGetUserBuzzAccount.mockResolvedValue([{ balance: 100000 }]);
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      if (parts.join('').includes('AS consumed')) throw new Error('clickhouse down');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
+      if (sql.includes('AS consumed')) throw new Error('clickhouse down');
       return [{ balance: 35000 }];
     });
   });
@@ -689,8 +768,8 @@ describe('getBanked after the bankable-amount cutover', () => {
   beforeEach(() => {
     vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
     mockCapCache();
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      const sql = parts.join('');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
       if (sql.includes('AS balance')) return [{ balance: '30000' }];
       return [{ earned: '10000', consumed: '0' }];
     });
@@ -707,6 +786,7 @@ describe('getBanked after the bankable-amount cutover', () => {
     expect(result.bankable).toEqual({
       snapshot: 30000,
       earned: 10000,
+      spent: 0,
       consumed: 0,
       remaining: 35000,
     });
@@ -1067,6 +1147,70 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('when the Tipalti payment fails after the burn', () => {
+    const readyCash = {
+      [userId]: {
+        id: userId,
+        status: 'ready',
+        ready: 100000,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    };
+    const conflict = () =>
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'conflict',
+        cause: new BuzzApiError(409, 'x'),
+      });
+    const canceled = () =>
+      mockDbWrite.$executeRaw.mock.calls.some(([strings]) =>
+        (strings as unknown as string[]).join('?').includes("status = 'Canceled'")
+      );
+
+    beforeEach(() => {
+      mockCachedObject.fetch.mockResolvedValue(readyCash);
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockCreateBuzzTransaction.mockResolvedValueOnce({ transactionId: 'tx-burn' });
+      mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('tipalti down'));
+      mockRefundTransaction.mockReset();
+      mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
+    });
+
+    it('cancels the withdrawal when the refund answers 200 (a repeat, as Buzz answers today)', async () => {
+      mockRefundTransaction.mockResolvedValue({ transactionId: 'tx-burn' });
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(mockRefundTransaction.mock.calls[0]?.[0]).toBe('tx-burn');
+      expect(canceled()).toBe(true);
+    });
+
+    it('cancels the withdrawal when the refund answers 409 and the refund is on the ledger', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        id === 'refund-tx-burn' ? { externalTransactionId: id } : null
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
+
+      expect(canceled()).toBe(true);
+    });
+
+    it('does not cancel when a 409 has no refund on the ledger behind it', async () => {
+      mockRefundTransaction.mockRejectedValue(conflict());
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('conflict');
+
+      expect(canceled()).toBe(false);
+    });
   });
 });
 

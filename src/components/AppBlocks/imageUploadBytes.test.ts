@@ -56,9 +56,12 @@ describe('resolveImageUploadBytes', () => {
     expect(resolveImageUploadBytes({ requestId: 'r', bytes })).toEqual({ kind: 'invalid' });
   });
 
-  it('refuses bytes with purpose generationSource (that purpose creates no Image row)', () => {
+  it('refuses bytes with purpose generationSource or trainingData (neither creates an Image row)', () => {
     expect(
       resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'generationSource' })
+    ).toEqual({ kind: 'invalid' });
+    expect(
+      resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'trainingData' })
     ).toEqual({ kind: 'invalid' });
     expect(
       resolveImageUploadBytes({ requestId: 'r', bytes: buf(PNG), purpose: 'display' }).kind
@@ -67,9 +70,9 @@ describe('resolveImageUploadBytes', () => {
 });
 
 describe('processUploadBytes', () => {
-  it('pins the limits: 40 MiB per file (the server cap), 3 uploads and 80 MiB per 60 s', () => {
+  it('pins the limits: 40 MiB per file (the server cap), 8 uploads and 80 MiB per 60 s', () => {
     expect(UPLOAD_BYTES_MAX_BYTES).toBe(40 * 1024 * 1024);
-    expect(UPLOAD_BYTES_MAX_PER_WINDOW).toBe(3);
+    expect(UPLOAD_BYTES_MAX_PER_WINDOW).toBe(8);
     expect(UPLOAD_BYTES_MAX_BYTES_PER_WINDOW).toBe(80 * 1024 * 1024);
     expect(UPLOAD_BYTES_WINDOW_MS).toBe(60_000);
   });
@@ -97,7 +100,10 @@ describe('processUploadBytes', () => {
   });
 
   it('an over-cap file is too-large even when the window is also full (cap first)', () => {
-    const full: SaveBytesWindowEntry[] = [1, 2, 3].map((i) => ({ at: T0 + i, size: 10 }));
+    const full: SaveBytesWindowEntry[] = Array.from({ length: 8 }, (_, i) => ({
+      at: T0 + i,
+      size: 10,
+    }));
     const out = processUploadBytes({ bytes: buf(PNG, UPLOAD_BYTES_MAX_BYTES + 1) }, full, T0 + 10);
     expect(out.result).toEqual({ ok: false, error: UPLOAD_BYTES_TOO_LARGE_ERROR });
   });
@@ -107,16 +113,17 @@ describe('processUploadBytes', () => {
     expect(out.result.ok).toBe(true);
   });
 
-  it('the 4th upload inside the window is busy, and the window frees after it', () => {
+  it('admits eight uploads inside the window, refuses the 9th busy, and frees after the window', () => {
     let recent: SaveBytesWindowEntry[] = [];
     const verdicts: string[] = [];
-    for (let i = 0; i < UPLOAD_BYTES_MAX_PER_WINDOW + 1; i++) {
+    // Literal counts, not the constant: a test that loops to the limit passes at any limit.
+    for (let i = 0; i < 9; i++) {
       const out = processUploadBytes({ bytes: buf(PNG, 100 + i) }, recent, T0 + i);
       recent = out.recent;
       verdicts.push(out.result.ok ? 'ok' : out.result.error);
     }
-    expect(verdicts).toEqual(['ok', 'ok', 'ok', UPLOAD_BYTES_BUSY_ERROR]);
-    expect(recent.map((e) => e.size)).toEqual([100, 101, 102]);
+    expect(verdicts).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'busy']);
+    expect(recent.map((e) => e.size)).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
 
     // Still inside the window of the FIRST entry (age = window - 1): busy.
     expect(
@@ -134,12 +141,23 @@ describe('processUploadBytes', () => {
       { at: T0, size: big },
       { at: T0 + 1, size: big },
     ];
-    // 2 of 3 slots used, 2000 bytes of budget left: 2000 fits, 2001 does not.
+    // 2 of 8 slots used, 2000 bytes of budget left: 2000 fits, 2001 does not.
     expect(processUploadBytes({ bytes: buf(PNG, 2000) }, recent, T0 + 2).result.ok).toBe(true);
     expect(processUploadBytes({ bytes: buf(PNG, 2001) }, recent, T0 + 2).result).toEqual({
       ok: false,
       error: UPLOAD_BYTES_BUSY_ERROR,
     });
+  });
+
+  it('four max-size photos in one window: the byte budget admits two and refuses the third', () => {
+    let recent: SaveBytesWindowEntry[] = [];
+    const verdicts: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const out = processUploadBytes({ bytes: buf(PNG, 40 * 1024 * 1024) }, recent, T0 + i);
+      recent = out.recent;
+      verdicts.push(out.result.ok ? 'ok' : out.result.error);
+    }
+    expect(verdicts).toEqual(['ok', 'ok', 'busy', 'busy']);
   });
 
   it('bounds the name to Image.name’s 255 characters, keeping the extension', () => {

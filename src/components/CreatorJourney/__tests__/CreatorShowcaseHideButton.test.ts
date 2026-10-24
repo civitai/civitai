@@ -35,12 +35,16 @@ const legend = (id: number) => ({
   founding: true,
   since: null,
 });
-const showcase = { newSupernovas: [], legends: [legend(10), legend(18)] } as unknown as Showcase;
+const showcase = {
+  newSupernovas: [],
+  legends: [legend(10), legend(18)],
+  mythics: [],
+} as unknown as Showcase;
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(onHide: () => void) {
+function render(onHide: () => void, data: Showcase = showcase) {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -49,7 +53,7 @@ function render(onHide: () => void) {
       React.createElement(
         MantineProvider,
         null,
-        React.createElement(CreatorShowcaseView, { showcase, onHide })
+        React.createElement(CreatorShowcaseView, { showcase: data, onHide })
       )
     )
   );
@@ -87,5 +91,28 @@ describe('showcase hide button', () => {
   it('does not appear for a viewer who is not listed', () => {
     mocks.viewerId = 99;
     expect(render(vi.fn())).toHaveLength(0);
+  });
+});
+
+describe('Mythic section', () => {
+  const headings = () => [...(container?.querySelectorAll('h2') ?? [])].map((h) => h.textContent);
+
+  it('sits above the Hall of Fame, dated by the month each creator crossed', () => {
+    const since = new Date('2026-11-02T00:00:00Z');
+    render(vi.fn(), {
+      ...showcase,
+      mythics: [{ ...legend(18), founding: false, since }, legend(10)],
+    } as unknown as Showcase);
+    const titles = headings();
+    expect(titles.indexOf('Mythic')).toBeGreaterThan(-1);
+    expect(titles.indexOf('Mythic')).toBe(titles.indexOf('Hall of Fame') - 1);
+    expect(container?.textContent).toContain('Mythic since November 2026');
+    expect(container?.textContent).toContain('Founding Mythic');
+  });
+
+  it('is left out while nobody holds Mythic', () => {
+    render(vi.fn());
+    expect(headings()).toContain('Hall of Fame');
+    expect(headings()).not.toContain('Mythic');
   });
 });

@@ -45,6 +45,7 @@ import {
   signDevScopedPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
+import { BUZZ_BUDGET_CAP, BUZZ_BUDGET_DEFAULT } from '~/shared/constants/block-scope.constants';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 
 // AIServicesWrite OAuth bit — models:read:self carries a DIFFERENT bit, so a
@@ -533,10 +534,25 @@ describe('resolveDevBuzzBudget', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'])).toBe(DEV_BUZZ_BUDGET_DEFAULT);
   });
 
-  // Fix 2 (dogfood follow-up): a recipe/app whose manifest budget exceeds the flat
-  // 50 default must be dev-testable without a manual budget request.
+  // Literals, so a change to either constant has to be made here on purpose. 6301
+  // overshoots the cap without being a multiple of it.
+  it.each([
+    [5000, 5000],
+    [5001, 5000],
+    [6301, 5000],
+  ])('a requested or manifest budget of %i resolves to %i', (declared, resolved) => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], declared)).toBe(resolved);
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, declared)).toBe(resolved);
+  });
+  it('resolves to 1000 when nothing declares a budget', () => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'])).toBe(1000);
+  });
+  it('the dev cap and default are the install-token ones', () => {
+    expect(DEV_BUZZ_BUDGET_CAP).toBe(BUZZ_BUDGET_CAP);
+    expect(DEV_BUZZ_BUDGET_DEFAULT).toBe(BUZZ_BUDGET_DEFAULT);
+  });
+
   it('DEFAULTS to the resolved app manifest budget when present (no explicit request)', () => {
-    // manifest page.buzzBudgetPerGen = 180 (> the flat 50 default) → 180.
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, 180)).toBe(180);
   });
   it('clamps a manifest default above the CAP to DEV_BUZZ_BUDGET_CAP', () => {

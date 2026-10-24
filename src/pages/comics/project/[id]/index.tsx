@@ -42,6 +42,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { defaultPresetRatio, PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
 import { slugit } from '~/utils/string-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -53,7 +54,6 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
-  COMIC_MODEL_SIZES,
   type BulkPanelItem,
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
@@ -237,7 +237,15 @@ function ProjectWorkspace() {
   );
 
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana2';
-  const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana2;
+  const activeAspectRatios = PRESET_MODEL_SIZES[effectiveModel] ?? PRESET_MODEL_SIZES.NanoBanana2;
+  // Reset a stored ratio the model's list lacks (a model change, an old Flux.2 label), but only once
+  // the project has loaded: until then the list is the NanoBanana2 fallback and would clobber a valid one.
+  useEffect(() => {
+    if (!project) return;
+    if (!activeAspectRatios.some((s) => s.label === aspectRatio))
+      setAspectRatio(defaultPresetRatio(activeAspectRatios));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- aspectRatio is read, not a trigger
+  }, [project, activeAspectRatios]);
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -731,18 +739,8 @@ function ProjectWorkspace() {
   });
 
   // ── Handlers ──
-  const handleModelChange = (value: string | null) => {
+  const handleModelChange = (value: string | null) =>
     setGenerationModel(value as typeof generationModel);
-    const newSizes =
-      COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana2'] ??
-      COMIC_MODEL_SIZES.NanoBanana2;
-    const defaultLabel =
-      newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')
-        ?.label ?? newSizes[0].label;
-    if (!newSizes.some((s) => s.label === aspectRatio)) {
-      setAspectRatio(defaultLabel);
-    }
-  };
 
   const handlePanelModalClose = () => {
     closePanelModal();
@@ -752,7 +750,7 @@ function ProjectWorkspace() {
     setUseContext(true);
     setReferencePanelId(null);
     setQuantity(1);
-    setAspectRatio('3:4');
+    setAspectRatio(defaultPresetRatio(activeAspectRatios));
     setGenerationModel(null);
     setSelectedImageIds(null);
     setEnhanceExistingSource(null);

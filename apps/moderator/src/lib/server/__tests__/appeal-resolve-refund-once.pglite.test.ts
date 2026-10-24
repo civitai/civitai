@@ -1,4 +1,5 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
@@ -56,6 +57,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -68,7 +70,8 @@ CREATE TABLE "Appeal" (
   "resolvedMessage" TEXT,
   "resolvedReason" TEXT,
   "internalNotes" TEXT,
-  "buzzTransactionId" TEXT
+  "buzzTransactionId" TEXT,
+  "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -80,7 +83,7 @@ let db: PGlite;
 
 beforeEach(async () => {
   refundAppealFee.mockClear();
-  db = await PGlite.create();
+  db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(
     `INSERT INTO "Image" ("id", "needsReview", "blockedFor") VALUES ($1, 'appeal', 'moderated')`,
@@ -221,5 +224,21 @@ describe('resolving one appeal twice at once', () => {
       blockedFor: 'moderated',
       ingestion: null,
     });
+  });
+
+  // A queue card loaded before the delete must not decide it.
+  it('leaves an appeal whose content was removed to its own page', async () => {
+    await db.query(`UPDATE "Appeal" SET "entityRemovedAt" = now()`);
+
+    const closed = await resolveImageAppeal({
+      imageId: IMAGE_ID,
+      status: 'Approved',
+      resolvedReason: 'false-positive',
+      userId: 2,
+    });
+
+    expect(closed).toBeUndefined();
+    expect(await appealStatuses()).toEqual(['Pending']);
+    expect(refundAppealFee).not.toHaveBeenCalled();
   });
 });

@@ -43,6 +43,7 @@
     empty = 'Nothing to review in this queue.',
     endLabel = 'End of queue.',
     minColumn = 300,
+    pagerTop = false,
   }: {
     items: T[];
     civitaiUrl: string;
@@ -65,6 +66,9 @@
     endLabel?: string | null;
     /** 300 unless the grid sits beside another column. */
     minColumn?: number;
+    /** The numbered pager above the grid as well as below it, for a page long enough that the bottom
+     *  one is a scroll away — the user report queue's 60-image account grid. */
+    pagerTop?: boolean;
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
@@ -103,6 +107,17 @@
   const goFirst = () => navigate(clearPaging);
 </script>
 
+{#snippet numberedPager(summary = true)}
+  <NumberedPager
+    {summary}
+    page={pageNumber}
+    total={total ?? 0}
+    perPage={perPage ?? 1}
+    label="images"
+    onPageChange={goPage}
+  />
+{/snippet}
+
 {#if items.length === 0}
   <div class="placeholder">{empty}</div>
   <!-- A narrowed filter or a deep link can land here with no other control on the page. -->
@@ -112,6 +127,9 @@
     </div>
   {/if}
 {:else}
+  {#if pagerTop && numbered && (total ?? 0) > (perPage ?? 1)}
+    <div class="-mt-6 mb-4">{@render numberedPager(false)}</div>
+  {/if}
   <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}
       {@const isSelected = selected?.has(key(item)) ?? false}
@@ -188,13 +206,7 @@
   </div>
 
   {#if numbered}
-    <NumberedPager
-      page={pageNumber}
-      total={total ?? 0}
-      perPage={perPage ?? 1}
-      label="images"
-      onPageChange={goPage}
-    />
+    {@render numberedPager()}
   {:else if nextCursor || endLabel || paged}
     <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
       {#if paged}

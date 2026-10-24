@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as Hooks from '~/server/events/points/hooks';
@@ -13,6 +13,20 @@ const suspensionFindUnique = dbMock.dbWrite.placementSuspension.findUnique;
 const suspensionUpsert = dbMock.dbWrite.placementSuspension.upsert;
 
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement }));
+// Asserted on, not executed: its own behaviour is tested in
+// storyline-chapter-removal.service.test.ts.
+const tombstoneChaptersForPlacements = vi.fn(async (..._a: unknown[]) => 0);
+vi.mock('~/server/services/storyline-chapter-removal.service', () => ({
+  tombstoneChaptersForPlacements,
+}));
+// Asserted on, not executed: its own behaviour is tested in storyline-continuation-loop.test.ts.
+const settleOrphanedContinuations = vi.fn(async (..._a: unknown[]) => ({
+  considered: 0,
+  settled: 0,
+}));
+vi.mock('~/server/services/storyline-placement.service', () => ({
+  settleOrphanedContinuations,
+}));
 // The event points hook, so each takedown path can be seen handing its ids over. The hook's own
 // behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
 const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
@@ -515,5 +529,203 @@ describe('event points on a takedown', () => {
 
     expect(onPlacementsTakenDown).toHaveBeenCalledTimes(1);
     expect(onPlacementsTakenDown).toHaveBeenCalledWith([4401, 4402]);
+  });
+});
+
+describe('a storyline chapter taken down with its placement', () => {
+  const STORYLINE_PLACEMENT = 5501;
+  const MODERATOR = 61;
+
+  /**
+   * The transaction gets its own client with its own `placement.updateMany`, defined rather than
+   * assigned (`dbWrite` is a proxy whose set trap would take an assignment onto the global client),
+   * so a takedown or tombstone written outside the transaction is told apart.
+   */
+  const txUpdateMany = vi.fn();
+  let tx: object;
+  const defaultTransaction = dbMock.dbWrite.$transaction.getMockImplementation();
+  beforeEach(() => {
+    suspensionFindUnique.mockResolvedValue({ userId: PLACER });
+    txUpdateMany.mockReset();
+    txUpdateMany.mockResolvedValue({ count: 1 });
+    tombstoneChaptersForPlacements.mockReset();
+    tombstoneChaptersForPlacements.mockResolvedValue(1);
+    tx = Object.create(dbMock.dbWrite);
+    Object.defineProperty(tx, 'placement', { value: { updateMany: txUpdateMany } });
+    dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: object) => unknown) =>
+      fn(tx)
+    );
+  });
+  afterEach(() => {
+    dbMock.dbWrite.$transaction.mockImplementation(defaultTransaction!);
+  });
+
+  it('tombstones the chapter of a reported approved placement, in the takedown transaction', async () => {
+    placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+
+    const result = await removePlacementByModerator({
+      placementId: STORYLINE_PLACEMENT,
+      actorId: MODERATOR,
+    });
+
+    expect(result).toMatchObject({ removed: true, wasLive: true });
+    expect(txUpdateMany).toHaveBeenCalledTimes(1);
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(tombstoneChaptersForPlacements.mock.calls).toEqual([
+      [{ placementIds: [STORYLINE_PLACEMENT] }, tx],
+    ]);
+    expect(tombstoneChaptersForPlacements.mock.calls[0][1]).not.toBe(dbMock.dbWrite);
+  });
+
+  it("tombstones the chapters of a suspended placer's approved placements, in the takedown transaction", async () => {
+    placementFindMany
+      .mockResolvedValueOnce([]) // pending
+      .mockResolvedValueOnce([{ id: STORYLINE_PLACEMENT }, { id: 5502 }]); // approved
+    txUpdateMany.mockResolvedValue({ count: 2 });
+
+    const result = await removePlacementsByUser({ placerId: PLACER, actorId: MODERATOR });
+
+    expect(result.takenDown).toBe(2);
+    expect(txUpdateMany.mock.calls[0][0].where).toEqual({
+      id: { in: [STORYLINE_PLACEMENT, 5502] },
+      status: 'approved',
+    });
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+    expect(tombstoneChaptersForPlacements.mock.calls).toEqual([
+      [{ placementIds: [STORYLINE_PLACEMENT, 5502] }, tx],
+    ]);
+  });
+
+  // A refused tombstone fails the takedown with it: in Postgres the transaction
+  // rolls the status flip back, so the placement and its chapter never disagree.
+  it.each([
+    [
+      'a reported placement',
+      () => {
+        placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+        return removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR });
+      },
+    ],
+    [
+      "a suspended placer's placements",
+      () => {
+        placementFindMany
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([{ id: STORYLINE_PLACEMENT }]);
+        return removePlacementsByUser({ placerId: PLACER, actorId: MODERATOR });
+      },
+    ],
+  ])('fails the takedown of %s when the tombstone fails, and awards no points', async (_, run) => {
+    tombstoneChaptersForPlacements.mockRejectedValue(new Error('lock timeout'));
+
+    await expect(run()).rejects.toThrow('lock timeout');
+    expect(onPlacementsTakenDown).not.toHaveBeenCalled();
+  });
+
+  // The tombstone is asked for every id given, whatever the flip matched (here,
+  // a row another takedown flipped between the read and this write).
+  it('still asks for the tombstone when the takedown flips nothing', async () => {
+    placementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: STORYLINE_PLACEMENT }]);
+    txUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementsByUser({ placerId: PLACER, actorId: MODERATOR });
+
+    expect(tombstoneChaptersForPlacements).toHaveBeenCalledWith(
+      { placementIds: [STORYLINE_PLACEMENT] },
+      tx
+    );
+  });
+
+  describe('the continuations of a removed chapter', () => {
+    // Settling moves Buzz, so it runs after the takedown commits, never inside it.
+    it.each([
+      [
+        'a reported placement',
+        () => {
+          placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+          return removePlacementByModerator({
+            placementId: STORYLINE_PLACEMENT,
+            actorId: MODERATOR,
+          });
+        },
+        [STORYLINE_PLACEMENT],
+      ],
+      [
+        "a suspended placer's placements",
+        () => {
+          placementFindMany
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: STORYLINE_PLACEMENT }, { id: 5502 }]);
+          return removePlacementsByUser({ placerId: PLACER, actorId: MODERATOR });
+        },
+        [STORYLINE_PLACEMENT, 5502],
+      ],
+    ])('are settled after the takedown of %s commits', async (_, run, ids) => {
+      const events: string[] = [];
+      tombstoneChaptersForPlacements.mockImplementation(async () => {
+        events.push('tombstone');
+        return 1;
+      });
+      dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: object) => unknown) => {
+        const result = await fn(tx);
+        events.push('commit');
+        return result;
+      });
+      settleOrphanedContinuations.mockImplementation(async () => {
+        events.push('settle');
+        return { considered: 0, settled: 0 };
+      });
+
+      await run();
+
+      expect(events).toEqual(['tombstone', 'commit', 'settle']);
+      expect(settleOrphanedContinuations.mock.calls).toEqual([[{ removedPlacementIds: ids }]]);
+    });
+
+    // The takedown has happened; the orphaned-continuation job settles what this left.
+    it('does not fail the takedown when settling them fails', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+      settleOrphanedContinuations.mockRejectedValueOnce(new Error('buzz down'));
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).resolves.toMatchObject({ removed: true });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'buzz down', placementIds: [STORYLINE_PLACEMENT] })
+      );
+    });
+
+    it('are settled again when a removed placement is removed again, which still refuses', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'removed' });
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).rejects.toThrow('already removed');
+      expect(settleOrphanedContinuations).toHaveBeenCalledWith({
+        removedPlacementIds: [STORYLINE_PLACEMENT],
+      });
+    });
+
+    it('are not settled when the tombstone fails, since nothing was removed', async () => {
+      placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'approved' });
+      tombstoneChaptersForPlacements.mockRejectedValue(new Error('lock timeout'));
+
+      await expect(
+        removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
+      ).rejects.toThrow('lock timeout');
+      expect(settleOrphanedContinuations).not.toHaveBeenCalled();
+    });
+  });
+
+  // Pending placements have no chapter: they settle through the ordinary path,
+  // which writes none.
+  it('asks for no tombstone when removing a pending placement', async () => {
+    placementFindUnique.mockResolvedValue({ id: STORYLINE_PLACEMENT, status: 'pending' });
+
+    await removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR });
+
+    expect(tombstoneChaptersForPlacements).not.toHaveBeenCalled();
   });
 });

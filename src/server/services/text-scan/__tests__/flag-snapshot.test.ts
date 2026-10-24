@@ -7,7 +7,6 @@ import {
   resolveFlagScanReasons,
   isBountyFlagAppealable,
   isModelFlagAppealable,
-  isTextScanFlagAppealGranted,
   isTextScanPoiHidden,
   MAX_FLAG_NAMES,
   MAX_FLAG_REASON_CHARS,
@@ -33,7 +32,7 @@ describe('readTextScanFlags', () => {
   });
 });
 
-describe('hasOpenTextScanFlag / isTextScanFlagAppealGranted', () => {
+describe('hasOpenTextScanFlag', () => {
   it('is open while the entry exists without a granted appeal', () => {
     expect(hasOpenTextScanFlag({ textScanFlags: { poi: entry() } }, 'poi')).toBe(true);
     expect(hasOpenTextScanFlag({ textScanFlags: { poi: entry() } }, 'minor')).toBe(false);
@@ -44,8 +43,6 @@ describe('hasOpenTextScanFlag / isTextScanFlagAppealGranted', () => {
     const granted = { textScanFlags: { poi: entry({ appealGranted: { at: 'x', by: 1 } }) } };
     expect(hasOpenTextScanFlag(upheld, 'poi')).toBe(true);
     expect(hasOpenTextScanFlag(granted, 'poi')).toBe(false);
-    expect(isTextScanFlagAppealGranted(granted, 'poi')).toBe(true);
-    expect(isTextScanFlagAppealGranted(upheld, 'poi')).toBe(false);
   });
 });
 
@@ -110,6 +107,13 @@ describe('buildTextScanFlagEntry', () => {
 });
 
 describe('isModelFlagAppealable', () => {
+  // The owner sees the appeal for a hash-applied real-person flag; creating it must not then refuse.
+  it('accepts a real-person flag the hash match applied, and not once it is lifted', () => {
+    const meta = { poiFlagSnapshot: { at: 'x', source: 'auto' } };
+    expect(isModelFlagAppealable({ minor: false, poi: true, meta })).toBe(true);
+    expect(isModelFlagAppealable({ minor: false, poi: false, meta })).toBe(false);
+  });
+
   it('accepts a minor flag that carries a minor snapshot (hash, manual or text-scan)', () => {
     expect(
       isModelFlagAppealable({ minor: true, poi: false, meta: { minorFlagSnapshot: { at: 'x' } } })

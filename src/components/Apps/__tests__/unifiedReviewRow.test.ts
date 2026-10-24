@@ -13,7 +13,7 @@ import {
  * The CORRECTNESS CORE of the unified /apps/review queues: the pure adapters that
  * map each proc's row → a unified row + the merge/sort/dedup. A mis-routed, dropped,
  * or duplicated row here means a moderator reviews/approves the wrong thing, so this
- * is the BLOCKING unit gate (the list's browser suite is report-only). Pins:
+ * is the node-tier gate. Pins:
  *  - globally-unique, kind-namespaced keys (on-site + off-site never collide);
  *  - correct field mapping + the manifest-name / listing-name → slug fallbacks;
  *  - `onReview` routes to the CORRECT modal opener with the CORRECT payload;
@@ -343,6 +343,7 @@ function row(key: string, iso: string): UnifiedReviewRow {
     playCount: null,
     iconUrl: null,
     coverUrl: null,
+    reviewMedia: null,
   };
 }
 
@@ -663,6 +664,55 @@ describe('offsiteRequestToUnifiedRow — a listing revision has no code version'
     expect(row.playCount).toBeNull();
     expect(row.iconUrl).toBeNull();
     expect(row.coverUrl).toBeNull();
+  });
+});
+
+describe('the moderator review media rides with each image’s own url', () => {
+  const image = (imageId: number, nsfwLevel: number) => ({
+    imageId,
+    url: `https://cdn.example/${imageId}.png`,
+    nsfwLevel,
+  });
+
+  it('a row carries the review media of its request', () => {
+    const reviewMedia = { icon: image(401, 4), cover: null, redIcon: null, redCover: null };
+    const row = offsiteRequestToUnifiedRow(
+      offsite({ id: 'rm-1', iconUrl: 'https://cdn.example/401.png', reviewMedia }),
+      vi.fn()
+    );
+    expect(row.reviewMedia).toEqual(reviewMedia);
+    expect(offsiteRequestToUnifiedRow(offsite({ id: 'rm-2' }), vi.fn()).reviewMedia).toBeNull();
+  });
+
+  it('🔴 a combined row takes each image’s level from the side its url came from', () => {
+    // Code half: an icon (R); listing half: an icon (PG) and a cover (XXX). The icon url is the
+    // code side's, the cover url the listing side's — and so must be their levels.
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code-rm',
+        slug: 'app-rm',
+        appBlockId: 'blk-rm',
+        iconUrl: 'https://cdn.example/402.png',
+        reviewMedia: { icon: image(402, 4), cover: null, redIcon: null, redCover: null },
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    const media = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'media-rm',
+        slug: 'app-rm',
+        kind: 'onsite',
+        iconUrl: 'https://cdn.example/403.png',
+        coverUrl: 'https://cdn.example/404.png',
+        reviewMedia: { icon: image(403, 1), cover: image(404, 16), redIcon: null, redCover: null },
+      }),
+      vi.fn()
+    );
+    const [combined] = mergeReviewRows([code], [media], 'asc', vi.fn());
+    expect(combined.iconUrl).toBe('https://cdn.example/402.png');
+    expect(combined.reviewMedia?.icon).toEqual(image(402, 4));
+    expect(combined.coverUrl).toBe('https://cdn.example/404.png');
+    expect(combined.reviewMedia?.cover).toEqual(image(404, 16));
   });
 });
 

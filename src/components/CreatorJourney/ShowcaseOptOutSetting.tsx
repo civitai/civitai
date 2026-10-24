@@ -7,7 +7,7 @@ import { trpc } from '~/utils/trpc';
 
 export const SHOWCASE_OPT_OUT_LABEL = 'Hide me from the Creator Showcase';
 const SHOWCASE_OPT_OUT_DESCRIPTION =
-  'Leaves you out of New Supernovas and the Hall of Fame. Your badges still show on your profile.';
+  'Leaves you out of Mythic, the Hall of Fame and New Supernovas. Your badges still show on your profile.';
 
 export function useShowcaseOptOut(options: { onHidden?: () => void } = {}) {
   const utils = trpc.useUtils();
@@ -20,7 +20,12 @@ export function useShowcaseOptOut(options: { onHidden?: () => void } = {}) {
           rows.filter((row) => row.user.id !== currentUser?.id);
         utils.creatorJourney.getShowcase.setData(
           undefined,
-          (old) => old && { newSupernovas: others(old.newSupernovas), legends: others(old.legends) }
+          (old) =>
+            old && {
+              newSupernovas: others(old.newSupernovas),
+              legends: others(old.legends),
+              mythics: others(old.mythics),
+            }
         );
         options.onHidden?.();
       } else await utils.creatorJourney.getShowcase.invalidate();

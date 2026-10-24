@@ -254,6 +254,9 @@ function createModelSaleCache() {
     key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales:v2`,
     idKey: 'modelId',
     ttl: CacheTTL.xs,
+    // Most entries are "no sale" markers. A new sale reaches the card through a bust, not this expiry,
+    // so this bounds only how late a badge shows when a bust is lost.
+    notFoundTtl: CacheTTL.md,
     staleWhileRevalidate: false,
     lookupFn: async (ids) => {
       const modelIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
@@ -689,7 +692,11 @@ export async function bustModelSaleCache(modelVersionIds: number[]) {
     where: { id: { in: modelVersionIds } },
     select: { modelId: true },
   });
-  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  await bustModelSaleCacheForModels([...new Set(rows.map((r) => r.modelId))]);
+}
+
+/** The same bust for a caller that already holds MODEL ids — no lookup. */
+export async function bustModelSaleCacheForModels(modelIds: number[]) {
   if (modelIds.length) await modelSaleCache().bust(modelIds);
 }
 
@@ -774,17 +781,21 @@ export async function writePaidAccessForModelVersion(
 /**
  * At publish: materialize a pending timed gate's `endsAt` from the freshly-set `publishedAt`.
  * No-op when there's no row or it's permanent (timeframeDays NULL). Idempotent.
+ * `pendingOnly`: fill an endsAt that is NULL, never move one that is set. For a publish that wrote no
+ * publishedAt — creators and buyers have already seen the end date.
  */
 export async function materializePaidAccessEndsAt(
   versionId: number,
   publishedAt: Date,
-  tx: PrismaClient | Prisma.TransactionClient = dbWrite
+  tx: PrismaClient | Prisma.TransactionClient = dbWrite,
+  { pendingOnly = false }: { pendingOnly?: boolean } = {}
 ) {
   const row = await tx.paidAccess.findUnique({
     where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
     select: { timeframeDays: true, endsAt: true },
   });
   if (!row || row.timeframeDays == null) return;
+  if (pendingOnly && row.endsAt != null) return;
   // Skip tombstones (a gate that already ended): republishing an ended version must NOT re-gate it.
   // Only a pending (endsAt NULL) or still-active (endsAt future) timed gate re-materializes.
   if (row.endsAt != null && row.endsAt <= new Date()) return;

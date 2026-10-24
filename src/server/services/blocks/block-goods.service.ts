@@ -1335,24 +1335,12 @@ async function payBlockGoodOwner(args: {
     // Buzz blip would otherwise leave `payouts: []` and an unpaid obligation
     // with no re-runner.
     //
-    // 🔴 EACH LEG IS SKIPPED ONCE IT HAS LANDED, AND THAT IS WHAT MAKES THE
-    // RETRY CONVERGE. The comment here used to say a re-run was "deduped by the
-    // ledger rather than double-paying", which is not a property this call has.
-    // `createBuzzTransaction`'s response type — `CreateTransactionResponse` in
-    // `packages/civitai-buzz/src/responses.ts` — carries only `transactionId`
-    // and `remainingBalance`. It has NO conflict field, unlike its siblings:
-    // the multi-account response marks each leg `duplicate`, and the bulk one
-    // returns a `conflicts` array. A duplicate on THIS endpoint therefore
-    // cannot be reported in band, so it arrives as a non-2xx, and the client
-    // throws on any non-2xx. `challenge-funding.ts`'s header records the same
-    // ledger behaviour from the other side: a re-charge of an already-paid leg
-    // "conflicts".
-    //
-    // So on a mixed-colour payout whose blue leg landed and whose yellow leg
-    // blipped, every retry re-sent blue, collided with itself, and failed the
-    // whole closure — four attempts, no progress, `payouts` left `[]`, and a
-    // later refund therefore clawed back NOTHING while refunding the buyer in
-    // full. Dedupe is ours to do, here.
+    // Each leg is skipped once it has landed, so a retry sends only the legs
+    // still owed. A re-sent leg would not pay twice either: `POST /transaction`
+    // answers a duplicate external id with 200 and the existing transaction id,
+    // moving nothing, so it reads as a success here. The service does not send
+    // a 409 for a duplicate on this endpoint; the arm below is the fail-safe
+    // reading of one if it ever does.
     await withRetries(async () => {
       for (const leg of legs) {
         if (landed.has(leg.color)) continue;

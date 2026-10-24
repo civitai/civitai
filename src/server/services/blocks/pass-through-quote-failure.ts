@@ -25,9 +25,6 @@ export type PassThroughQuoteFailure =
   | { kind: 'unavailable' }
   | { kind: 'unpriced' };
 
-export const UNQUOTED_TRAINING_ERROR =
-  'Training needs a price quote and none could be obtained; try again.';
-
 export const TRAINING_QUOTE_ERROR_CODES = {
   rejected: 'training-quote-rejected',
   unavailable: 'training-quote-unavailable',
@@ -36,6 +33,26 @@ export const TRAINING_QUOTE_ERROR_CODES = {
 
 export type TrainingQuoteErrorCode =
   (typeof TRAINING_QUOTE_ERROR_CODES)[keyof typeof TRAINING_QUOTE_ERROR_CODES];
+
+/** A `kind: 'workflow'` ESTIMATE with no price to show; the submit defines no such refusal. */
+export const WORKFLOW_QUOTE_ERROR_CODES = {
+  rejected: 'workflow_quote_rejected',
+  unavailable: 'workflow_quote_unavailable',
+  unpriced: 'workflow_quote_unpriced',
+} as const satisfies Record<PassThroughQuoteFailure['kind'], string>;
+
+export type WorkflowQuoteErrorCode =
+  (typeof WORKFLOW_QUOTE_ERROR_CODES)[keyof typeof WORKFLOW_QUOTE_ERROR_CODES];
+
+/** A registered-step (`kind: 'step'`, `step`) ESTIMATE with no price to show. */
+export const STEP_QUOTE_ERROR_CODES = {
+  rejected: 'step_quote_rejected',
+  unavailable: 'step_quote_unavailable',
+  unpriced: 'step_quote_unpriced',
+} as const satisfies Record<PassThroughQuoteFailure['kind'], string>;
+
+export type StepQuoteErrorCode =
+  (typeof STEP_QUOTE_ERROR_CODES)[keyof typeof STEP_QUOTE_ERROR_CODES];
 
 // `orchestratorErrorMessage` joins the orchestrator's validation messages this way.
 const MESSAGE_SEPARATOR = ',\n';
@@ -139,6 +156,28 @@ export function quoteFailureLogLevel(
   return status !== undefined && VIEWER_CAUSED_STATUSES.has(status) ? 'warning' : 'error';
 }
 
+const REJECTED_WITHOUT_REASON =
+  'the orchestrator rejected the request; check the step inputs and references ' +
+  '(retrying the same body will not help)';
+
+/**
+ * Why there is no quote, as the clause that completes "…needs a price quote and ".
+ * Only `unavailable` says "try again": it is the one cause a retry of the same
+ * body can clear.
+ */
+export function quoteFailureCause(failure: PassThroughQuoteFailure): string {
+  switch (failure.kind) {
+    case 'unavailable':
+      return 'none could be obtained; try again';
+    case 'unpriced':
+      return 'the orchestrator answered without one';
+    case 'rejected':
+      return failure.reason === undefined
+        ? REJECTED_WITHOUT_REASON
+        : `the orchestrator rejected the request: ${failure.reason}`;
+  }
+}
+
 /** The `error` / `errorCode` pair a block receives for an unquoted training step. */
 export function unquotedTrainingRefusal(failure: PassThroughQuoteFailure): {
   error: string;
@@ -147,7 +186,31 @@ export function unquotedTrainingRefusal(failure: PassThroughQuoteFailure): {
   const reason = failure.kind === 'rejected' ? failure.reason : undefined;
   return {
     error:
-      reason === undefined ? UNQUOTED_TRAINING_ERROR : `Training could not be priced: ${reason}`,
+      reason === undefined
+        ? `Training needs a price quote and ${quoteFailureCause(failure)}.`
+        : `Training could not be priced: ${reason}`,
     errorCode: TRAINING_QUOTE_ERROR_CODES[failure.kind],
+  };
+}
+
+/** The `error` / `errorCode` pair a block receives for a registered-step estimate with no quote. */
+export function unquotedStepEstimateRefusal(failure: PassThroughQuoteFailure): {
+  error: string;
+  errorCode: StepQuoteErrorCode;
+} {
+  return {
+    error: `No price quote for this step: ${quoteFailureCause(failure)}`,
+    errorCode: STEP_QUOTE_ERROR_CODES[failure.kind],
+  };
+}
+
+/** The `error` / `errorCode` pair a block receives for a `kind: 'workflow'` estimate with no quote. */
+export function unquotedWorkflowEstimateRefusal(failure: PassThroughQuoteFailure): {
+  error: string;
+  errorCode: WorkflowQuoteErrorCode;
+} {
+  return {
+    error: `No price quote for this workflow: ${quoteFailureCause(failure)}`,
+    errorCode: WORKFLOW_QUOTE_ERROR_CODES[failure.kind],
   };
 }

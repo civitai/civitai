@@ -48,3 +48,4 @@ describe('buildTextScanJsonSchema', () => {
     expect(b.properties.nsfw.required).toEqual(['level', 'reason']);
   });
 });
+

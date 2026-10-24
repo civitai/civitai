@@ -44,6 +44,7 @@ Notes); the **Main site** column is what exists on civitai.com today.
 | Per-model earnings by source | ✓ | ~ | Studio planned (A1); main shows Buzz totals, not per-model-by-source |
 | Usage & content analytics | ✓ | ~ | Studio planned (A1/C1); scattered across main today |
 | CP cash status (pending / settled) | ✓ | ✓ | Studio displays + links out; canonical view is the Buzz dashboard |
+| Banked Buzz this month (read-only) | ✓ | ✓ | Studio dashboard shows it; banking itself stays on the main site |
 | Creator score + requirements | ✓ | ✓ | Both display; Studio shows it on `/join` with growth tips |
 
 ### The cash-out pipeline & account (program mechanics)
@@ -87,6 +88,7 @@ Per [implementation-checklist.md](implementation-checklist.md) / the page specs:
 | **Earnings by source** (comp / license / tips / access / cosmetic) | `/earnings` | ✅ built (A1 Part 1 — reads `buzzTransactions` directly) |
 | **Usage & earnings analytics** | `/analytics` | ✅ content section (userId-keyed) · 🚧 model section (A1 Part 2) |
 | **CP cash status** (ready / pending / withdrawn) + **Withdraw link-out** | `/earnings`, dashboard | ✅ built (authoritative via `@civitai/buzz`) |
+| **Banked this month** (Buzz, read-only) | dashboard | ✅ built (buzz service, `creatorProgramBank`) |
 | **Payout (Tipalti) status** + membership/tier status + **$50 setup unlock** | `/settings` | ✅ built |
 | **Creator Program upsell** + live creator score + how-to-grow | `/join` | ✅ built |
 

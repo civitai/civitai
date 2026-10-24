@@ -32,7 +32,17 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import {
+  StorylineStageOverlay,
+  StorylineToolbarChip,
+} from '~/components/Storyline/StorylineDetail';
+import { StorylineChapterRail } from '~/components/Storyline/StorylineChapterRail';
+import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
+import {
+  getStorylineStep,
+  withStorylineNavigation,
+} from '~/components/Storyline/storyline-mode.utils';
 import { useRouter } from 'next/router';
 import clsx from 'clsx';
 import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
@@ -167,6 +177,15 @@ export function ImageDetail2() {
 
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
+  const storyline = useStorylineMode();
+  const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
+  const navigation = withStorylineNavigation(
+    carouselNavigation,
+    images.length,
+    storyline.active ? () => storyline.setEndOpen(true) : undefined,
+    storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
+  );
+
   // Deferred to the carousel settling rather than run per slide change: the URL
   // replace pushes a global store update that re-renders every useBrowserRouter
   // consumer, which is too much to do inside an animating frame.
@@ -181,6 +200,18 @@ export function ImageDetail2() {
     // dead-end (and loop back) at the edge of the loaded page
     if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
   };
+
+  // The drawer and the fork point move the detail to another image from outside the carousel.
+  // An index that only caught up with the carousel's own settle is skipped, or a quick second
+  // swipe would be dragged back.
+  const carouselNavigate = carouselNavigation.navigate;
+  useEffect(() => {
+    const target = images[index];
+    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
+    lastSettledIdRef.current = target.id;
+    carouselNavigate(index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
+  }, [index, storyline.active]);
 
   const image = images[carouselNavigation.index];
 
@@ -228,7 +259,7 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
-  const LeftImageControls = (
+  const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
@@ -246,6 +277,13 @@ export function ImageDetail2() {
           Save
         </Text>
       </Button>
+      {withStoryline && (
+        <StorylineToolbarChip
+          imageId={image.id}
+          postId={image.postId ?? null}
+          placement="toolbar"
+        />
+      )}
       {image.postId && (
         <NextLink
           href={`/posts/${image.postId}`}
@@ -327,11 +365,16 @@ export function ImageDetail2() {
                           className="size-9 rounded-full"
                         />
                         <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          {/* Placeholder */}
-                          <div className="@md:hidden" />
+                          <div className="flex items-center @md:hidden">
+                            <StorylineToolbarChip
+                              imageId={image.id}
+                              postId={image.postId ?? null}
+                              placement="mobile"
+                            />
+                          </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                            {LeftImageControls}
+                            {renderLeftImageControls(true)}
                           </div>
 
                           <div className="flex items-center gap-1">
@@ -399,13 +442,17 @@ export function ImageDetail2() {
                       </div>
 
                       {/* IMAGE CAROUSEL */}
-                      <ImageDetailCarousel
-                        images={images}
-                        videoRef={videoRef}
-                        connect={connect}
-                        onSettle={handleSettle}
-                        {...carouselNavigation}
-                      />
+                      <div className="relative flex min-h-0 flex-1 flex-col">
+                        <ImageDetailCarousel
+                          images={images}
+                          videoRef={videoRef}
+                          connect={connect}
+                          onSettle={handleSettle}
+                          loop={!storyline.active}
+                          {...navigation}
+                        />
+                        <StorylineStageOverlay isLastImage={isLastImage} imageId={image?.id} />
+                      </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
                         <div className="flex justify-center">
@@ -444,7 +491,16 @@ export function ImageDetail2() {
                             />
                           </ReactionSettingsProvider>
                         </div>
-                        <CarouselIndicators {...carouselNavigation} />
+                        {storyline.active ? (
+                          <StorylineChapterRail
+                            storyline={storyline}
+                            images={images}
+                            index={carouselNavigation.index}
+                            navigate={carouselNavigation.navigate}
+                          />
+                        ) : (
+                          <CarouselIndicators {...carouselNavigation} />
+                        )}
                         {/* {viewportHeight >= 1050 && (
                       <AdUnitImageDetailBanner />
                     )} */}
@@ -484,7 +540,7 @@ export function ImageDetail2() {
                     !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
                   }`}
                 >
-                  <div className="flex gap-1">{LeftImageControls}</div>
+                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
                   <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>

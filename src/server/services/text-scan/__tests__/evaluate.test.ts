@@ -86,9 +86,19 @@ describe('evaluateTextScan — flag labels', () => {
     expect(outcome.scam).toEqual({ detected: true, reason: 's' });
   });
 
+  it('csam triggers on detected and stays quiet otherwise', () => {
+    const detected = evaluateTextScan({ csam: { detected: true, reason: 'test' } }, {}, ['csam']);
+    expect(detected.triggeredLabels).toEqual(['csam']);
+    expect(detected.csam).toEqual({ detected: true, reason: 'test' });
+    const clear = evaluateTextScan({ csam: { detected: false, reason: 'test' } }, {}, ['csam']);
+    expect(clear.triggeredLabels).toEqual([]);
+    expect(clear.csam).toEqual({ detected: false, reason: 'test' });
+  });
+
   it('ignores output for labels that were not requested', () => {
     const outcome = evaluateTextScan({ scam: { detected: true, reason: 's' } }, {}, ['nsfw']);
     expect(outcome.scam).toBeUndefined();
     expect(outcome.triggeredLabels).toEqual([]);
   });
 });
+

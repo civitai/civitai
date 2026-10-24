@@ -1,4 +1,4 @@
-import { getWorkflow, type WorkflowEvent } from '@civitai/client';
+import { getWorkflow, type WorkflowEvent } from '@civitai/orchestration-client';
 import type { NextApiRequest } from 'next';
 import { logToAxiom } from '~/server/logging/client';
 import { imageScanWebhookCounter } from '~/server/prom/client';

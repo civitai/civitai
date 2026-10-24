@@ -6,9 +6,11 @@ import { LuaFactory } from 'wasmoon';
  * than mocked. CI has no Redis server.
  *
  * Supports only the commands the scripts under test use: TIME, HGET, HMGET, HSET, HINCRBY, PEXPIRE,
- * DEL, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
+ * EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
+ * `integerArgs` relaxes the first for scripts whose numeric arguments are literals or `ipairs`
+ * indices: integers format the same in both Lua versions, so only a non-integer still throws.
  */
 export type LuaRedis = {
   nowMs: number;
@@ -19,6 +21,14 @@ export type LuaRedis = {
   pttl: (key: string) => number;
   /** Replaces the hash at `key`, as a test's starting data. */
   setHash: (key: string, fields: Record<string, string>) => void;
+  /** The members of the set at `key` (after expiry), or undefined. */
+  set: (key: string) => string[] | undefined;
+  /** Replaces the set at `key`, as a test's starting data. */
+  setSet: (key: string, members: string[]) => void;
+  /** The list at `key`, head first, or undefined. */
+  list: (key: string) => string[] | undefined;
+  /** Replaces the list at `key` (head first), as a test's starting data. */
+  setList: (key: string, items: string[]) => void;
   /** Every redis.call issued, as [command, ...args]. */
   calls: string[][];
   /**
@@ -28,9 +38,14 @@ export type LuaRedis = {
   errors: unknown[];
 };
 
-export function createLuaRedis(startMs: number): LuaRedis {
+export function createLuaRedis(
+  startMs: number,
+  { integerArgs = false }: { integerArgs?: boolean } = {}
+): LuaRedis {
   const factory = new LuaFactory();
   const hashes = new Map<string, Map<string, string>>();
+  const lists = new Map<string, string[]>();
+  const sets = new Map<string, Set<string>>();
   const expiresAt = new Map<string, number>();
   const calls: string[][] = [];
   const errors: unknown[] = [];
@@ -70,29 +85,49 @@ export function createLuaRedis(startMs: number): LuaRedis {
       hashes.set(key, new Map(Object.entries(fields)));
       expiresAt.delete(key);
     },
+    set: (key) => {
+      expire(key);
+      const members = sets.get(key);
+      return members ? [...members] : undefined;
+    },
+    setSet: (key, members) => {
+      sets.set(key, new Set(members));
+      expiresAt.delete(key);
+    },
+    list: (key) => {
+      const l = lists.get(key);
+      return l ? [...l] : undefined;
+    },
+    setList: (key, items) => {
+      lists.set(key, [...items]);
+    },
     pttl: (key) => {
       expire(key);
-      if (!hashes.has(key)) return -2;
+      if (!exists(key)) return -2;
       const at = expiresAt.get(key);
       return at === undefined ? -1 : at - state.nowMs;
     },
   };
 
+  function exists(key: string) {
+    return hashes.has(key) || sets.has(key) || lists.has(key);
+  }
+
   function expire(key: string) {
     const at = expiresAt.get(key);
     if (at !== undefined && at <= state.nowMs) {
+      sets.delete(key);
       hashes.delete(key);
       expiresAt.delete(key);
     }
   }
 
   function redisCall(command: string, ...args: unknown[]) {
-    for (const a of args) {
-      if (typeof a !== 'string') {
-        throw new Error(`redis.call(${command}): argument ${String(a)} is a ${typeof a}`);
-      }
-    }
-    const strArgs = args as string[];
+    const strArgs = args.map((a) => {
+      if (typeof a === 'string') return a;
+      if (integerArgs && typeof a === 'number' && Number.isInteger(a)) return String(a);
+      throw new Error(`redis.call(${command}): argument ${String(a)} is a ${typeof a}`);
+    });
     calls.push([command, ...strArgs]);
     const key = strArgs[0];
     if (key !== undefined) expire(key);
@@ -127,14 +162,61 @@ export function createLuaRedis(startMs: number): LuaRedis {
         return 1;
       }
       case 'PEXPIRE': {
-        if (!hashes.has(key)) return 0;
+        if (!exists(key)) return 0;
         expiresAt.set(key, state.nowMs + Number(strArgs[1]));
         return 1;
       }
+      case 'EXPIRE': {
+        if (!exists(key)) return 0;
+        expiresAt.set(key, state.nowMs + Number(strArgs[1]) * 1000);
+        return 1;
+      }
+      case 'TTL': {
+        if (!exists(key)) return -2;
+        const at = expiresAt.get(key);
+        return at === undefined ? -1 : Math.ceil((at - state.nowMs) / 1000);
+      }
+      case 'SADD': {
+        const members = sets.get(key) ?? new Set<string>();
+        const before = members.size;
+        for (const m of strArgs.slice(1)) members.add(m);
+        sets.set(key, members);
+        return members.size - before;
+      }
+      case 'SCARD':
+        return sets.get(key)?.size ?? 0;
+      case 'SISMEMBER':
+        return sets.get(key)?.has(strArgs[1]) ? 1 : 0;
+      case 'SMEMBERS':
+        return [...(sets.get(key) ?? [])];
+      case 'SREM': {
+        const members = sets.get(key);
+        let removed = 0;
+        for (const m of strArgs.slice(1)) if (members?.delete(m)) removed++;
+        if (members && !members.size) {
+          sets.delete(key);
+          expiresAt.delete(key);
+        }
+        return removed;
+      }
       case 'DEL': {
-        const existed = hashes.delete(key);
+        const existed = hashes.delete(key) || sets.delete(key);
         expiresAt.delete(key);
         return existed ? 1 : 0;
+      }
+      case 'LRANGE': {
+        const l = lists.get(key) ?? [];
+        const at = (i: number) => (i < 0 ? l.length + i : i);
+        return l.slice(Math.max(at(Number(strArgs[1])), 0), at(Number(strArgs[2])) + 1);
+      }
+      case 'LSET': {
+        const l = lists.get(key);
+        if (!l) throw new Error('ERR no such key');
+        const raw = Number(strArgs[1]);
+        const i = raw < 0 ? l.length + raw : raw;
+        if (i < 0 || i >= l.length) throw new Error('ERR index out of range');
+        l[i] = strArgs[2];
+        return 'OK';
       }
       default:
         throw new Error(`redis.call: ${command} is not supported by the harness`);

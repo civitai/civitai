@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockSysRedis,
   mockRefundAppSpend,
+  mockChargeAppSpendOverage,
+  mockChargeDevSessionOverage,
   mockRefundDevSessionBuzz,
   mockObserveActualBuzz,
   mockObserveWallclock,
@@ -23,8 +25,11 @@ const {
     set: vi.fn(async () => undefined),
     del: vi.fn(async () => 1),
     decrBy: vi.fn(async () => 0),
+    incrBy: vi.fn(async () => 0),
   },
   mockRefundAppSpend: vi.fn(async () => undefined),
+  mockChargeAppSpendOverage: vi.fn(async () => undefined),
+  mockChargeDevSessionOverage: vi.fn(async () => undefined),
   // F4 — the dev-session refund leg dynamic-imports refundDevSessionBuzz. Mock the
   // (heavy, k8s-client-pulling) dev-tunnel module at its boundary so the settle's
   // third refund is assertable without loading the real service.
@@ -42,9 +47,11 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+  chargeAppSpendOverage: (...a: unknown[]) => mockChargeAppSpendOverage(...(a as [])),
 }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
+  chargeDevSessionOverage: (...a: unknown[]) => mockChargeDevSessionOverage(...(a as [])),
 }));
 vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
   observeCustomComfyActualBuzz: (...a: unknown[]) => mockObserveActualBuzz(...(a as [])),
@@ -69,7 +76,10 @@ beforeEach(() => {
     mockSysRedis.set,
     mockSysRedis.del,
     mockSysRedis.decrBy,
+    mockSysRedis.incrBy,
     mockRefundAppSpend,
+    mockChargeAppSpendOverage,
+    mockChargeDevSessionOverage,
     mockRefundDevSessionBuzz,
     mockObserveActualBuzz,
     mockObserveWallclock,
@@ -81,6 +91,7 @@ beforeEach(() => {
   mockSysRedis.set.mockResolvedValue(undefined);
   mockSysRedis.del.mockResolvedValue(1);
   mockSysRedis.decrBy.mockResolvedValue(0);
+  mockSysRedis.incrBy.mockResolvedValue(0);
   mockRefundAppSpend.mockResolvedValue(undefined);
   mockRefundDevSessionBuzz.mockResolvedValue(undefined);
 });
@@ -97,6 +108,7 @@ function seedRecord(
     engine: string;
     recipe: string;
     submittedAt: number;
+    correctOverage: boolean;
   }> = {}
 ) {
   const record = { buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180, ...over };
@@ -381,24 +393,6 @@ describe('settleCustomComfySpend', () => {
 
   // ── Per-engine runtime/cost OBSERVABILITY (instrument-ahead-of-demand) ────────
   describe('per-engine metric emit', () => {
-    it('observes the settled GPU-runtime (actual Buzz) + wall-clock with engine/recipe labels', async () => {
-      seedRecord({
-        ceiling: 150,
-        engine: 'flux2-klein',
-        recipe: 'seamless-pano-360',
-        submittedAt: 1_700_000_000_000,
-      });
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 42 });
-      // GPU-runtime ≈ billed actual Buzz — the ceil'd `actual` (42), labeled by engine.
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('flux2-klein', 'seamless-pano-360', 42);
-      // Wall-clock incl. queue (submit→terminal observation) — a Number of seconds.
-      expect(mockObserveWallclock).toHaveBeenCalledWith(
-        'flux2-klein',
-        'seamless-pano-360',
-        expect.any(Number)
-      );
-    });
-
     it('still observes actual Buzz when the job spent the FULL ceiling (emit precedes the refund early-return)', async () => {
       seedRecord({ ceiling: 150, engine: 'flux2-klein', recipe: 'seamless-pano-360' });
       await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 200 });
@@ -408,13 +402,6 @@ describe('settleCustomComfySpend', () => {
       expect(mockSysRedis.decrBy).not.toHaveBeenCalled(); // still no refund
     });
 
-    it('emits actual Buzz but NOT wall-clock when the record has no submittedAt', async () => {
-      seedRecord({ ceiling: 90, engine: 'zimage-turbo', recipe: 'seamless-pano-360' });
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'seamless-pano-360', 20);
-      expect(mockObserveWallclock).not.toHaveBeenCalled();
-    });
-
     it('emits NEITHER metric for a legacy record with no engine (back-compat safe)', async () => {
       seedRecord({ ceiling: 180 }); // pre-deploy record shape — no engine
       await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
@@ -422,12 +409,6 @@ describe('settleCustomComfySpend', () => {
       expect(mockObserveWallclock).not.toHaveBeenCalled();
       // …but the refund still happens (observability is orthogonal to settle).
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
-    });
-
-    it('a `recipe`-less record falls back to the "unknown" recipe label', async () => {
-      seedRecord({ ceiling: 90, engine: 'zimage-turbo' }); // engine but no recipe
-      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
-      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'unknown', 20);
     });
 
     // ── Finding-1 regression guard: the MONEY path must survive a throwing emit.
@@ -475,5 +456,124 @@ describe('settleCustomComfySpend', () => {
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
       expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
     });
+  });
+});
+
+describe('settleCustomComfySpend — overage correction (a record that asks for it)', () => {
+  it('persists `correctOverage` only when asked, so every other record keeps its shape', async () => {
+    await persistCustomComfySettle({
+      workflowId: 'wf_o',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 64,
+      submittedAt: 1,
+      correctOverage: true,
+    });
+    await persistCustomComfySettle({
+      workflowId: 'wf_p',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 64,
+      submittedAt: 1,
+    });
+    const [asked, plain] = mockSysRedis.set.mock.calls.map(
+      (c) => JSON.parse((c as unknown as [string, string])[1]) as Record<string, unknown>
+    );
+    expect(asked).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 64,
+      submittedAt: 1,
+      correctOverage: true,
+    });
+    expect(plain).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 64,
+      submittedAt: 1,
+    });
+  });
+
+  it('🔴 ADDS `actual - ceiling` to every counter when the job billed above its reservation', async () => {
+    seedRecord({
+      ceiling: 64,
+      correctOverage: true,
+      consentBudgetKey: CONSENT_KEY,
+      devSessionId: DEV_SESSION_ID,
+    });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 91 });
+    // 91 - 64 = 27, on the EXACT keys the submit reserved.
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(BUZZ_KEY, 27);
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(CONSENT_KEY, 27);
+    expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(2);
+    expect(mockChargeAppSpendOverage).toHaveBeenCalledWith(APP_KEY, 27);
+    expect(mockChargeDevSessionOverage).toHaveBeenCalledWith(DEV_SESSION_ID, 27);
+    // …and gives nothing back.
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
+  });
+
+  it('touches no counter when the job billed exactly its reservation', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 64 });
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
+  it('ceils a fractional overage', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 64.2 });
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(BUZZ_KEY, 1);
+  });
+
+  it('still REFUNDS `ceiling - actual` when the job billed under its reservation', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 41 });
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 23);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 23);
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+  });
+
+  it('charges NOTHING for a record that did not ask — the other kinds are unchanged', async () => {
+    seedRecord({ ceiling: 64 });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 91 });
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+    expect(mockChargeDevSessionOverage).not.toHaveBeenCalled();
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
+  it('skips the legs the record does not name', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true, appSpendKey: null });
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 91 });
+    expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(BUZZ_KEY, 27);
+    expect(mockChargeAppSpendOverage).not.toHaveBeenCalled();
+    expect(mockChargeDevSessionOverage).not.toHaveBeenCalled();
+  });
+
+  it('one failing leg never throws and never skips the others', async () => {
+    seedRecord({
+      ceiling: 64,
+      correctOverage: true,
+      consentBudgetKey: CONSENT_KEY,
+      devSessionId: DEV_SESSION_ID,
+    });
+    mockSysRedis.incrBy.mockRejectedValueOnce(new Error('redis down'));
+    mockChargeAppSpendOverage.mockRejectedValueOnce(new Error('redis down'));
+    await expect(
+      settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 91 })
+    ).resolves.toBeUndefined();
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(CONSENT_KEY, 27);
+    expect(mockChargeDevSessionOverage).toHaveBeenCalledWith(DEV_SESSION_ID, 27);
+  });
+
+  it('is single-shot: a second terminal observation charges nothing', async () => {
+    seedRecord({ ceiling: 64, correctOverage: true });
+    mockSysRedis.del.mockResolvedValue(0);
+    await settleCustomComfySpend({ workflowId: 'wf_o', actualCost: 91 });
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
   });
 });

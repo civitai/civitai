@@ -17,9 +17,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * inert so the module imports. Submissions die later in step assembly — irrelevant here.
  */
 
-const { mockAuditPromptServer, mockXGuard } = vi.hoisted(() => ({
+const { mockAuditPromptServer, mockXGuard, mockUnionSourceImageIds } = vi.hoisted(() => ({
   mockAuditPromptServer: vi.fn(async (): Promise<void> => undefined),
   mockXGuard: vi.fn(async () => undefined),
+  mockUnionSourceImageIds: vi.fn(async (): Promise<number[]> => []),
+}));
+
+vi.mock('~/server/services/orchestrator/remix-provenance', async (importOriginal) => ({
+  ...(await importOriginal<typeof RemixProvenanceMod>()),
+  unionSourceImageIds: mockUnionSourceImageIds,
 }));
 
 vi.mock('~/server/services/orchestrator/promptAuditing', async (importOriginal) => ({
@@ -56,6 +62,7 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: {},
 }));
 
+import type * as RemixProvenanceMod from '~/server/services/orchestrator/remix-provenance';
 import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAuditing';
 import type * as OrchestratorServiceMod from '~/server/services/orchestrator/orchestrator.service';
 import type { GenerationCtx } from '~/shared/generation/context';
@@ -99,6 +106,8 @@ beforeEach(() => {
   mockAuditPromptServer.mockReset();
   mockAuditPromptServer.mockImplementation(async () => undefined);
   mockXGuard.mockClear();
+  mockUnionSourceImageIds.mockReset();
+  mockUnionSourceImageIds.mockImplementation(async () => []);
 });
 
 describe('generateFromGraph — the prompt audit gate', () => {
@@ -133,6 +142,27 @@ describe('generateFromGraph — the prompt audit gate', () => {
     expect(mockXGuard).toHaveBeenCalledTimes(1);
     expect(mockXGuard).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'prompt', positivePrompt: '', negativePrompt: 'blurry' })
+    );
+  });
+
+  it('hands the audit the verified source ids and the orchestrator token it was given', async () => {
+    mockUnionSourceImageIds.mockImplementation(async () => [101, 102]);
+    await generateFromGraph({
+      input: img2img('a cat', 'blurry'),
+      externalCtx: externalCtx(),
+      token: 'orchestrator-token-xyz',
+      sourceProvenance: ['provenance-token-abc'],
+      userId: USER_ID,
+      isModerator: false,
+    } as never).catch(() => undefined);
+    expect(mockUnionSourceImageIds).toHaveBeenCalledWith(
+      expect.objectContaining({ tokens: ['provenance-token-abc'] })
+    );
+    expect(mockAuditPromptServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceImageIds: [101, 102],
+        orchestratorToken: 'orchestrator-token-xyz',
+      })
     );
   });
 

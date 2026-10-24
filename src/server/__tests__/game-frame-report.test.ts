@@ -193,6 +193,61 @@ describe('filing a report', () => {
   });
 });
 
+describe('picture reports', () => {
+  const image = {
+    url: 'https://games.civitai.com/api/reports/media/0123456789abcdef0123456789abcdef.png',
+    key: '0123456789abcdef0123456789abcdef',
+  };
+  const whereOf = (call = 0) => JSON.stringify(db.report.findFirst.mock.calls[call][0].where);
+
+  it('keeps the picture on the report it creates', async () => {
+    await file({ image, room: 'PICS-1' });
+
+    const { details } = db.report.create.mock.calls[0][0].data;
+    expect(details).toMatchObject({ image, subject: `image:${image.key}`, room: 'PICS-1' });
+  });
+
+  it('a game report without a picture is about the game, with no image', async () => {
+    await file();
+
+    const { details } = db.report.create.mock.calls[0][0].data;
+    expect(details.subject).toBe('game');
+    expect(details).not.toHaveProperty('image');
+  });
+
+  it('folds only within the same picture, for every reason', async () => {
+    await file({ image });
+    await file({ image, gfReason: 'adult', reason: 'NSFW', violation: undefined });
+
+    expect(whereOf(0)).toContain(`"path":["subject"],"equals":"image:${image.key}"`);
+    expect(whereOf(0)).toContain('"path":["violation"],"equals":"Hate or harassment"');
+    expect(whereOf(2)).toContain(`"path":["subject"],"equals":"image:${image.key}"`);
+  });
+
+  it('a game report never folds into a picture report', async () => {
+    await file({ gfReason: 'spam', reason: 'Spam', violation: undefined });
+
+    expect(whereOf()).toContain('"path":["subject"],"equals":"game"');
+  });
+
+  it('two pictures fold apart', async () => {
+    await file({ image });
+    await file({ image: { ...image, key: 'f'.repeat(32) } });
+
+    expect(whereOf(0)).toContain(`"equals":"image:${image.key}"`);
+    expect(whereOf(2)).toContain(`"equals":"image:${'f'.repeat(32)}"`);
+  });
+
+  it.each([
+    ['an http url', { ...image, url: 'http://games.civitai.com/x.png' }],
+    ['a javascript url', { ...image, url: 'javascript:alert(1)' }],
+    ['a short key', { ...image, key: 'abc' }],
+    ['a key with other characters', { ...image, key: 'Z'.repeat(32) }],
+  ])('refuses %s', (_label, bad) => {
+    expect(gameFrameReportSchema.safeParse(body({ image: bad })).success).toBe(false);
+  });
+});
+
 describe('guest reports', () => {
   it('files the first one as the guest account and seeds guests[]', async () => {
     await file({ reporter: guest });
@@ -621,20 +676,25 @@ describe('filing edge cases', () => {
   it.each([
     ['adult', 'NSFW'],
     ['spam', 'Spam'],
-  ])('folds %s reports on reason alone, with no violation predicate', async (gfReason, reason) => {
+  ])('folds %s reports on reason and subject, with no violation predicate', async (gfReason, reason) => {
     await file({ gfReason, reason, violation: undefined });
 
     expect(db.report.findFirst).toHaveBeenCalled();
-    for (const [{ where }] of db.report.findFirst.mock.calls)
+    for (const [{ where }] of db.report.findFirst.mock.calls) {
       expect(where).not.toHaveProperty('details');
+      expect(where.AND).toEqual([{ details: { path: ['subject'], equals: 'game' } }]);
+    }
   });
 
-  it('puts the violation predicate on both dedupe reads', async () => {
+  it('puts the subject and violation predicates on both dedupe reads', async () => {
     await file();
 
     expect(db.report.findFirst).toHaveBeenCalledTimes(2);
     for (const [{ where }] of db.report.findFirst.mock.calls)
-      expect(where.details).toEqual({ path: ['violation'], equals: 'Hate or harassment' });
+      expect(where.AND).toEqual([
+        { details: { path: ['subject'], equals: 'game' } },
+        { details: { path: ['violation'], equals: 'Hate or harassment' } },
+      ]);
   });
 });
 

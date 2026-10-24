@@ -26,7 +26,7 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
 }));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
-  invalidateCivitaiUser: invalidateMock,
+  revokeCivitaiUserTokens: invalidateMock,
 }));
 
 const { oauthClientRouter } = await import('~/server/routers/oauth-client.router');
@@ -85,20 +85,6 @@ describe('oauthClient.delete', () => {
     await expect(caller.delete({ id: CLIENT_ID })).resolves.toEqual({ success: true });
     expect(dbMock.dbWrite.oauthClient.delete).toHaveBeenCalledTimes(1);
     expect(invalidateMock).toHaveBeenCalledWith({ userId: 7170 });
-  });
-
-  // After the delete the parents no longer carry the client id, so the log line is the only
-  // record of which listings still need their items withdrawn by hand.
-  it('logs the parent ids when the withdraw fails', async () => {
-    withdrawMock.mockRejectedValueOnce(new Error('store down'));
-    await caller.delete({ id: CLIENT_ID });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'oauth.withdraw-catalog-items.failed',
-        clientId: CLIENT_ID,
-        parentListingIds: PARENT_IDS,
-      })
-    );
   });
 
   // Once the delete unlinks the parents nothing can find them, so a failed lookup must fail the

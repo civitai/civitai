@@ -1,4 +1,4 @@
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import type { BadgeProps } from '@mantine/core';
 import { Badge, Progress, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
@@ -27,14 +27,7 @@ export function GenerationStatusBadge({
   };
 
   return (
-    <Tooltip
-      label={tooltipLabel}
-      withArrow
-      maw={300}
-      multiline
-      withinPortal
-      opened={opened}
-    >
+    <Tooltip label={tooltipLabel} withArrow maw={300} multiline withinPortal opened={opened}>
       <Badge
         variant="light"
         size="sm"

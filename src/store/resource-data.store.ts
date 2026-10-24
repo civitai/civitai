@@ -29,8 +29,11 @@ export type ResourceData = GenerationResource & { air: string };
 interface ResourceDataStoreState {
   /** Per-ID resource cache (never evicted) */
   resources: Map<number, ResourceData>;
+  /** IDs the API returned nothing for: never refetched, and a consumer must not wait on them. */
+  notFound: Set<number>;
   /** Store fetched resources into the cache */
   _setFetched: (resources: ResourceData[]) => void;
+  _setNotFound: (ids: number[]) => void;
 }
 
 // =============================================================================
@@ -39,6 +42,12 @@ interface ResourceDataStoreState {
 
 export const useResourceDataStore = create<ResourceDataStoreState>()((set) => ({
   resources: new Map(),
+  notFound: new Set(),
+
+  _setNotFound: (ids) => {
+    if (!ids.length) return;
+    set((state) => ({ notFound: new Set([...state.notFound, ...ids]) }));
+  },
 
   _setFetched: (newResources) => {
     if (!newResources.length) return;
@@ -65,21 +74,15 @@ export const useResourceDataStore = create<ResourceDataStoreState>()((set) => ({
 const resourceFetchByIds = new Map<number, Promise<void>>();
 
 /**
- * IDs that were requested but returned no result from the API.
- * These are skipped in future requestResourceIds calls to avoid infinite retries.
- */
-const resourceNotFoundIds = new Set<number>();
-
-/**
  * Request resource data for the given IDs.
  * IDs already in the store, currently being fetched, or previously not found are skipped.
  * The remaining uncached IDs are batched into a single fetch and results
  * are stored in the global resource-data store on completion.
  */
 export function requestResourceIds(ids: number[]): void {
-  const { resources } = useResourceDataStore.getState();
+  const { resources, notFound } = useResourceDataStore.getState();
   const uncached = ids.filter(
-    (id) => !resources.has(id) && !resourceFetchByIds.has(id) && !resourceNotFoundIds.has(id)
+    (id) => !resources.has(id) && !resourceFetchByIds.has(id) && !notFound.has(id)
   );
   if (!uncached.length) return;
 
@@ -89,10 +92,10 @@ export function requestResourceIds(ids: number[]): void {
       useResourceDataStore.getState()._setFetched(data as ResourceData[]);
 
       const returnedIds = new Set(data.map((r) => r.id));
+      useResourceDataStore.getState()._setNotFound(uncached.filter((id) => !returnedIds.has(id)));
       for (const id of uncached) {
         resourceFetchByIds.delete(id);
         if (!returnedIds.has(id)) {
-          resourceNotFoundIds.add(id);
           if (process.env.NODE_ENV !== 'production') {
             console.warn(`[ResourceData] version ID ${id} not found — skipping future fetches`);
           }

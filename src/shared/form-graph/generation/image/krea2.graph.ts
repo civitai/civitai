@@ -3,7 +3,15 @@ import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
 import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
-import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
+import {
+  SEED,
+  aspectRatioDef,
+  enumDef,
+  imageEntryListDef,
+  imagesDef,
+  workflowScoped,
+  type ImageEntryValue,
+} from '../defs';
 import {
   familyResources,
   familyScope,
@@ -60,6 +68,24 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
 ]);
 
 export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
+
+/** Community checkpoints fine-tuned from Turbo carry this base model; nothing else marks them. */
+export const KREA2_TURBO_BASE_MODEL = 'Krea 2 Turbo';
+
+/**
+ * The official Turbo build, or a community checkpoint tagged as fine-tuned from it.
+ * An official version's id decides on its own: the handler routes the FAL tiers by id,
+ * so a stray tag must not move one onto the turbo branch.
+ */
+export function isKrea2TurboModel(model: unknown): boolean {
+  const id = modelIdOf(model);
+  if (id != null && isOfficialKrea2Version(id)) return id === krea2VersionIds.turbo;
+  return (
+    !!model &&
+    typeof model === 'object' &&
+    (model as { baseModel?: unknown }).baseModel === KREA2_TURBO_BASE_MODEL
+  );
+}
 
 /** Krea renders ~1MP area buckets. */
 const krea2AspectRatioDimensions: Record<string, { width: number; height: number }> = {
@@ -125,68 +151,14 @@ const STRENGTH_MIN = 0;
 const STRENGTH_MAX = 1;
 const STRENGTH_STEP = 0.05;
 
-const styleReferenceImageSchema = z.object({
-  url: z.string(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-});
+export type Krea2StyleReferenceEntry = ImageEntryValue<{ strength: z.ZodNumber }>;
 
-const styleReferenceEntryInputSchema = z.object({
-  image: z.union([z.string(), styleReferenceImageSchema]).optional(),
-  strength: z.number().min(STRENGTH_MIN).max(STRENGTH_MAX).optional(),
-});
-
-const styleReferenceEntryOutputSchema = z.object({
-  image: styleReferenceImageSchema,
-  strength: z.number().min(STRENGTH_MIN).max(STRENGTH_MAX),
-});
-
-export type Krea2StyleReferenceEntry = z.infer<typeof styleReferenceEntryOutputSchema>;
-
-/** Entries without an image are dropped on the output side. */
-const styleReferencesDef = {
-  input: styleReferenceEntryInputSchema
-    .array()
-    .max(KREA2_STYLE_REFERENCES_LIMIT)
-    .optional()
-    .transform((arr) => {
-      if (!arr) return undefined;
-      return arr.map((entry) => {
-        const image = typeof entry.image === 'string' ? { url: entry.image } : entry.image;
-        const normalizedImage = image?.url ? image : undefined;
-        return {
-          image: normalizedImage,
-          strength: entry.strength ?? KREA2_STYLE_REFERENCE_STRENGTH_DEFAULT,
-        };
-      });
-    }),
-  output: z
-    .array(z.unknown())
-    .max(
-      KREA2_STYLE_REFERENCES_LIMIT,
-      `Maximum ${KREA2_STYLE_REFERENCES_LIMIT} style references allowed`
-    )
-    .optional()
-    .transform((arr) =>
-      arr?.filter(
-        (e): e is { image: { url: string }; strength: number } =>
-          typeof e === 'object' &&
-          e !== null &&
-          'image' in e &&
-          !!(e as { image?: { url?: string } }).image?.url
-      )
-    )
-    .pipe(styleReferenceEntryOutputSchema.array().optional()),
-  default: [] as Krea2StyleReferenceEntry[],
-  // Staged references outlive the family they were staged under, so the limit they came
-  // from is not the limit they end up under. `correct`, not `coerce`: the input above
-  // carries the same `.max()`, so this can never fire on the server parse.
-  correct: (value: Krea2StyleReferenceEntry[] | undefined) =>
-    (value?.length ?? 0) > KREA2_STYLE_REFERENCES_LIMIT
-      ? { value: value!.slice(0, KREA2_STYLE_REFERENCES_LIMIT), reason: 'over_cap' }
-      : undefined,
+const styleReferencesDef = imageEntryListDef({
+  fields: { strength: z.number().min(STRENGTH_MIN).max(STRENGTH_MAX) },
+  defaults: { strength: KREA2_STYLE_REFERENCE_STRENGTH_DEFAULT },
+  limit: KREA2_STYLE_REFERENCES_LIMIT,
+  noun: { one: 'style reference', many: 'style references' },
   meta: {
-    limit: KREA2_STYLE_REFERENCES_LIMIT,
     strength: {
       min: STRENGTH_MIN,
       max: STRENGTH_MAX,
@@ -194,18 +166,19 @@ const styleReferencesDef = {
       step: STRENGTH_STEP,
     },
   },
-};
+});
 
 type Krea2VariantExt = FamilyExt & { model?: unknown };
 
 // Unknown ids are community checkpoints. Only the comfy builds can load one
-// via `diffusionModel`, so they fall back off the FAL tiers — and to the
-// full-step build, since turbo's 15-step / cfg-2 ceilings can't drive an
-// undistilled model.
+// via `diffusionModel`, so they fall back off the FAL tiers — to turbo when the
+// checkpoint is a Turbo fine-tune, else to the full-step build, since turbo's
+// 15-step / cfg-2 ceilings can't drive an undistilled model.
 const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
+  const turbo = isKrea2TurboModel(ext.model);
+  if (ext.workflow === 'img2img:edit') return turbo ? 'editTurbo' : 'editRaw';
+  if (turbo) return 'turbo';
   const id = modelIdOf(ext.model);
-  if (ext.workflow === 'img2img:edit')
-    return id === krea2VersionIds.turbo ? 'editTurbo' : 'editRaw';
   return (id != null ? krea2VersionIdToVariant.get(id) : undefined) ?? 'raw';
 };
 

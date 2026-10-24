@@ -61,13 +61,18 @@ export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' 
  * `category` so the caller can decide whether to file a Report (minor/poi/audit)
  * before converting to a user-facing TRPCError. NEVER leak the raw matched word to
  * the client beyond the audit machinery's own message.
+ *
+ * `unchecked` means a check could not run, not that one found something. Only metrics read it
+ * (`moderation_unavailable` vs `moderation_blocked`); it must not change the refusal.
  */
 export class SharedContentBlockedError extends Error {
   readonly category: SharedBlockedCategory;
-  constructor(category: SharedBlockedCategory, message: string) {
+  readonly unchecked: boolean;
+  constructor(category: SharedBlockedCategory, message: string, options?: { unchecked?: boolean }) {
     super(message);
     this.name = 'SharedContentBlockedError';
     this.category = category;
+    this.unchecked = options?.unchecked ?? false;
   }
 }
 
@@ -141,7 +146,9 @@ export async function assertSharedTextSafe(
       getBlocklistData(BlocklistType.MessagePattern),
     ]);
   } catch {
-    throw escalateToServerFault(new SharedContentBlockedError('link', retryMessage));
+    throw escalateToServerFault(
+      new SharedContentBlockedError('link', retryMessage, { unchecked: true })
+    );
   }
 
   // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
@@ -179,7 +186,7 @@ export async function assertSharedTextSafe(
         errorMessage: error instanceof Error ? error.message : String(error),
       },
     }).catch(() => undefined);
-    throw new SharedContentBlockedError('link', retryMessage);
+    throw new SharedContentBlockedError('link', retryMessage, { unchecked: true });
   }
 
   // C3 — full platform audit (regex + external moderation). isGreen:true forces
@@ -199,6 +206,7 @@ export async function assertSharedTextSafe(
       isModerator,
     });
   } catch (e) {
+    // Any throw is an `audit` block, a failed read inside the audit included, so never `unchecked`.
     const message = e instanceof Error ? e.message : 'Content was flagged';
     throw new SharedContentBlockedError('audit', message);
   }

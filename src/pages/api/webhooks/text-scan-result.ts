@@ -1,4 +1,4 @@
-import type { WorkflowEvent } from '@civitai/client';
+import type { WorkflowEvent } from '@civitai/orchestration-client';
 import { handleTextScanCallback } from '~/server/services/text-scan/callback';
 import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 

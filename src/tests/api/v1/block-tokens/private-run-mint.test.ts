@@ -181,8 +181,8 @@ const MOD = 4004;
 
 /**
  * 🔴 EVERY ID AND BUDGET IS PAIRWISE DISTINCT, AND DISTINCT FROM EVERY CONSTANT THE
- * ASSERTIONS NAME. The manifest budget is 137 — not 1000 (the cap), not 50 (the
- * default), not a multiple of either — so a clamp or precedence mutant MOVES the
+ * ASSERTIONS NAME. The manifest budget is 137 — not the cap, not the
+ * default, not a divisor of either — so a clamp or precedence mutant MOVES the
  * asserted value instead of landing on it.
  */
 const BLOCK = (over: Record<string, unknown> = {}) => ({
@@ -358,27 +358,29 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
       });
       const res = await invoke(BODY());
       expect(res._body.scopes, `audience=${audience}`).toContain('ai:write:budgeted');
-      // 137 is under the 1000 cap, so it passes through verbatim — and because it is
+      // 137 is under the cap, so it passes through verbatim — and because it is
       // neither the cap nor the default, this value could only have come from the
       // manifest via the clamp.
       expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(137);
     }
   });
 
-  it('a manifest budget OVER the dev cap clamps to 1000', async () => {
+  it.each([
+    ['at the cap', { path: '/', buzzBudgetPerGen: 5000 }, 5000],
+    ['one over the cap', { path: '/', buzzBudgetPerGen: 5001 }, 5000],
+    ['far over the cap', { path: '/', buzzBudgetPerGen: 6301 }, 5000],
+    ['undeclared', { path: '/' }, 1000],
+    ['a non-integer', { path: '/', buzzBudgetPerGen: 12.5 }, 1000],
+    ['negative', { path: '/', buzzBudgetPerGen: -5 }, 1000],
+  ])('a manifest budget, %s, mints the private-run buzzBudget', async (_l, page, minted) => {
     mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
       allowed: true,
       audience: 'moderator',
-      block: BLOCK({
-        manifest: {
-          name: 'x',
-          page: { path: '/', buzzBudgetPerGen: 1301 },
-          scopes: ['ai:write:budgeted'],
-        },
-      }),
+      block: BLOCK({ manifest: { name: 'x', page, scopes: ['ai:write:budgeted'] } }),
     });
-    await invoke(BODY());
-    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(1000);
+    const res = await invoke(BODY());
+    expect(mockTokenService.sign.mock.calls[0][0].buzzBudget).toBe(minted);
+    expect(res._body.buzzBudget).toBe(minted);
   });
 
   it('the mint-time AUDIT line carries the audience, slug, status and listing status', async () => {

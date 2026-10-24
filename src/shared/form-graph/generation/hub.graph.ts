@@ -14,6 +14,7 @@ import { videoHub } from './video/hub.graph';
 import { audioHub } from './audio/hub.graph';
 import { model3dHub } from './model3d/hub.graph';
 import { imageUpscale } from './workflows/image-upscale.graph';
+import { avatar } from './workflows/avatar.graph';
 import {
   imagePreprocess,
   imageRemoveBackground,
@@ -83,6 +84,7 @@ const STANDALONE_WORKFLOWS = new Set([
   'img2img:upscale',
   'img2img:remove-background',
   'img2img:preprocess',
+  'img2img:avatar',
   'vid2vid:preprocess',
   'img2meta',
   'prompt:enhance',
@@ -94,6 +96,7 @@ const workflowKinds = branch('workflowKind', [
   [['img2img:upscale'], imageUpscale],
   [['img2img:remove-background'], imageRemoveBackground],
   [['img2img:preprocess'], imagePreprocess],
+  [['img2img:avatar'], avatar],
   [['vid2vid:preprocess'], videoPreprocess],
   [['img2meta'], metadataExtraction],
   [['prompt:enhance'], promptEnhancement],

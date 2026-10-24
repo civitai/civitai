@@ -7,6 +7,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   resolveCatalogBrowsingLevel,
@@ -103,6 +104,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // words of non-public versions by enumerating ids. The computed `hasAccess`
       // (anon read) encodes "Published & Public".
       .filter((r) => r.hasAccess)
+      // Anonymous read, so flagged models are dropped (see canViewPoiModel).
+      .filter((r) => canViewPoiModel(r.model.poi, r.model.userId, null))
       // Maturity clamp: on a SFW ceiling, drop any resource that exceeds the clamped
       // browsing level (never leak a mature resource's public data to a SFW-domain
       // block). `model.nsfw` is the ACTIVE clamp signal in this path; `imageNsfwLevel`

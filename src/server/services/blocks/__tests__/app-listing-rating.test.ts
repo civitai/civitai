@@ -27,10 +27,43 @@ describe('resolveReDerivedListingRating', () => {
     reratedImageId: 3,
     previousNsfwLevel: NsfwLevel.R,
     reviewedRating: null as string | null,
+    mediaSplit: false,
   };
 
   it('lowers to max(declared, derived) when the re-rated image explains the stored rating', () => {
     expect(resolveReDerivedListingRating({ ...base, stored: 'r', declared: 'g' })).toBe('pg13');
+  });
+
+  it('🔴 on a split listing a correction lowers by the civitai.com media, on both sides of the guard', () => {
+    // Icon PG, screenshot 2 R, screenshot 1 corrected PG-13 → PG. Split, the R screenshot floors
+    // nothing: before the correction the media explained pg13, after it g. Unsplit, R raises.
+    const split = {
+      assets: [scanned(1, NsfwLevel.PG), scanned(2, NsfwLevel.PG), scanned(3, NsfwLevel.R)],
+      reratedImageId: 2,
+      previousNsfwLevel: NsfwLevel.PG13,
+      reviewedRating: null,
+      stored: 'pg13',
+      declared: 'g',
+    };
+    expect(resolveReDerivedListingRating({ ...split, mediaSplit: true })).toBe('g');
+    expect(resolveReDerivedListingRating({ ...split, mediaSplit: false })).toBe('r');
+  });
+
+  it('on a split listing an unsettled image above SFW does not block a lowering', () => {
+    const assets = [
+      scanned(1, NsfwLevel.PG),
+      scanned(2, NsfwLevel.PG),
+      { imageId: 3, nsfwLevel: NsfwLevel.R, ingestion: 'Pending' },
+    ];
+    const args = {
+      assets,
+      reratedImageId: 2,
+      previousNsfwLevel: NsfwLevel.PG13,
+      reviewedRating: null,
+      stored: 'pg13',
+      declared: 'g',
+    };
+    expect(resolveReDerivedListingRating({ ...args, mediaSplit: true })).toBe('g');
   });
 
   it('never lowers past the newest review decision; lowers to it when it sits between', () => {
@@ -225,6 +258,26 @@ describe('the rating-change event', () => {
         after: { contentRating: 'r' },
       },
     });
+  });
+
+  it('after commit: on a split listing the cause is judged by the civitai.com media only', async () => {
+    // Icon PG, cover PG-13, screenshot R. Split, the media floor is pg13, so g → pg13 is the
+    // media's doing; unsplit it is r, so the same move reads as a review decision.
+    const splitAnswer = (split: boolean) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...v: unknown[]
+      ) =>
+        strings.join('').includes('to_regclass')
+          ? [{ present: true, can_select: true, can_insert: true, can_update: true }]
+          : [{ split: split && v[0] === 'apl_1' }]) as never);
+
+    splitAnswer(true);
+    await recordListingRatingChangeAfterCommit({ ...change, after: 'pg13' });
+    splitAnswer(false);
+    await recordListingRatingChangeAfterCommit({ ...change, after: 'pg13' });
+
+    expect(create.mock.calls.map((c) => c[0].data.detail)).toEqual(['store-media', 'review']);
   });
 
   it.each([

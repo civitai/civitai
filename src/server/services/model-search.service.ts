@@ -12,11 +12,13 @@ import {
 } from '~/server/meilisearch/client';
 import type { GetAllModelsOutput } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
+import { inArray } from '~/shared/utils/meili-filter';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -24,12 +26,16 @@ import { isDefined } from '~/utils/type-guards';
  * Shared model-search + response-shaping body extracted verbatim from
  * `/api/v1/models/index.ts` so the public endpoint AND the block-scoped
  * catalog endpoint (`/api/v1/blocks/models.ts`) build the SAME response from
- * the SAME query path. The ONLY behavioral lever is `browsingLevel` (and the
+ * the SAME query path. The behavioral levers are `browsingLevel` (and the
  * `nsfwImagePassthrough` flag that mirrors the public endpoint's pre-refactor
- * `parsedParams.data.nsfw` image-filter widening) — both supplied by the
- * caller. The public endpoint passes its existing values UNCHANGED; the block
- * endpoint passes a server-clamped `browsingLevel` and `nsfwImagePassthrough:
- * false` so a SFW-domain block can never widen the image filter.
+ * `parsedParams.data.nsfw` image-filter widening) plus two block-only ctx
+ * filters, `ownerUserId` and `publicVersionsOnly` — all supplied by the
+ * caller. The public endpoint passes its existing values UNCHANGED and sets
+ * neither filter; the block endpoint passes a server-clamped `browsingLevel`,
+ * `nsfwImagePassthrough: false` so a SFW-domain block can never widen the image
+ * filter, `publicVersionsOnly: true`, and `ownerUserId` (from the token `sub`)
+ * only for `owner=mine`. The block tool route (`blocks/tools.ts`) passes the
+ * same clamp and `publicVersionsOnly: true`, and no owner filter.
  *
  * Maturity policy is NOT decided here — this helper is a pure executor. The
  * caller is the single place that derives the effective `browsingLevel`.
@@ -88,6 +94,14 @@ export type RunModelSearchContext = {
   user?: SessionUser;
   /** Absolute origin used to build download URLs (from getNextPage's baseUrl). */
   baseUrlOrigin: string;
+  /**
+   * Restrict to models owned by this user id. Set only by the block catalog's `owner=mine`, from
+   * the verified token subject — a ctx field, so it cannot arrive in parsed query input. Pair it
+   * with the same id on `resolveModelSearchIds` for a text query.
+   */
+  ownerUserId?: number;
+  /** Keep only Public-availability versions on every path (see getModelsRaw). */
+  publicVersionsOnly?: boolean;
 };
 
 const modelTypeValues = new Set<string>(Object.values(ModelType));
@@ -112,6 +126,13 @@ export async function resolveModelSearchIds(opts: {
   limit: number;
   browsingLevel: number;
   /**
+   * Owner filter applied INSIDE the Meili query (`user.id`, a declared filterable attribute).
+   * Filtering only afterwards in the DB would intersect the top-N relevance hits across ALL users
+   * with one user's models — sparse or empty pages, the same failure `types` documents below.
+   * Must be a safe integer: it is interpolated into the filter expression.
+   */
+  ownerUserId?: number;
+  /**
    * Type filter applied INSIDE the Meili query. Without it, a `query` +
    * `types` request intersects the top-N relevance hits (of ANY type) with
    * the type filter in the DB — for sparse types like Wildcards that's
@@ -120,11 +141,25 @@ export async function resolveModelSearchIds(opts: {
    * accepts arbitrary strings (also keeps them out of the filter expression).
    */
   types?: string[];
+  /** In the Meili query for the same reason as `types`; the DB still applies both. */
+  baseModels?: string[];
+  supportsGeneration?: boolean;
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel, types } = opts;
+  const { query, cursor, limit, browsingLevel, types, baseModels, supportsGeneration } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
   const typeValues = types?.filter((t) => modelTypeValues.has(t));
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
+  const { ownerUserId } = opts;
+  if (ownerUserId !== undefined && !Number.isSafeInteger(ownerUserId)) {
+    throw new Error('ownerUserId must be an integer');
+  }
+
+  // The index's canGenerate is isGenerationEligible, narrower than the DB's coverage-only filter.
+  const canGenerateField = supportsGeneration
+    ? (await nextCoverageEnabled())
+      ? 'canGenerateNext'
+      : 'canGenerate'
+    : undefined;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
   try {
@@ -137,6 +172,9 @@ export async function resolveModelSearchIds(opts: {
             filter: [
               `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
               ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
+              ...(ownerUserId !== undefined ? [`user.id = ${ownerUserId}`] : []),
+              ...(baseModels?.length ? [inArray('versions.baseModel', baseModels)] : []),
+              ...(canGenerateField ? [`${canGenerateField} = true`] : []),
             ],
             attributesToRetrieve: ['id'],
           })
@@ -180,7 +218,14 @@ export async function runModelSearch(
   input: RunModelSearchInput & { searchIds?: number[] },
   ctx: RunModelSearchContext
 ): Promise<{ items: unknown[]; nextCursor?: string | bigint | Date }> {
-  const { browsingLevel, nsfwImagePassthrough, user, baseUrlOrigin } = ctx;
+  const {
+    browsingLevel,
+    nsfwImagePassthrough,
+    user,
+    baseUrlOrigin,
+    ownerUserId,
+    publicVersionsOnly,
+  } = ctx;
   const {
     limit,
     skip,
@@ -221,6 +266,8 @@ export async function runModelSearch(
       disablePoi: true,
     } as Parameters<typeof getModelsWithVersions>[0]['input'],
     user,
+    ownerUserId,
+    publicVersionsOnly,
   });
 
   // Meilisearch returns ids in relevance order, but getModelsWithVersions
@@ -315,7 +362,12 @@ export async function runModelSearch(
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrlOrigin}${createModelFileDownloadUrl({

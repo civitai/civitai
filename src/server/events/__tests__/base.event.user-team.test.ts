@@ -12,7 +12,7 @@ const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
 }));
 
 // sysRedis comes from the canonical redis mock (setup.ts registers it).
-const mockHGetAll = redisMock.sysRedis.hGetAll;
+const mockHGet = redisMock.sysRedis.hGet;
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 
@@ -32,30 +32,34 @@ const USER = 42;
 
 describe('getUserTeam', () => {
   beforeEach(() => {
-    mockHGetAll.mockReset();
+    mockHGet.mockReset();
     mockLogSysRedisFailOpen.mockReset();
   });
 
   it('returns a manual assignment over the computed team', async () => {
     const computed = await (async () => {
-      mockHGetAll.mockResolvedValueOnce({});
+      mockHGet.mockResolvedValueOnce(null);
       return event.getUserTeam(USER);
     })();
     const other = TEAMS.find((t) => t !== computed) as string;
-    mockHGetAll.mockResolvedValue({ [USER]: other });
+    mockHGet.mockImplementation(async (_key: string, field: string) =>
+      field === String(USER) ? other : null
+    );
 
     expect(await event.getUserTeam(USER, { strict: true })).toBe(other);
   });
 
   it('by default falls back to the computed team when the read fails', async () => {
-    mockHGetAll.mockRejectedValue(new Error('sysRedis down'));
+    mockHGet.mockResolvedValueOnce(null);
+    const computed = await event.getUserTeam(USER);
+    mockHGet.mockRejectedValue(new Error('sysRedis down'));
 
-    expect(TEAMS).toContain(await event.getUserTeam(USER));
+    expect(await event.getUserTeam(USER)).toBe(computed);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
   });
 
   it('with strict, rejects when the read fails instead of guessing', async () => {
-    mockHGetAll.mockRejectedValue(new Error('sysRedis down'));
+    mockHGet.mockRejectedValue(new Error('sysRedis down'));
 
     await expect(event.getUserTeam(USER, { strict: true })).rejects.toThrow('sysRedis down');
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();

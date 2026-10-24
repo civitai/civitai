@@ -9,6 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // which the repo's `consistent-type-imports` rule forbids (this file was the
 // last lint error in src/components/AppBlocks).
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
@@ -30,12 +31,20 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
   return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
 });
 
+// A signed-out viewer's un-grantable REQUEST_CONSENT opens the sign-in popup
+// instead of the toast; spy on it rather than open a real window.
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
   // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because
   // `vi.mock` replaces the module wholesale, the factory MUST re-declare that named
   // export or the ESM link fails ("does not provide an export named …") and the whole
-  // test file fails to import — silently, since this suite is report-only.
+  // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
@@ -108,6 +117,8 @@ import {
 } from '~/components/AppBlocks/PageBlockHost';
 // eslint-disable-next-line import/first
 import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
+// eslint-disable-next-line import/first
+import { UNGRANTABLE_CONSENT_TOAST } from '~/components/AppBlocks/requestConsentGate';
 
 /**
  * W10 lazy-consent gap regression (page surface).
@@ -433,6 +444,7 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     // dialogStore is a module-level zustand store shared across tests — reset it.
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
   });
 
   test('after BLOCK_READY, REQUEST_CONSENT opens the consent dialog with the server-known missing set', async () => {
@@ -551,6 +563,8 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     });
     // No consent dialog is opened for an un-grantable scope.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Signed in (`viewer` is set): the toast, never the sign-in popup.
+    expect(openLoginPopupSpy).not.toHaveBeenCalled();
   });
 
   /**
@@ -740,6 +754,66 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     }
   });
 
+  test('ANONYMOUS viewer: BLOCK_INIT / TOKEN_REFRESH advertise only the SIGNED scopes, and a REQUEST_CONSENT for a stripped gated scope is refused, not dropped', async () => {
+    // The anon mint strips every consent-gated scope but reports
+    // `missingScopes: []` / `needsConsent: false` — anon cannot consent. Before
+    // `signedScopes`, the host advertised `declared − []`, i.e. the gated scope
+    // too, and then read it as "already granted" so the request was dropped.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['apps:storage:read', 'apps:storage:publish']}
+        missingScopes={[]}
+        signedScopes={['apps:storage:read']}
+        needsConsent={false}
+        viewer={null}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    // BLOCK_INIT is re-posted until BLOCK_READY, so subscribe BEFORE acking.
+    await pollFor('iframe mount', () => !!iframeElQuery()?.contentWindow);
+    const posts = listenForHostPosts();
+    try {
+      await vi.waitFor(() => expect(posts.of('BLOCK_INIT').length).toBeGreaterThan(0));
+      const initScopes = (posts.of('BLOCK_INIT')[0].payload as { token?: { scopes?: string[] } })
+        .token?.scopes;
+      expect(initScopes).toEqual(['apps:storage:read']);
+
+      await driveToReady();
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
+      postFromBlock('REQUEST_TOKEN', {});
+      await vi.waitFor(() =>
+        expect(posts.of('TOKEN_REFRESH').length).toBeGreaterThan(refreshesBefore)
+      );
+      for (const m of posts.of('TOKEN_REFRESH').slice(refreshesBefore)) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+          'apps:storage:read',
+        ]);
+      }
+
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage:publish'],
+      });
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {
     // Was: reviewMode dropped REQUEST_CONSENT silently, so a moderator clicking a
     // consent-gated action in the review preview got nothing at all and the app
@@ -764,6 +838,182 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
       expect(showNotificationSpy).toHaveBeenCalledTimes(1);
     });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+});
+
+/**
+ * The dev-tunnel preview (`surface: 'dev-tunnel'`, BLOCK_INIT `storageMode:
+ * 'local-preview'`): the document store is served by the in-tab local store, and
+ * the tunnel mint never signs `apps:storage` / `apps:storage:publish`.
+ *
+ * The prod defect: an app asked for `['ai:write:budgeted', 'apps:storage',
+ * 'apps:storage:publish']` before quoting. The storage scopes were neither
+ * granted nor missing, so the host toasted "isn't available here" and the whole
+ * request was refused — even though the spend scope was granted.
+ *
+ * On this surface the host no longer prompts the VIEWER for a refused
+ * document-store scope. It still answers the BLOCK with CONSENT_UNAVAILABLE: an
+ * SDK that predates local-preview grants waits on that push, and with no answer
+ * its `requestGrants` promise would never settle. A current SDK never sends these
+ * scopes here at all. Off this surface nothing changes.
+ *
+ * Every test uses its own declared/signed set and hint, pairwise distinct.
+ */
+describe('PageBlockHost REQUEST_CONSENT — dev-tunnel local-preview storage', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+  });
+
+  const tunnelProps = { ...baseProps, surface: 'dev-tunnel' as const, needsConsent: false };
+
+  test('spend granted + document-store scopes: the block gets its answer, the viewer gets no toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['ai:write:budgeted', 'user:read:self']}
+        signedScopes={['ai:write:budgeted', 'user:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish'],
+      });
+      // The arrival is the positive control: the handler ran on this mount, so the
+      // zero toast below is a measurement and not a dropped message.
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      expect(openLoginPopupSpy).not.toHaveBeenCalled();
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('spend MISSING + document-store scopes: the consent modal opens for the spend scope only, no toast', async () => {
+    // Invariant guard, not regression coverage: `missingScopes` non-empty took the
+    // modal path before this change too. Pinned so the storage handling cannot
+    // start refusing a request the consent path can serve.
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['ai:write:budgeted', 'collections:read:self']}
+        signedScopes={['collections:read:self']}
+        missingScopes={['ai:write:budgeted']}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['apps:storage:publish', 'ai:write:budgeted', 'apps:storage'],
+      });
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialogProps = useDialogStore.getState().dialogs[0].props as { missingScopes: string[] };
+    expect(dialogProps.missingScopes).toEqual(['ai:write:budgeted']);
+    expect(showNotificationSpy).not.toHaveBeenCalled();
+  });
+
+  test('a document-store-only request gets a definite answer (CONSENT_UNAVAILABLE), never silence, and no toast', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['models:read:self']}
+        signedScopes={['models:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage'],
+      });
+      await new Promise((r) => setTimeout(r, 150));
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('a document-store scope next to an unknown scope still toasts (for the unknown one)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...tunnelProps}
+        declaredScopes={['buzz:read:self']}
+        signedScopes={['buzz:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage', 'some:unknown:scope'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage'],
+      });
+      await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+      expect(showNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining(UNGRANTABLE_CONSENT_TOAST)
+      );
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('the LIVE page (page-run) with the same document-store request still toasts, as before', async () => {
+    // The surface condition's own regression guard: apply the local-preview
+    // handling on every surface and THIS test goes red on the toast assertion.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="page-run"
+        needsConsent={false}
+        declaredScopes={['goods:read:self']}
+        signedScopes={['goods:read:self']}
+        missingScopes={[]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish', 'apps:storage'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      await vi.waitFor(() => expect(showNotificationSpy).toHaveBeenCalledTimes(1));
+      expect(showNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining(UNGRANTABLE_CONSENT_TOAST)
+      );
+    } finally {
+      posts.stop();
+    }
   });
 });
 
@@ -1393,6 +1643,165 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
     expect(helloSpy).not.toHaveBeenCalled();
     helloSpy.mockRestore();
   });
+});
+
+/**
+ * DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL (`onGuestReloaded`).
+ *
+ * 🔴 REGRESSION. Vite's live reload is `location.reload()` INSIDE the frame. The host's
+ * init controller has stopped at BLOCK_READY, so the reloaded document never gets a
+ * BLOCK_INIT; and once the ~120 s entry token in `?dev=` has expired the reload is a
+ * 401 the app never even runs in. Either way the preview froze until a manual Reload.
+ * Before the fix nothing observed the frame reloading, so `onGuestReloaded` was never
+ * called and the first test below is red.
+ *
+ * Two signals feed `isDevTunnelGuestReload`: a BLOCK_HELLO while ready (a new document
+ * whose entry was still valid), and the frame element's `load` event when it leaves more
+ * loads than hellos — the refused reload: a 401 + X-Frame-Options page runs no app code
+ * (so no BLOCK_HELLO), but Chromium still fires `load` on the element (measured
+ * 2026-10-23). A load is synthesised with
+ * `dispatchEvent`; the REAL initial load is waited for first (a document-level CAPTURE
+ * listener, installed before render, so it cannot miss it — `load` does not bubble but
+ * capture still reaches the target), so every count below is exact.
+ */
+describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
+  let stopTracking: (() => void) | null = null;
+  afterEach(() => {
+    stopTracking?.();
+    stopTracking = null;
+  });
+
+  /** Count the frame's REAL (trusted) load events. Install BEFORE rendering. */
+  function trackRealFrameLoads() {
+    let trusted = 0;
+    const handler = (e: Event) => {
+      if (e.isTrusted && e.target instanceof HTMLIFrameElement) trusted += 1;
+    };
+    document.addEventListener('load', handler, true);
+    stopTracking = () => document.removeEventListener('load', handler, true);
+    return () => trusted;
+  }
+
+  /** The guest document loaded again (Vite `location.reload()`, or its 401 page). */
+  function guestReload() {
+    const el = iframeElQuery();
+    if (!el) throw new Error('iframe missing');
+    el.dispatchEvent(new Event('load'));
+  }
+
+  async function mountAt(surface: 'dev-tunnel' | 'page-run' | 'private-run') {
+    const realLoads = trackRealFrameLoads();
+    const onGuestReloaded = vi.fn();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} surface={surface} onGuestReloaded={onGuestReloaded} />
+    );
+    await pollFor('the frame’s initial load', () => realLoads() >= 1);
+    return onGuestReloaded;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  test('dev-tunnel: a reload after BLOCK_READY asks for a fresh entry exactly once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    // Nothing reloaded yet. (NOT a control for "the initial load after ready is not a
+    // reload": the initial load here landed BEFORE ready, so the status check rejects it.
+    // That ordering is pinned by the predicate's unit test, devTunnelGuestReload.test.ts.)
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a burst of reloads asks once (one remount, never a storm)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+
+    for (let i = 0; i < 5; i++) guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalled());
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a reload BEFORE ready does not ask (the running handshake serves it)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    // e.g. Vite's "new dependencies optimized, reloading" during the first boot: the
+    // controller is still re-posting BLOCK_INIT, so the new document gets one anyway.
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count carried: the next load after ready is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  test('dev-tunnel: a BLOCK_HELLO after ready (a reload whose entry was still valid) asks once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // The reloaded document announces itself; its own load follows.
+    postFromBlock('BLOCK_HELLO');
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  // 🔴 REGRESSION (round-1 audit). An app whose boot replaces its document ONCE before
+  // READY (a `location.replace`, Vite's dependency-optimizer reload): two documents, each
+  // saying hello once, and the second one's own load landing after READY. Counting loads
+  // over the frame's whole life called that last load a reload — on every remount, a loop.
+  test('dev-tunnel: a document replaced during boot is not a reload once it is ready', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // document 1 has loaded
+    postFromBlock('BLOCK_HELLO'); // document 1's hello
+    postFromBlock('BLOCK_HELLO'); // document 2 announces itself, still loading
+    await driveToReady();
+    guestReload(); // document 2's own load, after READY: 2 loads, 2 hellos
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count is live: a load no hello accounts for is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  // 🔴 REGRESSION (round-2 audit). An app that starts its SDK late (e.g. in a React mount
+  // effect) says hello AFTER its own document's load. Resetting a load count on each hello
+  // erased that load, so the later refused (401) reload read as a first load and the
+  // preview stayed frozen. Counting loads against hellos needs no ordering.
+  test('dev-tunnel: a hello AFTER its own load still lets the later 401 reload ask', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // the document has loaded...
+    postFromBlock('BLOCK_HELLO'); // ...and only now says hello
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload(); // the 401 page: no app code, no hello
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  test.each(['page-run', 'private-run'] as const)(
+    '%s: a reload after BLOCK_READY never asks — dev-tunnel only',
+    async (surface) => {
+      const onGuestReloaded = await mountAt(surface);
+      await driveToReady();
+
+      for (let i = 0; i < 3; i++) guestReload();
+      postFromBlock('BLOCK_HELLO');
+      await settle();
+      expect(onGuestReloaded).not.toHaveBeenCalled();
+    }
+  );
 });
 
 // ===========================================================================

@@ -8,6 +8,7 @@
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
     defaultRunParams,
@@ -60,6 +61,8 @@
   let samplePrompts = $state<SamplePrompt[]>([]);
   let promptsSeed: { labels: string; prompts: string } | null = null;
   let runParams = $state<Record<string, RunParams>>({});
+  // The trigger the current Review params were seeded with.
+  let paramsSeedTrigger = '';
   let presetType = $state('');
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
@@ -131,9 +134,15 @@
     runParams = Object.fromEntries(
       selection.runs.map((run) => {
         const key = runParamsKey(run);
-        return [key, runParams[key] ?? defaultRunParams(run)];
+        const existing = runParams[key];
+        // Params still at the previous trigger's defaults follow a trigger change (shuffle/keep).
+        const untouched =
+          existing &&
+          JSON.stringify(existing) === JSON.stringify(defaultRunParams(run, paramsSeedTrigger));
+        return [key, existing && !untouched ? existing : defaultRunParams(run, t)];
       })
     );
+    paramsSeedTrigger = t;
     leaveData();
     step = 3;
   }
@@ -207,6 +216,8 @@
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
     </Button>
   </div>
+
+  <ServiceStatusBanner />
 
   {#if step === 1}
     <SelectStep

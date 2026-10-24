@@ -24,6 +24,7 @@ import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.servi
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
+import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -1287,7 +1288,14 @@ const ownerModerationEventSelect = {
  * The MOD-facing per-listing history (`listModerationEvents`) is unaffected and
  * still shows these events in place.
  */
-const OWNER_HIDDEN_MODERATION_ACTIONS = ['purge-user-storage'] as const;
+const OWNER_HIDDEN_MODERATION_ACTIONS = [
+  'purge-user-storage',
+  // Same reasoning: an act against a document ANOTHER user authored in this app.
+  'storage-doc-hide',
+  'storage-doc-unhide',
+  'storage-doc-delete',
+  'storage-doc-dismiss',
+] as const;
 
 /**
  * Per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is the
@@ -1311,9 +1319,7 @@ async function queryModerationEvents(opts: {
       // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
       // is withheld from the owner's history outright, because the owner select
       // keeps `reason` and the reason is about someone else.
-      ...(opts.ownerScoped
-        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
-        : {}),
+      ...(opts.ownerScoped ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } } : {}),
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
@@ -2006,10 +2012,15 @@ export async function republishOwnListing(opts: {
     // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
     // safe: tame media can never lower a deliberately higher declaration, and an
     // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
+    // An owner republish never grants a split; it keeps one a moderator granted, exactly as
+    // an image re-rate does. An icon or cover raised above PG-13 since then does not end it:
+    // civitai.com shows the placeholder / another image and `sfw-slot-mature` tells the
+    // author, and the listing stays on civitai.com.
     const flooredRating = await resolveListingRatingFloorInTx(
       tx,
       input.appListingId,
-      listing.contentRating
+      listing.contentRating,
+      await readListingMediaSplit(tx, input.appListingId)
     );
     const ratingChange = {
       slug: listing.slug,

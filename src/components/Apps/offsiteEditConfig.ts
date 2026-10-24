@@ -23,6 +23,12 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 /** One prefill asset (icon/cover) — its imageId + an edge-resolved preview URL. */
 export type EditAsset = { imageId: number | null; url: string | null };
 
+/**
+ * The civitai.red icon / cover overrides as the editor reads them; `available: false` while the
+ * environment cannot store them (the picker is then replaced by a note).
+ */
+export type EditRedMedia = { available: boolean; icon: EditAsset; cover: EditAsset };
+
 /** One prefill screenshot — its row id + imageId + edge-resolved preview URL. */
 export type EditScreenshot = {
   id: string;
@@ -90,6 +96,12 @@ export type ListingEditContext = {
     cover: EditAsset;
     screenshots: EditScreenshot[];
   };
+  /**
+   * The edit target's civitai.red icon / cover overrides (`ListingAssetStep`'s `redMedia`).
+   * OPTIONAL so pre-existing edit contexts + fixtures still type-check; absent renders no
+   * civitai.red section.
+   */
+  redMedia?: EditRedMedia;
   /**
    * OAuth-connect scope disclosure (present for the merged external-app model;
    * OPTIONAL so pre-existing non-connect edit contexts + tests still type-check):

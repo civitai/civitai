@@ -30,7 +30,7 @@ import {
  * share the minimum, and two of the four do, which falsified a "more on the others"
  * clause while these tests stayed green.
  *   1. `textToImage` — reserves the live whatIf quote, not a declared ceiling, and is
- *      not bounded below by LOW (the platform's per-gen default is 10).
+ *      not bounded below by LOW.
  *   2. The INLINE `customComfy` arm — the app declares its own ceiling, up to
  *      `INLINE_MAX_BUZZ` = 250, which the router reserves verbatim. That is ABOVE the
  *      HIGH bound asserted here, and it is why the warning copy names no upper bound.

@@ -20,12 +20,16 @@ import * as z from 'zod';
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
+import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -163,6 +167,8 @@ export function ArticleUpsertForm({ article }: Props) {
   }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
+  // A ref, not state: the schedule dialog sets it and submits in the same tick.
+  const scheduleIntentRef = useRef<Date | null | undefined>(undefined);
   const eventCard = articleEditEventCard(article, currentUser);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -185,8 +191,13 @@ export function ArticleUpsertForm({ article }: Props) {
     lockedProperties,
     isOfficial,
     content,
-    ...rest
+    ...values
   }: z.infer<typeof schema>) => {
+    const { rest, scheduledAt, publishNow } = getArticleScheduleSubmit(values, {
+      publishing,
+      scheduleIntent: scheduleIntentRef.current,
+    });
+    scheduleIntentRef.current = undefined;
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
@@ -201,11 +212,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
-          userNsfwLevel: canEditUserNsfwLevel
-            ? userNsfwLevel
-              ? Number(userNsfwLevel)
-              : 0
-            : undefined,
+          userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
           // Empty string means "clear override" -> null.
@@ -216,7 +223,8 @@ export function ArticleUpsertForm({ article }: Props) {
             : undefined,
           tags,
           // publishedAt will be set server-side based on status
-          status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
+          status: args?.status ? args.status : publishNow ? ArticleStatus.Published : undefined,
+          scheduledAt,
           coverImage,
           lockedProperties: lockedPropertiesRef.current,
           // Same shape as moderatorNsfwLevel above, and for a stronger reason: the server
@@ -249,7 +257,7 @@ export function ArticleUpsertForm({ article }: Props) {
     // Check if publishing or updating published article with embedded images.
     const contentImages = features.articleImageScanning ? extractImagesFromArticle(content) : [];
     const needsImageScanConfirm =
-      contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published);
+      contentImages.length > 0 && (publishNow || article?.status === ArticleStatus.Published);
     const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
     const newImages = needsImageScanConfirm
       ? contentImages.filter((img) => !existingImageUrls.has(img.url))
@@ -314,6 +322,24 @@ export function ArticleUpsertForm({ article }: Props) {
       onConfirm: continueAfterOverrideCheck,
     });
   };
+
+  const submitWithSchedule = (intent: Date | null) => {
+    setPublishing(false);
+    scheduleIntentRef.current = intent;
+    void form.handleSubmit(handleSubmit, () => {
+      scheduleIntentRef.current = undefined;
+    })();
+  };
+  const handleSchedule = () =>
+    dialogStore.trigger({
+      component: SchedulePostModal,
+      props: {
+        entity: 'article',
+        publishedAt: article?.scheduledAt,
+        onSubmit: submitWithSchedule,
+      },
+    });
+  const handleCancelSchedule = () => submitWithSchedule(null);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -387,6 +413,15 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
+              scheduleProps={
+                features.articleScheduling
+                  ? {
+                      disabled: upsertArticleMutation.isPending || !features.canWrite,
+                      onSchedule: handleSchedule,
+                      onCancelSchedule: handleCancelSchedule,
+                    }
+                  : undefined
+              }
               className="hidden @sm:flex"
             />
             {eventCard && <ArticleEditEventCard {...eventCard} />}
@@ -603,6 +638,15 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
+              scheduleProps={
+                features.articleScheduling
+                  ? {
+                      disabled: upsertArticleMutation.isPending || !features.canWrite,
+                      onSchedule: handleSchedule,
+                      onCancelSchedule: handleCancelSchedule,
+                    }
+                  : undefined
+              }
               className="@sm:hidden"
             />
           </Stack>
@@ -619,6 +663,7 @@ function ActionButtons({
   currentContent,
   saveButtonProps,
   publishButtonProps,
+  scheduleProps,
   ...stackProps
 }: ActionButtonProps) {
   // Get scan status for articles in Processing state
@@ -693,14 +738,41 @@ function ActionButtons({
           </Button>
           <Tooltip label={publishTooltipLabel} disabled={!hasProblematicImages} {...tooltipProps}>
             <Button {...publishButtonProps} disabled={publishDisabled} type="submit" fullWidth>
-              Publish
+              {article?.scheduledAt ? 'Publish now' : 'Publish'}
             </Button>
           </Tooltip>
+          {scheduleProps && (
+            <Button
+              variant="light"
+              type="button"
+              fullWidth
+              disabled={scheduleProps.disabled || hasProblematicImages}
+              onClick={scheduleProps.onSchedule}
+            >
+              {article?.scheduledAt ? 'Reschedule' : 'Schedule'}
+            </Button>
+          )}
         </>
       )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
+        </Text>
+      ) : article?.scheduledAt ? (
+        <Text size="xs" c="dimmed">
+          Scheduled to publish {formatDate(article.scheduledAt, 'lll')} your time (
+          {formatDate(article.scheduledAt, 'MMM D, HH:mm', true)} UTC).{' '}
+          {scheduleProps && (
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              disabled={scheduleProps.disabled}
+              onClick={scheduleProps.onCancelSchedule}
+            >
+              Cancel schedule
+            </Anchor>
+          )}
         </Text>
       ) : (
         <Text size="xs" c="dimmed">
@@ -726,6 +798,7 @@ type FormButtonProps = Pick<ButtonProps, 'disabled' | 'loading'> & {
 type ActionButtonProps = StackProps & {
   saveButtonProps: FormButtonProps;
   publishButtonProps: FormButtonProps;
+  scheduleProps?: { disabled: boolean; onSchedule: () => void; onCancelSchedule: () => void };
   article?: ArticleGetById;
   currentContent?: string;
 };

@@ -208,7 +208,7 @@ describe('catalogue before joining (A5)', () => {
     );
     glows.forEach((g, i) => expect(g).toContain(COLORS[picked(i)]));
     expect(el.querySelector('h2')?.textContent).toBe('14 hats to collect');
-    expect(el.textContent).toContain('Every design comes in all 4 team colours.');
+    expect(el.textContent).toContain('Every design comes in all 4 team colors.');
     expect(el.textContent).toContain('and 2 more designs');
     expect(el.textContent).not.toMatch(/buzz|\d{3,} /i);
   });

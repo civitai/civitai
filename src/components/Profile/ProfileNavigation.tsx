@@ -19,6 +19,7 @@ import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
@@ -33,6 +34,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const settings = useCurrentUserSettings();
   const isProfileOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const isModerator = currentUser?.isModerator ?? false;
@@ -142,6 +144,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       data={opts}
       value={activePath}
       loading={isInitialLoading || isRefetching}
+      keepLabels={settings.navigation?.keepProfileLabels}
     />
   );
 };

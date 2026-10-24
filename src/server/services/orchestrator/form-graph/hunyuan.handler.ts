@@ -1,6 +1,6 @@
 /** Hunyuan video handler for the form-graph lane — array-shaped loras. */
 
-import type { HunyuanVdeoGenInput, VideoGenStepTemplate } from '@civitai/client';
+import type { HunyuanVdeoGenInput, VideoGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
@@ -21,7 +21,7 @@ export const createHunyuanInput = defineHandler<EcosystemData<'HyV1'>, [VideoGen
         input: removeEmpty({
           engine: 'hunyuan',
           // Unnamed, the orchestrator picks its own Hunyuan build, which the site's coverage never saw.
-          model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+          checkpointModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
           prompt: data.prompt,
           width: data.aspectRatio?.width,
           height: data.aspectRatio?.height,

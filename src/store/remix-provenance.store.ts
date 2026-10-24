@@ -143,6 +143,54 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
   )
 );
 
+/**
+ * The reuse-prompt mint still in flight, if any. Not persisted: a promise does not survive a
+ * reload, and after one there is nothing left to wait for.
+ */
+let pendingPromptMint: { imageId: number; settled: Promise<void> } | undefined;
+
+/** How long a submit waits for an in-flight reuse-prompt mint before going without its token. */
+export const PROMPT_MINT_WAIT_MS = 10_000;
+
+/**
+ * Records a reuse-prompt mint until it settles. `mint` must settle only after the token (if any)
+ * is stored, so a submit that waited on it reads the token straight after.
+ */
+export function trackPromptMint(imageId: number, mint: Promise<unknown>) {
+  const entry = { imageId, settled: mint.then(noop, noop) };
+  pendingPromptMint = entry;
+  void entry.settled.then(() => {
+    if (pendingPromptMint === entry) pendingPromptMint = undefined;
+  });
+}
+
+const noop = () => undefined;
+
+/** Whether a submit under the claim on `imageId` has a mint worth waiting for. */
+export function hasPendingPromptMint(imageId: number | undefined) {
+  return imageId !== undefined && pendingPromptMint?.imageId === imageId;
+}
+
+/**
+ * Waits up to `boundMs` for the in-flight mint for `imageId`. A mint can take tens of seconds,
+ * and a submit made before it lands would otherwise go without the token, losing the free
+ * remix-gallery placement it was for. `timedOut` means the submit goes ahead without it.
+ */
+export async function waitForPromptMint(
+  imageId: number | undefined,
+  boundMs = PROMPT_MINT_WAIT_MS
+): Promise<{ timedOut: boolean }> {
+  const pending = pendingPromptMint;
+  if (!pending || imageId === undefined || pending.imageId !== imageId) return { timedOut: false };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = await Promise.race([
+    pending.settled.then(() => false),
+    new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(true), boundMs))),
+  ]);
+  clearTimeout(timer);
+  return { timedOut };
+}
+
 /** Standalone accessor for use outside React components. */
 export const remixProvenanceStore = {
   setToken: (url: string, token: string) => useRemixProvenanceStore.getState().setToken(url, token),

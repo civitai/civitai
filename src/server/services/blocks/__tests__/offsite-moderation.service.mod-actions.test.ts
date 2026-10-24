@@ -30,6 +30,8 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
+  $executeRaw: ReturnType<typeof vi.fn>;
   appListing: {
     updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
@@ -79,6 +81,8 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       deleteMany: vi.fn(async () => ({ count: 1 })),
@@ -115,7 +119,9 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     appOwnershipEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
   // The tx client is the write mock itself, so tx.* calls land on the same spies.
-  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
+  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(write)
+  );
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
     appListingReport: { findUnique: vi.fn(async () => null) },
@@ -152,7 +158,9 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
 }));
 // Assert owner-notification emission without pulling the notifications client graph.
-vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: mockNotify,
+}));
 
 const REVIEWER = 1001;
 const APP_ID = 'apl_target';
@@ -211,8 +219,8 @@ function onsiteListing(status: string) {
 beforeEach(() => {
   ids.n = 0;
   vi.clearAllMocks();
-  mockWrite.$transaction.mockImplementation(
-    async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite)
+  mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(mockWrite)
   );
   mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
@@ -220,13 +228,17 @@ beforeEach(() => {
   // Default the in-tx purge primary read to a valid offsite listing (overridden
   // per-test where the snapshot status is load-bearing).
   mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
-  mockWrite.appListingModerationEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
+  mockWrite.appListingModerationEvent.create.mockImplementation(
+    async (a: { data: unknown }) => a.data
+  );
   mockWrite.appListingModerationEvent.findFirst.mockResolvedValue(null);
   mockWrite.appListingReport.updateMany.mockResolvedValue({ count: 1 });
   // claim: default the target-owner lookup to a real user + the reassign to 1 row.
   mockWrite.user.findUnique.mockResolvedValue({ id: 42 });
   mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 1 });
-  mockWrite.appListingPublishRequest.create.mockImplementation(async (a: { data: unknown }) => a.data);
+  mockWrite.appListingPublishRequest.create.mockImplementation(
+    async (a: { data: unknown }) => a.data
+  );
   mockRead.appListing.findUnique.mockResolvedValue(null);
   mockRead.appListingReport.findUnique.mockResolvedValue(null);
   mockRead.appListingModerationEvent.findMany.mockResolvedValue([]);
@@ -478,7 +490,10 @@ describe('delistListing', () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      delistListing({ input: { appListingId: APP_ID, reason: GOOD_REASON }, reviewerUserId: REVIEWER })
+      delistListing({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_TRANSITIONABLE' });
     // Guard threw BEFORE the audit write — no event on a rolled-back mutation.
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
@@ -512,7 +527,10 @@ describe('delistListing', () => {
   it('a missing listing → generic NOT_FOUND (indistinguishable from on-site)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(null);
     await expect(
-      delistListing({ input: { appListingId: APP_ID, reason: GOOD_REASON }, reviewerUserId: REVIEWER })
+      delistListing({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
@@ -529,7 +547,9 @@ describe('delistListing', () => {
       data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
     });
     // The event carries the reportId link.
-    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(REPORT_ID);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(
+      REPORT_ID
+    );
   });
 
   it('a reportId belonging to a DIFFERENT listing is NOT resolved (0-row no-op); the delist still succeeds', async () => {
@@ -588,7 +608,10 @@ describe('relistListing', () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
@@ -694,7 +717,10 @@ describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', (
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     mockWrite.appListing.findUnique.mockResolvedValue(deadCta());
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('needs a working link before it can go live'),
@@ -711,11 +737,12 @@ describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', (
     // the allowed set — which is why the URL is null here, a shape that is
     // non-actionable under BOTH versions of the view-model.
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
-    mockWrite.appListing.findUnique.mockResolvedValue(
-      deadCta({ connectClientId: 'client-123' })
-    );
+    mockWrite.appListing.findUnique.mockResolvedValue(deadCta({ connectClientId: 'client-123' }));
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
@@ -724,7 +751,10 @@ describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', (
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
   });
@@ -734,7 +764,10 @@ describe('relistListing / republishOwnListing — go-live ACTIONABILITY gate', (
     // No destination at all — an on-site listing never has one, and must still relist.
     mockWrite.appListing.findUnique.mockResolvedValue(onsiteListing('removed'));
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
     expect(mockWrite.appListing.updateMany).toHaveBeenCalled();
   });
@@ -761,8 +794,14 @@ describe('relistListing — go-live scan-clean gate', () => {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(offsiteListing('removed')));
     mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('still scanning') });
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('still scanning'),
+    });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
@@ -772,7 +811,10 @@ describe('relistListing — go-live scan-clean gate', () => {
     mockWrite.appListing.findUnique.mockResolvedValue(withAssets(offsiteListing('removed')));
     mockWrite.image.findMany.mockImplementation(injectIngestion({ 2: 'Blocked' }));
     await expect(
-      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('blocked') });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
@@ -843,7 +885,12 @@ describe('claimListing', () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
     mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved'));
     await claimListing({
-      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON, reportId: REPORT_ID },
+      input: {
+        appListingId: APP_ID,
+        targetUserId: TARGET,
+        reason: GOOD_REASON,
+        reportId: REPORT_ID,
+      },
       reviewerUserId: REVIEWER,
     });
     // Scoped to THIS listing (appListingId) AND pending — a reportId for another
@@ -853,7 +900,9 @@ describe('claimListing', () => {
       data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
     });
     // The claim event carries the reportId link.
-    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(REPORT_ID);
+    expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.reportId).toBe(
+      REPORT_ID
+    );
   });
 
   it('a reportId belonging to a DIFFERENT listing is NOT resolved (0-row no-op); the claim still succeeds', async () => {
@@ -863,7 +912,12 @@ describe('claimListing', () => {
     // another listing) — the claim must still succeed (silent no-op).
     mockWrite.appListingReport.updateMany.mockResolvedValueOnce({ count: 0 });
     const res = await claimListing({
-      input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON, reportId: REPORT_ID },
+      input: {
+        appListingId: APP_ID,
+        targetUserId: TARGET,
+        reason: GOOD_REASON,
+        reportId: REPORT_ID,
+      },
       reviewerUserId: REVIEWER,
     });
     expect(res).toEqual({ appListingId: APP_ID, userId: TARGET });
@@ -905,8 +959,8 @@ describe('claimListing', () => {
   it('a draft/pending/rejected status → NOT_TRANSITIONABLE, ZERO events, no reassign', async () => {
     for (const status of ['draft', 'pending', 'rejected']) {
       vi.clearAllMocks();
-      mockWrite.$transaction.mockImplementation(
-        async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite)
+      mockWrite.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+        cb(mockWrite)
       );
       mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing(status));
       mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot(status));
@@ -965,7 +1019,9 @@ describe('claimListing', () => {
   it('snapshots before.userId from the in-tx PRIMARY read, not the (lagging) replica classify', async () => {
     // The replica classify sees a stale row; the primary tx read sees the TRUE owner.
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved'));
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(primarySnapshot('approved', 'offsite', 777));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      primarySnapshot('approved', 'offsite', 777)
+    );
     await claimListing({
       input: { appListingId: APP_ID, targetUserId: TARGET, reason: GOOD_REASON },
       reviewerUserId: REVIEWER,
@@ -1327,7 +1383,10 @@ describe('purgeListing', () => {
   it('rejects a NON-DRAFT on-site listing at the replica classify (no tx)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed', 'onsite'));
     await expect(
-      purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })
+      purgeListing({
+        input: { appListingId: APP_ID, reason: 'spam expunge' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
@@ -1337,7 +1396,10 @@ describe('purgeListing', () => {
     // Passed the replica classify, but the primary tx read finds it gone.
     mockWrite.appListing.findUnique.mockResolvedValueOnce(null);
     await expect(
-      purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })
+      purgeListing({
+        input: { appListingId: APP_ID, reason: 'spam expunge' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     // Guard threw before the event write.
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
@@ -1349,7 +1411,10 @@ describe('purgeListing', () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
     mockWrite.appListing.deleteMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })
+      purgeListing({
+        input: { appListingId: APP_ID, reason: 'spam expunge' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
@@ -1359,11 +1424,19 @@ describe('purgeListing', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveReport / dismissReport', () => {
-  const report = { id: REPORT_ID, status: 'pending', appListingId: APP_ID, appListing: { slug: SLUG } };
+  const report = {
+    id: REPORT_ID,
+    status: 'pending',
+    appListingId: APP_ID,
+    appListing: { slug: SLUG },
+  };
 
   it('resolveReport flips pending → resolved (guarded) + a report-resolve event with the note', async () => {
     mockRead.appListingReport.findUnique.mockResolvedValueOnce(report);
-    await resolveReport({ input: { reportId: REPORT_ID, note: '  handled  ' }, reviewerUserId: REVIEWER });
+    await resolveReport({
+      input: { reportId: REPORT_ID, note: '  handled  ' },
+      reviewerUserId: REVIEWER,
+    });
     expect(mockWrite.appListingReport.updateMany).toHaveBeenCalledWith({
       where: { id: REPORT_ID, status: 'pending' },
       data: { status: 'resolved', resolvedByUserId: REVIEWER, resolvedAt: expect.any(Date) },
@@ -1517,7 +1590,10 @@ describe('resetListingToPending', () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(primary('removed'));
     mockWrite.appListing.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(
-      resetListingToPending({ input: { appListingId: APP_ID, reason: GOOD_REASON }, reviewerUserId: REVIEWER })
+      resetListingToPending({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
@@ -1527,14 +1603,20 @@ describe('resetListingToPending', () => {
   it('a missing / on-site listing → generic NOT_FOUND (offsite-only), no tx', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('approved', 'onsite'));
     await expect(
-      resetListingToPending({ input: { appListingId: APP_ID, reason: GOOD_REASON }, reviewerUserId: REVIEWER })
+      resetListingToPending({
+        input: { appListingId: APP_ID, reason: GOOD_REASON },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('a too-short reason is a BAD_REQUEST with no DB touch', async () => {
     await expect(
-      resetListingToPending({ input: { appListingId: APP_ID, reason: 'x' }, reviewerUserId: REVIEWER })
+      resetListingToPending({
+        input: { appListingId: APP_ID, reason: 'x' },
+        reviewerUserId: REVIEWER,
+      })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockRead.appListing.findUnique).not.toHaveBeenCalled();
   });
@@ -1545,7 +1627,12 @@ describe('resetListingToPending', () => {
 // ---------------------------------------------------------------------------
 
 describe('unpublishOwnListing', () => {
-  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
+  function ownerPrimary(
+    status: string,
+    kind = 'offsite',
+    userId = OWNER,
+    appBlockId: string | null = null
+  ) {
     // `externalUrl` present for the same reason as `offsiteListing` above: republish
     // is a go-live and runs the off-site actionability gate.
     return {
@@ -1585,7 +1672,9 @@ describe('unpublishOwnListing', () => {
   });
 
   it('🔴 ON-SITE full takedown: flips BOTH app_listings AND the backing app_blocks (approved → suspended) in ONE tx + owner-unpublish event', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('approved', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('approved', 'onsite', OWNER, BLOCK_ID)
+    );
     const res = await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'removed' });
     // The listing flip is kind-scoped to onsite.
@@ -1606,7 +1695,9 @@ describe('unpublishOwnListing', () => {
   });
 
   it('a NON-owner caller → NOT_OWNED (FORBIDDEN), no flip/event', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('approved', 'offsite', OWNER));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('approved', 'offsite', OWNER)
+    );
     await expect(
       unpublishOwnListing({ input: { appListingId: APP_ID }, userId: 999 })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_OWNED' });
@@ -1632,7 +1723,12 @@ describe('unpublishOwnListing', () => {
 });
 
 describe('republishOwnListing (🔴 the last-event safety guard)', () => {
-  function ownerPrimary(status: string, kind = 'offsite', userId = OWNER, appBlockId: string | null = null) {
+  function ownerPrimary(
+    status: string,
+    kind = 'offsite',
+    userId = OWNER,
+    appBlockId: string | null = null
+  ) {
     // `externalUrl` present for the same reason as `offsiteListing` above: republish
     // is a go-live and runs the off-site actionability gate.
     return {
@@ -1666,7 +1762,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   });
 
   it('🔴 ON-SITE republish restores BOTH app_listings AND the backing app_blocks (suspended → approved) in ONE tx + owner-republish event', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
@@ -1684,7 +1782,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   });
 
   it('🔴 ON-SITE republish FORBIDDEN when the last event is a MOD delist — no listing flip AND no block flip', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'delist' });
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
@@ -1695,7 +1795,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   });
 
   it('ON-SITE republish whose block-restore flip is a 0-count (drift) emits the post-commit warn (observability, mirrors mod relist)', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
     // The backing block wasn't `suspended` → the guarded block flip matches 0 rows.
     mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -1739,7 +1841,9 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
   });
 
   it('a NON-owner caller → NOT_OWNED (FORBIDDEN)', async () => {
-    mockWrite.appListing.findUnique.mockResolvedValueOnce(ownerPrimary('removed', 'offsite', OWNER));
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'offsite', OWNER)
+    );
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: 999 })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
@@ -1769,7 +1873,10 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
     await expect(
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('still scanning') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('still scanning'),
+    });
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
@@ -1825,7 +1932,10 @@ describe('listMyListingModerationEvents', () => {
     // Ownership check reads the listing owner...
     mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
     // ...then the events query returns the page.
-    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([evt('alme_2'), evt('alme_1')]);
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([
+      evt('alme_2'),
+      evt('alme_1'),
+    ]);
     const res = await listMyListingModerationEvents({
       input: { appListingId: APP_ID, limit: 1 },
       userId: OWNER,
@@ -1835,7 +1945,15 @@ describe('listMyListingModerationEvents', () => {
     const args = mockRead.appListingModerationEvent.findMany.mock.calls[0][0];
     expect(args.where).toEqual({
       appListingId: APP_ID,
-      action: { notIn: ['purge-user-storage'] },
+      action: {
+        notIn: [
+          'purge-user-storage',
+          'storage-doc-hide',
+          'storage-doc-unhide',
+          'storage-doc-delete',
+          'storage-doc-dismiss',
+        ],
+      },
     });
     expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
   });
@@ -1852,7 +1970,15 @@ describe('listMyListingModerationEvents', () => {
     mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([]);
     await listMyListingModerationEvents({ input: { appListingId: APP_ID }, userId: OWNER });
     const ownerWhere = mockRead.appListingModerationEvent.findMany.mock.calls[0][0].where;
-    expect(ownerWhere.action).toEqual({ notIn: ['purge-user-storage'] });
+    expect(ownerWhere.action).toEqual({
+      notIn: [
+        'purge-user-storage',
+        'storage-doc-hide',
+        'storage-doc-unhide',
+        'storage-doc-delete',
+        'storage-doc-dismiss',
+      ],
+    });
 
     mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([]);
     await listModerationEvents({ appListingId: APP_ID });
@@ -1875,7 +2001,15 @@ describe('listMyListingModerationEvents', () => {
       unknown
     >;
     expect(select).toEqual({ id: true, action: true, reason: true, createdAt: true });
-    for (const dropped of ['actor', 'reportId', 'detail', 'before', 'after', 'appListingId', 'slug']) {
+    for (const dropped of [
+      'actor',
+      'reportId',
+      'detail',
+      'before',
+      'after',
+      'appListingId',
+      'slug',
+    ]) {
       expect(select).not.toHaveProperty(dropped);
     }
   });
@@ -2016,7 +2150,9 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
       iconId: icon,
       coverId: cover,
     });
-    mockWrite.appListingScreenshot.findMany.mockResolvedValue(shots.map((imageId) => ({ imageId })));
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue(
+      shots.map((imageId) => ({ imageId }))
+    );
     mockWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
         (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion, nsfwLevel: levels[id] ?? 0 }))
@@ -2031,6 +2167,23 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
           screenshots: shots.map((imageId) => ({ imageId, caption: null })),
         })
       )
+    );
+  }
+
+  /** `APP_ID` is split; the face read answers `faceLevels` by image id. */
+  function splitFake(faceLevels: Record<number, number> = {}) {
+    mockWrite.$queryRaw.mockImplementation(
+      async (strings: TemplateStringsArray, ...v: unknown[]) => {
+        const text = strings.join('?');
+        if (text.includes('to_regclass'))
+          return [{ present: true, can_select: true, can_insert: true, can_update: true }];
+        if (text.includes('FROM app_listing_red_media')) return [{ split: v[0] === APP_ID }];
+        if (text.includes('FROM "Image"')) {
+          const ids = (v[0] as { values: number[] }).values;
+          return ids.map((id) => ({ nsfwLevel: faceLevels[id] ?? 0 }));
+        }
+        return [];
+      }
     );
   }
 
@@ -2218,6 +2371,41 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
   });
 
+  it('🔴 a split a moderator granted is kept: the mature screenshot does not floor the republish', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_PG, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_X },
+    });
+    splitFake();
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
+  // The same rule as an image re-rate: an icon raised above SFW since the grant does not end
+  // the split. civitai.com shows the placeholder, and the state this leaves (SFW rating, R
+  // icon) is the one the T8 seam (`listing-media-split.seam.test.ts`) pins `sfw-slot-mature`
+  // on. The face read still answers R, so a republish that re-checked the face would floor
+  // by all media ('r') and fail here.
+  it('🔴 …and kept when its icon is above SFW: the listing stays on civitai.com, floored by its civitai.com media', async () => {
+    wire({
+      kind: 'offsite',
+      contentRating: 'g',
+      levels: { [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13, [SHOT_ID]: LVL_PG },
+    });
+    splitFake({ [ICON_ID]: LVL_R, [COVER_ID]: LVL_PG13 });
+    try {
+      await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+      expect(flipData()).toEqual({ status: 'approved', contentRating: 'pg13' });
+    } finally {
+      mockWrite.$queryRaw.mockReset().mockImplementation(async () => []);
+    }
+  });
+
   it('[INVARIANT GUARD — green at origin/main] 🔴 a BLOCKED asset still refuses via the PRE-EXISTING scan gate (the floor did not displace it)', async () => {
     // Reachability/attribution: the media is ALSO over-rated (X), so both the scan gate
     // and the floor would have something to say. The scan gate runs FIRST, so the
@@ -2251,7 +2439,11 @@ describe('republishOwnListing — go-live RATING FLOOR (uniform, both kinds)', (
     mockWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) => {
         if (++call >= 2) throw new Error('nsfwLevel read failed');
-        return (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned', nsfwLevel: 0 }));
+        return (args?.where?.id?.in ?? []).map((id) => ({
+          id,
+          ingestion: 'Scanned',
+          nsfwLevel: 0,
+        }));
       }
     );
     await expect(

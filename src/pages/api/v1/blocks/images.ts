@@ -9,6 +9,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch } from '~/server/services/image-search.service';
+import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -230,7 +231,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     }
     metadata.nextPage = getNextPage({ req, ...metadata }).nextPage;
 
-    res.status(200).json({ items, metadata });
+    // A provenance ticket per image for a signed-in viewer, so the app may set that viewer's
+    // reaction on what it was shown (`blocks.setReactionFromApp`). Anonymous tokens get none.
+    // Per-viewer data is safe here only because `withBlockScope` forces `private, no-store`.
+    const ticketed = items.map((item) => {
+      const reactTicket = reactTicketForImage(claims, item.id);
+      return reactTicket ? { ...item, reactTicket } : item;
+    });
+
+    res.status(200).json({ items: ticketed, metadata });
     return;
   } catch (error) {
     // 🔴 PARTIAL parity with the public /api/v1/images, and the split is

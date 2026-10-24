@@ -1,6 +1,7 @@
 import {
   BLOCK_SPEND_SCOPE,
   BUZZ_BUDGET_CAP,
+  BUZZ_BUDGET_DEFAULT,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -71,7 +72,9 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
 // privately or exercise in review. Total spend on these tokens is bounded by the
 // aggregate caps (per-user daily, dev session, private-run, review).
 export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
-export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+// Not lower than the install-token default either, for the same reason: an app that
+// declares no budget must develop, run privately and review at the budget it gets live.
+export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
 
 // Forced SFW — the dev mint NEVER reads the request host. localhost / the dev
 // tunnel has no color domain, and even a color-localhost dev config must not widen
@@ -90,6 +93,17 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  // apps:storage / apps:storage:publish — the DOCUMENT STORE (`/api/v1/blocks/storage`).
+  // INCLUDED here, on this bearer path only. The storage resolver routes a dev token to
+  // the namespace `dev:<uid>` of the token's own subject, so every document, mark and
+  // counter it writes — shared collections included — is read back only by the same
+  // developer and never by a production viewer; and it resolves an APPROVED app only (a
+  // pending or local mint's synthetic ids are refused), so the pre-approval collision that
+  // keeps App Storage off the tunnel allowlist cannot arise. The publish scope is consent-
+  // gated in production; here, as for `collections:read:private`, the only identity it
+  // publishes under is the developer's own, into their own namespace.
+  'apps:storage',
+  'apps:storage:publish',
   // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
   // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
   // approval because a pre-approval app's storage NAMESPACE is synthetic and could
@@ -151,17 +165,35 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // the purchase path refuses a buyer who owns the app, and a pre-approval app
   // has no AppBlock row to resolve a catalog from at all.
   'goods:read:self',
+  // social:react:self — INCLUDED in BOTH dev allowlists, on the `posts:write:self` reasoning: a
+  // dev token is self-bound to the AUTHOR'S OWN account, so every reaction it sets is one the
+  // author could have clicked themselves, against the same per-user reaction quota (the wrapper
+  // shares the site's), and still behind the provenance ticket and the fail-closed flag.
+  // Omitting it would leave a reactions app un-iterable before approval: these allowlists strip
+  // the scope before signing, so no consent round-trip could restore it.
+  //
+  // 🔴 IT IS STILL A REAL, REWARD-PAYING REACTION, which is why BOTH review allowlists below
+  // withhold it: a moderator previewing someone else's unapproved app must never react under
+  // the MOD'S name. The private-run ceiling derives from the run-for-real set, so it is
+  // withheld there too.
+  'social:react:self',
 ]);
 
 /**
  * The COOKIE-authed dev-TUNNEL host-mint allowlist (Phase 2). IDENTICAL to
- * `DEV_TOKEN_SCOPE_ALLOWLIST` MINUS `apps:storage:read` / `apps:storage:write`
- * (Decision 1). App Storage is REFUSED pre-approval: a pre-approval app has a
- * synthetic, non-resolving appId, so its storage namespace is undefined and could
- * collide across the approve boundary — generation/Buzz work pre-approval, App
- * Storage does not. Stripping the scope from the clamp is defense-in-depth ON TOP
- * of the downstream `resolveStorageContext` 404 for a synthetic/non-approved appId
- * (so a minted tunnel token can NEVER carry a storage scope in the first place).
+ * `DEV_TOKEN_SCOPE_ALLOWLIST` MINUS its four storage scopes — `apps:storage`,
+ * `apps:storage:publish`, `apps:storage:read` and `apps:storage:write` (Decision 1;
+ * the shared `apps:storage:shared:*` pair is in neither list). App Storage is REFUSED
+ * pre-approval: a pre-approval app has a synthetic, non-resolving appId, so its
+ * storage namespace is undefined and could collide across the approve boundary —
+ * generation/Buzz work pre-approval, App Storage does not. Stripping the scope from
+ * the clamp is defense-in-depth ON TOP of the downstream `resolveStorageContext` 404
+ * for a synthetic/non-approved appId (so a minted tunnel token can NEVER carry a
+ * storage scope in the first place).
+ *
+ * An APPROVED app previewed through the tunnel never reaches this allowlist (it mints
+ * on the ordinary page path), so the same rule is applied there separately: see
+ * `withoutDocumentStoreScopes` in `src/pages/api/v1/block-tokens/index.ts`.
  */
 export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
@@ -190,6 +222,9 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // rationale): self-bound, read-only, and empty for a pre-approval app.
   // `goods:purchase:self` stays excluded everywhere.
   'goods:read:self',
+  // social:react:self — INCLUDED here too (see the DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // self-bound to the author's own account in their own dev tunnel.
+  'social:react:self',
 ]);
 
 /**
@@ -215,6 +250,7 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `goods:read:self`           not needed to RENDER; answers empty pre-approval
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
  *   - `posts:write:self`          PUBLIC content published under the MOD'S name
+ *   - `social:react:self`         public, reward-paying reactions under the MOD'S name
  *
  * These strings are verified against block-scope.constants.ts. Modelled on
  * TUNNEL_HOST_MINT_SCOPE_ALLOWLIST but WITHOUT `ai:write:budgeted`,
@@ -244,6 +280,10 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *                           per-call budget AND the aggregate session cap below)
  *   - `apps:storage:read`   the mod's OWN per-app KV (see caveat *)
  *   - `apps:storage:write`  the mod's OWN per-app KV (see caveat *)
+ *   - `apps:storage`        the DOCUMENT STORE (`/api/v1/blocks/storage`), in the mod's OWN
+ *                           review namespace (see caveat **)
+ *   - `apps:storage:publish` the document store's shared-collection writes, in that same
+ *                           namespace — so "shared" means shared with the mod alone (**)
  *   - `buzz:read:self`      the mod's OWN balance/ledger (self-bound read)
  *
  * DELIBERATELY WITHHELD (clamped out regardless of what the pending manifest
@@ -272,6 +312,8 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *                                     App Storage's `apprev_<pubreq>` schema) — it
  *                                     is indistinguishable from a real one and
  *                                     survives the approve/reject teardown.
+ *   - `social:react:self`             a public, reward-paying reaction under the
+ *                                     REVIEWING MOD'S name, on the same reasoning.
  *
  * (*) App Storage WORKS under run-for-real via a dedicated preview namespace:
  * `resolveStorageContext` (apps.router), when the token carries the signed
@@ -281,6 +323,26 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * pending app's namespace, and never pollute the eventual approved app's schema; the
  * preview schema is dropped on the approve/reject teardown. Generation + own-Buzz-read
  * likewise work (self-bound; no approved AppBlock row required).
+ *
+ * (**) The DOCUMENT STORE resolves a run-for-real token to the namespace
+ * `rev:<publishRequestId>:<moderatorUid>` (`doc-store-access.ts`; the store refuses a review
+ * namespace paired with any other request or viewer). Two reasons kept these scopes out until
+ * that namespace existed, and both are now closed:
+ *   - ONE `rev:<publishRequestId>` namespace would have been SHARED by every moderator
+ *     reviewing the request — their shared documents, marks, counters and (with `showAuthor`)
+ *     usernames would have crossed between them. Per-moderator namespaces make every
+ *     collection, shared ones included, visible to the reviewing mod alone, so the
+ *     consent-gated `apps:storage:publish` ("every user of the app can read them") has no
+ *     audience here beyond the mod. OWNER DECISION: the moderator's run-for-real opt-in counts
+ *     as the consent for `apps:storage:publish`; the review mint runs no per-scope consent
+ *     partition, and the consent-revocation marker still applies at the route.
+ *   - NOTHING deleted review data when the request was decided. Approve, reject and withdraw
+ *     now delete every review namespace of the request (`teardownReviewStorageForRequest`,
+ *     `publish-request.service.ts`), and the hourly sweep (`jobs/sweep-review-storage.ts`)
+ *     deletes whatever is left for any request no longer pending — superseded requests and
+ *     failed inline purges included.
+ * The tunnel and private-run ceilings still withhold both: their tokens resolve to no review
+ * namespace (see `PRIVATE_RUN_SUBTRACTED_SCOPES`).
  *
  * Money-OUT (`social:tip:self`) is excluded SOLELY by its ABSENCE from this
  * allowlist: the clamp keeps only scopes in the allowlist (step b), so a manifest
@@ -298,6 +360,8 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  'apps:storage',
+  'apps:storage:publish',
   'buzz:read:self',
 ]);
 
@@ -535,7 +599,7 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  *     `PRIVATE_RUN_BUZZ_CAP`. Editors are stripped of it at step 3.
  *   - `buzz:read:self` is NOT kept — see the subtractions below.
  *
- * ── THE THREE DELIBERATE SUBTRACTIONS ───────────────────────────────────────────
+ * ── THE DELIBERATE SUBTRACTIONS ─────────────────────────────────────────────────
  * `apps:storage:read` / `apps:storage:write` function under run-for-real ONLY because
  * `resolveStorageContext` resolves a disposable, per-publish-request `apprev_<pubreq>`
  * schema for a token carrying the signed `reviewRunForReal` claim. It grants no such
@@ -543,6 +607,10 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * schema or refuse outright — and granting a scope whose proc then refuses it is worse
  * than not granting it, because the block's UI offers a control that cannot work. (Net
  * effect unchanged from the tunnel ceiling, which also excludes both.)
+ *
+ * `apps:storage` / `apps:storage:publish` (the document store) are subtracted for the same
+ * reason: the store's review namespace is selected only by the signed `reviewRunForReal`
+ * claim, and a private run of a non-approved app gets no storage from its resolver at all.
  *
  * 🔴 `buzz:read:self` IS SUBTRACTED TOO, AND THIS ONE IS A REVIEW FINDING RATHER THAN A
  * MECHANICAL CARRY-OVER. It is a consent-gated SENSITIVE scope on the public path, and
@@ -568,9 +636,11 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * is the single `ai:write:budgeted` strip for an editor, in `clampPrivateRunScopes`.
  */
 const PRIVATE_RUN_SUBTRACTED_SCOPES: ReadonlySet<string> = new Set([
-  // Only usable under the review sandbox's disposable preview schema.
+  // Only usable under the review sandbox's disposable preview schema / review namespace.
   'apps:storage:read',
   'apps:storage:write',
+  'apps:storage',
+  'apps:storage:publish',
   // Consent-gated, and withheld by the DEFAULT review allowlist for a reason that
   // describes this surface verbatim. See the docblock above.
   'buzz:read:self',
@@ -694,13 +764,12 @@ export function parseManifestBuzzBudget(page: unknown): number | undefined {
  * Precedence: an EXPLICIT caller-supplied `requestedBudget` (the CLI/body can
  * always ask for a specific budget) > the RESOLVED app manifest's
  * `page.buzzBudgetPerGen` (`manifestDefaultBudget`, present for the approved +
- * pending modes where a manifest is resolvable) > `DEV_BUZZ_BUDGET_DEFAULT` (the
- * flat platform floor, used only for the ephemeral no-row mode). The
+ * pending modes where a manifest is resolvable) > `DEV_BUZZ_BUDGET_DEFAULT` (when
+ * neither is present). The
  * `DEV_BUZZ_BUDGET_CAP` hard ceiling clamps the final value in EVERY case, so a
  * manifest can only ever raise the dev default UP TO the cap. This is what lets a
- * recipe/app whose `page.buzzBudgetPerGen` exceeds 50 be dev-tested without a
- * manual `buzzBudget` request (the flat-50 default previously rejected it with
- * `ceiling N exceeds budget 50`).
+ * recipe/app whose `page.buzzBudgetPerGen` exceeds the default be dev-tested without
+ * a manual `buzzBudget` request.
  */
 export function resolveDevBuzzBudget(
   granted: string[],

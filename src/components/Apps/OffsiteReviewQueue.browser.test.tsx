@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 P3a — /apps/review off-site (external-link) queue. Browser-mode render test
- * (report-only in Tekton): a pending off-site row renders in the kind-aware queue,
+ * (`Component tests` in CI): a pending off-site row renders in the kind-aware queue,
  * and opening it shows the CONTENT-ONLY checklist (https / asset presence, NO code
  * items) + the external URL + Approve/Reject.
  */
@@ -50,6 +50,9 @@ const mocks = vi.hoisted(() => ({
   rejectMutate: vi.fn(),
   // Mutable so a test can inject a blocked / pending scan state (Item 1).
   assetsData: { current: null as unknown },
+  assetsError: { current: false },
+  // The moderator preview projection; `undefined` = the placeholder-art fallback.
+  previewData: { current: undefined as unknown },
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -113,6 +116,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             // per test via mocks.assetsData.current.
             data: mocks.assetsData.current,
             isLoading: false,
+            isError: mocks.assetsError.current,
             error: null,
           }),
         },
@@ -133,7 +137,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // Listing-preview projection — undefined data → the section falls back to the
         // placeholder-art layout preview (these tests assert checklist/scan behaviour).
         getListingPreviewForReview: {
-          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+          useQuery: () => ({ data: mocks.previewData.current, isLoading: false, error: null }),
         },
       },
     },
@@ -141,13 +145,47 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 const { OffsiteReviewQueue, OffsiteReviewModal } = await import('./OffsiteReviewQueue');
+const { buildListingDetailPreview } = await import('./reviewListingPreview');
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.approveMutate.mockClear();
   mocks.rejectMutate.mockClear();
   mocks.assetsData.current = { ...DEFAULT_ASSETS };
+  mocks.assetsError.current = false;
+  mocks.previewData.current = undefined;
 });
+
+/**
+ * The approve flow when the server reports the split as unreadable (`mediaSplitApproved: null`,
+ * the write role cannot read the record). The operator's rule (2026-10-18): approve proceeds with
+ * NO split decision, exactly as before the split existed — so no choice is offered and none is
+ * sent (an explicit one would be refused). Returns the mutation input.
+ *
+ * `note` is the WHOLE expected note, pinned literally: the note states what the approve does
+ * (rated by all media, an earlier split kept but not applied), so a reword is a claim change.
+ */
+const UNREADABLE_NOTE =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.';
+const UNREADABLE_REVISION_NOTE =
+  'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving this revision keeps the app’s current rating and records no split decision. Any split recorded earlier is kept on file but not applied while this environment cannot read it, so the next time the listing is re-rated its rating is floored by all of its media. Split choices are unavailable until the database grant for the media-split record is fixed.';
+
+async function expectUnreadableApproveSendsNoDecision(note: string) {
+  const el = page.getByTestId('apps-media-split-unreadable');
+  await expect.element(el).toBeInTheDocument();
+  expect((el.element().textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(note);
+  expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+  expect(page.getByRole('radio', { name: /^Rate by all media/ }).elements()).toHaveLength(0);
+  expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
+  const confirm = page.getByTestId('apps-offsite-approve-confirm');
+  await expect.element(confirm).toBeEnabled();
+  await confirm.click();
+  expect(mocks.approveMutate).toHaveBeenCalledTimes(1);
+  const vars = mocks.approveMutate.mock.calls[0][0];
+  expect(vars).toEqual(expect.objectContaining({ publishRequestId: expect.any(String) }));
+  expect(vars).not.toHaveProperty('mediaSplit');
+  return vars;
+}
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
   test('renders a pending off-site row', async () => {
@@ -168,6 +206,134 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     // The two ENTRY actions present (approve is now gated behind its own click).
     await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — click-to-reveal on civitai.com and the civitai.red overrides', () => {
+  // This host does not show mature content (`canViewNsfw` absent): civitai.com.
+  const card = {
+    id: 'listing-1',
+    slug: 'ci-ext-app',
+    kind: 'offsite',
+    name: 'CI External App',
+    tagline: null,
+    category: 'utility',
+    contentRating: 'g',
+    iconUrl: LOADABLE_IMAGE_DATA_URI,
+    coverUrl: LOADABLE_IMAGE_DATA_URI,
+    creator: null,
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    openCount: null,
+    isBeta: false,
+    restrictedAudience: null,
+    kindData: { kind: 'offsite', externalUrl: 'https://example.com/app' },
+  };
+  const preview = (screenshotLevel: number) => ({
+    card,
+    detail: undefined,
+    media: {
+      icon: { imageId: 10, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      cover: { imageId: 11, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 1 },
+      redIcon: { imageId: 13, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: 16 },
+      redCover: null,
+      screenshots: [
+        {
+          imageId: 12,
+          url: LOADABLE_IMAGE_DATA_URI,
+          nsfwLevel: screenshotLevel,
+          caption: null,
+        },
+      ],
+    },
+  });
+
+  test('🔴 the store-layout preview is held behind one reveal by its most mature image', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const reveal = page.getByTestId('apps-listing-preview-reveal');
+    await expect.element(reveal).toBeInTheDocument();
+    // The XXX civitai.red icon is the most mature image here.
+    expect(reveal.element().querySelector('[data-revealed]')?.getAttribute('data-revealed')).toBe(
+      'false'
+    );
+  });
+
+  test('🔴 the media panel shows the civitai.red icon as its own tile, labelled civitai.red only', async () => {
+    mocks.previewData.current = preview(1);
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-review-listing-red-icon-audience-ci-ext-app'))
+      .toHaveTextContent('civitai.red only');
+  });
+
+  test('🔴 the held-back preview cannot be reached by keyboard: its screenshot tile never opens the full-size viewer until Show', async () => {
+    // The preview's screenshot tile is a button whose viewer is a portal Modal outside the
+    // blur, so Tab + Enter on it showed the XXX media full-size without clicking Show.
+    mocks.previewData.current = {
+      ...preview(1),
+      detail: buildListingDetailPreview(OFFSITE_ROW as never, {
+        screenshots: [{ url: LOADABLE_IMAGE_DATA_URI, caption: null }],
+      }),
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const reveal = page.getByTestId('apps-listing-preview-reveal');
+    const held = () => reveal.element().querySelector('[data-revealed]');
+    await expect.poll(() => held()?.getAttribute('data-revealed')).toBe('false');
+    const tile = page.getByTestId('apps-listing-screenshot-tile');
+    await expect.element(tile).toBeInTheDocument();
+    const tileEl = tile.element() as HTMLElement;
+    expect(held()?.contains(tileEl)).toBe(true);
+
+    // A Tab sweep through the whole review modal never lands inside the held-back preview.
+    let landedInside = 0;
+    let moved = 0;
+    let last: Element | null = null;
+    for (let i = 0; i < 60; i++) {
+      await userEvent.keyboard('{Tab}');
+      if (document.activeElement !== last) moved++;
+      last = document.activeElement;
+      if (held()?.contains(document.activeElement)) landedInside++;
+    }
+    expect(moved).toBeGreaterThan(3); // positive control: the sweep really moved focus
+    expect(landedInside).toBe(0);
+    // Park focus on the body (the sweep may have ended on another image's own Show button,
+    // which would reveal this one too), then try to focus the tile directly and press Enter.
+    (document.activeElement as HTMLElement | null)?.blur();
+    tileEl.focus();
+    expect(document.activeElement).not.toBe(tileEl);
+    await userEvent.keyboard('{Enter}');
+    expect(page.getByTestId('apps-listing-screenshot-viewer').query()).toBeNull();
+    expect(held()?.getAttribute('data-revealed')).toBe('false');
+
+    // After Show the same tile is reachable and opens the viewer.
+    // A DOM click: this file loads no site stylesheet, so the overlay is never laid out the way
+    // Playwright's actionability check wants (`ReviewMediaReveal.browser.test.tsx` clicks it
+    // for real, with the stylesheet).
+    (reveal.getByRole('button', { name: 'Show' }).element() as HTMLElement).click();
+    await expect.poll(() => held()?.getAttribute('data-revealed')).toBe('true');
+    (page.getByTestId('apps-listing-screenshot-tile').element() as HTMLElement).focus();
+    expect(document.activeElement).toBe(page.getByTestId('apps-listing-screenshot-tile').element());
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByTestId('apps-listing-screenshot-viewer')).toBeInTheDocument();
+  });
+
+  test('a Blocked civitai.red icon is named in the blocked-media alert', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      redIconId: 13,
+      redIconNsfwLevel: 16,
+      redIconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-assets-scan-blocked'))
+      .toHaveTextContent(/Blocked media: civitai\.red icon/);
   });
 });
 
@@ -405,7 +571,7 @@ describe('OffsiteReviewModal — readOnly (history) posture hides the action but
 // On-site listing-MEDIA revision (kind: 'onsite') — the same listing modal reviews
 // it, but it renders kind-aware: a "listing media" header (NOT "external app"), NO
 // external URL, NO connect panel, the shadow-asset content checklist, and a
-// cap-at-app-rating review (media must not exceed the app's rating). Report-only.
+// cap-at-app-rating review (media must not exceed the app's rating).
 describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)', () => {
   const ONSITE_MEDIA_ROW = {
     id: 'lmr-1',
@@ -463,6 +629,40 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
     // assertion to the mismatch callout itself.
     await expect.element(mismatch).toHaveTextContent('must not exceed the app’s rating');
   });
+
+  test('🔴 an on-site media revision whose split the app cannot read approves with no decision', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const vars = await expectUnreadableApproveSendsNoDecision(UNREADABLE_REVISION_NOTE);
+    expect(vars).toEqual(expect.objectContaining({ publishRequestId: 'lmr-1' }));
+  });
+
+  test('🔴 the split choice previews no rating: the revision apply records it but rates nothing', async () => {
+    // `applyApprovedRevision`'s on-site branch is assets-only — it writes the split stamp and
+    // never `contentRating`. Fixture ratings are distinct (all media R, civitai.com media G), so
+    // a projection of either would be visible.
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const control = page.getByTestId('apps-media-split');
+    await expect.element(control).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-media-split-later'))
+      .toHaveTextContent('keeps the app’s current rating');
+    expect(page.getByTestId('apps-media-split-all-rating').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-media-split-com-rating').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-media-split-audiences').elements()).toHaveLength(0);
+    const text = control.element().textContent ?? '';
+    expect(text).not.toMatch(/\((G|PG|PG-13|R|X|XXX)\)/);
+    expect(text).not.toContain(' as G');
+    // The decision itself is kept: preselected as the listing's current split, and sent.
+    await expect.element(page.getByRole('radio', { name: /^Split:/ })).toBeChecked();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'split' })
+    );
+  });
 });
 
 // 🔴 The OTHER on-site request shape: an owner republish whose store imagery changed
@@ -517,6 +717,13 @@ describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-
     await expect.element(mismatch).toBeInTheDocument();
     await expect.element(mismatch).toHaveTextContent('it is a floor here, not a cap');
     expect(mismatch.element().textContent).not.toContain('reject this revision');
+  });
+
+  test('positive control: a republish review DOES rate, so its split choice shows the projection', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-media-split-all-rating')).toBeInTheDocument();
+    expect(page.getByTestId('apps-media-split-later').elements()).toHaveLength(0);
   });
 
   test('🔴 the approve Select defaults to the DERIVED rating (the floor), not the app rating', async () => {
@@ -587,6 +794,164 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     // label would satisfy the assertion above and break this one.
     expect(mocks.approveMutate).toHaveBeenCalledWith(
       expect.objectContaining({ publishRequestId: 'req-1', contentRating: 'r' })
+    );
+  });
+});
+
+describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
+  async function openApprove() {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+  }
+
+  test('shows both ratings the decision chooses between', async () => {
+    await openApprove();
+    expect(page.getByTestId('apps-media-split-all-rating').element().textContent).toBe(
+      'Rating with all media: R'
+    );
+    expect(page.getByTestId('apps-media-split-com-rating').element().textContent).toBe(
+      'Rating with civitai.com media only: G'
+    );
+  });
+
+  test('🔴 by default approve sends rate-mature and the all-media rating', async () => {
+    await openApprove();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'r', mediaSplit: 'rate-mature' })
+    );
+  });
+
+  test('🔴 choosing the split re-defaults the rating to the civitai.com media, and approve sends both', async () => {
+    await openApprove();
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
+    await page.getByTestId('apps-media-split-split').click();
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    await expect.poll(() => ratingInput.value).toBe('G');
+    // The R screenshot no longer floors the rating, so nothing is flagged as above it.
+    expect(page.getByTestId('apps-offsite-rating-mismatch').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'g', mediaSplit: 'split' })
+    );
+  });
+
+  test('labels each image with where it will show under the chosen decision', async () => {
+    await openApprove();
+    const shot = page.getByTestId('apps-media-split-audience-screenshot-1');
+    const icon = page.getByTestId('apps-media-split-audience-icon-0');
+    // Rated by all media (R): the listing leaves civitai.com, so everything is .red-only.
+    expect(shot.element().textContent).toBe('civitai.red only');
+    expect(icon.element().textContent).toBe('civitai.red only');
+    await page.getByTestId('apps-media-split-split').click();
+    await expect.poll(() => icon.element().textContent).toBe('civitai.com + civitai.red');
+    expect(shot.element().textContent).toBe('civitai.red only');
+  });
+
+  test('🔴 approve waits until the listing’s media and split state have loaded', async () => {
+    mocks.assetsData.current = undefined;
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect
+      .element(page.getByTestId('apps-media-split-unknown'))
+      .toHaveTextContent('Approve is available once the listing’s media has loaded.');
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+  });
+
+  test('a failed read says so, and approve stays unavailable', async () => {
+    mocks.assetsData.current = undefined;
+    mocks.assetsError.current = true;
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect
+      .element(page.getByTestId('apps-media-split-unknown'))
+      .toHaveTextContent('Could not load the listing’s media');
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeDisabled();
+  });
+
+  test('invariant guard: a request with no listing to read is never blocked on it', async () => {
+    mocks.assetsData.current = undefined;
+    renderWithProviders(
+      <OffsiteReviewModal
+        request={{ ...OFFSITE_ROW, appListingId: null } as never}
+        onClose={() => undefined}
+      />
+    );
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-offsite-approve-confirm')).toBeEnabled();
+    expect(page.getByTestId('apps-media-split-unknown').elements()).toHaveLength(0);
+  });
+
+  test('a cover above SFW makes the split unavailable', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, coverNsfwLevel: 4 };
+    await openApprove();
+    await expect.element(page.getByTestId('apps-media-split-split')).toBeDisabled();
+  });
+
+  test('all-SFW media offers no choice', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      screenshots: [{ imageId: 12, nsfwLevel: 2, scanStatus: 'scanned' as const }],
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+  });
+
+  test('🔴 a split the app cannot read: no choice, a note, and approve proceeds with no decision', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: null };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const vars = await expectUnreadableApproveSendsNoDecision(UNREADABLE_NOTE);
+    // Rated by all media (the screenshot's R), as before the split existed.
+    expect(vars).toEqual(expect.objectContaining({ contentRating: 'r' }));
+  });
+
+  test('positive control: the same listing read as unsplit offers the choice and approves', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: false };
+    await openApprove();
+    expect(page.getByTestId('apps-media-split-unreadable').elements()).toHaveLength(0);
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'rate-mature' })
+    );
+  });
+
+  test('🔴 a listing that is already split keeps it by default, and says how to end it', async () => {
+    mocks.assetsData.current = { ...DEFAULT_ASSETS, mediaSplitApproved: true };
+    await openApprove();
+    await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+    await expect.element(page.getByRole('radio', { name: /^Split:/ })).toBeChecked();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ contentRating: 'g', mediaSplit: 'split' })
+    );
+  });
+
+  test('🔴 a split chosen while the choice was shown is not sent once it is hidden', async () => {
+    await openApprove();
+    await page.getByTestId('apps-media-split-split').click();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    // The author's media is now all SFW: the choice no longer applies and is not shown.
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      screenshots: [{ imageId: 12, nsfwLevel: 2, scanStatus: 'scanned' as const }],
+    };
+    await page.getByTestId('apps-offsite-approve-open').click();
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaSplit: 'rate-mature' })
     );
   });
 });

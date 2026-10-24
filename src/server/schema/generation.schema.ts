@@ -1,11 +1,16 @@
 import * as z from 'zod';
+import { rangeSchema } from '~/shared/zod/range.schema';
 import type { Sampler } from '~/server/common/constants';
-import { constants, generation } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionTermsSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
-import { generationSamplers } from '~/shared/constants/generation.constants';
+import {
+  MAX_SEED,
+  DEFAULT_STRENGTH_RANGE,
+  generationSamplers,
+} from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 
@@ -37,7 +42,7 @@ export const getGenerationRequestsSchema = z.object({
 
 const generationResourceSchemaBase = z.object({
   id: z.number(),
-  strength: z.number().default(1),
+  strength: z.number().optional(),
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
@@ -45,8 +50,17 @@ const generationResourceSchemaBase = z.object({
     .object({ endsAt: z.coerce.date().nullable(), terms: modelVersionTermsSchema })
     .nullish(),
   canGenerate: z.boolean(),
-  minStrength: z.number().default(-1),
-  maxStrength: z.number().default(2),
+  settings: z
+    .object({
+      strength: rangeSchema,
+      clipSkip: z.number().optional(),
+      turboLora: z.object({ id: z.number(), strength: z.number().optional() }).optional(),
+    })
+    .default({ strength: DEFAULT_STRENGTH_RANGE }),
+  turbo: z.boolean().optional(),
+  recommendedSettings: z
+    .object({ steps: rangeSchema.optional(), cfgScale: rangeSchema.optional() })
+    .optional(),
   image: imageSchema
     .pick({ url: true, type: true })
     .extend({ url: z.url().or(z.string().uuid()) })
@@ -138,7 +152,7 @@ const sharedGenerationParamsSchema = z.object({
   sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
-  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
+  seed: z.coerce.number().min(-1).max(MAX_SEED).default(-1),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),

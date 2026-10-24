@@ -1,6 +1,8 @@
 import { Checkbox, Input, Select, Stack, Switch } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
+import { TurboRow } from '~/components/form-graph/generation/TurboRow';
+import { additionalResources, turboMetaOf } from '~/shared/form-graph/generation/turbo';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
@@ -39,6 +41,7 @@ import {
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
+import { AvatarFormFields } from '~/components/AvatarGen/AvatarFormFields';
 import type { GenerationStore } from './store';
 
 /**
@@ -98,18 +101,52 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="resources"
-        render={({ value, meta, onChange }) => (
-          <ResourceSelectMultipleInput
-            value={value}
-            onChange={onChange}
-            label="Additional Resources"
-            buttonLabel="Add LoRA"
-            modalTitle="Select Resources"
-            options={meta?.options}
-            limit={meta?.limit}
-            role="resource"
-          />
-        )}
+        render={({ meta, onChange: setResources }) => {
+          const turbo = turboMetaOf(meta);
+          if (!turbo) return null;
+          return (
+            <Controller
+              graph={imageHub}
+              name="turboLora"
+              render={({ value: pick, meta: loraMeta, onChange: setPick }) =>
+                pick && loraMeta ? (
+                  <TurboRow
+                    turbo={turbo}
+                    pick={pick}
+                    familyDefaultId={loraMeta.familyDefaultId}
+                    options={loraMeta.options}
+                    onToggle={(on, lora) =>
+                      setResources(on && lora ? [...turbo.withoutTurbo, lora] : turbo.withoutTurbo)
+                    }
+                    onChange={(lora) => {
+                      setPick(lora);
+                      if (turbo.enabled) setResources([...turbo.withoutTurbo, lora]);
+                    }}
+                  />
+                ) : null
+              }
+            />
+          );
+        }}
+      />
+      <Controller
+        graph={imageHub}
+        name="resources"
+        render={({ value, meta, onChange }) => {
+          const list = additionalResources(turboMetaOf(meta), value, meta?.limit);
+          return (
+            <ResourceSelectMultipleInput
+              value={list.value}
+              onChange={(next) => onChange(list.commit(next as NonNullable<typeof value>))}
+              label="Additional Resources"
+              buttonLabel="Add LoRA"
+              modalTitle="Select Resources"
+              options={meta?.options}
+              limit={list.limit}
+              role="resource"
+            />
+          );
+        }}
       />
       <MultiController
         graph={imageHub}
@@ -172,6 +209,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
+      <AvatarFormFields store={store} />
       <Controller
         graph={generationHub}
         name="upscaler"
@@ -293,18 +331,13 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="resolution"
         render={({ value, meta, onChange, note }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-            <FieldCorrectionNote note={note} />
-          </div>
+          <SegmentedEnumField
+            label="Resolution"
+            value={value}
+            onChange={onChange}
+            options={(meta as SegmentedEnumMeta).options}
+            note={note}
+          />
         )}
       />
       <Controller
@@ -326,17 +359,24 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="creativity"
         render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Creativity</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={meta.options.map((o: { label: string; value: string }) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
+          <SegmentedEnumField
+            label="Creativity"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="thinkingMode"
+        render={({ value, meta, onChange }) => (
+          <SegmentedEnumField
+            label="Thinking"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+          />
         )}
       />
       <div className="flex gap-4">
@@ -384,6 +424,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }
@@ -441,6 +482,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 max={meta.max}
                 step={meta.step}
                 presets={meta.presets}
+                recommended={'recommended' in meta ? meta.recommended : undefined}
               />
             ) : null
           }
@@ -601,5 +643,33 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         />
       </AccordionLayout>
     </Stack>
+  );
+}
+
+type SegmentedEnumMeta = { options: readonly { label: string; value: string }[] };
+
+function SegmentedEnumField<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  note,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: SegmentedEnumMeta['options'];
+  note?: React.ComponentProps<typeof FieldCorrectionNote>['note'];
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Input.Label>{label}</Input.Label>
+      <SegmentedControlWrapper
+        value={value}
+        onChange={(v) => onChange(v as T)}
+        data={options.map((o) => ({ label: o.label, value: o.value }))}
+      />
+      <FieldCorrectionNote note={note} />
+    </div>
   );
 }

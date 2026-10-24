@@ -41,7 +41,8 @@ async function before() {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY);
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int,
+      type text NOT NULL DEFAULT 'Badge', source text, "permanentUnlock" boolean, data jsonb);
   `);
   for (const dir of earlier) await db.exec(read(dir));
   for (const [id, n] of BADGES)

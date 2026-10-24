@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { captured, devTunnelEnabled, serverEnv } = vi.hoisted(() => ({
+const { captured, devTunnelEnabled, runnerConfigured, serverEnv } = vi.hoisted(() => ({
   serverEnv: { APP_ASSISTANT_SANDBOX_URL: undefined as string | undefined },
   captured: { fn: null as null | ((c: unknown) => Promise<unknown>) },
   devTunnelEnabled: vi.fn(async () => true),
+  runnerConfigured: vi.fn(() => true),
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -19,6 +20,9 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', () => ({
   AppAssistantWorkspace: () => null,
 }));
 vi.mock('~/env/server', () => ({ env: serverEnv }));
+vi.mock('~/server/services/app-assistant/assistant-runner-tokens', () => ({
+  isAssistantRunnerConfigured: runnerConfigured,
+}));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({ AppsPageLayout: () => null }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 
@@ -44,6 +48,7 @@ async function resolve(features: Record<string, boolean>, user: object | null = 
 
 beforeEach(() => {
   devTunnelEnabled.mockResolvedValue(true);
+  runnerConfigured.mockReturnValue(true);
   serverEnv.APP_ASSISTANT_SANDBOX_URL = undefined;
 });
 
@@ -72,15 +77,42 @@ describe('/apps/assistant getServerSideProps', () => {
 
   it('renders without a route CSP, which would outlive the page in the tab', async () => {
     const { result, csp } = await resolve({ ...ON, appBlocksAuthor: true });
-    expect(result).toEqual({ props: { canPreview: true, sandboxUrl: null } });
+    expect(result).toEqual({
+      props: { canPreview: true, sandboxUrl: null, subagents: false, remoteRunner: false },
+    });
     expect(csp).toBeUndefined();
   });
 
   it('offers the preview only to an author with dev tunnels', async () => {
-    expect((await resolve(ON)).result).toEqual({ props: { canPreview: false, sandboxUrl: null } });
+    expect((await resolve(ON)).result).toEqual({
+      props: { canPreview: false, sandboxUrl: null, subagents: false, remoteRunner: false },
+    });
     devTunnelEnabled.mockResolvedValue(false);
     expect((await resolve({ ...ON, appBlocksAuthor: true })).result).toEqual({
-      props: { canPreview: false, sandboxUrl: null },
+      props: { canPreview: false, sandboxUrl: null, subagents: false, remoteRunner: false },
+    });
+  });
+
+  it('offers subagents only with their flag', async () => {
+    expect((await resolve({ ...ON, appAssistantSubagents: true })).result).toMatchObject({
+      props: { subagents: true },
+    });
+    expect((await resolve(ON)).result).toMatchObject({ props: { subagents: false } });
+  });
+
+  it('runs replies on the server only with its flag, and only once the runner and the sandbox service are configured', async () => {
+    // No sandbox service: the runner would refuse every start, so the page stays in the browser.
+    expect((await resolve({ ...ON, appAssistantRemoteRunner: true })).result).toMatchObject({
+      props: { remoteRunner: false },
+    });
+    serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
+    expect((await resolve({ ...ON, appAssistantRemoteRunner: true })).result).toMatchObject({
+      props: { remoteRunner: true },
+    });
+    expect((await resolve(ON)).result).toMatchObject({ props: { remoteRunner: false } });
+    runnerConfigured.mockReturnValue(false);
+    expect((await resolve({ ...ON, appAssistantRemoteRunner: true })).result).toMatchObject({
+      props: { remoteRunner: false },
     });
   });
 
@@ -93,7 +125,12 @@ describe('/apps/assistant getServerSideProps', () => {
   it('passes the sandbox service URL from the server env, read at request time', async () => {
     serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
     expect((await resolve(ON)).result).toEqual({
-      props: { canPreview: false, sandboxUrl: 'https://sandbox.example' },
+      props: {
+        canPreview: false,
+        sandboxUrl: 'https://sandbox.example',
+        subagents: false,
+        remoteRunner: false,
+      },
     });
     serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://other-sandbox.example';
     expect((await resolve(ON)).result).toMatchObject({

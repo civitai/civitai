@@ -68,6 +68,7 @@ import {
 } from '~/utils/unreadable-pick';
 import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { isMediaHost } from '~/shared/utils/media-host';
+import { toOriginalEdgeUrl } from '~/client-utils/edge-url';
 import { isCivitaiSiteUrl } from '~/utils/civitai-url';
 import { env } from '~/env/client';
 
@@ -2054,8 +2055,15 @@ SourceImageUploadMultiple.UrlDropzone = function UrlDropzone({
 SourceImageUploadMultiple.Image = function ImagePreview({
   className,
   index,
+  showDimensions = true,
+  fit = 'contain',
   ...previewItem
-}: ImagePreview & { className?: string; index: number }) {
+}: ImagePreview & {
+  className?: string;
+  index: number;
+  showDimensions?: boolean;
+  fit?: 'contain' | 'cover';
+}) {
   const {
     missingAiMetadata,
     removeItem,
@@ -2150,7 +2158,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewItem.url}
-                className="size-full object-contain"
+                className={clsx('size-full', fit === 'cover' ? 'object-cover' : 'object-contain')}
                 alt="image"
                 onError={handleError}
               />
@@ -2159,10 +2167,12 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                   <Loader size="sm" />
                 </div>
               ) : (
-                <SourceImageUploadMultiple.Dimensions
-                  width={previewItem.width}
-                  height={previewItem.height}
-                />
+                showDimensions && (
+                  <SourceImageUploadMultiple.Dimensions
+                    width={previewItem.width}
+                    height={previewItem.height}
+                  />
+                )
               )}
               {enableMetadataExtraction && (
                 <MetadataAction url={previewItem.url} apply={metadataApply} />
@@ -2222,10 +2232,13 @@ export async function uploadOrchestratorImage(
   // they have, so a caller can release a blob: url only when nothing is reading it.
   let sourceMetadata: ReturnType<typeof extractSourceMetadata> | undefined;
   const reads = () => Promise.resolve(sourceMetadata).then(() => undefined);
+  // A url dropped from a page is the resized variant it showed, which has lost a PNG's
+  // generation metadata; read the stored file instead. `src` stays the provenance key.
+  const readSrc = typeof src === 'string' ? toOriginalEdgeUrl(src) : src;
   try {
     // Inside the try: callers render a failed upload from `blockedReason`, and a throw here
     // would leave their card loading forever.
-    originalSize = await prepStage('dims', () => getImageDimensions(src), timeoutMs);
+    originalSize = await prepStage('dims', () => getImageDimensions(readSrc), timeoutMs);
 
     // If already an orchestrator URL, return it directly
     if (typeof src === 'string' && isOrchestratorUrl(src)) {
@@ -2246,13 +2259,16 @@ export async function uploadOrchestratorImage(
     // below drops its EXIF — otherwise the uploaded URL has nothing left to read
     // back and the image-metadata modal comes up empty for local files.
     const metadataSrc =
-      metadataSource ?? (typeof src === 'string' || src instanceof File ? src : undefined);
+      typeof metadataSource === 'string'
+        ? toOriginalEdgeUrl(metadataSource)
+        : metadataSource ??
+          (typeof readSrc === 'string' || readSrc instanceof File ? readSrc : undefined);
     sourceMetadata = metadataSrc
       ? extractSourceMetadata(metadataSrc).catch(() => undefined)
       : undefined;
 
     // Resize and convert to JPEG blob
-    const resized = await resizeImage(src, {
+    const resized = await resizeImage(readSrc, {
       maxHeight: maxUpscaleSize,
       maxWidth: maxUpscaleSize,
       minWidth: minUploadSize,

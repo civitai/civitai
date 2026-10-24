@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateTime, plural } from '../format';
+import { dateTime, ordinal, plural } from '../format';
 
 /**
  * These call `Intl` for real rather than asserting a rendered string: the defect they cover is a
@@ -65,5 +65,24 @@ describe('plural', () => {
     expect(out).not.toBe('12345 findings');
     expect(out.endsWith(' findings')).toBe(true);
     expect(out).toMatch(/^\d[\d\s,.  ]*\d findings$/);
+  });
+});
+
+describe('ordinal', () => {
+  it('handles the teens and the 1/2/3 endings', () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 102, 111].map(ordinal)).toEqual([
+      '1st',
+      '2nd',
+      '3rd',
+      '4th',
+      '11th',
+      '12th',
+      '13th',
+      '21st',
+      '22nd',
+      '23rd',
+      '102nd',
+      '111th',
+    ]);
   });
 });

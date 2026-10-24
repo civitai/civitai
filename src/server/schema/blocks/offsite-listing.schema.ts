@@ -9,6 +9,7 @@ import {
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
   OFFSITE_MOD_REASON_MAX,
   OFFSITE_MOD_REASON_MIN,
@@ -242,6 +243,15 @@ export const updateListingPatchSchema = z
      */
     isBeta: z.boolean().optional(),
     betaMessage: z.string().max(BETA_MESSAGE_MAX).nullable().optional(),
+    /**
+     * AUTHOR OPT-IN: "Let others fork this app's source" (on-site listings only).
+     *
+     * 🔴 TRIVIAL, NOT MATERIAL — absent from `MATERIAL_LISTING_PATCH_FIELDS`, so it applies IN
+     * PLACE with no moderator review, like `isBeta`. It grants nothing a moderator approved: a
+     * fork is a separate app that passes its own publish review. Written to the LIVE listing
+     * only, never staged on a shadow revision (`updateRevisionDraft` refuses it).
+     */
+    forkable: z.boolean().optional(),
     // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications
@@ -372,6 +382,7 @@ export const approveExternalRequestSchema = z.object({
   // nsfwLevel; when provided the service FLOORS it at the derived value (never
   // publishes mature assets under a too-low rating). See `approveExternalRequest`.
   contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 

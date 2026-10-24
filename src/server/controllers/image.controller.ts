@@ -33,6 +33,7 @@ import {
   updateImageAcceptableMinor,
   raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
+  getOpenImageReportIds,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import {
@@ -45,10 +46,15 @@ import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
+import {
+  canConfirmReRemoval,
+  heldRemovalSummary,
+  holdRemovals,
+} from '~/server/services/image-removal-hold.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, refreshProfilePicturesForImages } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -56,15 +62,19 @@ import {
 } from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { viewerCanSeeImageMedia, withoutMedia } from '~/server/utils/image-media-visibility';
+import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
+  EntityType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -76,6 +86,7 @@ import type {
   UpdateImageNsfwLevelOutput,
 } from './../schema/image.schema';
 import { requiresImageDbPath } from './../schema/image.schema';
+import { FEED_MAX_LIMIT } from '~/server/services/feed-shadow.service';
 import {
   getAllImages,
   getEntityCoverImage,
@@ -86,6 +97,7 @@ import {
   getResourceIdsForImages,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
+  getPostImageCounts,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
@@ -115,6 +127,9 @@ export const moderateImageHandler = async ({
       userId: ctx.user.id,
       ip: resolveClientIpOrNull(ctx.req) ?? undefined,
       userAgent: ctx.req.headers['user-agent'],
+      ...(input.reviewAction === 'block' && {
+        canConfirmReRemoval: await canConfirmReRemoval(ctx.user),
+      }),
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -146,6 +161,12 @@ export const deleteImageHandler = async ({
     const image = await deleteImageById(input);
 
     if (image) {
+      // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
+      await closeAppealsDeletedByOwner({
+        entityType: EntityType.Image,
+        entityIds: [input.id],
+        ownerId: ctx.user.id,
+      });
       await ctx.track.images([
         {
           type: 'Delete',
@@ -193,11 +214,30 @@ export const setTosViolationHandler = async ({
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
+    // Before anything changes: a held removal leaves the image, its reports and its owner untouched
+    // until a second moderator confirms it.
+    if (!(await canConfirmReRemoval(user))) {
+      const { held } = await holdRemovals(
+        [
+          {
+            imageId: id,
+            violationType,
+            violationDetails,
+            reportIds: await getOpenImageReportIds(id, ReportReason.TOSViolation),
+          },
+        ],
+        user.id,
+        'site.setTosViolation'
+      );
+      if (held.length) return { ...image, held: heldRemovalSummary(held)[0] };
+    }
+
     // Update all reports with this comment id to actioned
     const affectedReports = await updateImageReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(
@@ -236,6 +276,7 @@ export const setTosViolationHandler = async ({
     await clearReviewFlagsOnBlock([id]);
     await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
+    await refreshProfilePicturesForImages([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
     // would let a later account restore un-block what was just moderated.
@@ -247,8 +288,8 @@ export const setTosViolationHandler = async ({
     // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
     // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
     //
-    // It is also load-bearing now: `remove-blocked-images` retracts the SHARED, content-addressed
-    // stored object only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
+    // It is also load-bearing now: `remove-blocked-images` retracts an image's public copies
+    // only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
     // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
     // bytes left in place — which is the safe direction, but not the intended one.
     await trackModActivity(user.id, {
@@ -287,7 +328,7 @@ export const setTosViolationHandler = async ({
         userId: ctx.user.id,
       },
     ]);
-    return image;
+    return { ...image, held: null };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -402,6 +443,33 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
+// One completion fetch stays inside the search index's hit window (posts) and the feed service's
+// page (rows): a fetch the feed can't answer whole goes to the search index instead.
+const COMPLETION_POSTS_PER_FETCH = 25;
+const COMPLETION_ROWS_PER_FETCH = FEED_MAX_LIMIT;
+
+/**
+ * Groups posts into completion fetches of at most `COMPLETION_POSTS_PER_FETCH` posts and
+ * `COMPLETION_ROWS_PER_FETCH` rows, in order. A post larger than one fetch goes alone.
+ */
+export function packPostCompletions(postIds: number[], rowsOf: (postId: number) => number) {
+  const batches: number[][] = [];
+  let batch: number[] = [];
+  let rows = 0;
+  for (const postId of postIds) {
+    const r = rowsOf(postId);
+    const full = batch.length >= COMPLETION_POSTS_PER_FETCH || rows + r > COMPLETION_ROWS_PER_FETCH;
+    if (batch.length && full) {
+      batches.push(batch);
+      batch = [];
+      rows = 0;
+    }
+    batch.push(postId);
+    rows += r;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
@@ -519,21 +587,25 @@ export const getImagesAsPostsInfiniteHandler = async ({
       userAgent: ctx.req.headers['user-agent'],
     });
 
+    // TODO handle/remove all these (headers, include, ids)
+    const pageFetchArgs = {
+      ...input,
+      followed: false,
+      domain: getRequestBoardDomainColor(ctx.req),
+      ids: fetchHidden ? versionHiddenImages : undefined,
+      user,
+      eventDecorationViewer: user,
+      headers: { src: 'getImagesAsPostsInfiniteHandler' },
+      include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
+      dbTarget: features.datapacketRead ? ('datapacket' as const) : ('read' as const),
+      actor,
+    };
+
     while (true) {
-      // TODO handle/remove all these (headers, include, ids)
       const { nextCursor, items } = await fetchFn({
-        ...input,
-        followed: false,
-        domain: getRequestBoardDomainColor(ctx.req),
+        ...pageFetchArgs,
         cursor,
-        ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
-        user,
-        eventDecorationViewer: user,
-        headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds', 'profilePictures'],
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        actor,
       });
 
       // Merge images by postId
@@ -556,6 +628,45 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // If there are enough posts, stop
       if (Object.keys(posts).length >= limit) break;
       remaining = limit - Object.keys(posts).length;
+    }
+
+    // Pages are cut by image, so an image-level sort leaves a post holding only the images that
+    // ranked onto this page. Completing it here keeps its card, and the `imageCount` the lazy
+    // carousel loads the tail from, the same on every page. A post whose row count is already on
+    // the page cannot be incomplete, so only the others are fetched again. It runs only with lazy
+    // post images on, so turning that flag off restores the page as the query returned it.
+    if (features.galleryLazyPostImages) {
+      const pagePostIds = Object.keys(posts).map(Number);
+      const rowCounts = await getPostImageCounts({
+        postIds: pagePostIds,
+        dbTarget: pageFetchArgs.dbTarget,
+      }).catch((error: Error) => {
+        // Without counts, complete every post rather than leave one short.
+        logToAxiom({ type: 'error', name: 'gallery-post-counts-failed', message: error.message });
+        return undefined;
+      });
+      const rowCountOf = (postId: number) => rowCounts?.get(postId) ?? POST_IMAGE_LIMIT;
+      const partialPostIds = pagePostIds.filter(
+        (postId) => rowCountOf(postId) > posts[postId].length
+      );
+      const completions = await Promise.all(
+        packPostCompletions(partialPostIds, rowCountOf).map((postIds) =>
+          fetchFn({
+            ...pageFetchArgs,
+            cursor: undefined,
+            postIds,
+            postIdsInRequestedSort: true,
+            // The rows a filtered fetch returns are a subset of the posts' rows.
+            limit: postIds.reduce((sum, postId) => sum + rowCountOf(postId), 0),
+          })
+        )
+      );
+      for (const { items: wholePosts } of completions) {
+        for (const image of wholePosts) {
+          const post = image?.postId ? posts[image.postId] : undefined;
+          if (post && !post.some((x) => x.id === image.id)) post.push(image);
+        }
+      }
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
@@ -613,7 +724,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
-      if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      if (input.sort === ImageSort.Newest)
+        images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
       let nsfwLevel = 0;
       for (const imageNsfwLevel of imageNsfwLevels) {
@@ -746,11 +858,30 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    const result = await getImage({
-      ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
-    });
+    const [image, eventDecorations] = await Promise.all([
+      getImage({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+      }),
+      // The hat the image detail draws when it is opened on its own, with no feed to seed it.
+      // Safe per viewer only while image.get caches nothing per URL.
+      // A hat is decoration: its lookup failing must not fail the image.
+      getEventDecorationsForEntity({
+        ids: [input.id],
+        entity: 'Image',
+        viewer: eventViewerOf(ctx),
+      }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'image-get-event-decoration',
+          message: (error as Error).message,
+          imageId: input.id,
+        }).catch(() => undefined);
+        return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
+      }),
+    ]);
+    const result = { ...image, eventDecoration: eventDecorations[image.id] ?? null };
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
@@ -762,7 +893,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: result.user.id,
       postId: result.postId ?? null,
     });
-    return canSeeMedia ? result : withoutMedia(result);
+    return canSeeMedia ? result : withoutMedia({ ...result, eventDecoration: null });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -796,6 +927,7 @@ export const getEntitiesCoverImageHandler = async ({
     return await getEntityCoverImage({
       ...input,
       include: ['tags'],
+      viewer: ctx.user,
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: ctx.user,

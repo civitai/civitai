@@ -27,6 +27,8 @@ const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
+const SHARED_OPS = 'civitai_app_block_shared_storage_ops_total';
+const SHARED_LATENCY = 'civitai_app_block_shared_storage_latency_seconds';
 
 async function seriesCount(name: string): Promise<number> {
   const metric = client.register.getSingleMetric(name) as
@@ -43,6 +45,8 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
     expect(client.register.getSingleMetric(QUOTA_EXCEEDED)).toBeUndefined();
     expect(client.register.getSingleMetric(USER_QUOTA_UNTRACKED)).toBeUndefined();
     expect(client.register.getSingleMetric(LATENCY)).toBeUndefined();
+    expect(client.register.getSingleMetric(SHARED_OPS)).toBeUndefined();
+    expect(client.register.getSingleMetric(SHARED_LATENCY)).toBeUndefined();
   });
 
   it('CONTROL 2: loading the module registers them but publishes NO series', async () => {
@@ -55,6 +59,8 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
     expect(await seriesCount(QUOTA_EXCEEDED)).toBe(0);
     expect(await seriesCount(USER_QUOTA_UNTRACKED)).toBe(0);
     expect(await seriesCount(LATENCY)).toBe(0);
+    expect(await seriesCount(SHARED_OPS)).toBe(0);
+    expect(await seriesCount(SHARED_LATENCY)).toBe(0);
   });
 
   it('🔴 serving one scrape publishes all 90 of them', async () => {
@@ -81,5 +87,21 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
     expect(body).toContain(`${QUOTA_EXCEEDED}{ceiling="user"} 0`);
     expect(body).toContain(`${USER_QUOTA_UNTRACKED} 0`);
     expect(body).toContain(`${LATENCY}_count{op="list"} 0`);
+  });
+
+  it('🔴 the same scrape publishes the 230 shared storage series', async () => {
+    const mod = await import('~/pages/api/metrics');
+    const handler = mod.default as unknown as (
+      req: unknown,
+      res: { setHeader: (k: string, v: string) => void; send: (body: string) => void }
+    ) => Promise<void>;
+
+    let body = '';
+    await handler({}, { setHeader: () => undefined, send: (b: string) => (body = b) });
+
+    expect(await seriesCount(SHARED_OPS)).toBe(76);
+    expect(await seriesCount(SHARED_LATENCY)).toBe(154);
+    expect(body).toContain(`${SHARED_OPS}{op="increment",outcome="moderation_unavailable"} 0`);
+    expect(body).toContain(`${SHARED_LATENCY}_count{op="getTop"} 0`);
   });
 });

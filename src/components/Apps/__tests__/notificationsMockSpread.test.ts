@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
  * count, never as a failing assertion.
  *
  * NEITHER TIER BLOCKS A MERGE. The node one is `continue-on-error` on a pull request
- * (`lint.yml:405`) and the browser one is report-only always (`preview / component-tests`);
+ * and the browser one runs as `Component tests`;
  * `main` requires no status check at all in this repo — `branches/main/protection` carries no
  * `required_status_checks` key, and the only ruleset is
  * `protect-deploy-branches-from-deletion`. So a failure here is a signal a reviewer must

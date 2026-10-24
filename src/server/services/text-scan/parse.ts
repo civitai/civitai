@@ -7,7 +7,8 @@ export type TextScanFailureReason =
   | 'refused'
   | 'truncated'
   | 'malformed'
-  | 'missing_label';
+  | 'missing_label'
+  | 'missing_segment';
 
 export type TextScanParseResult =
   | { ok: true; output: TextScanOutput }
@@ -15,6 +16,9 @@ export type TextScanParseResult =
 
 export type ChatCompletionStepLike = {
   $type?: string;
+  name?: string | null;
+  status?: string;
+  metadata?: Record<string, unknown> | null;
   output?: {
     choices?: Array<{
       message?: { content?: string | null };
@@ -43,12 +47,8 @@ const labelValidators: Record<TextScanLabel, z.ZodType> = {
   poi: z.object({ detected: z.boolean(), names: z.array(z.string()), reason: z.string() }),
   minor: z.object({ detected: z.boolean(), reason: z.string() }),
   scam: z.object({ detected: z.boolean(), reason: z.string() }),
+  csam: z.object({ detected: z.boolean(), reason: z.string() }),
 };
-
-export function findChatCompletionStep(steps: unknown): ChatCompletionStepLike | undefined {
-  if (!Array.isArray(steps)) return undefined;
-  return (steps as ChatCompletionStepLike[]).find((s) => s?.$type === 'chatCompletion');
-}
 
 function tryParseJson(content: string): unknown {
   try {
@@ -98,4 +98,82 @@ export function parseTextScanStep(
     (output as Record<string, unknown>)[label] = result.data;
   }
   return { ok: true, output };
+}
+
+const STEP_NAME = /^textScan(\d*)$/;
+
+export function segmentIndexOf(step: ChatCompletionStepLike): number | undefined {
+  const fromMetadata = step.metadata?.segment;
+  if (Number.isInteger(fromMetadata) && (fromMetadata as number) >= 0)
+    return fromMetadata as number;
+  const match = STEP_NAME.exec(step.name ?? '');
+  if (match) return match[1] ? Number(match[1]) : 0;
+  return undefined;
+}
+
+function chatCompletionSteps(steps: unknown): ChatCompletionStepLike[] {
+  if (!Array.isArray(steps)) return [];
+  return (steps as ChatCompletionStepLike[]).filter((s) => s?.$type === 'chatCompletion');
+}
+
+/** First step wins when two share a segment. */
+export function textScanStepsBySegment(steps: unknown) {
+  const bySegment = new Map<number, ChatCompletionStepLike>();
+  chatCompletionSteps(steps).forEach((step, order) => {
+    const segment = segmentIndexOf(step) ?? order;
+    if (!bySegment.has(segment)) bySegment.set(segment, step);
+  });
+  return bySegment;
+}
+
+export type TextScanStepsResult =
+  | { ok: true; outputs: TextScanOutput[] }
+  | {
+      ok: false;
+      reason: TextScanFailureReason;
+      detail?: string;
+      segment?: number;
+      /** The segments that did parse, in segment order; empty when the workflow itself is unusable. */
+      outputs: TextScanOutput[];
+    };
+
+/**
+ * All `expected` segments parsed, in segment order, or the first failure with its segment. Any
+ * missing, extra or unusable step fails the scan: a partial verdict must never replace the stored
+ * one, though the callback may still raise it from the segments that parsed.
+ */
+export function parseTextScanSteps(
+  steps: unknown,
+  labels: TextScanLabel[],
+  expected: number
+): TextScanStepsResult {
+  if (!Number.isInteger(expected) || expected < 1)
+    return {
+      ok: false,
+      reason: 'malformed',
+      detail: `invalid expected step count ${expected}`,
+      outputs: [],
+    };
+  const count = chatCompletionSteps(steps).length;
+  if (count > expected)
+    return {
+      ok: false,
+      reason: 'malformed',
+      detail: `expected ${expected} chatCompletion steps, got ${count}`,
+      outputs: [],
+    };
+  const bySegment = textScanStepsBySegment(steps);
+  const outputs: TextScanOutput[] = [];
+  let failure: { reason: TextScanFailureReason; detail?: string; segment: number } | undefined;
+  for (let segment = 0; segment < expected; segment++) {
+    const step = bySegment.get(segment);
+    const parsed: TextScanParseResult = step
+      ? parseTextScanStep(step, labels)
+      : { ok: false, reason: 'missing_segment' };
+    if (parsed.ok) outputs.push(parsed.output);
+    else failure ??= { reason: parsed.reason, detail: parsed.detail, segment };
+  }
+  if (!failure) return { ok: true, outputs };
+  const { detail, ...rest } = failure;
+  return { ok: false, ...rest, ...(detail === undefined ? {} : { detail }), outputs };
 }

@@ -62,10 +62,6 @@ export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
-  // `true` narrows to Civitai-published articles. `false` is NOT the inverse — it is
-  // absent, the same as not filtering — so a stale `?isOfficial=false` in a url cannot
-  // silently hide every official article from a feed.
-  isOfficial: z.boolean().optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
   username: z.string().optional(),
@@ -109,6 +105,8 @@ export const upsertArticleInput = z.object({
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
   publishedAt: z.date().nullish(),
+  // A date schedules a never-published draft to go live then; null cancels; omitted leaves it.
+  scheduledAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),

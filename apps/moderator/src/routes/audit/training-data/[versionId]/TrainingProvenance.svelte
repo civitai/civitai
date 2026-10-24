@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
@@ -15,7 +16,7 @@
           if (!r.ok) throw new Error(`provenance ${r.status}`);
           return r.json();
         })
-      : null
+      : SSR_PENDING
   );
 </script>
 

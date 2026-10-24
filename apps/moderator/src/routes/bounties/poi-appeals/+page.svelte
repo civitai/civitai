@@ -1,29 +1,51 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
+  import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
   import type { ActionData, PageData } from './$types';
+
+  type Verdict = ResolutionVerdict<'flagAppeal'>;
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const acted = new SvelteMap<number, string>();
+  // Held here, not in the form: the row swaps to its verdict on submit and back on a refusal.
+  const drafts = new SvelteMap<number, RulingDraft<Verdict>>();
   $effect(() => {
-    data.items;
+    const open = new Set(data.items.map((row) => row.bountyId));
     acted.clear();
+    // Untracked: typing a reason must not re-run this and wipe the marks.
+    untrack(() => {
+      for (const bountyId of drafts.keys()) if (!open.has(bountyId)) drafts.delete(bountyId);
+    });
+  });
+
+  const keepUnavailable = (poi: boolean) => (verdict: Verdict) =>
+    verdict === 'Rejected' && !poi ? 'No longer flagged. Unflag closes the request.' : null;
+
+  const refusal = $derived.by(() => {
+    if (!form || !('error' in form) || !form.error) return null;
+    const bountyId = 'bountyId' in form ? form.bountyId : undefined;
+    return bountyId ? `Bounty #${bountyId}: ${form.error}` : form.error;
   });
 
   // A refused verdict must undo its mark, or a moderator believes they ruled on an appeal that
   // is still open.
-  const submit = (bountyId: number, verdict: string) =>
+  const submit = (bountyId: number) =>
     optimisticEnhancer(
-      () => {
-        acted.set(bountyId, verdict);
+      ({ formData }) => {
+        acted.set(
+          bountyId,
+          formData.get('status') === 'Rejected' ? 'Appeal rejected' : 'Appeal approved'
+        );
         return () => acted.delete(bountyId);
       },
       { reload: true }
@@ -34,8 +56,8 @@
   <h1>Bounty Real-Person Appeals</h1>
 </header>
 
-{#if form && 'error' in form && form.error}
-  <ErrorAlert class="mb-4" message={form.error} />
+{#if refusal}
+  <ErrorAlert class="mb-4" message={refusal} />
 {/if}
 
 {#if form && 'rescanQueued' in form && form.rescanQueued}
@@ -109,22 +131,22 @@
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
           {:else}
-            <form
-              method="POST"
-              action="?/uphold"
-              use:enhance={submit(row.bountyId, 'Appeal rejected')}
+            <RulingForm
+              subject="flagAppeal"
+              choices={FLAG_APPEAL_RULING_CHOICES}
+              choiceDisabled={keepUnavailable(row.poi)}
+              labels={['poi']}
+              action="?/resolve"
+              enhancer={submit(row.bountyId)}
+              idPrefix="bounty-poi-{row.bountyId}"
+              size="xs"
+              bind:draft={() => drafts.get(row.bountyId) ?? emptyRulingDraft<Verdict>(),
+                (d: RulingDraft<Verdict>) => drafts.set(row.bountyId, d)}
             >
-              <input type="hidden" name="bountyId" value={row.bountyId} />
-              <Button type="submit" size="xs" disabled={!row.poi}>Uphold flag</Button>
-            </form>
-            <form
-              method="POST"
-              action="?/overturn"
-              use:enhance={submit(row.bountyId, 'Appeal approved')}
-            >
-              <input type="hidden" name="bountyId" value={row.bountyId} />
-              <Button type="submit" size="xs" variant="destructive">Overturn</Button>
-            </form>
+              {#snippet hidden()}
+                <input type="hidden" name="bountyId" value={row.bountyId} />
+              {/snippet}
+            </RulingForm>
           {/if}
         </div>
       </li>

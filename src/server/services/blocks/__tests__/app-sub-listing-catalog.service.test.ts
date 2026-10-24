@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
@@ -13,15 +14,23 @@ import type * as RateLimit from '~/server/utils/shared-storage-rate-limit';
  * these tests pin what the write path does with it.
  */
 
-const { mockBust, mockTextSafe, mockSyncRate, mockWriteRate, mockGetSessionUser, mockPoolQuery } =
-  vi.hoisted(() => ({
-    mockBust: vi.fn(async () => undefined),
-    mockTextSafe: vi.fn(),
-    mockSyncRate: vi.fn(),
-    mockWriteRate: vi.fn(),
-    mockGetSessionUser: vi.fn(),
-    mockPoolQuery: vi.fn(),
-  }));
+const {
+  mockBust,
+  mockTextSafe,
+  mockSyncRate,
+  mockWriteRate,
+  mockGetSessionUser,
+  mockPoolQuery,
+  mockGetImage,
+} = vi.hoisted(() => ({
+  mockBust: vi.fn(async () => undefined),
+  mockTextSafe: vi.fn(),
+  mockSyncRate: vi.fn(),
+  mockWriteRate: vi.fn(),
+  mockGetSessionUser: vi.fn(),
+  mockPoolQuery: vi.fn(),
+  mockGetImage: vi.fn(),
+}));
 
 vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppListingService>()),
@@ -40,6 +49,7 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (id: number) => mockGetSessionUser(id) },
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
+vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
 
 const {
   listCatalogSubListings,
@@ -110,6 +120,17 @@ function itemRow(over: Record<string, unknown> = {}) {
 
 const BODY = { title: 'Neon Drift', tagline: 'Arcade racer' };
 
+/** Public images and their uploaders: 51 is the owner's, 52 and 53 the creator's. */
+const OWNER_IMAGE = 51;
+const CREATOR_IMAGE = 52;
+const CREATOR_IMAGE_2 = 53;
+const IMAGE_OWNERS: Record<number, number> = {
+  [OWNER_IMAGE]: OWNER,
+  [CREATOR_IMAGE]: CREATOR,
+  [CREATOR_IMAGE_2]: CREATOR,
+};
+const notPublic = () => new TRPCError({ code: 'NOT_FOUND', message: 'No image' });
+
 const put = (body: Record<string, unknown> = BODY, externalId = 'neon-drift') =>
   upsertCatalogSubListing({ parentListingId: PARENT, clientId: CLIENT, externalId, body });
 
@@ -129,7 +150,14 @@ const nothingWritten = () => {
 
 beforeEach(() => {
   resetSharedMocks();
-  for (const m of [mockBust, mockTextSafe, mockSyncRate, mockWriteRate, mockGetSessionUser]) {
+  for (const m of [
+    mockBust,
+    mockTextSafe,
+    mockSyncRate,
+    mockWriteRate,
+    mockGetSessionUser,
+    mockGetImage,
+  ]) {
     m.mockReset();
   }
   mockPoolQuery.mockReset();
@@ -151,6 +179,15 @@ beforeEach(() => {
     body,
   }));
   mockSyncRate.mockResolvedValue({ allowed: true });
+  // `getImage`'s anonymous read: a public image uploaded by whoever the test names.
+  mockGetImage.mockImplementation(async ({ id }: { id: number }) => ({
+    id,
+    user: { id: IMAGE_OWNERS[id] ?? -1 },
+  }));
+  // `isImageInPublicPost`: every image above is in a published, non-private post.
+  read.$queryRaw.mockImplementation(async (q: { values: unknown[] }) =>
+    IMAGE_OWNERS[q.values[0] as number] ? [{ id: q.values[0] }] : []
+  );
 });
 
 describe('upsertCatalogSubListing — new items', () => {
@@ -214,7 +251,8 @@ describe('upsertCatalogSubListing — new items', () => {
   );
 
   it.each([
-    ['an unknown key', { ...BODY, imageId: 5 }],
+    ['an unknown key', { ...BODY, subPath: 'neon-drift' }],
+    ['a non-integer imageId', { ...BODY, imageId: 5.5 }],
     ['a missing title', { tagline: 'x' }],
     ['a blank title', { title: '   ' }],
     ['a long tagline', { title: 'T', tagline: 'x'.repeat(141) }],
@@ -400,6 +438,123 @@ describe('upsertCatalogSubListing — existing items', () => {
     );
     await expectError(put(), 503, 'unavailable');
   });
+});
+
+describe('upsertCatalogSubListing — item images', () => {
+  const asCreator = (body: Record<string, unknown>) => {
+    write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
+    return put({ ...body, creatorUserId: CREATOR });
+  };
+
+  it('stores a public image the listing owner uploaded, read as an anonymous viewer', async () => {
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.create.mock.calls[0][0].data.imageId).toBe(OWNER_IMAGE);
+    expect(mockGetImage).toHaveBeenCalledWith({ id: OWNER_IMAGE, isModerator: false });
+  });
+
+  it('checks ownership against the attributed creator, not the listing owner', async () => {
+    await expect(asCreator({ ...BODY, imageId: CREATOR_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.create.mock.calls[0][0].data).toMatchObject({
+      authorUserId: CREATOR,
+      imageId: CREATOR_IMAGE,
+    });
+  });
+
+  it('refuses an image the author did not upload, even the listing owner’s', async () => {
+    await expectError(asCreator({ ...BODY, imageId: OWNER_IMAGE }), 403, 'image_not_yours');
+    await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    nothingWritten();
+  });
+
+  it('refuses an image that is not public', async () => {
+    mockGetImage.mockRejectedValueOnce(notPublic());
+    await expectError(put({ ...BODY, imageId: OWNER_IMAGE }), 400, 'image_not_public');
+    nothingWritten();
+  });
+
+  it('a changed image on an approved item is staged; the live image keeps serving', async () => {
+    write.oauthConsent.findUnique.mockResolvedValue({ id: 1 });
+    write.appSubListing.findUnique.mockResolvedValue(
+      itemRow({ authorUserId: CREATOR, imageId: CREATOR_IMAGE })
+    );
+    await expect(
+      put({ ...BODY, imageId: CREATOR_IMAGE_2, creatorUserId: CREATOR })
+    ).resolves.toMatchObject({ status: 'approved', pendingEdit: true });
+    const { data } = write.appSubListing.updateMany.mock.calls[0][0];
+    expect(data).toMatchObject({ pendingImageId: CREATOR_IMAGE_2, pendingTitle: 'Neon Drift' });
+    expect(data).not.toHaveProperty('imageId');
+    expect(data).not.toHaveProperty('status');
+  });
+
+  it('a staged image goes through the same checks as a new one', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: OWNER_IMAGE }));
+    await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    mockGetImage.mockRejectedValueOnce(notPublic());
+    await expectError(put({ ...BODY, imageId: 54 }), 400, 'image_not_public');
+    nothingWritten();
+  });
+
+  it('a PUT without imageId removes the image, as a staged edit of an approved item', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: OWNER_IMAGE }));
+    await expect(put()).resolves.toMatchObject({ status: 'approved', pendingEdit: true });
+    const { data } = write.appSubListing.updateMany.mock.calls[0][0];
+    expect(data).toMatchObject({ pendingImageId: null, pendingSubmittedAt: expect.any(Date) });
+    expect(mockGetImage).not.toHaveBeenCalled();
+  });
+
+  it('a withdrawn item republished with an image is checked, then goes back to review with it', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ status: 'withdrawn' }));
+    await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    nothingWritten();
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: 'pending',
+      imageId: OWNER_IMAGE,
+    });
+  });
+
+  it('a hidden item stays locked: a new image is neither checked nor written', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ status: 'hidden' }));
+    await expect(put({ ...BODY, imageId: CREATOR_IMAGE })).resolves.toMatchObject({
+      status: 'hidden',
+      pendingEdit: false,
+    });
+    expect(mockGetImage).not.toHaveBeenCalled();
+    nothingWritten();
+  });
+
+  it('a rate-limited PUT does not read the image', async () => {
+    mockSyncRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    await expectError(put({ ...BODY, imageId: OWNER_IMAGE }), 429, 'rate_limited');
+    expect(mockGetImage).not.toHaveBeenCalled();
+    // Positive control: the same PUT under the limit does read it.
+    await put({ ...BODY, imageId: OWNER_IMAGE });
+    expect(mockGetImage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['approved', 'pending'])(
+    'an identical re-sync of a %s item with an image writes nothing and checks nothing',
+    async (status) => {
+      write.appSubListing.findUnique.mockResolvedValueOnce(
+        itemRow({ status, imageId: OWNER_IMAGE })
+      );
+      await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toEqual({
+        id: ROW_ID,
+        status,
+        pendingEdit: false,
+        href: 'https://games.example.com/?game=neon-drift',
+      });
+      expect(mockGetImage).not.toHaveBeenCalled();
+      expect(mockSyncRate).not.toHaveBeenCalled();
+      nothingWritten();
+    }
+  );
 });
 
 describe('withdrawCatalogSubListing', () => {
@@ -635,5 +790,70 @@ describe('moderation of an off-site parent’s items', () => {
       null,
     ]);
     expect(items[0].parent).toEqual({ id: PARENT, slug: 'civitai-games', name: 'Games' });
+  });
+
+  // The review's click-to-reveal decides on each image's level, so the queue must carry the
+  // level of the LIVE image and of the PROPOSED one separately — they are different images.
+  it('🔴 the queue carries the live and the proposed image’s own levels', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce([
+      {
+        ...itemRow({
+          imageId: CREATOR_IMAGE,
+          pendingTitle: 'Neon Drift 2',
+          pendingSubPath: 'neon-drift',
+          pendingImageId: CREATOR_IMAGE_2,
+          pendingSubmittedAt: new Date(VERSION),
+        }),
+        image: { url: 'live-key', nsfwLevel: 2 },
+        pendingImage: { url: 'proposed-key', nsfwLevel: 16 },
+        createdAt: new Date(VERSION),
+        moderatedAt: null,
+        parentListing: {
+          id: 'apl_ONSITE',
+          slug: 'custom-generators',
+          name: 'Gens',
+          kind: 'onsite',
+        },
+        author: { id: OWNER, username: 'owner', image: null },
+      },
+    ]);
+    const { items } = await listSubListingQueue({ view: 'queue', limit: 50 });
+    expect(items[0].live).toMatchObject({
+      imageId: CREATOR_IMAGE,
+      imageUrl: 'live-key',
+      imageNsfwLevel: 2,
+    });
+    expect(items[0].pending).toMatchObject({
+      imageId: CREATOR_IMAGE_2,
+      imageUrl: 'proposed-key',
+      imageNsfwLevel: 16,
+    });
+    // The level reaches the row only because the read asks for it — a mocked row would carry it
+    // either way, so the select is the half that proves the column is read.
+    const select = read.appSubListing.findMany.mock.calls.at(-1)?.[0]?.select;
+    expect(select?.image).toEqual({ select: { url: true, nsfwLevel: true } });
+    expect(select?.pendingImage).toEqual({ select: { url: true, nsfwLevel: true } });
+  });
+
+  it('a queue row without an image carries no level', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce([
+      {
+        ...itemRow({ status: 'pending' }),
+        image: null,
+        pendingImage: null,
+        createdAt: new Date(VERSION),
+        moderatedAt: null,
+        parentListing: {
+          id: 'apl_ONSITE',
+          slug: 'custom-generators',
+          name: 'Gens',
+          kind: 'onsite',
+        },
+        author: { id: OWNER, username: 'owner', image: null },
+      },
+    ]);
+    const { items } = await listSubListingQueue({ view: 'queue', limit: 50 });
+    expect(items[0].live.imageNsfwLevel).toBeNull();
+    expect(items[0].pending).toBeNull();
   });
 });

@@ -11,26 +11,25 @@ import type * as GameFrame from '$lib/server/game-frame';
 const setReportStatus = vi.fn();
 const getReports = vi.fn(async () => ({ items: [], totalItems: 0, page: 1, limit: 20 }));
 const updateReportNotes = vi.fn();
-const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
-const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
 const getReportedGame = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
+  getReportStatusCounts: vi.fn(async () => ({})),
   setReportStatus,
   updateReportNotes,
   getReportedGame,
   getGameMirrors: vi.fn(async () => []),
 }));
-vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
-vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   ...(await importOriginal<typeof GameFrame>()),
   delistGame,
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// Imports the main-app client (`$app/server`, private env), which nothing else in this graph loads.
+vi.mock('$lib/server/storyline-scan-lift.service', () => ({ liftStorylineScanTakedown: vi.fn() }));
 // Stubbed for a different reason than the others: no database, but `canAccess` reads a grants store
 // only the request hook fills, so the real one answers false for everything here.
 vi.mock('$lib/server/access', () => ({ canAccess }));
@@ -38,17 +37,19 @@ vi.mock('$lib/server/access', () => ({ canAccess }));
 const { actions } = await import('../+page.server');
 
 const MOD = { id: 7 };
+/** The actor's resolved permissions; reset per test, so a grant cannot leak into the next case. */
+let grants: Record<string, true> = {};
 
 /**
  * A REAL `FormData`, not a Map: `Map.get` gives `undefined` where `FormData.get` gives `null`, and
- * `Number()` maps those to NaN and 0 — opposite sides of `removePlacement`'s `Number.isInteger`.
+ * `Number()` maps those to NaN and 0 — opposite sides of an action's `Number.isInteger` check.
  */
 const event = (form: Record<string, string> = {}, slug = 'image') => {
   const data = new FormData();
   for (const [key, value] of Object.entries(form)) data.append(key, value);
   return {
     request: { formData: async () => data },
-    locals: { user: MOD },
+    locals: { user: MOD, grants },
     params: { slug },
     getClientAddress: () => '203.0.113.9',
   } as never;
@@ -62,6 +63,7 @@ const failure = (result: unknown) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  grants = {};
   canAccess.mockReturnValue(true);
   setReportStatus.mockResolvedValue({ ok: true, changed: true });
   updateReportNotes.mockResolvedValue({ ok: true });
@@ -116,91 +118,6 @@ describe('setStatus action', () => {
 
     expect(failure(result).status).toBe(400);
     expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('actionResolvedPosts action', () => {
-  it('counts what actually changed, not how many ids it looped over', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1, 2, 3]);
-    setReportStatus
-      .mockResolvedValueOnce({ ok: true, changed: true })
-      .mockResolvedValueOnce({ ok: true, changed: false })
-      .mockResolvedValueOnce({ ok: false, error: 'gone' });
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ success: true, actioned: 1, skipped: 2, found: 3 });
-  });
-
-  it('sweeps as Actioned — the content was removed, so the reports were right', async () => {
-    getResolvedPostReportIds.mockResolvedValue([1]);
-
-    await actions.actionResolvedPosts(event());
-
-    expect(setReportStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ status: ReportStatus.Actioned })
-    );
-  });
-
-  it('flags a full batch as probably having more behind it', async () => {
-    getResolvedPostReportIds.mockResolvedValue(Array.from({ length: 500 }, (_, i) => i + 1));
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(result).toMatchObject({ more: true, found: 500 });
-  });
-
-  it('does not claim a sweep when there was nothing to sweep', async () => {
-    getResolvedPostReportIds.mockResolvedValue([]);
-
-    const result = await actions.actionResolvedPosts(event());
-
-    expect(failure(result).status).toBe(400);
-    expect(setReportStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('removePlacement action', () => {
-  it('is gated on /reports even though the page load is not', async () => {
-    canAccess.mockReturnValue(false);
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(canAccess).toHaveBeenCalledWith(MOD, '/reports');
-    expect(failure(result).status).toBe(403);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('delegates to the service so escrow settles in one place', async () => {
-    removePlacement.mockResolvedValue({ ok: true });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(removePlacement).toHaveBeenCalledWith({ placementId: 5, moderatorId: 7 });
-    expect(result).toMatchObject({ success: true, placementRemoved: 5 });
-  });
-
-  it('rejects a non-positive placement id without reaching the service', async () => {
-    const result = await actions.removePlacement(event({ placementId: '0' }));
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('rejects a missing placement id — absent reads as 0, not as NaN', async () => {
-    const result = await actions.removePlacement(event());
-
-    expect(failure(result).status).toBe(400);
-    expect(removePlacement).not.toHaveBeenCalled();
-  });
-
-  it('surfaces an escrow failure rather than reporting the placement removed', async () => {
-    // A refusal here is money that did not move.
-    removePlacement.mockResolvedValue({ ok: false, error: 'Escrow already settled.' });
-
-    const result = await actions.removePlacement(event({ placementId: '5' }));
-
-    expect(failure(result)).toEqual({ status: 400, error: 'Escrow already settled.' });
   });
 });
 

@@ -14,7 +14,7 @@ browser with the injected user token. Minting stays server-side in whichever hos
 ## Why this shape
 
 - The current app's 13 `/api/*` routes are almost all thin wrappers: verify session → mint/read
-  the user's orchestrator token → one `@civitai/client` SDK call. Moving those calls into the
+  the user's orchestrator token → one `@civitai/orchestration-client` SDK call. Moving those calls into the
   browser removes the wrapper tier entirely; nothing of substance is lost.
 - Signals already works exactly this way today (server mints a token at `/api/signals-token`,
   the browser connects to the signals host directly), so the pattern is proven in this app.
@@ -34,6 +34,12 @@ interface TrainingStudioHost {
 
   /** SignalR access token for live workflow updates. Null => component falls back to polling. */
   getSignalsToken(): Promise<string | null>;
+
+  /** The main app's trigger word check for one run, called before anything is submitted
+   *  (`POST /api/training-studio/check-text`). Resolves { ok: false, error } on a refusal and
+   *  rejects when the check could not run. Without it the component refuses to start training. */
+  checkTrainingText(input: { triggerWord: string }):
+    Promise<{ ok: true } | { ok: false; error: string }>;
 
   /** Spendable balances for the header/pricing UI. The buzz service is internal-only (no
    *  browser CORS), so this stays a host call. Null => balances hidden, flow still works. */
@@ -143,6 +149,8 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
   `getOrchestratorToken` (main app).
 - **Signals token minting** — internal signals endpoint.
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
+- **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
+  shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
 
 ## CORS requirement
 

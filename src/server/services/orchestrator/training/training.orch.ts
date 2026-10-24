@@ -13,7 +13,7 @@ import type {
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
@@ -36,6 +36,7 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -51,6 +52,7 @@ import {
   isInvalidAiToolkit,
   isAiToolkitEnabled,
   isAudioTrainingBaseType,
+  isKohyaEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -142,7 +144,7 @@ const createTrainingStep_Run = (
     };
   } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
     // All rapid/fast training engines use the same input structure
-    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    // Type assertion needed because flux2 engine types aren't in @civitai/orchestration-client yet
     const input = {
       ...inputBase,
       engine,
@@ -428,6 +430,13 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
+  // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
+  // API caller can still carry it, and no worker would claim the step.
+  if (trainingParams.engine === 'kohya' && !isKohyaEnabled(features))
+    throw throwBadRequestError(
+      'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
+    );
+
   // Audio base types are marked `isAiToolkitMandatory`, so the check above
   // short-circuits to true regardless of feature flags. Enforce the rollout
   // flag here so API callers can't submit ACE-Step training when the
@@ -452,6 +461,11 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'trainer', modelVersionId },
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.
@@ -511,6 +525,20 @@ export const createTrainingWorkflow = async ({
     data: { trainingStatus: TrainingStatus.Submitted },
   });
   if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
 
   let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
   try {

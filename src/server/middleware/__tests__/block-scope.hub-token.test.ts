@@ -228,6 +228,39 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     });
   });
 
+  it.each([
+    ['at the cap', { buzzBudgetPerGen: 5000 }, 5000],
+    ['one over the cap', { buzzBudgetPerGen: 5001 }, 5000],
+    ['far over the cap', { buzzBudgetPerGen: 6301 }, 5000],
+    ['undeclared', {}, 1000],
+    ['a non-integer', { buzzBudgetPerGen: 12.5 }, 1000],
+    ['negative', { buzzBudgetPerGen: -5 }, 1000],
+  ])(
+    'an owned, not-yet-approved app’s budget, %s, resolves on its dev-tunnel hub token',
+    async (_l, page, minted) => {
+      sessionMock.mockResolvedValue({
+        user: { id: USER_ID },
+        apiKeyId: 7,
+        subject: { type: 'oauth', id: CLIENT_ID },
+      });
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: APP_BLOCK_ID,
+        blockId: BLOCK_ID,
+        manifest: { page },
+        approvedScopes: ['ai:write:budgeted', SCOPE],
+      });
+      tunnelMock.mockResolvedValue({ grantedScopes: [] });
+      dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({
+        scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+      });
+
+      const { claims } = await drive('civ_dev_oauth');
+
+      expect(claims?.dev).toBe(true);
+      expect(claims?.buzzBudget).toBe(minted);
+    }
+  );
+
   it('carries an approved block’s under-cap buzzBudgetPerGen through unchanged', async () => {
     sessionMock.mockResolvedValue({
       user: { id: USER_ID },
@@ -251,29 +284,42 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     expect(claims?.buzzBudget).toBe(75);
   });
 
-  it('clamps an approved block’s over-cap buzzBudgetPerGen to the per-call cap', async () => {
-    sessionMock.mockResolvedValue({
-      user: { id: USER_ID },
-      apiKeyId: 99,
-      subject: { type: 'oauth', id: CLIENT_ID },
-    });
-    dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
-      id: APP_BLOCK_ID,
-      blockId: BLOCK_ID,
-      manifest: { scopes: ['ai:write:budgeted', SCOPE], page: { buzzBudgetPerGen: 1301 } },
-      approvedScopes: ['ai:write:budgeted', SCOPE],
-    });
-    dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
-      grantedScopes: ['ai:write:budgeted', SCOPE],
-      revokedAt: null,
-    });
+  // 6301 overshoots the cap without being a multiple of it. A non-integer falls back to
+  // the default; a negative integer clamps to 0, which every spend gate refuses.
+  it.each([
+    ['at the cap', { buzzBudgetPerGen: 5000 }, 5000],
+    ['one over the cap', { buzzBudgetPerGen: 5001 }, 5000],
+    ['far over the cap', { buzzBudgetPerGen: 6301 }, 5000],
+    ['undeclared', {}, 1000],
+    ['a non-integer', { buzzBudgetPerGen: 12.5 }, 1000],
+    ['a non-number', { buzzBudgetPerGen: '200' }, 1000],
+    ['negative', { buzzBudgetPerGen: -5 }, 0],
+  ])(
+    'an approved block’s budget, %s, resolves to the hub token’s buzzBudget',
+    async (_l, page, minted) => {
+      sessionMock.mockResolvedValue({
+        user: { id: USER_ID },
+        apiKeyId: 99,
+        subject: { type: 'oauth', id: CLIENT_ID },
+      });
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: APP_BLOCK_ID,
+        blockId: BLOCK_ID,
+        manifest: { scopes: ['ai:write:budgeted', SCOPE], page },
+        approvedScopes: ['ai:write:budgeted', SCOPE],
+      });
+      dbMock.dbRead.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['ai:write:budgeted', SCOPE],
+        revokedAt: null,
+      });
 
-    const { res, claims } = await drive('civ_oauth_access_token');
+      const { res, claims } = await drive('civ_oauth_access_token');
 
-    expect(res.statusCode).toBe(200);
-    expect(claims?.scopes).toContain('ai:write:budgeted');
-    expect(claims?.buzzBudget).toBe(1000);
-  });
+      expect(res.statusCode).toBe(200);
+      expect(claims?.scopes).toContain('ai:write:budgeted');
+      expect(claims?.buzzBudget).toBe(minted);
+    }
+  );
 
   it('still accepts a block JWT on the unchanged path', async () => {
     const { token } = await BlockTokenService.sign({

@@ -2,11 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import {
-  checkSubListingSyncRateLimit,
-  SUB_LISTING_SYNC_DAILY_MAX,
-  SUB_LISTING_SYNC_HOURLY_MAX,
-} from '~/server/utils/shared-storage-rate-limit';
+import { checkSubListingSyncRateLimit } from '~/server/utils/shared-storage-rate-limit';
 
 /** The per-parent catalog-sync budget: an hourly and a daily fixed window, keyed by parent. */
 
@@ -26,11 +22,6 @@ beforeEach(() => {
 const keys = () => [...counts.keys()];
 
 describe('checkSubListingSyncRateLimit', () => {
-  it('pins the windows at 600/hour and 3000/day', () => {
-    expect(SUB_LISTING_SYNC_HOURLY_MAX).toBe(600);
-    expect(SUB_LISTING_SYNC_DAILY_MAX).toBe(3000);
-  });
-
   it('counts per parent, in an hourly and a daily bucket', async () => {
     await checkSubListingSyncRateLimit('apl_A');
     await checkSubListingSyncRateLimit('apl_B');

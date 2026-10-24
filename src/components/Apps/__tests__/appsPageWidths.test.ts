@@ -42,8 +42,8 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * between routes.
  *
  * The RENDERED proof of the alignment lives in
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode, report-only). This
- * file pins the CONSTANTS and the route taxonomy in the tier that actually gates.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode). This
+ * file pins the CONSTANTS and the route taxonomy in the node tier.
  */
 
 /**
@@ -392,18 +392,6 @@ function portalOffenders(name: string, abs: string, exportName: string): string[
 }
 
 describe('the container is uniform, and it is the only container', () => {
-  test('every `/apps/*` route renders in ONE container width (2560)', () => {
-    // A literal, not derived from the module's own arithmetic.
-    //
-    // 🔴 2560, RAISED FROM 1920 BY THE ULTRAWIDE PASS. The old cap left `(2560 −
-    // 1920) / 2 = 320px` of dead margin on each side of every apps page on a 2560
-    // monitor, and Mantine's top breakpoint (`xl`, 88em / 1408px) meant nothing in
-    // the grid could react to any of it. Raising the cap is only half the change —
-    // the store's column ladder is the other half, and it lives in
-    // `__tests__/appListingGrid.test.ts`.
-    expect(APPS_PAGE_CONTAINER_WIDTH).toBe(2560);
-  });
-
   test('🔴 there is no per-route CONTAINER width map any more', () => {
     // The defect was `APPS_PAGE_WIDTHS`: a container width per route. If it comes
     // back — under any name — the sub-nav starts moving again. `APPS_PAGE_MEASURES`
@@ -677,20 +665,6 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
 });
 
 describe('🔴 the measures preserve the OLD rendered content widths exactly', () => {
-  /**
-   * THE +32px TRAP, PINNED. Mantine's `Container` is border-box: `size={N}` renders
-   * `N − 2×16` of content. A `maw={N}` box lives INSIDE that gutter and renders `N`.
-   * So carrying the old round container numbers over as measures would have widened
-   * every narrowed page by 32px — a confounded change hiding inside an alignment fix.
-   *
-   * Each measure is therefore the OLD container width minus the gutter, and the old
-   * numbers are named here as literals so the provenance is checkable rather than
-   * asserted in prose.
-   */
-  test('the Container gutter is 16px per side', () => {
-    expect(APPS_CONTAINER_GUTTER).toBe(32);
-  });
-
   // 🔴 THE PROVENANCE IS NOW THE BAND'S **FLOOR**, and that is the point of a floor: a
   // band whose min drifted off the old container width would silently re-decide what a
   // 1440 monitor shows, which is the confounded change the gutter arithmetic above

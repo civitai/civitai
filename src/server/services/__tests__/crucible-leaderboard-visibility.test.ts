@@ -137,15 +137,22 @@ const rows = [latestAndSecond, earliestAndLast, ownedAndFirst];
 const ids = (entries: { id: number }[]) => entries.map((e) => e.id);
 const lastFindManyArgs = () =>
   findEntries.mock.calls.at(-1)![0] as { orderBy: unknown; take: number; cursor?: unknown };
+/** The page query: a first page also asks for the list's count, which is not under test here. */
+const lastPageQueryCall = () =>
+  queryRaw.mock.calls
+    .filter(
+      ([strings]) => !(strings as unknown as TemplateStringsArray).join('').includes('count(*)')
+    )
+    .at(-1) as [TemplateStringsArray, ...unknown[]];
 /** The raw query's text, nested `Prisma.sql` fragments included, with its bound values. */
 /** The raw query as Postgres receives it, nested fragments in place. */
 const lastRendered = () => {
-  const [strings, ...values] = queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+  const [strings, ...values] = lastPageQueryCall();
   return Prisma.sql(strings, ...values);
 };
 const lastRenderedSql = () => lastRendered().text.replace(/\s+/g, ' ');
 const lastRawQuery = () => {
-  const [strings, ...values] = queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+  const [strings, ...values] = lastPageQueryCall();
   const fragments = values.filter(
     (value): value is { strings: string[] } =>
       !!value && typeof value === 'object' && 'strings' in value
@@ -472,7 +479,10 @@ describe('crucible.getById — prize winners', () => {
     const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
 
     expect(crucible?.prizeWinners).toEqual([]);
-    expect(queryRaw).not.toHaveBeenCalled();
+    // The entrant count is the only raw query a running crucible makes; placings are never read.
+    const sqls = queryRaw.mock.calls.map(([strings]) => (strings as string[]).join('?'));
+    expect(sqls.some((sql) => sql.includes('count(DISTINCT e."userId")'))).toBe(true);
+    expect(sqls.filter((sql) => sql.includes('position IS NOT NULL'))).toEqual([]);
   });
 });
 
@@ -652,6 +662,11 @@ describe('crucible.getMinVotesToPlace', () => {
   const aggregate = dbMock.dbRead.crucibleEntry.aggregate;
 
   it('asks for 75% of the average vote count across the entries that can place', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: false,
+    });
     aggregate.mockResolvedValue({ _sum: { voteCount: 56 }, _count: { _all: 4 } });
 
     const result = await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
@@ -666,6 +681,26 @@ describe('crucible.getMinVotesToPlace', () => {
         post: { publishedAt: { not: null } },
       },
     });
+  });
+
+  it('projects the vote rate over the time left for a time-adjusted crucible', async () => {
+    const HOUR = 3_600_000;
+    const startAt = new Date(Date.now() - 50 * HOUR);
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: true,
+      startAt,
+      endAt: new Date(startAt.getTime() + 100 * HOUR),
+    });
+    findEntries.mockResolvedValue([{ voteCount: 400, createdAt: startAt }]);
+
+    const result = await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
+
+    // 8 votes/hour so far, 50 hours left: 400 expected, 75% of it. Allow for the clock moving on.
+    expect(result.minVotes).toBeGreaterThanOrEqual(299);
+    expect(result.minVotes).toBeLessThanOrEqual(300);
+    expect(aggregate).not.toHaveBeenCalled();
   });
 
   it('is not found for a crucible still under review, like its entries', async () => {

@@ -8,6 +8,7 @@ import * as z from 'zod';
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
 import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -208,6 +209,11 @@ export const resourceIntentInputSchema = z
     baseModel: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
     kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+    // Answered by the block route from the hosted-model catalog; never reaches the primitive.
+    needs: z
+      .array(z.enum(HOSTED_MODEL_CAPABILITIES))
+      .max(HOSTED_MODEL_CAPABILITIES.length)
+      .optional(),
   })
   .superRefine((input, ctx) => {
     if (input.kind !== 'checkpoint') return;
@@ -344,6 +350,20 @@ export const resourceIntentResponseSchema = z.strictObject({
    */
   kind: z.literal('checkpoint').optional(),
   checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
+  /**
+   * The v1_tags arm only (absent on every other arm). `v1Fallback`: the arm could not rank this
+   * prompt (no servable tag index, no kept tag, no resolvable ecosystem, an ecosystem the index
+   * never saw, or nothing survived the gates and hydration), so the list is the POOL_MERGE arm's,
+   * with its own `coocFallback`. `ecosystems`: the top tag-derived
+   * ecosystems, best first, when the caller gave no `baseModel` and the list is v1's own; the list
+   * is restricted to the first.
+   *
+   * 🔴 Optional, not required: a required field would make every older cached blob fail to parse,
+   * and these keys are written only under v1 cache keys, which older pods never compute.
+   */
+  arm: z.literal('v1_tags').optional(),
+  v1Fallback: z.boolean().optional(),
+  ecosystems: z.array(z.string()).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

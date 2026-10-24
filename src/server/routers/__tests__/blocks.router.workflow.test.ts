@@ -2420,6 +2420,57 @@ describe('blocks.submitWorkflow', () => {
       expect(incrKey).not.toContain('system:blocks:buzz-cap');
     });
 
+    // The per-call cap equals this aggregate (both 5000): one call at the full per-call
+    // budget fits an untouched session exactly, and a second such call does not.
+    it('one call at the full 5000 per-call budget fits a fresh session; a second does not [INV]', async () => {
+      mockVerifyBlockToken.mockResolvedValue({ ...runForRealClaims(), buzzBudget: 5000 });
+      happyVersionLookup();
+      happyUser();
+      const totals = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) + n;
+        totals.set(String(key), next);
+        return next;
+      });
+      mockSysRedis.decrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) - n;
+        totals.set(String(key), next);
+        return next;
+      });
+      const quoteAndRun = { id: 'wf_real', status: 'unassigned', cost: { total: 5000 }, steps: [] };
+      mockSubmitWorkflow.mockResolvedValue(quoteAndRun);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+
+      const first = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(first.snapshot.error).toBeUndefined();
+      expect(first.snapshot.workflowId).toBe('wf_real');
+
+      const second = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(second.snapshot.status).toBe('failed');
+      expect(second.snapshot.error).toBe(
+        'review run-for-real Buzz cap reached: 5000 already spent this review session, ' +
+          'this generation costs 5000, session cap is 5000'
+      );
+    });
+
+    it('a call one Buzz over the 5000 per-call budget is refused by the budget, before any reservation [INV]', async () => {
+      mockVerifyBlockToken.mockResolvedValue({ ...runForRealClaims(), buzzBudget: 5000 });
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 5001 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.error).toBe(
+        'insufficient buzz budget: estimate 5001 exceeds budget 5000'
+      );
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
     it('REJECTS a run-for-real submit that tops the 5000 session cap even FAR under the 50k daily cap', async () => {
       mockVerifyBlockToken.mockResolvedValue(runForRealClaims());
       happyVersionLookup();
@@ -5359,7 +5410,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
   // strings) can't be asserted here — the global test setup mocks
-  // `@civitai/client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
+  // `@civitai/orchestration-client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
   // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
   // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
   // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
@@ -5452,7 +5503,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 
   // ---- viewer-picked accountType (money page blocks) ----------------------
   // The exact reordered orchestrator currency VALUES can't be asserted here
-  // (the global @civitai/client mock nulls out BuzzClientAccount, so
+  // (the global @civitai/orchestration-client mock nulls out BuzzClientAccount, so
   // toOrchestratorType yields non-comparable values — the ORDERING is asserted
   // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
   // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
@@ -7708,6 +7759,65 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         );
       });
 
+      it('a long NON-STRING `mode` is described, not echoed', async () => {
+        const node = { note: 'x'.repeat(1_000) };
+        const mode = new Array(1_000).fill(node);
+        const stringify = JSON.stringify;
+        // Every character JSON.stringify writes during the call, whatever it is called on.
+        let stringified = 0;
+        const spy = vi
+          .spyOn(JSON, 'stringify')
+          .mockImplementation((...args: Parameters<typeof stringify>) => {
+            const out = stringify(...args);
+            stringified += out?.length ?? 0;
+            return out;
+          });
+        let issues;
+        try {
+          issues = await rejectionIssues({
+            kind: 'customComfy',
+            mode,
+            recipe: 'starter-comfy-txt2img',
+            params: { prompt: 'a cat' },
+          });
+        } finally {
+          spy.mockRestore();
+        }
+        // The mode's JSON is ~1 MB; nothing near that is written.
+        expect(stringified).toBeLessThan(100_000);
+        expect(issues[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // More entries than fit in 200 characters is described too, even ones left out of the JSON.
+        const padded = Object.fromEntries(
+          Array.from({ length: 150 }, (_, i) => [`k${i}`, undefined])
+        );
+        const described = await rejectionIssues({
+          kind: 'customComfy',
+          mode: padded,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(described[0].message).toBe(
+          'Invalid `customComfy` mode: a value over 200 characters — expected "recipe" or "inline".' +
+            ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+        // At the limit it is still echoed.
+        const atLimit = ['x'.repeat(200 - '[""]'.length)];
+        const echoed = await rejectionIssues({
+          kind: 'customComfy',
+          mode: atLimit,
+          recipe: 'starter-comfy-txt2img',
+          params: { prompt: 'a cat' },
+        });
+        expect(echoed[0].message).toBe(
+          `Invalid \`customComfy\` mode: ${JSON.stringify(
+            atLimit
+          )} — expected "recipe" or "inline".` + ` ${RECIPE_ARM}. ${INLINE_ARM}.`
+        );
+      });
+
       // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — green before this change and
       // after. A genuinely bad value on a DECLARED inline field is raised by that
       // field's own schema, not by the object, so the arm error map must not
@@ -7930,25 +8040,147 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(realSubmitCalls()).toHaveLength(0);
     });
 
-    it('falls back to the DECLARED estimate when the quote throws', async () => {
-      // 🔴 DEGRADE, NEVER ERROR. An unquotable step is exactly the pre-change
-      // behaviour, so this path can only be more accurate than what it replaced
-      // — it must not turn a working estimate into a failure the block cannot
-      // act on. (The SUBMIT still fails closed on a missing quote; that is the
-      // path where the number bounds real money.)
-      mockVerifyBlockToken.mockResolvedValue(stepClaims());
-      happyUser();
-      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
-      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
-    });
+    // 🔴 NO QUOTE IS A FAILED, CODED ESTIMATE — never the declared price shown as
+    // one. Each cause gets its own code; only `unavailable` says "try again".
+    const OWN_ID = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
+    const FOREIGN_ID = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
+    const REJECTION_REASON = 'The output quality must be between 1 and 100.';
+    const REJECTED_NO_REASON =
+      'the orchestrator rejected the request; check the step inputs and references ' +
+      '(retrying the same body will not help)';
+    function stepQuoteError(status: number, message: string) {
+      const err = new TRPCError({
+        code: status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST',
+        message,
+      });
+      annotateOrchestratorSubmitFailure(err, { attempt: 1, status });
+      return err;
+    }
+    function quoteThrowing(make: () => unknown) {
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) throw make();
+        return { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 1 } };
+      });
+    }
+    const STEP_QUOTE_FAILURES = [
+      {
+        name: 'a 400 with a safe reason',
+        arrange: () => quoteThrowing(() => stepQuoteError(400, REJECTION_REASON)),
+        errorCode: 'step_quote_rejected',
+        cause: `the orchestrator rejected the request: ${REJECTION_REASON}`,
+        submitThrows: { code: 'BAD_REQUEST', message: REJECTION_REASON },
+      },
+      {
+        name: 'a 400 whose reason is withheld',
+        arrange: () => quoteThrowing(() => stepQuoteError(400, 'Could not read s3://datasets/a')),
+        errorCode: 'step_quote_rejected',
+        cause: REJECTED_NO_REASON,
+        submitThrows: { code: 'BAD_REQUEST', message: 'Could not read s3://datasets/a' },
+      },
+      {
+        name: 'a 503',
+        arrange: () => quoteThrowing(() => stepQuoteError(503, 'upstream down')),
+        errorCode: 'step_quote_unavailable',
+        cause: 'none could be obtained; try again',
+        submitThrows: { code: 'INTERNAL_SERVER_ERROR', message: 'upstream down' },
+      },
+      {
+        name: 'an answer with no total',
+        arrange: () => stepSubmitQuoting(null, 1),
+        errorCode: 'step_quote_unpriced',
+        cause: 'the orchestrator answered without one',
+        submitThrows: null,
+      },
+    ] as const;
 
-    it('falls back to the DECLARED estimate when the quote carries no numeric cost', async () => {
+    it.each(STEP_QUOTE_FAILURES)(
+      '🔴 with NO quote ($name) is a failed snapshot coded $errorCode, never the declared price',
+      async ({ arrange, errorCode, cause }) => {
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        arrange();
+        const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+        expect(result.snapshot).toEqual({
+          workflowId: 'failed',
+          status: 'failed',
+          errorCode,
+          error: `No price quote for this step: ${cause}`,
+        });
+        expect(realSubmitCalls()).toHaveLength(0);
+      }
+    );
+
+    it.each(STEP_QUOTE_FAILURES)(
+      '🔴 no quote ($name) leaves the SUBMIT as it was: it throws, or refuses at the declared price with no code',
+      async ({ arrange, submitThrows }) => {
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        arrange();
+        const submit = caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+        if (submitThrows) {
+          await expect(submit).rejects.toMatchObject(submitThrows);
+        } else {
+          expect((await submit).snapshot).toEqual({
+            workflowId: 'failed',
+            status: 'failed',
+            cost: { total: STEP_PRICE },
+            error:
+              'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+              'this step, so its cost could not be bounded before execution — please retry shortly',
+          });
+        }
+        expect(realSubmitCalls()).toHaveLength(0);
+        expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      }
+    );
+
+    it('the unpriced SUBMIT refuses at the price it would reserve, not the display estimate', async () => {
+      // `fixture-high-estimate-step` reserves 5 and displays 9 for `{pricey: true}`.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       stepSubmitQuoting(null, 1);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
+      });
+      expect(result.snapshot).toMatchObject({ status: 'failed', cost: { total: 5 } });
+      expect(result.snapshot.errorCode).toBeUndefined();
+    });
+
+    it('a token that cannot be minted is unavailable, with no whatif sent', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      mockGetOrchestratorToken.mockRejectedValueOnce(new Error('mint down'));
       const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost.total).toBe(STEP_PRICE);
+      expect(result.snapshot).toMatchObject({
+        status: 'failed',
+        errorCode: 'step_quote_unavailable',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('a rejection may name an id the app sent in its params, and no other', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      const body = stepBody({
+        params: { image: `https://image.civitai.com/${OWN_ID}.png`, output: { format: 'webp' } },
+      });
+      quoteThrowing(() => stepQuoteError(404, `The blob ${OWN_ID} was not found.`));
+      expect((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot.error).toBe(
+        `No price quote for this step: the orchestrator rejected the request: The blob ${OWN_ID} was not found.`
+      );
+      quoteThrowing(() => stepQuoteError(404, `The blob ${FOREIGN_ID} was not found.`));
+      expect((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot.error).toBe(
+        `No price quote for this step: ${REJECTED_NO_REASON}`
+      );
+    });
+
+    it('a quote of ZERO is a price, not a missing quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(0, 0);
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'wf_estimate', status: 'pending' });
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -8013,7 +8245,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
     });
 
     it('floors on the SUBMIT’s declared value too, not only the estimate’s', async () => {
-      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. `estimateStepBuzz` is
+      // 🔴 THE TWO FLOORS ARE DIFFERENT DERIVATIONS. The entry's `estimateBuzz` is
       // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit's
       // is variant-driven and ceiled (`Math.ceil(priceForVariant(variant))`).
       // Registry load ties them only at CANONICAL params and nothing re-checks
@@ -8033,15 +8265,9 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 5);
     });
 
-    it('falls back to the entry’s DECLARED estimate, not to the floor, when no quote is had', async () => {
-      // 🔴 THE OPERAND NO MUTATION COULD KILL — until this fixture existed.
-      // `quotedBuzz ?? declaredBuzz` → `?? 0` (or `?? submitFloorBuzz`) survived
-      // the whole suite, and that was written up as "unreachable, and in the safe
-      // direction". BOTH claims were wrong. `fixture-high-estimate-step` answers
-      // `estimateBuzz` 9 against a `priceForVariant` of 5 for `{pricey: true}`,
-      // and it registers cleanly — so with the quote unavailable the fallback is
-      // 9 and the mutants show 5: a 44% UNDER-display, on the degraded path,
-      // which is exactly the direction this whole area exists to prevent.
+    it('with no quote shows NEITHER the declared estimate nor the submit floor', async () => {
+      // `fixture-high-estimate-step` answers `estimateBuzz` 9 against a
+      // `priceForVariant` of 5, so a fallback to either number would be visible.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
@@ -8049,7 +8275,12 @@ describe("step-type registry bridge (kind: 'step')", () => {
         blockToken: 'tok',
         body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
       });
-      expect(estimate.snapshot.cost.total).toBe(9);
+      expect(estimate.snapshot).toEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        errorCode: 'step_quote_unavailable',
+        error: 'No price quote for this step: none could be obtained; try again',
+      });
     });
 
     // 🔴 THE SECOND ESTIMATE CALL SITE. The guard above `blocks.estimateWorkflow`
@@ -9703,7 +9934,7 @@ describe('blocks — #3520 model substitution observability', () => {
    * an arm-swap mutant visible rather than merely possible.
    */
   describe('🔴 the PRIVATE-RUN Buzz cap reply names the right window and scope [INV]', () => {
-    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}) {
+    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}, quoted = 25) {
       mockVerifyBlockToken.mockResolvedValue(
         validClaims({
           buzzBudget: 1000,
@@ -9728,10 +9959,58 @@ describe('blocks — #3520 model substitution observability', () => {
       mockSubmitWorkflow.mockResolvedValueOnce({
         id: '',
         status: 'succeeded',
-        cost: { total: 25 },
+        cost: { total: quoted },
         steps: [],
       });
     }
+
+    // The per-call cap (5000) is above this aggregate (2500), so one call can fit its
+    // budget and still breach the cap from an untouched counter. `incrBy` answers with
+    // real arithmetic here, so the total is the call's own cost and nothing else.
+    function freshCounters() {
+      const totals = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, n: number) => {
+        const next = (totals.get(String(key)) ?? 0) + n;
+        totals.set(String(key), next);
+        return next;
+      });
+    }
+
+    it('🔴 ONE call inside a 5000 per-call budget but above the cap is refused by the cap [INV]', async () => {
+      reachesTheCapAsPrivateRun({ buzzBudget: 5000 }, 2501);
+      freshCounters();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toBe(
+        "private-run Buzz cap reached: 0 already spent on this app's private run, " +
+          'this generation costs 2501, cap is 2500 per app'
+      );
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // the reservation was refunded
+    });
+
+    it.each([[2499], [2500]])(
+      '…and the same call at %i, at or under the cap, runs [INV]',
+      async (price) => {
+        reachesTheCapAsPrivateRun({ buzzBudget: 5000 }, price);
+        freshCounters();
+        mockSubmitWorkflow.mockResolvedValue({
+          id: 'wf_1',
+          status: 'succeeded',
+          cost: { total: price },
+          steps: [],
+        });
+
+        const caller = blocksRouter.createCaller(fakeCtx() as never);
+        const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+        expect(result.snapshot.error).toBeUndefined();
+        expect(result.snapshot.status).not.toBe('failed');
+      }
+    );
 
     it('quotes the per-app private-run cap, NOT the daily one', async () => {
       reachesTheCapAsPrivateRun();
@@ -10081,6 +10360,56 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
 
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
+  describe('inline media is refused before any quote or charge', () => {
+    // A phone photo inlined as a data URI: over the byte cap AND inline media.
+    const photo = `data:image/jpeg;base64,${'/9j/4AAQSkZJRgABAQ'.repeat(20_000)}`;
+    const expected =
+      'input.ImageUrl carries inline media (data URI/base64); ' +
+      'pass a hosted url instead — upload the image, video or audio with useMediaUpload ' +
+      "(an image also works with useImageUpload({ purpose: 'generationSource' }) or useImagePicker) and pass the returned url";
+
+    it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+      '%s reports the inline-media message, not the byte cap',
+      async (procedure) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        const body = ptBody({ input: { ImageUrl: photo } });
+
+        const err = await caller()
+          [procedure]({ blockToken: 'tok', body })
+          .then(
+            () => null,
+            (e: unknown) => e as { code: string; message: string }
+          );
+
+        expect(err?.code).toBe('BAD_REQUEST');
+        expect(err?.message).toContain(expected);
+        expect(err?.message).not.toContain('byte limit');
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      }
+    );
+
+    it("refuses it in a kind:'workflow' step on the estimate", async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const body = {
+        kind: 'workflow' as const,
+        steps: [
+          { name: 'gen', $type: PT_TYPE, input: { prompt: 'a cat' } },
+          { $type: PT_TYPE, input: { images: ['https://image.civitai.com/a.jpeg', photo] } },
+        ],
+      };
+
+      await expect(caller().estimateWorkflow({ blockToken: 'tok', body })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('steps[1].input.images[1] carries'),
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe('🔴 criterion 1 — an UNREGISTERED $type parses and submits', () => {
     it('submits a $type that is not in stepRegistry', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
@@ -10381,7 +10710,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       const REFUSAL = {
         workflowId: 'failed',
         status: 'failed',
-        error: 'Training needs a price quote and none could be obtained; try again.',
+        error: 'Training needs a price quote and the orchestrator answered without one.',
         errorCode: 'training-quote-unpriced',
       };
       const blockCapIncrs = () =>
@@ -10521,12 +10850,19 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           blockToken: 'tok',
           body: ptBody({ $type: 'training' }),
         });
-        expect(result.snapshot).toEqual({ ...REFUSAL, errorCode: 'training-quote-unavailable' });
+        expect(result.snapshot).toEqual({
+          ...REFUSAL,
+          error: 'Training needs a price quote and none could be obtained; try again.',
+          errorCode: 'training-quote-unavailable',
+        });
         expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       });
 
       describe('a quote that FAILS tells the block why', () => {
         const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
+        const REJECTED_NO_REASON =
+          'Training needs a price quote and the orchestrator rejected the request; check the ' +
+          'step inputs and references (retrying the same body will not help).';
         /** A 32-character key the block itself submitted, and one it did not. */
         const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
         const FOREIGN_KEY = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
@@ -10588,12 +10924,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           [
             'a rejection whose message carries a URL and a stack frame',
             UNSAFE,
-            { error: GENERIC, errorCode: 'training-quote-rejected' },
+            { error: REJECTED_NO_REASON, errorCode: 'training-quote-rejected' },
           ],
           [
             'a rejection naming an id the block did not send',
             FOREIGN_ID,
-            { error: GENERIC, errorCode: 'training-quote-rejected' },
+            { error: REJECTED_NO_REASON, errorCode: 'training-quote-rejected' },
           ],
           [
             'an unrecognised throw',
@@ -10667,112 +11003,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           for (const text of forbidden) expect(wire).not.toContain(text);
         });
 
-        it('logs the swallowed error with the orchestrator status', async () => {
-          mockVerifyBlockToken.mockResolvedValue(ptClaims());
-          happyUser();
-          quoteThrows(NOT_FOUND);
-          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
-          expect(mockLogToAxiom).toHaveBeenCalledWith({
-            name: 'block-pass-through-quote-failed',
-            type: 'warning',
-            outcome: 'rejected',
-            phase: 'estimate',
-            stepType: 'training',
-            appBlockId: 'apb_test',
-            code: 'BAD_REQUEST',
-            attempt: 1,
-            status: 404,
-            error: `The blob ${OWN_KEY} was not found.`,
-            cause: null,
-          });
-        });
-
         // The level follows THIS classification, not the generic tRPC client-fault
         // table: only an outcome caused by the request or the viewer is a warning. Our
         // own token refused (401), an upstream timeout (408) and a blob refresh that
         // failed in transit are ours, so they are errors.
         const BLOB_REFRESH_MESSAGE =
           'Failed to refresh image URL for blob: BLOB1. Please try uploading the image again.';
-        it.each<[string, 'warning' | 'error', 'rejected' | 'unavailable', () => unknown]>([
-          ['an upstream 404 rejection', 'warning', 'rejected', NOT_FOUND],
-          [
-            'a blob the orchestrator says is gone',
-            'warning',
-            'rejected',
-            () => {
-              const err = new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE });
-              annotateOrchestratorMissingBlob(err);
-              return err;
-            },
-          ],
-          [
-            'an upstream 429',
-            'warning',
-            'unavailable',
-            () => orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429),
-          ],
-          [
-            'an upstream 403 (insufficient funds)',
-            'warning',
-            'unavailable',
-            () => orchestratorError('BAD_REQUEST', 'Insufficient funds.', 403),
-          ],
-          [
-            'an upstream 401 (our own token refused)',
-            'error',
-            'unavailable',
-            () => orchestratorError('UNAUTHORIZED', 'Authorization has been denied.', 401),
-          ],
-          [
-            'an upstream 408',
-            'error',
-            'unavailable',
-            () => orchestratorError('BAD_REQUEST', 'Request timed out.', 408),
-          ],
-          [
-            'a blob refresh that failed in transit',
-            'error',
-            'unavailable',
-            () => new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE }),
-          ],
-          [
-            'an upstream 500',
-            'error',
-            'unavailable',
-            () =>
-              orchestratorError(
-                'SERVICE_UNAVAILABLE',
-                'Generation services are temporarily unavailable. Please try again.',
-                500
-              ),
-          ],
-          ['a network failure', 'error', 'unavailable', NETWORK],
-          [
-            'a timeout',
-            'error',
-            'unavailable',
-            () => new TRPCError({ code: 'TIMEOUT', message: 'The operation timed out.' }),
-          ],
-          [
-            'an unrecognised throw',
-            'error',
-            'unavailable',
-            () => new Error('Cannot read properties of undefined'),
-          ],
-        ])('logs %s at %s level, as %s', async (_name, level, outcome, make) => {
-          mockVerifyBlockToken.mockResolvedValue(ptClaims());
-          happyUser();
-          quoteThrows(make);
-          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
-          const logged = mockLogToAxiom.mock.calls
-            .map((c) => c[0])
-            .filter((entry) => entry?.name === 'block-pass-through-quote-failed');
-          expect(logged).toHaveLength(1);
-          expect({ type: logged[0].type, outcome: logged[0].outcome }).toEqual({
-            type: level,
-            outcome,
-          });
-        });
 
         it('a blob the orchestrator says is gone is a rejection with a host-written reason', async () => {
           mockVerifyBlockToken.mockResolvedValue(ptClaims());
@@ -11029,9 +11265,9 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
   // tokens are exercised here, and this gate is where that number meets a real price. A 3D step is quoted at ~390, so a budget below that
   // means such an app can run in production but can never be developed or reviewed.
   // The budget is minted by the REAL clamp rather than restated, so the test follows
-  // the cap; 1300 is a manifest ask above it that is not a multiple of it.
+  // the cap; 6301 is a manifest ask above it that is not a multiple of it.
   describe('a pre-approval token can afford a 3D-priced step [REG]', () => {
-    const MANIFEST_BUDGET = 1300;
+    const MANIFEST_BUDGET = 6301;
     const mintedBudget = () =>
       resolveDevBuzzBudget(['ai:write:budgeted'], undefined, MANIFEST_BUDGET);
     // The explicit `step: undefined` is what the wire type's pass-through arm requires.
@@ -11057,16 +11293,36 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(mockSysRedis.incrBy).toHaveBeenCalledWith(expect.stringMatching(key), 390);
     });
 
-    it.each(TOKENS)('a %s token is still refused a step quoted above 1000', async (_name, over) => {
+    it.each(TOKENS)('a %s token is still refused a step quoted above 5000', async (_name, over) => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: mintedBudget(), ...over }));
       happyUser();
-      ptQuoting(1037, 1037);
+      ptQuoting(5037, 5037);
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
       expect(result.snapshot).toMatchObject({
         workflowId: 'failed',
         status: 'failed',
-        error: 'insufficient buzz budget: step ceiling 1037 exceeds budget 1000',
+        error: 'insufficient buzz budget: step ceiling 5037 exceeds budget 5000',
       });
+      expect(ptRealSubmits()).toHaveLength(0);
+    });
+
+    // The per-call cap is above the private-run aggregate, so one step can fit the
+    // budget and still be refused by the aggregate from an untouched counter.
+    it('a private-run step inside the budget but above the private-run cap is refused by that cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ptClaims({ buzzBudget: mintedBudget(), privateRun: true, privateRunAudience: 'owner' })
+      );
+      happyUser();
+      ptQuoting(2501, 2501);
+      mockSysRedis.incrBy.mockImplementation(async (_key: string, n: number) => n);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      expect(result.snapshot.error).toContain('this step may cost up to 2501');
+      expect(result.snapshot.error).toContain('cap is 2500');
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:private-run-buzz-cap:42:/),
+        2501
+      );
       expect(ptRealSubmits()).toHaveLength(0);
     });
   });
@@ -11769,10 +12025,7 @@ describe('blocks workflow — author-fee price disclosure', () => {
       expect(result.snapshot.cost).toEqual({ total: 1 + EXPECTED_FEE, authorFee: EXPECTED_FEE });
     });
 
-    it('adds NOTHING when the orchestrator quote DEGRADES', async () => {
-      // No whatIf ⇒ no `cost.base` ⇒ no fee priced, and the shown generation
-      // price already falls back to the declared estimate. Degradation is
-      // correlated with the submit's, not bounded by it.
+    it('prices NO fee when the orchestrator quote fails: the estimate carries no cost', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       feeLive();
@@ -11780,7 +12033,8 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
-      expect(result.snapshot.cost).toEqual({ total: 1, authorFee: 0 });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toBeUndefined();
     });
   });
 
@@ -12205,6 +12459,21 @@ describe('blocks.estimateWorkflowBatch', () => {
     expect(result.aggregate).toEqual({ total: 213, pricedCells: 4, cellCount: 4 });
   });
 
+  it('🔴 a registry step cell with no quote fails on its own, coded, and is not summed', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [step('cell-boom'), comfy('zimage-turbo')],
+    });
+    expect(result.snapshots[0]).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'step_quote_unavailable',
+      error: 'No price quote for this step: none could be obtained; try again',
+    });
+    expect(result.snapshots[1].cost).toEqual({ total: 20 });
+    expect(result.aggregate).toEqual({ total: 20, pricedCells: 1, cellCount: 2 });
+  });
+
   it('prices each cell exactly as the SINGLE estimate prices that body', async () => {
     const bodies = [txt('cell-c'), comfy('qwen-image'), step('cell-e')];
     const batch = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies });
@@ -12325,7 +12594,7 @@ describe('blocks.estimateWorkflowBatch', () => {
           // A body the single estimate's schema ACCEPTS — so the refusal below is the
           // batch's own, not a parse failure that would have happened anyway.
           kind: 'training',
-          datasetId: `tds_${'a'.repeat(32)}`,
+          items: [{ air: 'K1.jpeg', caption: 'a' }],
           engine: 'ai-toolkit',
           model: 'sdxl',
           params: {

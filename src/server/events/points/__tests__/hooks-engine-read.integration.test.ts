@@ -201,11 +201,18 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
     expect((await getHatTotals(event, [HAT], NOW)).counts).toBeNull();
     const seasonKeys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, NOW));
     await redisMock.sysRedis.hIncrBy(seasonKeys.base('count'), COUNT_BASE_MARK, 1);
-    // One of each way earned, counted live beside the points (modelLike is not a shown count).
+    // One of each way earned, counted live beside the points.
     expect(await getHatTotals(event, [HAT], NOW)).toEqual({
       points: { [hatField(HAT)]: expected },
       counts: {
-        [hatField(HAT)]: { impressions: 1, reactions: 1, comments: 1, stickers: 1, remixes: 1 },
+        [hatField(HAT)]: {
+          impressions: 1,
+          reactions: 1,
+          comments: 1,
+          stickers: 1,
+          remixes: 1,
+          modelLikes: 1,
+        },
       },
     });
     expect((await getTeamPoints({ ...event, teams: birthday2026.teams }, NOW)).Blue).toBe(expected);

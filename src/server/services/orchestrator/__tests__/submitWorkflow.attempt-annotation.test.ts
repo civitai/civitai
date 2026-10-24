@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
 /**
- * The REAL `submitWorkflow` retry loop, with only the generated `@civitai/client`
+ * The REAL `submitWorkflow` retry loop, with only the generated `@civitai/orchestration-client`
  * transport mocked: which attempt received a status-bearing failure, recorded on the
  * thrown error, and the training submit's classification of it.
  *
@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),

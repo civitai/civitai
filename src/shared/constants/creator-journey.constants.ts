@@ -44,6 +44,8 @@ export const SCORE_TIERS = [
   { slug: 'star', accent: '#4dabf7' },
   { slug: 'supernova', accent: '#ae3ec9' },
   { slug: 'legend', accent: '#e9c46a' },
+  // The Mythic card glow and Discord role color, matching the copper plate; Flame shares it.
+  { slug: 'mythic', accent: '#f76707' },
 ] as const;
 
 export type ScoreTierSlug = (typeof SCORE_TIERS)[number]['slug'];
@@ -146,3 +148,8 @@ export function parseMilestoneShareId(raw: string) {
   const milestone = parseMilestoneShareToken(match[2]);
   return userId > 0 && userId <= 2_147_483_647 && milestone ? { userId, milestone } : null;
 }
+
+/** The ClickHouse image event the Creator Score deducts "Reports against" for, once per image. */
+export const REPORTS_AGAINST_EVENT = 'DeleteTOS';
+/** The ClickHouse image event a moderator restore records. */
+export const REMOVAL_RESTORED_EVENT = 'Restore';

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
@@ -76,7 +77,7 @@ const run = (over: Partial<Parameters<typeof snapshotAutomatedText>[0]> = {}) =>
   );
 
 beforeAll(async () => {
-  [mainPg, modPg] = await Promise.all([PGlite.create(), PGlite.create()]);
+  [mainPg, modPg] = await Promise.all([freshPglite(), freshPglite()]);
   await Promise.all([mainPg.exec(MAIN_TABLES), modPg.exec(MODERATOR_SCHEMA)]);
   main = new Kysely<MainDB>({ dialect: pgliteDialect(mainPg) });
   mod = new Kysely<ModeratorDB>({ dialect: pgliteDialect(modPg) });

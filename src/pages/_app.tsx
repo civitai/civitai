@@ -13,6 +13,7 @@ import { getCookie, getCookies } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
+import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -46,7 +47,6 @@ import { SignalsProviderStack } from '~/components/Signals/SignalsProviderStack'
 import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
-import { env } from '~/env/client';
 import { isDev, isPreview, isProd } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
@@ -70,6 +70,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   NAV_BANNERS_DISMISSED_COOKIE,
   parseNavBannersDismissed,
@@ -87,6 +88,10 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
+import {
+  ShellBootstrapProvider,
+  useShellBootstrap,
+} from '~/components/Shell/ShellBootstrapProvider';
 
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
@@ -96,6 +101,9 @@ import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css'; //import MRT styles
+// `data-civitai-ui` component rules, all inside `@layer civitai.components` (ordered in
+// `_document.tsx`). Tokens deliberately NOT loaded — see `ShellDs.module.css`.
+import '@civitai/components/styles.css';
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
@@ -129,6 +137,7 @@ type CustomAppProps = {
   announcementsDismissed?: DismissedByType;
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
+  siteAlerts?: SiteAlertsPayload;
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -148,6 +157,8 @@ type CustomAppProps = {
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   adsGated?: boolean;
+  /** Set by a static-shell render: the viewer's data comes from page data after hydration. */
+  shell?: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -156,7 +167,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: {
       session,
       colorScheme,
-      cookies = parseCookies(getCookies()),
+      cookies: pageCookies,
       flags,
       userFeatureFlags,
       tosMeta,
@@ -164,10 +175,11 @@ function MyApp(props: CustomAppProps) {
       announcementsDismissed,
       navBanners,
       navBannersDismissed,
+      siteAlerts,
       following,
       seed = Date.now(),
       canIndex,
-      hasAuthCookie,
+      hasAuthCookie: pageHasAuthCookie,
       settings,
       browsingSettingsAddons,
       liveNow = false,
@@ -178,12 +190,31 @@ function MyApp(props: CustomAppProps) {
       serverDomains,
       availableOAuthProviders,
       verifiedBot = null,
-      adsGated = false,
+      adsGated: pageAdsGated = false,
+      shell,
       ...pageProps
     },
   } = props;
 
   const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
+  // Fixed for the tab: the shell machinery stays mounted after navigating off the shell page, so
+  // the tree above the page never remounts.
+  const [bootedShell] = useState(() => shell === true);
+  const {
+    cookies,
+    hasAuthCookie,
+    adsGated,
+    sessionSeed,
+    flagsSeed,
+    appShell,
+    referralsPending,
+    status: shellStatus,
+  } = useShellBootstrap(bootedShell, {
+    onShellPage: shell === true,
+    cookies: pageCookies,
+    hasAuthCookie: pageHasAuthCookie,
+    adsGated: pageAdsGated,
+  });
 
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
@@ -220,7 +251,7 @@ function MyApp(props: CustomAppProps) {
       </FeatureLayout>
     );
 
-  return (
+  const app = (
     <AppProvider
       seed={seed}
       canIndex={canIndex}
@@ -230,6 +261,7 @@ function MyApp(props: CustomAppProps) {
       announcementsDismissed={announcementsDismissed}
       navBanners={navBanners}
       navBannersDismissed={navBannersDismissed}
+      siteAlerts={siteAlerts}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -240,6 +272,7 @@ function MyApp(props: CustomAppProps) {
       availableOAuthProviders={availableOAuthProviders}
       verifiedBot={verifiedBot}
       isAuthed={!!session || hasAuthCookie}
+      shell={appShell}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -264,6 +297,7 @@ function MyApp(props: CustomAppProps) {
           {/* <ErrorBoundary> */}
           <SessionProvider
             session={session ? session : !hasAuthCookie ? null : undefined}
+            seed={sessionSeed}
             refetchOnWindowFocus={false}
             refetchWhenOffline={false}
           >
@@ -285,7 +319,7 @@ function MyApp(props: CustomAppProps) {
                   <RegisterCatchNavigation />
                   <RouterTransition />
                   {/* <ChadGPT isAuthed={!!session} /> */}
-                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags} seed={flagsSeed}>
                     {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
                         `region` is the SAME SSR-derived country code AppProvider is seeded with
                         above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded in as a
@@ -320,7 +354,10 @@ function MyApp(props: CustomAppProps) {
                               <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
                                 <SignalsProviderStack>
                                   <ActivityReportingProvider>
-                                    <ReferralsProvider {...cookies.referrals}>
+                                    <ReferralsProvider
+                                      {...cookies.referrals}
+                                      pending={referralsPending}
+                                    >
                                       <FiltersProvider>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
@@ -367,6 +404,12 @@ function MyApp(props: CustomAppProps) {
       {isDev && <ReactQueryDevtools buttonPosition="bottom-right" />}
     </AppProvider>
   );
+
+  return shellStatus ? (
+    <ShellBootstrapProvider status={shellStatus}>{app}</ShellBootstrapProvider>
+  ) : (
+    app
+  );
 }
 
 // MyApp.getInitialProps = async (appContext: AppContext) => {
@@ -407,22 +450,6 @@ function MyApp(props: CustomAppProps) {
 //     ...appProps,
 //   };
 // };
-const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
-// Bound the server-side self-fetch to `/api/user/settings` so a slow/hung apex
-// Service endpoint can't stall every SSR render's critical path. The endpoint
-// does session + settings + a 3-way Promise.all (tos/announcements/follows) —
-// several DB/redis round-trips — so under rollout load it can be slow-but-
-// successful. 8s sits well under the gateway/kubelet ceilings but only trips on
-// a genuine hang (don't abort a fetch that would have succeeded → needless
-// degraded render). Env-overridable for tuning. (Confirm P99 from Tempo.)
-// Clamp to a positive floor: `AbortSignal.timeout()` throws RangeError on a
-// negative value, so a fat-fingered/negative env override (e.g. `-1`) would
-// throw on EVERY render and silently force the permanent-degrade path. Floor at
-// 1s; a too-low (but positive) value at worst over-degrades, it can't crash.
-const SETTINGS_FETCH_TIMEOUT_MS = Math.max(
-  1000,
-  Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000
-);
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -476,15 +503,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
-  // Self-fetch the pod's own apex Service for the per-user settings bootstrap.
-  // This sits on EVERY SSR page render's critical path with no resolver behind
-  // it, so any failure here (fetch reject — ECONNREFUSED/ECONNRESET from a
-  // churning keep-alive socket — timeout/abort, non-OK status, or a `res.json()`
-  // reject) must NOT throw out of `getInitialProps`: that would surface a
-  // user-facing 500 with no app error log. Degrade to the anonymous/no-settings
-  // shape instead; the downstream consumers already tolerate it (`settings`
-  // undefined → the client `user.getSettings` query self-heals; `session` null →
-  // anon render; the optional seeds are `enabled: !!x` gated).
+  // The per-user settings bootstrap, read in-process (the same function
+  // `/api/user/settings` serves). This sits on EVERY SSR page render's critical
+  // path, so any failure here (a failed session lookup, the render deadline, or
+  // a payload with no `session` key) must NOT throw out of `getInitialProps`:
+  // that would surface a user-facing 500 with no app error log. Degrade to the
+  // anonymous/no-settings shape instead; the downstream consumers already
+  // tolerate it (`settings` undefined → the client `user.getSettings` query
+  // self-heals; `session` null → anon render; the optional seeds are
+  // `enabled: !!x` gated).
   // The success-path shape is identical to before; on failure we fall back to
   // the anonymous/no-settings shape. `settings` keeps its original
   // `UserContentSettings` type (downstream consumers already treat an undefined
@@ -502,39 +529,46 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     browsingSettingsAddons?: BrowsingSettingsAddon[];
     liveNow?: boolean;
     navBanners?: NavBanner[];
+    siteAlerts?: SiteAlertsPayload;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
-  // True only on the DEGRADED fallback path (we couldn't reach/parse the settings
-  // endpoint). A SUCCESSFUL fetch returning `session: null` looks identical in the
-  // destructured shape below, but the two drive `hasAuthCookie` differently — see the
-  // carve-out near the return.
+  // True only on the DEGRADED fallback path (we couldn't obtain the bootstrap). A
+  // SUCCESSFUL bootstrap carrying `session: null` looks identical in the destructured
+  // shape below, but the two drive `hasAuthCookie` differently — see the carve-out
+  // near the return.
   let settingsDegraded = false;
   try {
-    const res = await fetch(`${baseUrl as string}/api/user/settings`, {
-      headers: { ...request.headers } as HeadersInit,
-      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
-    const data = (await res.json()) as SettingsBootstrap;
-    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB blip on a
-    // draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with NO `session` key.
-    // That sails past the `!res.ok` guard but carries no authoritative session, so
-    // treating it as a real result would render a logged-in user as signed out. Key
-    // ABSENT (`{}`) ⇒ degraded; key PRESENT (`session: null`) ⇒ render anonymous.
-    // `'session' in data` is the discriminator — a truthiness check erases it.
-    if (!data || typeof data !== 'object' || !('session' in data)) {
-      throw new Error('settings fetch returned no session payload (endpoint-swallowed error)');
+    // 🔴 The `typeof window` BLOCK is what keeps the bootstrap's server graph (database,
+    // redis, server env, `fs`) out of the client bundle: both bundlers fold the condition
+    // and drop the branch, import included. Keep this exact form. `if (!request) return`
+    // above does NOT do it (runtime-only), and neither does an early
+    // `if (typeof window !== 'undefined') return` — the webpack build keeps what follows.
+    // Pinned by `no-server-infra-in-app-graph.test.ts`.
+    let data: unknown;
+    if (typeof window === 'undefined') {
+      const { resolveSettingsBootstrapForRender } = await import(
+        '~/server/services/settings-bootstrap.service'
+      );
+      data = await resolveSettingsBootstrapForRender(request);
     }
-    settingsBootstrap = data;
+    // A bootstrap with NO `session` key is not authoritative, so treating it as a real
+    // result would render a logged-in user as signed out. Key ABSENT ⇒ degraded; key
+    // PRESENT (`session: null`) ⇒ render anonymous. `'session' in data` is the
+    // discriminator — a truthiness check erases it.
+    if (!data || typeof data !== 'object' || !('session' in data)) {
+      throw new Error('settings bootstrap returned no session payload');
+    }
+    settingsBootstrap = data as SettingsBootstrap;
   } catch (e) {
     settingsDegraded = true;
     // Observable but non-fatal: log concisely and fall through to a safe render.
     // The structured marker `[_app] settings bootstrap fetch failed` is the
     // stable greppable string and the ONLY alertable signal — a genuinely-broken
-    // settings endpoint mass-degrades every SSR render with NO 5xx spike (we
-    // swallow the throw), so it would otherwise be silent. A Loki log-rate alert
-    // on this marker is wired on the datapacket-talos side.
+    // bootstrap mass-degrades every SSR render with NO 5xx spike (we swallow the
+    // throw), so it would otherwise be silent. Log-based alerting and runbooks
+    // match this exact text, so it keeps the word "fetch" although the read is
+    // now in-process.
     // NB: deliberately NO prom-client metric here — `_app.tsx` runs in BOTH the
     // client and server bundles, and importing `~/server/prom/client` (even
     // dynamically) pulls `prom-client` → Node built-ins (`tls`/`v8`) into the
@@ -553,6 +587,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       browsingSettingsAddons: undefined,
       liveNow: undefined,
       navBanners: undefined,
+      siteAlerts: undefined,
       session: null,
     };
   }
@@ -569,6 +604,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
     navBanners,
+    siteAlerts,
   } = settingsBootstrap;
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
@@ -588,9 +624,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   host `flags`. Computed here via the SAME shared function the resolver uses
   //   (fs-free, safe in this client-bundled getInitialProps graph).
   // - tosMeta: the static per-domain ToS metadata (lastmod + body hash + the
-  //   per-domain settings field keys) — resolved server-side in the
-  //   `/api/user/settings` route above and delivered via that fetch, so we never
-  //   import `content.service` (and its `fs/promises` read) into this graph.
+  //   per-domain settings field keys) — resolved by the settings bootstrap above,
+  //   behind its server-only `typeof window` block, so `content.service` (and its
+  //   `fs/promises` read) never enters this client-bundled graph.
   //   ToS content only changes on a deploy (never mid-session). The show/hide
   //   decision is computed client-side in `useToSUpdateModal` against the seeded
   //   `user.getSettings`, so there is no tRPC query to seed here — `tosMeta` just
@@ -621,6 +657,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     chatSettings = resolveChatSettings(settings.chat);
   }
 
+  // Read by the page-render metric: a render with a session cookie whose settings bootstrap failed
+  // is not known to be anonymous. Assigned on every run, since a notFound runs this twice on one request.
+  (appContext.ctx.req as any)[SESSION_UNRESOLVED_REQ_KEY] =
+    !session && hasAuthCookie && settingsDegraded;
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie && !settingsDegraded) {
@@ -667,6 +707,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings,
       browsingSettingsAddons,
       liveNow,
+      // Every seed computed above must be returned here; `app-ssr-seeds.test.ts` pins the ones it lists.
+      chatSettings,
       flags,
       userFeatureFlags,
       tosMeta,
@@ -674,6 +716,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       announcementsDismissed,
       navBanners,
       navBannersDismissed,
+      siteAlerts,
       following,
       seed: Date.now(),
       hasAuthCookie,

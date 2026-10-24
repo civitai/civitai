@@ -15,14 +15,21 @@ const findUnique = dbMock.dbRead.keyValue.findUnique;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
 const getCapTier = vi.fn();
+const getCapTiers = vi.fn();
 
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
   getCapTier,
+  getCapTiers,
 }));
 
-const { getPlacementConfig, placementPriceRange, MIN_EXPIRY_HOURS, MAX_EXPIRY_HOURS } =
-  await import('~/server/services/placement.service');
+const {
+  getPlacementConfig,
+  placementPriceRange,
+  placementPriceRanges,
+  MIN_EXPIRY_HOURS,
+  MAX_EXPIRY_HOURS,
+} = await import('~/server/services/placement.service');
 
 const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
 
@@ -177,6 +184,71 @@ describe('placementPriceRange', () => {
     const range = await placementPriceRange(1, 'sticker');
     expect(range.score).toBe(0);
     expect(range.max).toBe(100);
+  });
+});
+
+describe('placementPriceRanges', () => {
+  // Three creators in three different bands: neither score nor tier, score alone, and both.
+  const creators = [
+    { id: 1, score: 0, tier: null },
+    { id: 2, score: 25_000, tier: null },
+    { id: 3, score: 100_000, tier: 'gold' },
+  ];
+
+  it('answers each creator as placementPriceRange does, in two reads for the whole set', async () => {
+    queryRaw.mockResolvedValue(creators.map(({ id, score }) => ({ id, score })));
+    getCapTiers.mockResolvedValue(new Map(creators.map(({ id, tier }) => [id, tier])));
+    const ranges = await placementPriceRanges([1, 2, 3, 3], 'storyline');
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledWith([1, 2, 3]);
+
+    for (const { id, score, tier } of creators) {
+      queryRaw.mockResolvedValue([{ score }]);
+      getCapTier.mockResolvedValue(tier);
+      expect(ranges.get(id)).toEqual(await placementPriceRange(id, 'storyline'));
+    }
+    expect([...ranges.values()].map((range) => range.max)).toEqual([100, 500, 5_000]);
+  });
+
+  it('puts a creator with no stored score in the bottom band', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map([[9, null]]));
+    const ranges = await placementPriceRanges([9], 'storyline');
+    expect(ranges.get(9)).toMatchObject({ score: 0, tier: 'free', max: 100 });
+  });
+
+  it('reads each creator score by id, from the stored total', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map());
+    await placementPriceRanges([4, 5], 'storyline');
+    const [strings, ...values] = queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      `SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score FROM "User" WHERE id = ANY(?::int[])`
+    );
+    expect(values).toEqual([[4, 5]]);
+  });
+
+  it('uses a config it is handed instead of reading one, and prices the surface asked', async () => {
+    queryRaw.mockResolvedValue([{ id: 1, score: 0 }]);
+    getCapTiers.mockResolvedValue(new Map([[1, null]]));
+    const config = await getPlacementConfig();
+    findUnique.mockClear();
+    const ranges = await placementPriceRanges([1], 'sticker', config);
+    expect(findUnique).not.toHaveBeenCalled();
+    queryRaw.mockResolvedValue([{ score: 0 }]);
+    getCapTier.mockResolvedValue(null);
+    expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
+    expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);
+  });
+
+  it('reads nothing for no creators', async () => {
+    await expect(placementPriceRanges([], 'storyline')).resolves.toEqual(new Map());
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(getCapTiers).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import {
   IconApps,
@@ -28,6 +28,8 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeForkMenuItem } from './ChromeForkEntry';
+import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
@@ -36,14 +38,16 @@ import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
 import { handleEstimateBatch } from './estimateBatchGate';
-import { failureSnapshot } from './failureSnapshot';
+import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  resolveAdvertisedScopes,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
 } from './requestConsentGate';
 import { BlockConsentNotice } from './BlockConsentNotice';
@@ -79,6 +83,12 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  classifyEntityReactionError,
+  createReactionReplyLatch,
+  resolveGetEntityReactionsRequest,
+  resolveSetEntityReactionRequest,
+} from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -115,12 +125,18 @@ interface IframeHostProps {
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
   tokenKind?: 'block' | 'oauth';
+  /** The per-call Buzz budget `token` carries, as the mint reported it.
+   *  Forwarded to the block as-is; never derived here. */
+  buzzBudget?: number;
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** The scopes the mint signed into `token`. When present, exactly this set is
+   *  advertised to the block — see `resolveAdvertisedScopes`. */
+  signedScopes?: string[];
   /**
    * 🔴 THE MINT'S OWN VERDICT that the signed-in viewer's grant is short of the
    * app's approved manifest — and the input the HOST-SIDE consent notice keys on,
@@ -172,9 +188,11 @@ const HARD_HEIGHT_CEILING = 8_000;
  * a 0px iframe because we could not read the viewport is a worse outcome than
  * the over-tall iframe the clamp exists to prevent.
  *
- * `window.innerHeight` deliberately, not `visualViewport.height` — nothing else
- * in `src/` reads `visualViewport`, and the pinch-zoom/keyboard-inset precision
- * it would add buys nothing for a bound whose whole job is "roughly one screen".
+ * `window.innerHeight` deliberately, not `visualViewport.height` — the
+ * pinch-zoom/keyboard-inset precision it would add buys nothing for a bound
+ * whose whole job is "roughly one screen". (A keyboard inset is a real concern
+ * for a fixed sheet holding a text field; that is
+ * `useVisualViewportBottomInset`'s job, not this clamp's.)
  */
 function viewportHeightPx(): number | null {
   if (typeof window === 'undefined') return null;
@@ -473,8 +491,8 @@ export function AppBlockChrome({
   // Which of those entries this menu may offer. The rules (off-site exclusion,
   // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
   // `/apps/run/` links, self-exclusion, the cap) live in the pure
-  // `selectChromeRecentApps` so the node `unit` project covers them — the
-  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // `selectChromeRecentApps` so the node `unit` project covers them. The
+  // store's PER-KIND cap is what stops
   // off-site entries from evicting the on-site ones this menu needs.
   const recentApps = selectChromeRecentApps(recents, {
     canOpenPage,
@@ -666,8 +684,14 @@ export function AppBlockChrome({
           after mount so SSR + first client render match). Excludes the app
           currently being viewed and the whole label+section is omitted when
           there's nothing else to show (a first-time / single-app viewer).
-          Each item shows the app icon (persisted `iconUrl`, else a generic
-          app icon) + name, linking to the full-page run route. */}
+          Each item shows the app's icon + name, linking to the full-page run
+          route. 🔴 THE ICON IS READ LIVE, NEVER FROM THE STORE: the recents
+          store never persists an icon url (`recentlyOpenedAppsStore.ts`) and
+          `selectChromeRecentApps` strips one, so `ChromeRecentAppIcon` gets
+          only the slug and draws the `iconUrl` the server's listing-media gate
+          returned for THIS host and viewer (`appListings.getAppDetail`) — the
+          generic glyph while that loads, on any error, and whenever the gate
+          hides the icon. */}
       {recentApps.length > 0 && (
         <ChromeSurfaceGroup data-testid="app-recently-run">
           <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
@@ -683,13 +707,8 @@ export function AppBlockChrome({
               // note in `ChromeSurface.tsx` for why it is opt-in rather than
               // universal.
               clamp
-              leftSection={
-                r.iconUrl ? (
-                  <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
-                ) : (
-                  <IconApps size={14} stroke={1.5} />
-                )
-              }
+              // `blockId` is the listing slug for an on-site app (`app-listing-mapper.ts`).
+              leftSection={<ChromeRecentAppIcon slug={r.blockId} />}
             >
               {/* The persisted `name` is the SAME publisher-controlled string
                   the trust label above laundered through localStorage — so
@@ -754,6 +773,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* FORKABLE APPS — "Fork": same lazy listing read and same render-its-own-gates shape as
+          the review item above; hidden on the dev tunnel and the review preview. */}
+      <ChromeForkMenuItem slug={slug} hostSurface={hostSurface} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -1180,7 +1202,9 @@ export function IframeHost({
   token,
   expiresAt,
   tokenKind,
+  buzzBudget,
   missingScopes,
+  signedScopes,
   needsConsent,
   domain,
   maxBrowsingLevel,
@@ -1472,40 +1496,14 @@ export function IframeHost({
     return () => window.removeEventListener('resize', onViewportChange);
   }, [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]);
 
-  // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
-  // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
-  // (`missingScopes`, reported by the mint). The server signs exactly this set
-  // into the JWT; sending the full manifest scopes in the wrapped token would
-  // lie to the block (it would think it has `ai:write:budgeted` when the JWT
-  // doesn't), defeating the block's Generate-time consent check. For anon and
-  // fully-granted viewers `missingScopes` is empty, so this equals the manifest
-  // scopes — no behavior change. (Anon is gated block-side by `viewer === null`,
-  // not by scopes.)
-  const grantedScopes = useMemo<string[]>(() => {
-    const declared = install.manifest.scopes ?? [];
-    if (!missingScopes || missingScopes.length === 0) return declared;
-    const withheld = new Set(missingScopes);
-    return declared.filter((s) => !withheld.has(s));
-  }, [install.manifest.scopes, missingScopes]);
-
-  // Mirror the server's buzzBudget resolution (publisher's
-  // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the token
-  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
-  // a budget cap is meaningless without the spend scope it bounds.
-  //
-  // Must stay in lockstep with the server's `resolveBuzzBudget`
-  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
-  // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
-  const buzzBudget = useMemo<number | undefined>(() => {
-    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
-    const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
-    if (candidate <= 0) return undefined;
-    return Math.min(candidate, 1000);
-  }, [grantedScopes, install.publisherSettings]);
+  // A6 lazy consent: the scopes ACTUALLY carried by the minted token. Sending the
+  // full manifest scopes would lie to the block (it would think it has
+  // `ai:write:budgeted` when the JWT doesn't), defeating its Generate-time consent
+  // check. See `resolveAdvertisedScopes` for why the mint's signed set wins.
+  const grantedScopes = useMemo<string[]>(
+    () => resolveAdvertisedScopes(install.manifest.scopes ?? [], missingScopes, signedScopes),
+    [install.manifest.scopes, missingScopes, signedScopes]
+  );
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their
@@ -2065,7 +2063,10 @@ export function IframeHost({
       const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
-        missingScopes
+        missingScopes,
+        // This host only ever mounts the model slot, which is not a local preview,
+        // so `promptViewer` always equals `notify` here and is not read.
+        'model-slot'
       );
       if (!ungrantable.notify) return; // already-granted or no hint — drop
       // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
@@ -2080,11 +2081,25 @@ export function IframeHost({
       // still sends, with `scopes: []`. The refusal is the signal; the names are
       // advisory. Delivered solely to the frame that asked.
       send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
-      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      // Signed out → offer sign-in, not "unavailable" — see the shared gate.
+      const prompt = resolveUngrantableConsentPrompt(readGateStatus(), currentUser?.id != null);
+      if (prompt === 'toast') showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
+      else if (prompt === 'sign-in') {
+        const here = window.location.pathname + window.location.search + window.location.hash;
+        openLoginPopup(here, 'image-gen');
+      }
     });
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
-  }, [onMessage, send, readGateStatus, missingScopes, grantedScopes, openConsentModal]);
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    missingScopes,
+    grantedScopes,
+    openConsentModal,
+    currentUser?.id,
+  ]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.
@@ -2197,8 +2212,9 @@ export function IframeHost({
           // The "30 seconds" above is the SDK-side request timeout carried over
           // from #3680's reasoning. It is NOT verifiable in this repo:
           // `@civitai/blocks-react` is not a dependency (0 hits in
-          // pnpm-lock.yaml; the installed SDK is `@civitai/app-sdk@0.14.0`,
-          // which implements neither OPEN_BUZZ_PURCHASE nor a request timeout).
+          // pnpm-lock.yaml; when this was written the installed SDK was
+          // `@civitai/app-sdk@0.14.0`, which implements neither
+          // OPEN_BUZZ_PURCHASE nor a request timeout — not re-checked at 0.65.1).
           // Treat it as the reasonable inference it is, not a measurement.
           //
           // `!raw` is implied by requestId != null; the compound condition also
@@ -2437,16 +2453,21 @@ export function IframeHost({
           return;
         }
         const requestId = raw.requestId;
+        const workflowId = raw.workflowId;
+        const { waitSeconds } = raw as { waitSeconds?: unknown };
         try {
           const { snapshot } = await pollWorkflowMutation.mutateAsync({
             blockToken: token,
             workflowId: raw.workflowId,
+            ...(typeof waitSeconds === 'number' && Number.isFinite(waitSeconds)
+              ? { waitSeconds }
+              : {}),
           });
           send('WORKFLOW_STATUS', { requestId, snapshot });
         } catch (err) {
           send('WORKFLOW_STATUS', {
             requestId,
-            snapshot: failureSnapshot(err),
+            snapshot: pollFailureSnapshot(err, workflowId),
           });
         }
       }
@@ -3197,6 +3218,111 @@ export function IframeHost({
     trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
+  ]);
+
+  // ── SET_ENTITY_REACTION / GET_ENTITY_REACTIONS ─────────────────────────────
+  // The model-slot twin of PageBlockHost's reaction handlers; the decision layer is shared
+  // (`reactionGate.ts`) and carries the rationale. This host contributes `currentUser` and the
+  // token's granted scopes. There is no mod-review sandbox on the model slot, so `reviewMode`
+  // is constant false here.
+  //
+  // No confirm dialog: the consent-gated `social:react:self` grant is the consent. Every path
+  // with a usable `requestId` replies exactly once; `trpcUtils.client` so no render-time hook
+  // is added.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_ENTITY_REACTION', (raw) => {
+      const gate = resolveSetEntityReactionRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTION_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('SET_ENTITY_REACTION');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.setReactionFromApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
+  ]);
+
+  useEffect(() => {
+    const off = onMessage<unknown>('GET_ENTITY_REACTIONS', (raw) => {
+      const gate = resolveGetEntityReactionsRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: currentUser?.id != null,
+        reviewMode: false,
+        grantedScopes,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('ENTITY_REACTIONS_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, ...request } = gate.request;
+      const latch = createReactionReplyLatch({
+        requestId,
+        emit: (payload) => send('ENTITY_REACTIONS_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('GET_ENTITY_REACTIONS');
+        latch.reply({ error: 'not-ready' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.getReactionsForApp.mutate({
+            blockToken: token,
+            ...request,
+          });
+          latch.reply({ result });
+        } catch (err) {
+          latch.reply({ error: classifyEntityReactionError(err) });
+        }
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    currentUser,
+    grantedScopes,
+    trpcUtils,
+    reportNoToken,
   ]);
 
   useEffect(() => {

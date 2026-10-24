@@ -9,6 +9,7 @@ import { imagesQueryParamSchema, parseImageQueryParams } from '~/components/Imag
 import type { PostTailDescriptor } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import { usePostImagesWithTail } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { StorylineModeProvider } from '~/components/Storyline/StorylineModeProvider';
 import { removeEmpty } from '../../../utils/object-helpers';
 import type { ImageGetInfinite } from '~/types/router';
 
@@ -28,6 +29,9 @@ export default function ImageDetailModal({
   hideReactionCount?: boolean;
   hideReactions?: boolean;
   collectionId?: number;
+  /** Consumed by the route, which puts them in the URL; storyline mode reads them from there. */
+  storylineChapterId?: number;
+  storylineVia?: number[] | string;
 }) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
@@ -76,16 +80,21 @@ export default function ImageDetailModal({
       padding={0}
       fullScreen
     >
-      <ImageDetailProvider
-        imageId={imageId}
-        filters={queryFilters}
-        images={images ? seededImages : undefined}
-        hideReactionCount={hideReactionCount}
-        hideReactions={hideReactions}
-        collectionId={collectionId}
-      >
-        <ImageDetail2 />
-      </ImageDetailProvider>
+      <StorylineModeProvider>
+        {(storylineImages, modeKey) => (
+          <ImageDetailProvider
+            key={modeKey}
+            imageId={imageId}
+            filters={queryFilters}
+            images={storylineImages ?? (images ? seededImages : undefined)}
+            hideReactionCount={hideReactionCount}
+            hideReactions={hideReactions}
+            collectionId={collectionId}
+          >
+            <ImageDetail2 />
+          </ImageDetailProvider>
+        )}
+      </StorylineModeProvider>
     </PageModal>
   );
 }

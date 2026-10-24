@@ -205,6 +205,67 @@ export function parseImports(source: string): Edge[] {
   return edges;
 }
 
+/**
+ * True only for the literal condition `typeof window === 'undefined'` (either operand order).
+ * Next defines `typeof window` as a build-time constant, so the CLIENT build reads this as
+ * `false` and drops the guarded block — the imports inside it included.
+ *
+ * Deliberately narrow. Every other spelling is treated as reaching the client, because the
+ * pruning is only known for this one: measured on Next 16.3.1, an early
+ * `if (typeof window !== 'undefined') return` drops what follows under Turbopack but NOT
+ * under webpack (the `next build --webpack` fallback), and an aliased condition
+ * (`const isServer = typeof window === 'undefined'`) is not a constant either bundler folds.
+ */
+function isServerOnlyCondition(expr: ts.Expression): boolean {
+  if (!ts.isBinaryExpression(expr)) return false;
+  if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken) return false;
+  const isTypeofWindow = (e: ts.Expression) =>
+    ts.isTypeOfExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'window';
+  const isUndefinedString = (e: ts.Expression) => ts.isStringLiteral(e) && e.text === 'undefined';
+  return (
+    (isTypeofWindow(expr.left) && isUndefinedString(expr.right)) ||
+    (isUndefinedString(expr.left) && isTypeofWindow(expr.right))
+  );
+}
+
+/**
+ * The source as the CLIENT build sees it: the body of every
+ * `if (typeof window === 'undefined') { … }` blanked out (its `else`, if any, is kept).
+ * Returns the specifiers of the imports that were inside an erased body, so a guard can
+ * account for every edge it stopped following rather than losing them silently.
+ *
+ * Blanked with spaces, newlines kept, so nothing else in the file moves.
+ */
+export function eraseServerOnlyBlocks(
+  source: string,
+  fileName: string
+): { source: string; erased: string[] } {
+  // Cheap pre-filter: almost no file in the graph mentions it, and parsing ~1200 files would
+  // cost more than the rest of the walk combined.
+  if (!source.includes('typeof window')) return { source, erased: [] };
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const ranges: [number, number][] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isIfStatement(node) && isServerOnlyCondition(node.expression)) {
+      ranges.push([node.thenStatement.getStart(sf), node.thenStatement.getEnd()]);
+      if (node.elseStatement) visit(node.elseStatement);
+      return; // anything nested in the erased body is erased with it
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (!ranges.length) return { source, erased: [] };
+
+  let out = source;
+  const erased: string[] = [];
+  for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
+    const body = out.slice(start, end);
+    erased.push(...parseImports(body).map((e) => e.spec));
+    out = out.slice(0, start) + body.replace(/[^\n]/g, ' ') + out.slice(end);
+  }
+  return { source: out, erased };
+}
+
 export const rel = (abs: string) => path.relative(REPO_ROOT, abs).replace(/\\/g, '/');
 
 /**

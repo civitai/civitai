@@ -1,6 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+/** Hand-made team assignments, as sysRedis answers getUserTeam's per-user field read. */
+const assignTeams = (teams: Record<string, string>) =>
+  redisMock.sysRedis.hGet.mockImplementation(
+    async (_key: string, field: string) => teams[field] ?? null
+  );
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
@@ -28,6 +34,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
   })
 );
 const killSwitch = vi.hoisted(() => ({ on: true }));
+const mockRefreshWorn = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
 
 // The engine's kill switch is on unless a test turns it off.
 vi.mock('~/server/events/points/enabled', () => ({
@@ -42,6 +49,7 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { refresh: vi.fn() },
+  refreshUserCosmeticCache: (ids: number[]) => mockRefreshWorn(ids),
   cosmeticEntityCaches: new Proxy({}, { get: () => ({ refresh: vi.fn() }) }),
   eventDecorationEntityCaches: new Proxy(
     {},
@@ -200,7 +208,7 @@ describe('event registration', () => {
     // Team = seeded PRNG over (name + userId) indexing the teams array. If this changes after
     // launch, every participant changes team. Do not "update the expected values" to make it
     // pass: find out what moved the name, the seed or the array.
-    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    assignTeams({});
     const teams = await Promise.all(GOLDEN_USER_IDS.map((id) => birthday2026.getUserTeam(id)));
     expect(teams).toEqual(GOLDEN_TEAMS);
   });
@@ -210,7 +218,7 @@ describe('event registration', () => {
   // only; if you are adding the date, the flag or the preview to it, the hats testers bought
   // become the wrong colour at launch.
   it('assigns the same team during the preview, at launch and after, whatever the flag says', async () => {
-    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    assignTeams({});
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const moments = [
@@ -298,17 +306,45 @@ describe('end-of-event cleanup', () => {
     // Proves the assertions above can see a cleanup: the same observable fires when it should.
     // Also pins the for..in fix: the old loop passed indices "0".."3" to getCosmetic and
     // collected no ids.
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation((async (args: {
+      where?: { equippedToId?: unknown };
+    }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
     await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).toHaveBeenCalledWith({
       where: { cosmeticId: { in: [11, 12, 13, 14] } },
       data: { equippedAt: null },
     });
+    // The users wearing one are read before the unequip, then their worn-cosmetic entries refreshed.
+    expect(dbMock.dbWrite.userCosmetic.findMany).toHaveBeenCalledWith({
+      where: {
+        cosmeticId: { in: [11, 12, 13, 14] },
+        equippedAt: { not: null },
+        equippedToId: null,
+      },
+      select: { userId: true },
+    });
+    expect(mockRefreshWorn).toHaveBeenCalledWith([501, 502]);
     // An unscored event's cleanup still flags its own winner: Yellow, first of four tied at zero.
     const flagged = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
     expect(flagged.map(([, id]) => id)).toEqual([11]);
+  });
+
+  // Search results and user pickers render the cosmetics on each user's search document, which the
+  // sync re-pulls only for queued ids: everyone the cleanup unequipped must be queued, and no one else.
+  it('queues the users the cleanup unequipped for a search-index update', async () => {
+    dbMock.dbWrite.userCosmetic.findMany.mockImplementation((async (args: {
+      where?: { equippedToId?: unknown };
+    }) => (args?.where?.equippedToId === null ? [{ userId: 501 }, { userId: 502 }] : [])) as never);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await eventEngine.dailyReset(new Date('2025-01-02T00:00:00.000Z'));
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([501, 502]);
   });
 
   const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
@@ -565,7 +601,7 @@ describe('join', () => {
   });
 
   it('grants the team cosmetic under the join claimKey at the window edges', async () => {
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue' });
+    assignTeams({ '7': 'Blue' });
     const first = await join(BIRTHDAY_2026_STARTS_AT);
     const last = await join(new Date(BIRTHDAY_2026_ENDS_AT.getTime() - 1));
 
@@ -578,7 +614,7 @@ describe('join', () => {
 
   it('reports a repeat join as not joined, with the cosmetic actually held', async () => {
     // Joined as Blue, since reassigned to Pink by hand.
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
+    assignTeams({ '7': 'Pink' });
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ cosmeticId: 22 }]);
     expect(await join(BIRTHDAY_2026_STARTS_AT)).toEqual({
@@ -591,7 +627,7 @@ describe('join', () => {
 
 describe('join team lookup', () => {
   it('refuses to join when the manual team assignments cannot be read', async () => {
-    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('ECONNREFUSED'));
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(
       eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT)
     ).rejects.toThrow('ECONNREFUSED');
@@ -609,7 +645,9 @@ describe('join balancing', () => {
   beforeEach(() => {
     lua = createLuaRedis(0);
     redisMock.sysRedis.eval.mockImplementation(lua.eval);
-    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => lua.hash(key) ?? {});
+    redisMock.sysRedis.hGet.mockImplementation(
+      async (key: string, field: string) => lua.hash(key)?.[field] ?? null
+    );
     lua.setHash(keys.list, { '7': '500', '8': '400', '9': '300', '10': '200' });
     // Not joined yet: no team cosmetic held.
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
@@ -617,7 +655,7 @@ describe('join balancing', () => {
   // clearAllMocks keeps implementations, and later describes expect the default sysRedis.
   afterEach(() => {
     redisMock.sysRedis.eval.mockReset();
-    redisMock.sysRedis.hGetAll.mockReset();
+    redisMock.sysRedis.hGet.mockReset();
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   });
 
@@ -816,7 +854,7 @@ describe('scoring behind the flag', () => {
 
   it('lets a tester join during the preview, and nobody else', async () => {
     testerFlag.reset({ public: false, testers: [7] });
-    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue', '8': 'Blue' });
+    assignTeams({ '7': 'Blue', '8': 'Blue' });
     expect(await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, PREVIEW)).toMatchObject({
       joined: true,
     });
@@ -857,6 +895,6 @@ describe('getEventData: what the scored-event page reads', () => {
     expect(BIRTHDAY_2026_STARTS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
     expect(BIRTHDAY_2026_ENDS_AT.toISOString()).toBe('2026-12-01T00:00:00.000Z');
     expect(birthday2026.page?.dates).toBe('Nov 1 to Nov 30');
-    expect(birthday2026.banner?.text).toContain('Four colour teams, Nov 1 to Nov 30.');
+    expect(birthday2026.banner?.text).toContain('Four color teams, Nov 1 to Nov 30.');
   });
 });

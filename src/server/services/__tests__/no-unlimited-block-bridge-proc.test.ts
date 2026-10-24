@@ -1,7 +1,14 @@
-import fs from 'fs';
-import path from 'path';
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import {
+  GUARD,
+  ROUTER,
+  parse,
+  reachable,
+  read,
+  routerHelpers,
+  routerProcedures,
+  siblingInputLedger,
+} from './block-bridge-router-ast.harness';
 
 /**
  * Every tRPC procedure on the host↔block postMessage bridge must carry a RECORDED DECISION about
@@ -81,14 +88,6 @@ import { describe, expect, it } from 'vitest';
  *     the exclusion is recorded rather than silent.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '../../../..');
-const ROUTER = 'src/server/routers/blocks.router.ts';
-/** The sibling whose population is derived from `.input(...)` shapes rather than reachability. */
-const SIBLING = 'src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts';
-
-/** The guard every bridge procedure must reach. Its own ledger lives in the sibling. */
-const GUARD = 'authorizeBlockBridgeToken';
-
 /**
  * The rate-limit primitives, mapped to the bucket name the ledger speaks in. Sub-namespaced Redis
  * keys, so no two of these ever contend — see `src/server/utils/block-catalog-rate-limit.ts`.
@@ -99,8 +98,8 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPostRateLimit: 'post',
   checkBlockPostAppRateLimit: 'post-app',
   checkBlockPollRateLimit: 'poll',
-  checkBlockTrainingDatasetRateLimit: 'training-dataset',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
+  checkBlockUploadAppRateLimit: 'upload-app',
 });
 
 type Decision = {
@@ -123,8 +122,7 @@ type Decision = {
  * on these procedures is the guard, the viewer/app scope assertions and the consent scopes.
  *
  * ⚠️ AND `weight` IS 1 EXCEPT WHERE THE COST IS PER ITEM. `checkBlockPublishRateLimit` is charged by
- * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), `training-dataset` likewise,
- * and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
+ * IMAGE COUNT because its cost is per-image (fetch + S3 upload + scan), and `estimate-cells` is charged by CELL COUNT because each cell is an orchestrator whatif; the
  * rest charge one token per call because the call is the unit. `createPostFromApp` charges BOTH —
  * `post`/`post-app` by the post, `publish` by the images it adopts — so a post cannot be used to
  * bypass the image ceiling. `estimateWorkflowBatch` charges BOTH for the mirror-image reason: the
@@ -144,6 +142,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'The session-bound confirmation of a training quote: one Redis read + write, reached only from a viewer click in host chrome. The read bucket, like its preview sibling.',
   },
+  consentQuoteGrant: {
+    buckets: ['catalog'],
+    why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
+  },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
     why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
@@ -162,19 +164,23 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   getMyBuzzAccounts: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyBuzzBalance: {
     buckets: ['catalog'],
-    why: '#569 — the one Buzz read that does NOT go through authorizeBlockBuzzRead, so it was the only unlimited one. Charged inline (the helper’s error copy differs).',
+    why: '#569 — it was the one unlimited Buzz read. Charged in the rateLimit.check it hands authorizeBlockBridgeViewer, which also counts its refusals.',
   },
   getMyBuzzTransactions: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
   },
   getMyDailyCompensation: {
     buckets: ['catalog'],
-    why: 'Reaches the bucket through authorizeBlockBuzzRead; pre-existing. The ClickHouse read behind it is the expensive half.',
+    why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing. The ClickHouse read behind it is the expensive half.',
+  },
+  getReactionsForApp: {
+    buckets: ['catalog'],
+    why: 'The read half of app reactions: a metric read plus the viewer’s own reactions for up to 100 ticketed images per call.',
   },
   getMyViewer: {
     buckets: ['catalog'],
@@ -188,17 +194,17 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['poll'],
     why: '#569 criterion 2 — its OWN bucket (1200/60 s), keyed on the install AND the viewer because blockInstanceId is page_<appBlockId> for a page app. Previously bounded only by the SDK’s sequential loop, a client-side pacing assumption and not a bound. A refusal RETURNS a non-terminal snapshot rather than throwing: both hosts convert a throw into status:failed, which the SDK treats as terminal, so a thrown 429 would end the watch loop on a paid generation.',
   },
-  prepareTrainingDataset: {
-    buckets: ['training-dataset'],
-    why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
-  },
   persistAppUploadImage: {
-    buckets: ['publish'],
-    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
+    buckets: ['upload-app'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
+  },
+  previewQuoteGrant: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read; materialises nothing. previewTrainingQuote is its training-named delegate.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],
-    why: 'The read-only half of the training consent pair — a quote + dataset read and a Buzz balance read; materialises nothing.',
+    why: 'The read-only half of the training consent pair — a quote read and a Buzz balance read; materialises nothing.',
   },
   previewPostFromApp: {
     buckets: ['catalog'],
@@ -206,11 +212,15 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   publishGenerationOutputs: {
     buckets: ['publish'],
-    why: 'Image-WEIGHTED: each image is a fetch + S3 upload + scan, so the cost is per image, not per call; pre-existing.',
+    why: 'Image-WEIGHTED: each image is a fetch + S3 upload + scan, so the cost is per image, not per call; pre-existing. Keyed per INSTALL, so on a page app every viewer shares it.',
   },
   queryAppWorkflows: {
     buckets: ['catalog'],
     why: 'Up to 50 projections per call off an orchestrator LIST; pre-existing.',
+  },
+  setReactionFromApp: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
   },
   submitWorkflow: {
     buckets: [],
@@ -259,124 +269,18 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  * record that they were seen.**
  */
 
-/** Every procedure name declared on the `blocksRouter` object literal, with its initializer node. */
-function routerProcedures(source: ts.SourceFile): Map<string, ts.Node> {
-  const procs = new Map<string, ts.Node>();
-  let found: ts.ObjectLiteralExpression | null = null;
+/** `getMyBuzzBalance`'s limiter call, as the router spells it. */
+const GET_MY_BUZZ_BALANCE_LIMITER = 'await checkBlockCatalogRateLimit(claims.blockInstanceId)';
 
-  const findRouter = (node: ts.Node): void => {
-    if (
-      found == null &&
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === 'blocksRouter' &&
-      node.initializer != null &&
-      ts.isCallExpression(node.initializer) &&
-      node.initializer.arguments.length > 0 &&
-      ts.isObjectLiteralExpression(node.initializer.arguments[0])
-    ) {
-      found = node.initializer.arguments[0] as ts.ObjectLiteralExpression;
-      return;
-    }
-    ts.forEachChild(node, findRouter);
-  };
-  findRouter(source);
-
-  // 🔴 A THROW, NOT A SILENT EMPTY MAP. An unparseable router is the one outcome that would make
-  // every assertion below vacuously true, so it has to be a different result from "no procedures
-  // matched" — the "not in the set vs could not be parsed" distinction this file's header names.
-  if (found == null)
-    throw new Error(`could not locate the blocksRouter object literal in ${ROUTER}`);
-
-  for (const prop of (found as ts.ObjectLiteralExpression).properties) {
-    if (!ts.isPropertyAssignment(prop)) continue;
-    const name = ts.isIdentifier(prop.name)
-      ? prop.name.text
-      : ts.isStringLiteral(prop.name)
-      ? prop.name.text
-      : null;
-    if (name == null) continue;
-    procs.set(name, prop.initializer);
-  }
-  return procs;
-}
-
-/**
- * The set of function names CALLED anywhere under `node`.
- *
- * Reads `CallExpression` nodes off the AST, so a comment or a string literal naming a function can
- * never enter this set — the whole class the sibling spends 400 lines of normalisation defending
- * against. Both access forms are covered: `f(...)` and `obj.f(...)`.
- */
-function callees(node: ts.Node): Set<string> {
-  const names = new Set<string>();
-  const walk = (n: ts.Node): void => {
-    if (ts.isCallExpression(n)) {
-      const target = n.expression;
-      if (ts.isIdentifier(target)) names.add(target.text);
-      else if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.name)) {
-        names.add(target.name.text);
-      }
-    }
-    ts.forEachChild(n, walk);
-  };
-  walk(node);
-  return names;
-}
-
-/** Module-scope function declarations in the router, by name — the router-local helper layer. */
-function routerHelpers(source: ts.SourceFile): Map<string, ts.Node> {
-  const helpers = new Map<string, ts.Node>();
-  for (const stmt of source.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name != null) {
-      helpers.set(stmt.name.text, stmt);
-      continue;
-    }
-    if (ts.isVariableStatement(stmt)) {
-      for (const decl of stmt.declarationList.declarations) {
-        if (
-          ts.isIdentifier(decl.name) &&
-          decl.initializer != null &&
-          (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
-        ) {
-          helpers.set(decl.name.text, decl.initializer);
-        }
-      }
-    }
-  }
-  return helpers;
-}
-
-/**
- * Everything a procedure reaches: its own callees, plus the callees of every router-local helper
- * it calls, transitively. Bounded by the helper set, so it terminates on a cycle.
- */
-function reachable(start: ts.Node, helpers: Map<string, ts.Node>): Set<string> {
-  const seen = new Set<string>(callees(start));
-  const queue = [...seen];
-  const expanded = new Set<string>();
-  while (queue.length > 0) {
-    const name = queue.shift() as string;
-    if (expanded.has(name)) continue;
-    expanded.add(name);
-    const helper = helpers.get(name);
-    if (helper == null) continue;
-    for (const inner of callees(helper)) {
-      if (!seen.has(inner)) {
-        seen.add(inner);
-        queue.push(inner);
-      }
-    }
-  }
-  return seen;
-}
-
-function read(rel: string): string {
-  return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
-}
-
-function parse(text: string, rel = ROUTER): ts.SourceFile {
-  return ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+/** Replaces `getMyBuzzBalance`'s limiter call only: the first one from its declaration on. */
+function withoutBalanceLimiter(replacement: string): string {
+  const text = read(ROUTER);
+  const start = text.indexOf('\n  getMyBuzzBalance: publicProcedure');
+  expect(
+    start,
+    'getMyBuzzBalance is no longer declared the way this control expects'
+  ).toBeGreaterThan(-1);
+  return text.slice(0, start) + text.slice(start).replace(GET_MY_BUZZ_BALANCE_LIMITER, replacement);
 }
 
 /** `{ proc name → buckets it charges }` for every procedure that reaches the bridge guard. */
@@ -391,40 +295,6 @@ function bridgeProcBuckets(text: string): Map<string, string[]> {
     out.set(name, [...new Set(buckets)].sort());
   }
   return out;
-}
-
-/** The sibling's `BRIDGE_INPUT_LEDGER`, read out of its source — the input-shape derivation. */
-function siblingInputLedger(): string[] {
-  const text = read(SIBLING);
-  const marker = 'const BRIDGE_INPUT_LEDGER = [';
-  const start = text.indexOf(marker);
-  expect(
-    start,
-    `${SIBLING} no longer declares BRIDGE_INPUT_LEDGER — this cross-check is blind`
-  ).toBeGreaterThan(-1);
-  // 🔴 BOUND THE END TO THE FIRST COLUMN-ZERO `]`, NOT TO THE NEXT `].sort()`. Searching for
-  // `].sort()` walks PAST this ledger when the sibling stops spelling it that way and lands on
-  // some later array hundreds of lines on — the slice then spans unrelated code and the regex
-  // below harvests ~90 "names". The carefully-worded failure message never fires, and whoever
-  // hits it is told the sibling ledger has 90 entries and goes looking in the wrong file. It
-  // still fails closed either way; the point is that it failed closed while REPORTING SOMETHING
-  // FALSE, which is worse than a blunt error.
-  const end = text.indexOf('\n]', start);
-  expect(end, `${SIBLING}'s BRIDGE_INPUT_LEDGER is not a closed array literal`).toBeGreaterThan(
-    start
-  );
-  const body = text.slice(start + marker.length, end);
-  // Entry lines only: `  'name',`. A comment line inside the array cannot match, because the
-  // pattern requires the quote to open the line's first non-space character.
-  const names = [...body.matchAll(/^\s*'([A-Za-z0-9_]+)',/gm)].map((m) => m[1]).sort();
-  // A MAGNITUDE CONTROL on the harvest itself, so a slice that ran away is reported as a broken
-  // parse rather than compared as a population. The real ledger is 17 today.
-  expect(
-    names.length,
-    `harvested ${names.length} names from ${SIBLING}'s BRIDGE_INPUT_LEDGER — that is not a ledger, it is a runaway slice`
-  ).toBeLessThan(40);
-  expect(names.length).toBeGreaterThan(5);
-  return names;
 }
 
 const derived = bridgeProcBuckets(read(ROUTER));
@@ -467,15 +337,12 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   it('POSITIVE CONTROL — a bucket that disappears is detected, not absorbed', () => {
     // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
-    const mutated = read(ROUTER).replace(
-      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
-      // moment that site is edited — which it did, when the refusal counter was added — and the
-      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
-      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
-      // free. A stale mutation target is the classic way a control stops controlling.
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
-      '// getUserBuzzAccounts returns every spend type'
-    );
+    // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
+    // moment that call is respelled, and the `expect(mutated).not.toEqual(read(ROUTER))` line
+    // below turns that into a LOUD failure rather than a mutation that silently applies to
+    // nothing and scores the guard GREEN for free. A stale mutation target is the classic way a
+    // control stops controlling.
+    const mutated = withoutBalanceLimiter('await Promise.resolve({ allowed: true })');
     expect(mutated).not.toEqual(read(ROUTER));
 
     expect(bridgeProcBuckets(mutated).get('getMyBuzzBalance')).toEqual([]);
@@ -485,17 +352,11 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   it('NEGATIVE CONTROL — a COMMENTED-OUT or STRING-QUOTED limiter is not a limiter', () => {
     // 🔴 The fail-OPEN hazard the sibling has hit six times, measured here rather than argued
     // away. Both shapes name the function with an argument list; neither is a call.
-    const mutated = read(ROUTER).replace(
-      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
-      // moment that site is edited — which it did, when the refusal counter was added — and the
-      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
-      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
-      // free. A stale mutation target is the classic way a control stops controlling.
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
-      `// const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
-      void note;
-      // getUserBuzzAccounts returns every spend type`
+    // The same exact-literal target as the control above, stale-loud for the same reason.
+    const mutated = withoutBalanceLimiter(
+      `await Promise.resolve({ allowed: true }); // checkBlockCatalogRateLimit(claims.blockInstanceId)
+            const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
+            void note`
     );
     expect(mutated).not.toEqual(read(ROUTER));
 
@@ -510,9 +371,17 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
   });
 
   it('sees a bucket reached THROUGH a router-local helper, not only a direct call', () => {
-    // The three buzz self-reads charge the catalog bucket via `authorizeBlockBuzzRead` and never
-    // name a limiter themselves. A one-level-shallow walk would score all three as unlimited.
+    // The three buzz self-reads charge the catalog bucket inside `buzzReadOptions` and never
+    // name a limiter themselves. They reach the guard through a helper too, so a
+    // one-level-shallow walk would drop all three from the population.
+    const procedures = routerProcedures(parse(read(ROUTER)));
     for (const proc of ['getMyBuzzAccounts', 'getMyBuzzTransactions', 'getMyDailyCompensation']) {
+      // With no helpers to follow, the walk sees the procedure's own calls only.
+      const own = reachable(procedures.get(proc) as never, new Map());
+      expect(
+        [...own].filter((fn) => fn in BUCKET_BY_FN),
+        `${proc} names a limiter itself`
+      ).toEqual([]);
       expect(derived.get(proc), `${proc} should reach the catalog bucket via its helper`).toEqual([
         'catalog',
       ]);
@@ -572,7 +441,15 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .filter(([, d]) => d.buckets.length === 0)
       .map(([name]) => name)
       .sort();
-    expect(unlimited).toEqual(['listMyWorkflows', 'submitWorkflow', 'updateUserSettings']);
+    // `setReactionFromApp` is not unlimited in fact — it is charged the site's per-user reaction
+    // quota by the rateLimit middleware, which this file's derivation does not read. It is listed
+    // here because that is what `buckets: []` means to this file; its ledger entry says why.
+    expect(unlimited).toEqual([
+      'listMyWorkflows',
+      'setReactionFromApp',
+      'submitWorkflow',
+      'updateUserSettings',
+    ]);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {
@@ -587,6 +464,20 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .map(([name]) => name)
       .sort();
     expect(pollers).toEqual(['pollWorkflow']);
+  });
+
+  it('an upload charges the app-wide upload bucket and NOT the per-install publish bucket', () => {
+    // Pinned as a relationship: "is it limited at all" passes just as well if an upload charges
+    // the install-only publish bucket, which every viewer of a page app shares.
+    expect(derived.get('persistAppUploadImage')).toEqual(['upload-app']);
+    const chargers = (bucket: string) =>
+      [...derived.entries()]
+        .filter(([, buckets]) => buckets.includes(bucket))
+        .map(([name]) => name)
+        .sort();
+    expect(chargers('upload-app')).toEqual(['persistAppUploadImage']);
+    // Shared per install: what a post adopts and what a publish creates.
+    expect(chargers('publish')).toEqual(['createPostFromApp', 'publishGenerationOutputs']);
   });
 
   it('the two cancel procedures agree — criterion 3, pinned as a relationship', () => {

@@ -174,7 +174,9 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
-    if (filters.query !== searchInput) setSearchInput(filters.query);
+    // Trimmed on both sides, like the echo above: a write skipped for whitespace alone leaves the
+    // URL one space off the box, and adopting that would eat or resurrect the space under the caret.
+    if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
   // "Recently opened" rail (client-only personalisation from localStorage).
@@ -322,8 +324,8 @@ export function AppListingsMarketplaceBody() {
    * RECONCILE the persisted recents against the listings already on this page.
    *
    * 🔴 WHY THE RAIL NEEDS THIS. A recents entry written by the legacy
-   * `MarketplaceBody.recordRecent` carries `{id, blockId, name, iconUrl}` — no
-   * `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
+   * `MarketplaceBody.recordRecent` carries `{id, blockId, name}` (the `iconUrl` it
+   * passes is dropped by the store, which never persists one) — no `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
    * viewer's most-run apps rendered an EYE pointing at the detail page instead of
    * a PLAY pointing at `/apps/run/…`, and no amount of clicking healed it:
    * `handleOpenRecent` re-persists the resolved `false`. `reconcileRecentApps`
@@ -353,7 +355,7 @@ export function AppListingsMarketplaceBody() {
    * 🔴 AND IT WOULD NOT BUY THE CHROME MENU ANYTHING EITHER. The store's other
    * consumer — the app-chrome "Recently run" menu — filters on `kind`/`blockId`,
    * and a legacy entry carries `blockId` but NOT `kind`: `MarketplaceBody`'s
-   * `recordRecent` writes only `{id, blockId, name, iconUrl}`. Such entries are
+   * `recordRecent` writes only `{id, blockId, name}`. Such entries are
    * admitted by ABSENCE (`undefined !== 'offsite'` is true), not by carrying the
    * field — see the 🔴 note on `selectChromeRecentApps`, which is the authority
    * on that gate. So persisting `kind` would not change what that menu shows;

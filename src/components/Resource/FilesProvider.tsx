@@ -1,5 +1,5 @@
 import { Anchor, Stack, Text } from '@mantine/core';
-import { randomId } from '@mantine/hooks';
+import { randomId, useLocalStorage } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -27,6 +27,7 @@ import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
+import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -95,6 +96,9 @@ type FilesContextState = {
   baseModel?: string;
   usageControl?: ModelUsageControl | null;
   dropzoneConfig: DropzoneOptions;
+  // Opt-in: each file finishes (and is saved) before the next one starts.
+  sequentialUploads: boolean;
+  setSequentialUploads: (sequential: boolean) => void;
   onDrop: (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
@@ -151,6 +155,13 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
+  const [sequentialUploads, setSequentialUploads] = useLocalStorage({
+    key: 'model-files-sequential-upload',
+    defaultValue: false,
+  });
+  // Read when a file's upload starts, so the switch never reaches into one already running.
+  const sequentialUploadsRef = useRef(sequentialUploads);
+  sequentialUploadsRef.current = sequentialUploads;
 
   const [errors, setErrors] = useState<FileErrors | null>(null);
   const [files, setFiles] = useState<FileFromContextProps[]>(() => {
@@ -318,10 +329,14 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   };
 
   const publishModelMutation = trpc.model.publish.useMutation({
-    async onSuccess(_, variables) {
+    async onSuccess(result, variables) {
       hideNotification('publishing-version');
       const modelId = variables.id;
       const modelVersionId = variables.versionIds?.[0];
+      if (notifyIfPublishHeld(result)) {
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        return;
+      }
       showPublishedNotification(modelId, modelVersionId);
     },
     onError(error) {
@@ -335,7 +350,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation({
     async onSuccess(results) {
       hideNotification('publishing-version');
-      if (results) showPublishedNotification(results.modelId, results.id);
+      if (!results) return;
+      if (notifyIfPublishHeld(results)) {
+        await queryUtils.model.getById.invalidate({ id: results.modelId });
+        return;
+      }
+      showPublishedNotification(results.modelId, results.id);
     },
     onError(error) {
       hideNotification('publishing-version');
@@ -705,6 +725,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
           meta: { versionId, type, size, fp, format, quantType, isRequired, uuid },
+          uploadGroup: {
+            id: `model-version-${versionId}`,
+            sequential: sequentialUploadsRef.current,
+          },
         },
         async ({ meta, size: uploadedSize, backend, ...result }) => {
           // `uploadedSize` is the byte size of the upload (renamed to avoid
@@ -838,6 +862,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         updateFile: handleUpdateFile,
         removeFile,
         dropzoneConfig,
+        sequentialUploads,
+        setSequentialUploads,
         modelId: model?.id,
         modelVersionId: version?.id,
         modelType: model?.type ?? null,

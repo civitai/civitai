@@ -8,7 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * On-site listing-media OWNER editor (`ListingMediaEditor`, the "Listing media" tab of
- * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
+ * `/apps/<appBlockId>/edit`) — render test (browser mode, `Component tests` in CI).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
  * (`getMyListingForApp`), re-hosts the reused `ListingAssetStep` against the
@@ -364,7 +364,28 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
       listingRating: 'r',
       stage: 'live-revision',
       assets: levels,
+      // `getAssets` reported no media split, so the author's rating callout counts every image.
+      mediaSplit: false,
     });
+  });
+
+  const mediaSplitProp = () =>
+    (state.assetProps.last?.rating as { mediaSplit?: unknown } | undefined)?.mediaSplit;
+  const splitLevels = { iconNsfwLevel: NsfwLevel.PG, coverNsfwLevel: NsfwLevel.R, screenshots: [] };
+
+  test('passes a granted media split through to the asset step', async () => {
+    state.assets = { data: { ...splitLevels, mediaSplitApproved: true }, isError: false };
+    renderWithProviders(<ListingMediaPage />);
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(mediaSplitProp()).toBe(true);
+  });
+
+  test('an unreadable split (`null`) reaches the asset step as unsplit', async () => {
+    // `null` means the split state could not be read: the author's callout treats it as unsplit.
+    state.assets = { data: { ...splitLevels, mediaSplitApproved: null }, isError: false };
+    renderWithProviders(<ListingMediaPage />);
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(mediaSplitProp()).toBe(false);
   });
 
   test('surfaces the honest live-app framing copy', async () => {

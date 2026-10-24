@@ -45,6 +45,10 @@ enters the flow.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
+- **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
+  session cookie, `CIVITAI_URL`); `submitTrainingBatch`/`continueTraining` refuse to run without a
+  `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
+
 ## Model catalog
 
 `src/lib/data/trainingModels.ts` is a **vendored mirror** of the main app's `src/utils/training.ts`
@@ -63,8 +67,11 @@ does not run it.
 Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run
 with `pnpm --filter @civitai/training-studio-app test`, or from the root `pnpm run test:apps:run`).
 They cover what the UI can't be typechecked into: the flow's param/prompt rules (`trainingFlow.test.ts`),
-the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape
-(`train-core.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`). `@civitai/client` is mocked by hand there — its dist imports a directory, which
+the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape and its
+required `checkText` hook (`train-core.test.ts`), the standalone server's call to the main app's text
+check (`src/lib/server/text-check.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`).
+`$env/dynamic/private` is aliased to `src/test/env.mock.ts` in `vitest.config.ts` (this config doesn't
+load the SvelteKit plugin), so modules importing it can run under test. `@civitai/orchestration-client` is mocked by hand there — its dist imports a directory, which
 Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 ## Previewing the UI without OAuth
@@ -86,7 +93,7 @@ Duplicated in every SvelteKit app's `CLAUDE.md` because this file always loads a
 link away. Full reasoning: [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** It gives a stuck spinner, a
-  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  re-run loop, or a stale response landing on a newer lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : new Promise(() => {}))`, then `{#await x}`. The server half is a promise that never settles, **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel never fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
   node, so a row's action button ends up wired to a different row. Correctness, not lint.

@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { simpleBuzzLimitToBudgets, type BuzzLimit } from '~/server/schema/api-key.schema';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
@@ -278,5 +278,5 @@ export async function revokeOauthConsentForBlock(opts: {
       error: safeError(err),
     }).catch(() => undefined);
   });
-  await invalidateCivitaiUser({ userId });
+  await revokeCivitaiUserTokens({ userId });
 }

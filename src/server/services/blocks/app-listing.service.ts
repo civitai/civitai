@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
@@ -38,12 +38,28 @@ import type {
   ListingCreatorChip,
   ListingDetail,
   ListingDetailKindData,
-  ListingGalleryScreenshot,
   ListingKind,
   ListingRecommendRollup,
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
-import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import {
+  LISTING_SCREENSHOT_WIDTH,
+  listingCoverUrl,
+  listingIconUrl,
+} from '~/server/services/blocks/listing-media-url';
+import {
+  listingMediaImageSelect,
+  listingSocialImage,
+  MODERATOR_REVIEW_MEDIA,
+  projectListingMedia,
+  SFW_PUBLIC_MEDIA,
+  type ListingMediaView,
+  type ListingSocialImage,
+} from '~/server/services/blocks/listing-media-audience';
+import {
+  readListingRedMediaManyForRender,
+  type ListingRedMediaImages,
+} from '~/server/services/blocks/listing-media-split.service';
 import {
   hydrateSubListingCards,
   PARENT_LINK_TEMPLATE_SQL,
@@ -65,6 +81,11 @@ import {
   readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
+// Fork opt-in + provenance: no-type (stripped) columns, read through raw SQL only.
+import {
+  readListingForkProvenanceForRender,
+  resolveForkAttribution,
+} from '~/server/services/blocks/app-fork.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 // The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
 // that must `await import()` this service cannot name a constant exported from it
@@ -213,14 +234,12 @@ function safeExternalUrl(url: string | null | undefined): string | null {
 }
 
 /**
- * Build a CDN icon URL from an icon Image row (or null).
- *
- * Thin alias over the shared projection in `listing-media-url.ts` — the author-facing
- * `listMine` read needs the same hop, and two copies is two places to drift a width.
+ * RAW icon / cover URL builders, for the moderator review surfaces ONLY (the queue facts,
+ * {@link listingQueueFacts}, and the review media, {@link listingReviewMedia}), which must show
+ * what is attached. Public card and detail media go
+ * through `projectListingMedia`, which gates each image for the viewer.
  */
 const iconUrl = listingIconUrl;
-
-/** Cover URL = the cover Image, else the first screenshot's Image, else null. */
 const coverUrl = listingCoverUrl;
 
 function creatorChip(
@@ -283,8 +302,10 @@ export const listingHydrateSelect = {
   // The column IS applied in production (verified directly against `public.app_listings`);
   // that is a fact about prod, not about every environment.
   appBlockId: true,
-  icon: { select: { url: true } },
-  cover: { select: { url: true } },
+  // The image columns the per-image visibility decision reads (`listing-media-audience`). They
+  // are consumed server-side by `projectListingMedia`; no DTO field carries a level or a flag.
+  icon: { select: listingMediaImageSelect },
+  cover: { select: listingMediaImageSelect },
   user: { select: { id: true, username: true, image: true } },
   // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
   // Harmless extra column for the card projection, which doesn't surface it.
@@ -316,19 +337,11 @@ export const listingHydrateSelect = {
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
     // would otherwise sort nondeterministically across requests.
     orderBy: [{ order: 'asc' }, { id: 'asc' }],
-    select: { caption: true, image: { select: { url: true } } },
+    select: { caption: true, image: { select: listingMediaImageSelect } },
   },
 } satisfies Prisma.AppListingSelect;
 
 export type HydratedListing = Prisma.AppListingGetPayload<{ select: typeof listingHydrateSelect }>;
-
-/** First screenshot's CDN URL (used as the cover fallback), or null. */
-function firstScreenshotUrl(row: HydratedListing): string | null {
-  for (const s of row.screenshots) {
-    if (s.image?.url) return getEdgeUrl(s.image.url, { width: 1200 });
-  }
-  return null;
-}
 
 function cardKindData(row: HydratedListing): ListingCardKindData {
   if (row.kind === 'offsite') {
@@ -426,17 +439,48 @@ export function cardOpenCount(row: CardOpenCountSource): number | null {
   return row.metric?.openCount ?? 0;
 }
 
+/**
+ * One listing image as a MODERATOR review surface shows it: its display url, plus the image id
+ * and level the review needs to hold an above-SFW image behind a click-to-reveal on civitai.com
+ * (`ReviewMediaReveal`). Moderator-only — no public DTO carries a level.
+ */
+export type ListingReviewImage = { imageId: number; url: string; nsfwLevel: number };
+
+/** The listing's icon and cover, and its civitai.red icon / cover overrides, for review. */
+export type ListingReviewMedia = {
+  icon: ListingReviewImage | null;
+  cover: ListingReviewImage | null;
+  redIcon: ListingReviewImage | null;
+  redCover: ListingReviewImage | null;
+};
+
+export const NO_LISTING_REVIEW_MEDIA: ListingReviewMedia = {
+  icon: null,
+  cover: null,
+  redIcon: null,
+  redCover: null,
+};
+
 /** What a `/apps/review` queue row shows about the app's store listing. */
 export type ListingQueueFacts = {
   /** {@link cardOpenCount}'s answer — a number for an on-site listing, `null` otherwise. */
   playCount: number | null;
   iconUrl: string | null;
   coverUrl: string | null;
+  /** The same icon and cover with their levels, plus the civitai.red overrides. */
+  reviewMedia: ListingReviewMedia;
 };
 
+/**
+ * A queue / preview image as selected: `id` and `nsfwLevel` REQUIRED, so a select that drops the
+ * level is a type error rather than an image the click-to-reveal shows unblurred (a missing
+ * level would read as "not rated yet", which the reveal does not hold back).
+ */
+type QueueFactsImage = { id: number; url: string | null; nsfwLevel: number } | null | undefined;
+
 export type ListingQueueFactsSource = CardOpenCountSource & {
-  icon?: { url: string | null } | null;
-  cover?: { url: string | null } | null;
+  icon?: QueueFactsImage;
+  cover?: QueueFactsImage;
 };
 
 /** No listing to read — the two moderator queues project this for a row with none. */
@@ -444,7 +488,40 @@ export const NO_LISTING_QUEUE_FACTS: ListingQueueFacts = {
   playCount: null,
   iconUrl: null,
   coverUrl: null,
+  reviewMedia: NO_LISTING_REVIEW_MEDIA,
 };
+
+/**
+ * A review image from a row that selected `{ id, url, nsfwLevel }`, its url built by `toUrl` (the
+ * same builder as the plain url beside it). `null` without an id or a url, so a select that
+ * omitted the id yields no image rather than one keyed on nothing.
+ */
+function reviewImage(
+  image: QueueFactsImage,
+  toUrl: (image: { url: string | null }) => string | null
+): ListingReviewImage | null {
+  if (image?.id == null) return null;
+  const url = toUrl(image);
+  return url ? { imageId: image.id, url, nsfwLevel: image.nsfwLevel } : null;
+}
+
+/**
+ * The review media of one listing: its icon and cover as `listing` carries them, and the
+ * civitai.red overrides from `red` (`readListingRedMediaManyForRender`, keyed by listing id).
+ * Shown as attached — the moderator sees, behind a reveal, what the store would gate.
+ */
+export function listingReviewMedia(
+  listing: { icon?: QueueFactsImage; cover?: QueueFactsImage },
+  red: ListingRedMediaImages | null | undefined
+): ListingReviewMedia {
+  const cover = (image: { url: string | null }) => coverUrl(image, null);
+  return {
+    icon: reviewImage(listing.icon, iconUrl),
+    cover: reviewImage(listing.cover, cover),
+    redIcon: reviewImage(red?.icon, iconUrl),
+    redCover: reviewImage(red?.cover, cover),
+  };
+}
 
 /**
  * One projection of a listing → the three facts both moderator review queues show.
@@ -458,11 +535,16 @@ export const NO_LISTING_QUEUE_FACTS: ListingQueueFacts = {
  * 🔴 NO SCREENSHOT COVER FALLBACK. A moderator has to see that the listing has no cover —
  * the same reason the author's own `listMine` read passes `null` here.
  */
-export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueueFacts {
+export function listingQueueFacts(
+  listing: ListingQueueFactsSource,
+  /** The listing's civitai.red overrides, from the queue's one batched read for its page. */
+  red?: ListingRedMediaImages | null
+): ListingQueueFacts {
   return {
     playCount: cardOpenCount(listing),
     iconUrl: iconUrl(listing.icon),
     coverUrl: coverUrl(listing.cover, null),
+    reviewMedia: listingReviewMedia(listing, red),
   };
 }
 
@@ -482,13 +564,21 @@ export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueu
  * `restrictedAudience` is passed IN for the same manual-apply reason AND because it is
  * VIEWER-SCOPED: the caller derives it with `restrictedAudienceForViewer`. It defaults to
  * `null`, so a caller that forgets it discloses nothing.
+ *
+ * 🔴 `media` decides which images reach the card, per image and per request — see
+ * `listing-media-audience.ts`. It defaults to {@link SFW_PUBLIC_MEDIA}, the narrowest public
+ * view, so a caller that forgets it shows LESS, never more.
  */
 export function projectListingCard(
   row: HydratedListing,
   beta: ListingBetaRead = BETA_NOT_SET,
-  restrictedAudience: RestrictedListingAudience | null = null
+  restrictedAudience: RestrictedListingAudience | null = null,
+  media: ListingMediaView = SFW_PUBLIC_MEDIA
 ): ListingCard {
   const recommend = recommendRollup(row.metric);
+  const { iconUrl: cardIconUrl, coverUrl: cardCoverUrl } = projectListingMedia(row, media, {
+    gallery: false,
+  });
   return {
     // Author-declared beta label — resolved by the caller through the manual-apply guard,
     // never selected on `row`. `false` covers BOTH "not in beta" and "the columns are not
@@ -501,8 +591,8 @@ export function projectListingCard(
     tagline: row.tagline ?? null,
     category: row.category ?? null,
     contentRating: row.contentRating ?? null,
-    iconUrl: iconUrl(row.icon),
-    coverUrl: coverUrl(row.cover, firstScreenshotUrl(row)),
+    iconUrl: cardIconUrl,
+    coverUrl: cardCoverUrl,
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
@@ -564,19 +654,6 @@ export function detailKindData(row: DetailKindDataSource): ListingDetailKindData
   };
 }
 
-/** Ordered gallery — screenshots whose backing Image still exists. */
-function galleryScreenshots(row: HydratedListing): ListingGalleryScreenshot[] {
-  const out: ListingGalleryScreenshot[] = [];
-  for (const s of row.screenshots) {
-    // A row whose Image was deleted (imageId → null via onDelete: SetNull) must
-    // NOT render as a blank tile. The select already filters imageId != null, but
-    // guard defensively so a null-image row can never reach the wire.
-    if (!s.image?.url) continue;
-    out.push({ url: getEdgeUrl(s.image.url, { width: 1200 }), caption: s.caption ?? null });
-  }
-  return out;
-}
-
 /**
  * MOD-ONLY review preview: project a SHADOW / pending listing (by its own id — the
  * review row's `appListingId`) into the SAME `ListingCard` + `ListingDetail` store
@@ -593,9 +670,16 @@ function galleryScreenshots(row: HydratedListing): ListingGalleryScreenshot[] {
  * the authz gate. Read-only — no listing mutation. Returns `null` when the id has no
  * listing row (the client then falls back to a placeholder-art layout preview).
  */
-export async function getListingPreviewForReview(args: {
-  listingId: string;
-}): Promise<{ card: ListingCard; detail: ListingDetail } | null> {
+/** {@link ListingReviewMedia} plus the screenshots, in order — the moderator preview's media. */
+export type ListingReviewPreviewMedia = ListingReviewMedia & {
+  screenshots: (ListingReviewImage & { caption: string | null })[];
+};
+
+export async function getListingPreviewForReview(args: { listingId: string }): Promise<{
+  card: ListingCard;
+  detail: ListingDetail;
+  media: ListingReviewPreviewMedia;
+} | null> {
   const row = await dbRead.appListing.findUnique({
     where: { id: args.listingId },
     // `revisionOfId` on top of the shared select — the beta read below is keyed on the
@@ -607,6 +691,13 @@ export async function getListingPreviewForReview(args: {
     // migration — see the note at that select. Same reason `revisionOfId` is spread.
     select: {
       ...listingHydrateSelect,
+      // The image ids too, for the review's per-image reveal (`media` below). Moderator-only.
+      icon: { select: { ...listingMediaImageSelect, id: true } },
+      cover: { select: { ...listingMediaImageSelect, id: true } },
+      screenshots: {
+        ...listingHydrateSelect.screenshots,
+        select: { caption: true, image: { select: { ...listingMediaImageSelect, id: true } } },
+      },
       revisionOfId: true,
       connectRequestedScopes: true,
       status: true,
@@ -640,10 +731,14 @@ export async function getListingPreviewForReview(args: {
   const betaSourceId = row.revisionOfId ?? args.listingId;
   // The visibility level is keyed on the PARENT for the same reason beta is: every level
   // write targets the live listing, so a shadow's own column is never the source of truth.
-  const [sourceRepo, beta, levels] = await Promise.all([
+  // The civitai.red overrides are THIS row's (a shadow's own go live with it), read through the
+  // WRITE client like the rest of the review's media state (`getListingAssets`), so the preview
+  // shows what the approve will apply.
+  const [sourceRepo, beta, levels, red] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
     readListingBetaForRender(betaSourceId, dbRead),
     readListingVisibilityManyForRender([betaSourceId], dbRead),
+    readListingRedMediaManyForRender(dbWrite, [args.listingId]),
   ]);
   // The caller is `moderatorProcedure`, so the viewer IS a moderator — who may always know
   // the level. Stated through the shared rule rather than by passing the raw level through.
@@ -655,15 +750,29 @@ export async function getListingPreviewForReview(args: {
     isModerator: true,
   });
   return {
-    card: projectListingCard(row, beta, restrictedAudience),
+    // 🔴 MODERATOR_REVIEW_MEDIA: the reviewer sees what is attached — including media the
+    // public gate would hide (still scanning, flagged, above the rating) — so it can be rejected.
+    card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA),
     detail: projectListingDetail(
       row,
       [],
       sourceRepo.value,
       beta,
       row.connectRequestedScopes,
-      restrictedAudience
+      restrictedAudience,
+      MODERATOR_REVIEW_MEDIA
     ),
+    media: {
+      ...listingReviewMedia(row, red.get(args.listingId)),
+      screenshots: row.screenshots.flatMap((s) => {
+        const image = s.image?.url
+          ? reviewImage(s.image, (i) =>
+              i.url ? getEdgeUrl(i.url, { width: LISTING_SCREENSHOT_WIDTH }) : null
+            )
+          : null;
+        return image ? [{ ...image, caption: s.caption ?? null }] : [];
+      }),
+    },
   };
 }
 
@@ -712,9 +821,12 @@ export function projectListingDetail(
    */
   connectRequestedScopes: number | null = null,
   /** Viewer-scoped — see `projectListingCard`. `null` by default: discloses nothing. */
-  restrictedAudience: RestrictedListingAudience | null = null
+  restrictedAudience: RestrictedListingAudience | null = null,
+  /** Per-image media gate — see `projectListingCard`. Defaults to the narrowest public view. */
+  media: ListingMediaView = SFW_PUBLIC_MEDIA
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
+  const gallery = projectListingMedia(row, media);
   return {
     restrictedAudience,
     // Author-declared beta label + note. Passed IN for the SAME manual-apply reason as
@@ -739,8 +851,8 @@ export function projectListingDetail(
     description: row.description ?? null,
     category: row.category ?? null,
     contentRating: row.contentRating ?? null,
-    iconUrl: iconUrl(row.icon),
-    coverUrl: coverUrl(row.cover, firstScreenshotUrl(row)),
+    iconUrl: gallery.iconUrl,
+    coverUrl: gallery.coverUrl,
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
@@ -755,8 +867,14 @@ export function projectListingDetail(
     // (`validateRepositoryUrl`), so what reaches the wire is always
     // `https://<allowlisted-host>/<owner>/<repo>`.
     sourceRepoUrl: sourceRepoUrl ?? null,
-    screenshots: galleryScreenshots(row),
+    screenshots: gallery.screenshots,
     kindData: detailKindData(row),
+    // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
+    // this projection carries the "nothing to say" values and `getListingDetail` overrides them
+    // from `app-fork.service`. Every other caller (the moderator review preview) shows no fork
+    // facts, which is the safe default for both: no Fork action, no attribution.
+    forkable: false,
+    forkOf: null,
     // Pre-launch permission disclosure. IDENTICAL projection to the one
     // `BlockRegistry.getAppDetail` already ships for the same purpose — the
     // approved scope ids, string-filtered, `[]` when the column is NULL.
@@ -1564,8 +1682,15 @@ export async function listAvailableListings(
   // and the read could never reach the response (the anonymous `/apps` grid and every public
   // REST page). A signed-in viewer on the same floor still needs it — they may OWN a row.
   const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
+  // Per-image media gate for every card on this page — see `listing-media-audience.ts`. Built
+  // from the same `redCapable` that keys the id cache above, and applied BELOW it, to the live
+  // hydration: the cache never holds media, so it cannot serve one host's media to the other.
+  const media: ListingMediaView = {
+    kind: 'public',
+    audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+  };
   const levelCanDisclose = viewer.userId !== null || viewer.isModerator || floor !== 'public';
-  const [hydrated, betaById, subListingById, visibilityById] = await Promise.all([
+  const [hydrated, betaById, subListingById, visibilityById, redById] = await Promise.all([
     listingIds.length
       ? dbRead.appListing.findMany({
           where: { id: { in: listingIds } },
@@ -1582,6 +1707,11 @@ export async function listAvailableListings(
     levelCanDisclose
       ? readListingVisibilityManyForRender(listingIds, dbRead)
       : Promise.resolve(new Map<string, { visibility: AppListingVisibility | null }>()),
+    // 🔴 The civitai.red icon / cover overrides are read ONLY for a red-capable request: a
+    // non-red page never touches them (and the projection would ignore them anyway).
+    redCapable && listingIds.length
+      ? readListingRedMediaManyForRender(dbRead, listingIds)
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
   ]);
   const byId = new Map(hydrated.map((r) => [r.id, r] as const));
   const items: StoreGridItem[] = [];
@@ -1605,7 +1735,8 @@ export async function listAvailableListings(
             visibilityById.get(row.id)?.visibility ?? null,
             floor,
             viewer
-          )
+          ),
+          { ...media, red: redById.get(row.id) ?? null }
         )
       );
     }
@@ -1630,10 +1761,113 @@ export async function getListingDetail(
     floor?: ListingAudienceFloor;
     /** The viewer, for `restrictedAudience` only. Defaults to anonymous. */
     viewer?: ListingViewer;
+    /** The viewer's browsing level, for the per-image media gate on a red-capable host. */
+    viewerBrowsingLevel?: number | null;
   } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
+  const gated = await loadStoreVisibleListingRow(input, { redCapable, scope: opts.scope, floor });
+  if (!gated) return null;
+  const { row, visibility } = gated;
+
+  // All three extras run in PARALLEL with each other, so the public detail read still costs
+  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
+  // against its own manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
+  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
+  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
+  // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
+  // to "none" on any error, like beta).
+  const [collaborators, sourceRepo, beta, red, forkProvenance] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
+    redCapable
+      ? readListingRedMediaManyForRender(dbRead, [row.id])
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+    // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
+    readListingForkProvenanceForRender(row.id, dbRead),
+  ]);
+  // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
+  // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
+  // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
+  // reaches the DTO. One extra round trip, and only for a fork.
+  const forkOf = await resolveForkAttribution(forkProvenance, (parentId) =>
+    getStoreVisibleListingSummary({ id: parentId }, { redCapable, scope: opts.scope, floor })
+  );
+  const detail = projectListingDetail(
+    row,
+    collaborators,
+    sourceRepo.value,
+    beta,
+    row.connectRequestedScopes,
+    // The level gate already admitted this viewer, and `restrictedAudienceForViewer`
+    // re-applies that same predicate rather than relying on it — so if this gate is ever
+    // widened (say, to let an owner open their own restricted listing), who is TOLD the level
+    // still stays the owner, moderators and the cohort the level admits.
+    restrictedAudienceForRow(row, visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER),
+    {
+      kind: 'public',
+      audience: { redCapable, viewerBrowsingLevel: opts.viewerBrowsingLevel },
+      red: red.get(row.id) ?? null,
+    }
+  );
+  // The opt-in is only meaningful for an app whose source is hosted here; an off-site listing
+  // never offers a Fork action whatever its column says.
+  return { ...detail, forkable: row.kind === 'onsite' && forkProvenance.forkable, forkOf };
+}
+
+/**
+ * The `{ id, slug, name }` of one listing IF this request may open its public store page, else
+ * `null` — exactly the gates of {@link getListingDetail} (one shared loader), so "visible" can
+ * never mean something different here. For the fork surfaces: resolving a fork's parent for the
+ * "Forked from …" line, and refusing to list the forks of a listing the viewer cannot see.
+ */
+export async function getStoreVisibleListingSummary(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+): Promise<{ id: string; slug: string; name: string } | null> {
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable: opts.redCapable,
+    scope: opts.scope,
+    floor: opts.floor ?? 'public',
+  });
+  if (!gated) return null;
+  return { id: gated.row.id, slug: gated.row.slug, name: gated.row.name };
+}
+
+/**
+ * The image a listing's public page offers link unfurlers (`og:image`) on this host, or null —
+ * `listingSocialImage` over the same row, under EXACTLY the gates of {@link getListingDetail}
+ * (one shared loader), so a listing whose detail this request may not read yields no image
+ * either. Never the requester's browsing level, and never a civitai.red override (they are not
+ * read here at all): see `listingSocialImage`.
+ */
+export async function getListingSocialImage(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor?: ListingAudienceFloor }
+): Promise<ListingSocialImage | null> {
+  const gated = await loadStoreVisibleListingRow(input, {
+    redCapable: opts.redCapable,
+    scope: opts.scope,
+    floor: opts.floor ?? 'public',
+  });
+  if (!gated) return null;
+  return listingSocialImage(gated.row, { redCapable: opts.redCapable });
+}
+
+/**
+ * The one approved, store-visible listing row a public detail read may serve, with its
+ * visibility level — or null for a row this request may not see, indistinguishable from a
+ * missing one. Every gate of the public detail lives here, shared by {@link getListingDetail}
+ * and {@link getListingSocialImage}.
+ */
+async function loadStoreVisibleListingRow(
+  input: GetAppListingDetailInput,
+  opts: { redCapable: boolean; scope?: StoreVisibilityScope; floor: ListingAudienceFloor }
+) {
+  const { redCapable, floor } = opts;
   // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
   // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
   // reach a listing's full detail through the public REST endpoint.
@@ -1702,30 +1936,7 @@ export async function getListingDetail(
   // Maturity gate off a non-red host: a mature listing is indistinguishable from
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
-
-  // All three extras run in PARALLEL with each other, so the public detail read still costs
-  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
-  // against its own manual-apply migration being outstanding — the collaborator TABLE
-  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
-  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
-  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
-  const [collaborators, sourceRepo, beta] = await Promise.all([
-    loadDisplayedCollaboratorChips(row.id),
-    readListingSourceRepoUrl(row.id, dbRead),
-    readListingBetaForRender(row.id, dbRead),
-  ]);
-  return projectListingDetail(
-    row,
-    collaborators,
-    sourceRepo.value,
-    beta,
-    row.connectRequestedScopes,
-    // The level gate above already admitted this viewer, and `restrictedAudienceForViewer`
-    // re-applies that same predicate rather than relying on it — so if this gate is ever
-    // widened (say, to let an owner open their own restricted listing), who is TOLD the level
-    // still stays the owner, moderators and the cohort the level admits.
-    restrictedAudienceForRow(row, level.visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER)
-  );
+  return { row, visibility: level.visibility };
 }
 
 /**

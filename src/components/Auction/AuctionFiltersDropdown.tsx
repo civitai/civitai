@@ -21,12 +21,21 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
 
   const handleClear = useCallback(() => setFilters({ baseModels: undefined }), [setFilters]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: setFilters,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: setFilters,
+    onClear: handleClear,
+  });
 
   const filterLength = mergedFilters.baseModels?.length ? 1 : 0;
 
@@ -112,6 +121,9 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
       radius={12}
       opened={opened}
       onClose={close}
+      onChange={(next) => {
+        if (!next) close();
+      }}
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>{target}</Popover.Target>

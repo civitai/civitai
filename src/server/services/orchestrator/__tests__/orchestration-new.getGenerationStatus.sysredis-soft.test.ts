@@ -75,11 +75,14 @@ beforeEach(() => {
 
 describe('buildGenerationContext → local getGenerationStatus — sysRedis soft-dependency', () => {
   it('happy path: reads status through withSysReadDeadline, resolves, no fail-open', async () => {
-    mockHGet.mockResolvedValue(JSON.stringify({ available: true }));
+    mockHGet.mockResolvedValue(
+      JSON.stringify({ mode: 'disabled', message: 'maintenance', selfHostedMode: 'memberOnly' })
+    );
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined();
+    expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
+    expect(result.externalCtx.selfHostedMode).toBe('memberOnly');
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
@@ -89,7 +92,8 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined(); // did NOT throw
+    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
+    expect(result.externalCtx.selfHostedMode).toBe('enabled');
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('defaults-firing');
@@ -102,7 +106,7 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined();
+    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');

@@ -58,7 +58,14 @@ export function ImageCard({ data }: Props) {
               the image at the same bottom edge, so an anchored panel lands on the
               reaction counts. */}
           {safe && <RemixedCardFlyout imageId={data.id} />}
-          <UserAvatarSimple {...data.user} />
+          <UserAvatarSimple
+            {...data.user}
+            classNames={{
+              avatar: cardClasses.creatorAvatar,
+              namePill: cardClasses.creatorPill,
+              namePillPlate: cardClasses.creatorPillPlate,
+            }}
+          />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
               className={cardClasses.reactions}

@@ -24,9 +24,11 @@ import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 import {
   selectableVersions,
+  needsVersionFilter,
   skipBaseModelForOwnTabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const GRID_GAP = 16;
@@ -84,9 +86,10 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
+  const { canGenerate, resources, selectSource, excludedIds, tab, filters, excludeTurbo } =
     useResourceSelectContext();
   const loadedOnly = filters.loadedOnly;
+  const turboOnly = filters.turboOnly;
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -133,12 +136,25 @@ export function ResourceHitList({ query }: { query: string }) {
         member,
         isCheckpoint: model.type === 'Checkpoint',
         loadedOnly,
+        turboOnly,
+        excludeTurbo,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
       });
     },
-    [canGenerate, coverageNext, member, loadedOnly, resources, excludedIds, tab, selectSource]
+    [
+      canGenerate,
+      coverageNext,
+      member,
+      loadedOnly,
+      turboOnly,
+      excludeTurbo,
+      resources,
+      excludedIds,
+      tab,
+      selectSource,
+    ]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -217,7 +233,8 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length && !loadedOnly) return models;
+    if (!needsVersionFilter({ canGenerate, resources, loadedOnly, turboOnly, excludeTurbo }))
+      return models;
 
     const ret = models
       .map((model) => {
@@ -239,7 +256,17 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, loadedOnly, featured, models, resources, tab, filterVersions]);
+  }, [
+    canGenerate,
+    loadedOnly,
+    turboOnly,
+    excludeTurbo,
+    featured,
+    models,
+    resources,
+    tab,
+    filterVersions,
+  ]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
@@ -305,6 +332,13 @@ export function ResourceHitList({ query }: { query: string }) {
               We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
               query.
             </Text>
+            {resources.length > 0 && (
+              <Text align="center" c="dimmed" size="sm">
+                Only showing {[...new Set(resources.map((r) => getDisplayName(r.type)))].join(', ')}{' '}
+                compatible with your selected resources. Paste a model link to see why a specific
+                model is missing.
+              </Text>
+            )}
           </Stack>
         </Center>
       </div>

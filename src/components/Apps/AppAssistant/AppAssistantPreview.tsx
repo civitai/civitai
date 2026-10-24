@@ -2,6 +2,7 @@ import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core
 import { IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
@@ -23,7 +24,8 @@ export function AppAssistantPreview({
   session: PreviewSession | null;
 }) {
   const frame = useQuery({
-    queryKey: ['app-assistant', 'preview', session?.sessionId],
+    // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
+    queryKey: ['app-assistant', 'preview', session?.blockId, session?.sessionId, session?.view],
     queryFn: () => fetchPreviewFrame((session as PreviewSession).blockId),
     enabled: !!session,
     // The entry token in `iframeSrc` is short-lived and used once, on load; never reuse an old one.
@@ -36,7 +38,7 @@ export function AppAssistantPreview({
     return (
       <EmptyState>
         Live preview isn’t enabled for your account yet. The assistant can still build and test your
-        app in its sandbox.
+        app.
       </EmptyState>
     );
   if (!session)
@@ -75,12 +77,17 @@ export function AppAssistantPreview({
               {frame.error instanceof Error ? frame.error.message : 'The preview is unavailable'}
             </Alert>
           </Stack>
+        ) : 'preparing' in frame.data ? (
+          <DevTunnelDnsGate blockId={session.blockId} onSettled={() => frame.refetch()} />
         ) : (
           <DevTunnelBlockHost
             // A fresh entry URL is a fresh mount, so the host re-runs its handshake.
             key={frame.data.iframeSrc}
             {...frame.data}
             fit="fill"
+            // The app reloaded itself (Vite live reload): the Reload button's own path. Not
+            // `cancelRefetch`, so reports arriving mid-fetch join it rather than restart it.
+            onGuestReloaded={() => void frame.refetch({ cancelRefetch: false })}
             tokenErrorFallback={
               <Stack p="md">
                 <Alert color="red" variant="light">

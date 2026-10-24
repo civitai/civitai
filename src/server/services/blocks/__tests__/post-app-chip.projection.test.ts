@@ -59,6 +59,7 @@ import { postSelect } from '~/server/selectors/post.selector';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
 import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import {
   postAppChipQuery,
   postAppMarkerQuery,
@@ -118,8 +119,23 @@ type Listing = {
   kind: string;
   contentRating: string | null;
   revisionOfId: string | null;
-  icon: { url: string | null } | null;
+  icon: ReturnType<typeof scannedPgIcon> | null;
 };
+
+/** A listing icon as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgIcon(url: string | null) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
 type Block = { status: string; currentVersionDeployedAt: Date | null; appListing?: Listing | null };
 
 const listing = (over: Partial<Listing> = {}): Listing => ({
@@ -129,7 +145,7 @@ const listing = (over: Partial<Listing> = {}): Listing => ({
   kind: 'onsite',
   contentRating: 'pg',
   revisionOfId: null,
-  icon: { url: ICON_UUID },
+  icon: scannedPgIcon(ICON_UUID),
   ...over,
 });
 
@@ -199,15 +215,6 @@ describe('the marker read is narrow, and its blob never leaves the module', () =
     expect(readBlockPublishedAppId(liveShapedMetadata)).toBe('appblk-custom-generators');
   });
 
-  it('reads the key the WRITER writes, not a re-spelled literal', () => {
-    // The constant is shared with `block-post.service.ts`'s write path, so a
-    // rename there is a compile error here rather than a silently dead chip.
-    // One literal assertion remains so a change to the constant's VALUE — which
-    // would orphan every existing row — still fails something.
-    expect(BLOCK_POST_APP_ID_META_KEY).toBe('blockPublishedAppId');
-    expect(readBlockPublishedAppId({ blockPublishedAppId: 'appblk-x' })).toBe('appblk-x');
-  });
-
   it('reads no marker from metadata that has none, or that is not an object', () => {
     const { [BLOCK_POST_APP_ID_META_KEY]: _dropped, ...withoutMarker } = liveShapedMetadata;
     expect(readBlockPublishedAppId(withoutMarker)).toBeNull();
@@ -246,7 +253,11 @@ describe('the app read is an allowlist', () => {
       // `appListing` write immune to the manual-apply window.
       ['contentRating', 'icon', 'id', 'kind', 'name', 'revisionOfId', 'slug', 'status'].sort()
     );
-    expect(Object.keys(q.select.appBlocks.select.appListing.select.icon.select)).toEqual(['url']);
+    // `url` plus the scan/level columns the per-image media gate reads — all `Image` columns,
+    // never an `OauthClient` one.
+    expect(Object.keys(q.select.appBlocks.select.appListing.select.icon.select).sort()).toEqual(
+      Object.keys(listingMediaImageSelect).sort()
+    );
   });
 
   it('names no forbidden OauthClient column anywhere in the select tree', () => {

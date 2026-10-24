@@ -99,6 +99,12 @@ export function outcomeAmountToBuzz(outcomeAmount: number): number {
 /** Deposit statuses that mean buzz has been credited. */
 const DEPOSIT_COMPLETED_STATUSES = new Set(['finished', 'partially_paid']);
 
+/**
+ * Deposits recorded from a signed IPN that NOWPayments has not confirmed. Their userId is only the
+ * IPN's claim, so nothing a user or support sees reads them until processDeposit re-owns them.
+ */
+export const UNVERIFIED_DEPOSIT_STATUSES = ['unverified', 'unverified_exhausted'];
+
 /** Check if a deposit status means buzz has been credited. */
 export function isDepositComplete(status: string): boolean {
   return DEPOSIT_COMPLETED_STATUSES.has(status);

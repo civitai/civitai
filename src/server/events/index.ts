@@ -42,7 +42,8 @@ import {
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { cosmeticCache } from '~/server/redis/caches';
+import { cosmeticCache, refreshUserCosmeticCache } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 
 export const events = [holiday2024, birthday2026];
@@ -168,10 +169,20 @@ export const eventEngine = {
             if (!cosmeticId) continue;
             cosmeticIds.push(cosmeticId);
           }
+          const wearers = await dbWrite.userCosmetic.findMany({
+            where: {
+              cosmeticId: { in: cosmeticIds },
+              equippedAt: { not: null },
+              equippedToId: null,
+            },
+            select: { userId: true },
+          });
           await dbWrite.userCosmetic.updateMany({
             where: { cosmeticId: { in: cosmeticIds } },
             data: { equippedAt: null },
           });
+          await refreshUserCosmeticCache(wearers.map((x) => x.userId));
+          await queueWornCosmeticsUpdate(wearers.map((x) => x.userId));
         }
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
@@ -673,6 +684,7 @@ export const eventEngine = {
       WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId};
     `);
     await eventDef.onDonate?.({ userId, amount, db: dbWrite, userCosmeticData });
+    await refreshUserCosmeticCache([userId]);
 
     return { team, title, accountId };
   },

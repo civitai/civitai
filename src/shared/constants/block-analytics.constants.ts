@@ -17,6 +17,8 @@
  * published schema accepts.
  */
 
+import { boundedManifestParse } from './manifest-bounded-parse';
+
 /**
  * Shared by event and property names. The length lives in the regex because the
  * schema's `propertyNames.pattern` must equal its `.source` (drift-guarded).
@@ -274,15 +276,10 @@ function parse(manifest: unknown): ParsedManifestAnalytics {
  *   from a cache.
  */
 export function parseManifestAnalytics(manifest: unknown): ParsedManifestAnalytics {
-  try {
-    const { events, errors } = parse(manifest);
-    if (errors.length === 0) return { events, errors };
-    const capped = errors.slice(0, BLOCK_ANALYTICS_MAX_ERRORS);
-    const rest = errors.length - capped.length;
-    if (rest > 0) capped.push(`…and ${rest} more analytics errors`);
-    return { events: new Map(), errors: capped };
-  } catch {
-    // Reachable only via a throwing getter or Proxy; JSON input cannot get here.
-    return { events: new Map(), errors: ['analytics could not be read'] };
-  }
+  return boundedManifestParse<ParsedManifestAnalytics>({
+    noun: 'analytics',
+    maxErrors: BLOCK_ANALYTICS_MAX_ERRORS,
+    parse: () => parse(manifest),
+    invalid: (errors) => ({ events: new Map(), errors }),
+  });
 }

@@ -4,6 +4,11 @@ import { dbRead } from '~/server/db/client';
 import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import {
+  getUserMetricPrivacyDefaults,
+  needsOwnerMetricPrivacyDefaults,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 
 /**
  * Batched `hasValidCreatorMembership` for read-time gating across a list of owners
@@ -396,4 +401,14 @@ export async function bustCreatorMembershipValidCache(userId: number | number[])
   } catch {
     // Best-effort bust; the TTL bounds any residual staleness.
   }
+}
+
+/** The owner's defaults for the editor's inherit hint, served only where the gate allows. */
+export async function getOwnerMetricPrivacyDefaultsForEditor(
+  viewer: { id: number; isModerator?: boolean | null } | null | undefined,
+  ownerId: number
+): Promise<HiddenModelMetrics | null> {
+  if (!needsOwnerMetricPrivacyDefaults(viewer, ownerId)) return null;
+  const defaults = await getUserMetricPrivacyDefaultsMap([ownerId]);
+  return getUserMetricPrivacyDefaults(defaults.get(ownerId));
 }

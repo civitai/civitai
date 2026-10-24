@@ -111,6 +111,7 @@ const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
 const BLOCK_EXTERNAL_ID_PREFIX_CLIENT = 'blk';
 const BLOCK_EXTERNAL_ID_PREFIX_SERVER = 'bls';
 const BLOCK_EXTERNAL_ID_PREFIX_TRAINING = 'blt';
+const BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP = 'blc';
 
 /**
  * The SINGLE gate every emitted externalId passes. Shared by the client-key
@@ -229,6 +230,24 @@ export function composeTrainingBlockExternalId(runKey: string): string {
     throw new Error('training externalId: runKey must be a sha256 hex digest');
   }
   return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_TRAINING}${runKey}`);
+}
+
+/**
+ * The orchestrator `externalId` for a CONFIRMED pass-through step, derived from the
+ * server-minted QUOTE the viewer confirmed (`sq_<32 hex>`) — NOT from the body. Every
+ * confirmation consumes its own quote, so every confirmed job is a distinct run: two
+ * confirms of an identical body get two ids, and there is no counter whose expiry could
+ * hand a new job an old job's id. (Training keys on the run instead — see
+ * `composeTrainingBlockExternalId` — so a retry after an ambiguous failure dedupes onto the
+ * run that may exist.)
+ *
+ * SHAPE: `blc<32 hex>` — the quote's own 128 random bits under the `blc` tag, disjoint
+ * from `blk` / `bls` / `blt` at index 2.
+ */
+export function composeConfirmedStepBlockExternalId(quoteId: string): string {
+  const match = /^sq_([a-f0-9]{32})$/.exec(quoteId);
+  if (!match) throw new Error('confirmed step externalId: quoteId must be an sq_ quote id');
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_CONFIRMED_STEP}${match[1]}`);
 }
 
 export type BlockGenIdempotencyClaim<T> =

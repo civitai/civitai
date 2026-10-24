@@ -4,7 +4,6 @@ import {
   AUTO_RETRY_BACKOFF_MS,
   buildReviewConsentNotification,
   decideAutoRetry,
-  grantedPageScopes,
   INITIAL_REVIEW_CONSENT_LATCH,
   isAuthTerminalStatus,
   isAutoRetryableStatus,
@@ -35,41 +34,12 @@ import { MAX_ADDITIONAL_RESOURCES } from '~/server/schema/blocks/workflow.schema
 /**
  * W10 PageBlockHost pure logic.
  *
- * #3/#6 — grantedPageScopes: the scopes the host advertises in BLOCK_INIT /
- * TOKEN_REFRESH must be the REAL granted set the JWT carries (declared −
- * missing), NOT the old hardcoded `[]`. A page token carries the viewer-scoped
- * ambient `apps:storage:*` scopes; posting `[]` lied to the block.
+ * (The #3/#6 advertised-scopes cases moved to `requestConsentGate.test.ts` with
+ * the function, now `resolveAdvertisedScopes`.)
  *
  * #4 — pageFallbackReason: a full-page surface in a terminal state must render
  * a BlockFallback message (mapped reason), not a blank viewport.
  */
-
-describe('grantedPageScopes (#3/#6 — BLOCK_INIT carries the JWT scopes, not [])', () => {
-  it('returns the declared scopes when nothing is withheld (the real JWT scopes — NOT [])', () => {
-    const declared = ['apps:storage:read', 'apps:storage:write'];
-    expect(grantedPageScopes(declared, [])).toEqual(declared);
-    expect(grantedPageScopes(declared, undefined)).toEqual(declared);
-    // The regression we're fixing: this must NOT collapse to the old `[]`.
-    expect(grantedPageScopes(declared, [])).not.toEqual([]);
-  });
-
-  it('strips the consent-withheld scopes from the granted set', () => {
-    const declared = ['apps:storage:read', 'apps:storage:write', 'social:read'];
-    expect(grantedPageScopes(declared, ['social:read'])).toEqual([
-      'apps:storage:read',
-      'apps:storage:write',
-    ]);
-  });
-
-  it('returns [] only when every declared scope is withheld', () => {
-    expect(grantedPageScopes(['social:read'], ['social:read'])).toEqual([]);
-  });
-
-  it('is a no-op for a missingScopes entry that was never declared', () => {
-    const declared = ['apps:storage:read'];
-    expect(grantedPageScopes(declared, ['ai:write:budgeted'])).toEqual(declared);
-  });
-});
 
 describe('resolveReviewConsentNotice (mod review — silent REQUEST_CONSENT → visible notice)', () => {
   const granted = ['models:read:self', 'user:read:self', 'collections:read:self'];
@@ -637,6 +607,17 @@ describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule +
       purpose: 'generationSource',
       asyncScan: false,
     });
+  });
+
+  it('threads purpose:trainingData for the training-image upload mode', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_tr', purpose: 'trainingData' })).toEqual({
+      requestId: 'u_tr',
+      purpose: 'trainingData',
+      asyncScan: false,
+    });
+    expect(resolveImageUploadRequest({ requestId: 'u_tr2', purpose: 'TrainingData' }).purpose).toBe(
+      'display'
+    );
   });
 
   it('opts into asyncScan ONLY for a literal asyncScan === true', () => {

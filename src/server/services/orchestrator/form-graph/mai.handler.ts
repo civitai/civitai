@@ -4,7 +4,7 @@ import type {
   ImageGenStepTemplate,
   MaiImageCreateFalImageGenInput,
   MaiImageEditFalImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { maiCropAspectRatios } from '~/shared/form-graph/generation/image/mai.graph';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -35,12 +35,12 @@ export const createMAIInput = defineHandler<EcosystemData<'MAI'>, [ImageGenStepT
       return [
         {
           $type: 'imageGen',
-          input: removeEmpty({
+          input: removeEmpty<MaiImageEditFalImageGenInput>({
             ...baseInput,
             operation: 'editImage',
             aspectRatio,
             images: data.images?.map((x) => x.url) ?? [],
-          }) as MaiImageEditFalImageGenInput,
+          }),
         },
       ];
     }
@@ -48,11 +48,11 @@ export const createMAIInput = defineHandler<EcosystemData<'MAI'>, [ImageGenStepT
     return [
       {
         $type: 'imageGen',
-        input: removeEmpty({
+        input: removeEmpty<MaiImageCreateFalImageGenInput>({
           ...baseInput,
           operation: 'createImage',
           aspectRatio: data.aspectRatio?.value as MAIAspectRatio | undefined,
-        }) as MaiImageCreateFalImageGenInput,
+        }),
       },
     ];
   }

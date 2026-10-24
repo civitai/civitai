@@ -9,8 +9,14 @@ vi.mock('$lib/server/db', async () => {
 });
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
 
-const { getMinorHashMatchesForReview, getAutoFlaggedMinorModels, getMinorFlagAppealsForReview } =
-  await import('../minor-hash.service');
+const { getNeedsReviewModels, getMinorFlagAppealsForReview } = await import(
+  '../minor-hash.service'
+);
+
+/** Needs review's file-match half. */
+const getMinorHashMatchesForReview = (
+  query: Omit<Parameters<typeof getNeedsReviewModels>[0], 'sources'>
+) => getNeedsReviewModels({ ...query, sources: { detections: false, matches: true } });
 
 const compile = async (fn: () => Promise<unknown>) => {
   captured.length = 0;
@@ -30,14 +36,15 @@ describe('minor queue search', () => {
 
   it('compares a username case-insensitively', async () => {
     const statement = await compile(() =>
-      getAutoFlaggedMinorModels({ limit: 50, search: { username: 'Someone' } })
+      getMinorHashMatchesForReview({ limit: 50, search: { text: 'Someone' } })
     );
     expect(statement).toContain('lower("u"."username") = lower($');
+    expect(statement).toContain(`"c"."modelName" ILIKE $`);
   });
 
   it('adds nothing but TRUE without a search', async () => {
-    const statement = await compile(() => getAutoFlaggedMinorModels({ limit: 50 }));
-    expect(statement).not.toContain('"u"."username"');
+    const statement = await compile(() => getMinorHashMatchesForReview({ limit: 50 }));
+    expect(statement).not.toContain('lower("u"."username")');
   });
 });
 

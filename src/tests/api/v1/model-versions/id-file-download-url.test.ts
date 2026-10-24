@@ -132,12 +132,21 @@ function modelVersion() {
     name: 'v1',
     baseModel: 'SD 1.5',
     status: 'Published',
+    availability: 'Public',
     nsfwLevel: 1,
     licensingFee: null,
     // getVaeFiles pushes into this array, so hand over a fresh copy per call.
     files: FILES.map((f) => ({ ...f })),
     metrics: [{ downloadCount: 5, thumbsUpCount: 2 }],
-    model: { name: 'Model 77', type: 'Checkpoint', nsfw: false, poi: false, mode: null },
+    model: {
+      name: 'Model 77',
+      type: 'Checkpoint',
+      nsfw: false,
+      poi: false,
+      mode: null,
+      availability: 'Public',
+      userId: 7,
+    },
   } as any;
 }
 

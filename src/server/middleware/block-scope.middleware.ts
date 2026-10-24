@@ -43,7 +43,7 @@ import {
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
-  BUZZ_BUDGET_CAP,
+  resolvePerCallBuzzBudget,
   isKnownBlockScope,
   isPrivateRunAudience,
   type PrivateRunAudience,
@@ -237,9 +237,9 @@ export interface BlockTokenClaims {
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The submit gates spell the same comparison and are NOT interchangeable. The
- * txt2img and registry-step gates add the per-generation author fee into the value
- * they compare; the custom-comfy and pass-through gates do not, because neither has
- * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
+ * txt2img, registry-step and multi-step workflow gates add the per-generation author
+ * fee into the value they compare; the custom-comfy and pass-through gates do not,
+ * because neither reserves one, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
@@ -272,12 +272,14 @@ export interface BlockTokenClaims {
  * never by widening what `buzzBudget` means, which would hand the money-unsafe
  * value to every gate written the obvious way.
  *
- * ⚠️ ONE SUCH CEILING EXISTS: `blockTrainingRunCeiling`, for `kind:'training'`. It
- * is fee-free (the training author fee is zero by decision), so the fee half of the
- * sentence above does not apply; what replaces it is that the grant is a PER-RUN
- * confirmation of one exact price, recorded only by the viewer's own signed-in
- * session — see that function for why that, and not a wider `buzzBudget`, is what
- * lets it exceed the declared number. It still routes through this helper first.
+ * ⚠️ TWO SUCH CEILINGS EXIST: `blockTrainingRunCeiling` (`kind:'training'`) and
+ * `blockConfirmedStepCeiling` (a confirmed pass-through step). Both are fee-free (the
+ * training author fee is zero by decision; the pass-through arm charges none), so the
+ * fee half of the sentence above does not apply; what replaces it is that the grant
+ * is a PER-JOB confirmation of one exact price, recorded only by the viewer's own
+ * signed-in session — see `blockTrainingRunCeiling` for why that, and not a wider
+ * `buzzBudget`, is what lets it exceed the declared number. Both check the grant
+ * through `blockQuoteGrantRefusal`, which routes through this helper first.
  *
  * Returns 0 when no budget was minted, so a caller that skipped the
  * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
@@ -304,7 +306,7 @@ export function blockPerCallBudget(
   // before a clamp regression and still inside its lifetime.
   //
   // 🔴 IT IS ONE PLACE BECAUSE N COPIES WOULD BE N BUGS. Every submit gate compares a
-  // cost against this ceiling (the training gate via `blockTrainingRunCeiling`), and
+  // cost against this ceiling (the two confirmed-quote gates via `blockQuoteGrantRefusal`), and
   // `no-direct-block-budget-claim-read` forces each through this function rather than
   // reading `claims.buzzBudget` directly — which is what lets a ceiling decision be made
   // once here and apply to all of them. Open-coding an audience check at each gate would
@@ -332,18 +334,75 @@ export function blockPerCallBudget(
 export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
 
 /**
- * The quote a `kind:'training'` submit is gated against — the server-stored record
- * written by the estimate and confirmed by the viewer's own signed-in session.
+ * Hard per-job Buzz ceiling for a CONFIRMED pass-through step — a fixed price above
+ * the token's per-call budget that the viewer confirmed in host chrome. Every other
+ * cap still applies on top. The same number as `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` by
+ * product decision, and a SEPARATE constant on purpose so the two can diverge.
  */
-export type BlockTrainingQuoteGrant = {
+export const BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB = 5000;
+
+/**
+ * The quote a viewer-confirmed submit is gated against — the server-stored record
+ * written by an estimate and confirmed by the viewer's own signed-in session. Shared
+ * by `kind:'training'` and the confirmed pass-through step.
+ */
+export type BlockQuoteGrant = {
   userId: number;
   appBlockId: string;
   blockInstanceId: string;
-  /** The quoted whole-Buzz price of the run. */
+  /** The quoted whole-Buzz price of the job. */
   total: number;
   /** The session user who confirmed this exact quote, or null until one does. */
   consentedBy: number | null;
 };
+
+/** The `kind:'training'` quote grant — the shared shape, named for its first use. */
+export type BlockTrainingQuoteGrant = BlockQuoteGrant;
+
+/** Why a quote grant cannot be charged, in the order `blockQuoteGrantRefusal` checks. */
+export type BlockQuoteGrantRefusal =
+  /** No per-call budget was minted, or this is an editor's read-only private run. */
+  | 'no-budget'
+  /** The quote belongs to another viewer, app or install. */
+  | 'not-bound'
+  /** Nobody — or somebody other than the token subject — confirmed it. */
+  | 'not-confirmed'
+  /** The stored total is not a positive whole number. */
+  | 'invalid-total';
+
+/**
+ * THE one check of a viewer-confirmed quote grant, shared by every ceiling that may
+ * exceed the token's per-call budget — `null` when the grant may be charged, else why
+ * not.
+ *
+ * 🔴 ONE RULE, ONE PLACE. The training and confirmed-step ceilings ask the same four
+ * questions of the same record; a second copy is where one of them would drift. It
+ * routes through `blockPerCallBudget` FIRST, so an unbudgeted token and an editor's
+ * read-only private run can never be granted, whatever the record says.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`): neither grant charges an
+ * author fee, so the number that clears this gate is the number reserved and charged.
+ */
+export function blockQuoteGrantRefusal(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockQuoteGrant,
+  subjectUserId: number
+): BlockQuoteGrantRefusal | null {
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 'no-budget';
+  if (
+    quote.userId !== subjectUserId ||
+    quote.appBlockId !== claims.appBlockId ||
+    quote.blockInstanceId !== claims.blockInstanceId
+  ) {
+    return 'not-bound';
+  }
+  if (quote.consentedBy !== subjectUserId) return 'not-confirmed';
+  if (!Number.isInteger(quote.total) || quote.total <= 0) return 'invalid-total';
+  return null;
+}
 
 /**
  * THE per-run ceiling a `kind:'training'` submit compares against, in place of the
@@ -362,6 +421,8 @@ export type BlockTrainingQuoteGrant = {
  *
  * Fee-free by classification (`pricesAuthorFee: false`): the training author fee
  * is zero, so the number that clears this gate is the number reserved and charged.
+ * The grant itself is checked by `blockQuoteGrantRefusal`, shared with
+ * `blockConfirmedStepCeiling`.
  */
 export function blockTrainingRunCeiling(
   claims: Pick<
@@ -371,21 +432,53 @@ export function blockTrainingRunCeiling(
   quote: BlockTrainingQuoteGrant,
   subjectUserId: number
 ): number {
-  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 0;
-  if (
-    quote.userId !== subjectUserId ||
-    quote.appBlockId !== claims.appBlockId ||
-    quote.blockInstanceId !== claims.blockInstanceId
-  ) {
-    return 0;
-  }
-  if (quote.consentedBy !== subjectUserId) return 0;
-  if (!Number.isInteger(quote.total) || quote.total <= 0) return 0;
+  if (blockQuoteGrantRefusal(claims, quote, subjectUserId) !== null) return 0;
   return Math.min(quote.total, BLOCK_TRAINING_MAX_BUZZ_PER_RUN);
+}
+
+/**
+ * THE per-job ceiling a CONFIRMED pass-through step submit compares against, in place
+ * of the token's per-call budget — `{ ceiling }`, or the one reason it is refused.
+ *
+ * 🔴 THE SECOND "SEPARATE, GRANTED CEILING" `blockPerCallBudget` DESCRIBES, for the
+ * same reason as `blockTrainingRunCeiling`: the viewer confirmed THIS fixed price in
+ * host chrome, recorded only by a procedure that requires their own signed-in session
+ * (`blocks.consentQuoteGrant`), which the block, holding nothing but its token, cannot
+ * call. `buzzBudget` keeps meaning exactly what it did.
+ *
+ * 🔴 IT REFUSES ABOVE THE PER-JOB MAXIMUM; IT DOES NOT CLAMP. The training ceiling
+ * clamps to its maximum and leaves the refusal to the submit's re-quote comparison;
+ * here the record is refused outright (`above-max`), so the ceiling it grants IS the
+ * confirmed total and the submit's one re-quote comparison (`requote > ceiling`) is
+ * also its "above the confirmed price" refusal. One check per refusal, each with its
+ * own reason, so removing any one of them is visible on its own.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`, via `blockQuoteGrantRefusal`):
+ * the pass-through arm charges no author fee.
+ */
+export function blockConfirmedStepCeiling(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockQuoteGrant,
+  subjectUserId: number
+): { ceiling: number } | { refusal: BlockQuoteGrantRefusal | 'above-max' } {
+  const refusal = blockQuoteGrantRefusal(claims, quote, subjectUserId);
+  if (refusal !== null) return { refusal };
+  if (quote.total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) return { refusal: 'above-max' };
+  return { ceiling: quote.total };
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
   blockClaims?: BlockTokenClaims;
+  /**
+   * True when the per-scope consent marker could not be read for this request. The route's
+   * own scope was consent-exempt, so it was served, but every revokable scope was stripped
+   * from `blockClaims` fail-closed. A handler that sub-checks a consent-gated scope reads this
+   * to answer "retry" rather than "not granted".
+   */
+  blockConsentUnavailable?: boolean;
 };
 
 /**
@@ -558,6 +651,57 @@ export interface WithBlockScopeOpts {
    * endpoints additionally return only PUBLIC maturity-clamped data.)
    */
   allowOpaqueOrigin?: boolean;
+
+  /**
+   * Methods beyond GET and POST that this route serves, added to the CORS preflight's
+   * `Access-Control-Allow-Methods`. Without it a browser refuses a cross-origin PUT or
+   * DELETE before it is sent. Only the document store (`blocks/storage`) declares any.
+   */
+  extraCorsMethods?: readonly ('PUT' | 'DELETE')[];
+
+  /**
+   * Opt-in: write THIS route's refusals in its own envelope instead of the wrapper's
+   * `{ error, code? }`. Receives every refusal the wrapper itself emits (after it has decided
+   * to refuse — the decision, the status and the order are unchanged) and returns the body.
+   * Absent, the body is byte-identical to before. Only the document store declares one.
+   */
+  formatRefusal?: (refusal: BlockScopeRefusal) => unknown;
+}
+
+/**
+ * Every refusal `withBlockScope` emits, by a stable `kind`. `code` is the wire code the
+ * default body carries (absent on the two refusals that have never had one).
+ */
+export type BlockScopeRefusalKind =
+  | 'invalid_token'
+  | 'instance_revoked'
+  | 'permission_state_unavailable'
+  | 'consent_revoked'
+  | 'app_not_approved'
+  | 'approval_unavailable'
+  | 'insufficient_scope'
+  | 'context_binding';
+
+export type BlockScopeRefusal = {
+  kind: BlockScopeRefusalKind;
+  status: number;
+  error: string;
+  code?: string;
+};
+
+/** Send a wrapper refusal: the route's own envelope when it declared one, else the default. */
+function sendRefusal(res: NextApiResponse, opts: WithBlockScopeOpts, refusal: BlockScopeRefusal) {
+  const body = opts.formatRefusal
+    ? opts.formatRefusal(refusal)
+    : refusal.code === undefined
+    ? { error: refusal.error }
+    : { error: refusal.error, code: refusal.code };
+  res.status(refusal.status).json(body);
+}
+
+/** The preflight's allowed methods for a route. */
+function corsAllowMethods(opts: WithBlockScopeOpts): string {
+  return ['GET', 'POST', ...(opts.extraCorsMethods ?? []), 'OPTIONS'].join(', ');
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -727,7 +871,7 @@ async function setBlockCors(
     // per the CORS spec. Setting "true" would require Allow-Origin to never
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -747,7 +891,7 @@ async function setBlockCors(
     res.setHeader('Access-Control-Allow-Origin', 'null');
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', corsAllowMethods(opts));
     res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -1025,6 +1169,7 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - user:read:self     → claims.sub != 'anon'
  *   - ai:write:budgeted  → claims.buzzBudget > 0
  *   - posts:write:self   → claims.sub != 'anon'
+ *   - social:react:self  → claims.sub != 'anon'
  *
  * 🔴 THE BINDING SWITCH IS SCOPED TO `requiredScope`, NOT TO EVERY SCOPE ON THE
  * TOKEN (#5063), and that is deliberate. A binding answers "is THIS request
@@ -1133,6 +1278,22 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage': {
+        // DOCUMENT STORE, base scope. An anonymous viewer may READ shared collections
+        // (they are public within the app), so the binding cannot demand a subject. Every
+        // other operation under this scope — private collections, marks, counters — is
+        // refused for an anonymous viewer by the storage route itself, per op, which is
+        // where the operation is known. No request-shape binding; presence is the check.
+        break;
+      }
+      case 'apps:storage:publish': {
+        // Authoring a document in a shared collection is ALWAYS attributed to a user, so
+        // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:shared:read': {
         // SHARED (app-global) READS are allowed for anon — the shared list +
         // counts are public within the app (the real per-op authorization + the
@@ -1191,6 +1352,16 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'social:react:self': {
+        // A reaction belongs to a USER — there is no anonymous reactor. No REST route declares
+        // this scope today (the write is the session-authed `blocks.setReactionFromApp`), so
+        // this case exists for the `default:` arm's sake: a route that ever does must find a
+        // binding here rather than 403 every request.
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       default:
         // Fail closed (L-M6). Reaching here means the ROUTE'S `requiredScope`
         // passed the `isKnownBlockScope` gate above (it's in
@@ -1210,16 +1381,6 @@ export function enforceContextBinding(
 // Same instance id the page host mints under, so storage, rate-limit buckets and the
 // publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
 const HUB_INSTANCE_PREFIX = 'page_';
-// Mirror of the mint's private per-gen default (block-tokens/index.ts BUZZ_BUDGET_DEFAULT).
-const HUB_BUZZ_BUDGET_DEFAULT = 10;
-
-function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
-  const raw = manifest.page?.buzzBudgetPerGen;
-  const candidate =
-    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
-  return Math.min(Math.max(candidate, 0), BUZZ_BUDGET_CAP);
-}
-
 /**
  * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
  * Null for anything else — a personal API key is never elevated. Scopes are what the
@@ -1358,7 +1519,9 @@ async function resolveHubTokenClaims(
     blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
     ctx: { entityType: 'none' },
     scopes,
-    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(scopes.includes('ai:write:budgeted')
+      ? { buzzBudget: resolvePerCallBuzzBudget(manifest.page?.buzzBudgetPerGen) }
+      : {}),
     ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
     maxBrowsingLevel,
   };
@@ -1420,7 +1583,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       : null;
     if (!claims) {
       if (!isJwt) return handler(req, res);
-      res.status(401).json({ error: 'invalid block token' });
+      sendRefusal(res, opts, { kind: 'invalid_token', status: 401, error: 'invalid block token' });
       return;
     }
 
@@ -1592,7 +1755,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // be a breaking change for zero gain. `code` lets an app distinguish "this install
       // went away / the publisher was banned" from the consent refusal below and from an
       // ordinary `insufficient_scope`, which are three different things for it to do.
-      res.status(403).json({ error: 'block instance revoked', code: 'instance_revoked' });
+      sendRefusal(res, opts, {
+        kind: 'instance_revoked',
+        status: 403,
+        error: 'block instance revoked',
+        code: 'instance_revoked',
+      });
       return;
     }
 
@@ -1662,10 +1830,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       //
       // ⚠️ THE 503 BUYS AN HONEST MESSAGE, NOT AUTOMATIC RECOVERY. `client-safe-error.ts` passes
       // a 503's message through (every other 5xx is replaced), and `utils/trpc.ts` retries
-      // QUERIES only — and the block host currently turns any poll throw into a terminal `failed`
-      // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
-      // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
-      // done here. Do not read this branch as delivering retry.
+      // QUERIES only. Over the BRIDGE the hosts now answer a poll that throws SERVICE_UNAVAILABLE
+      // with a non-terminal snapshot (`pollFailureSnapshot`), so the block keeps polling; this is
+      // the REST seam, where no host sits in between and what the caller does with a 503 is up to
+      // it. So here this changes what the caller is TOLD, not whether it resumes. Do not read this
+      // branch as delivering retry.
       // 🔴 AND IT REFUSES ONLY WHEN THE ROUTE'S OWN SCOPE IS REVOKABLE. Placing this branch
       // ahead of the `requiredScope` test made it refuse EVERY consulted request, including the
       // 21 routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member (5 `app-storage/*`,
@@ -1704,13 +1873,18 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         !isConsentExemptScope(opts.requiredScope)
       ) {
         recordBlockConsentMarkerUnavailable('rest');
-        res.status(503).json({
+        sendRefusal(res, opts, {
+          kind: 'permission_state_unavailable',
+          status: 503,
           error: 'permission state is temporarily unavailable — retry shortly',
           code: 'permission_state_unavailable',
         });
         return;
       }
 
+      if (verdict.kind === 'unavailable') {
+        (req as BlockScopedNextApiRequest).blockConsentUnavailable = true;
+      }
       const revoked = revokedScopesForToken(verdict, claims.scopes);
       if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
         // The SHARED emitter, so this seam and the bridge cannot report different things under
@@ -1721,7 +1895,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // point of adding codes: "you never had this" and "the user took this away" call
         // for different app behaviour — the second one should stop asking and let the host
         // re-prompt, the first is a manifest/approval problem.
-        res.status(403).json({
+        sendRefusal(res, opts, {
+          kind: 'consent_revoked',
+          status: 403,
           error: `consent revoked for scope: ${opts.requiredScope}`,
           code: 'consent_revoked',
         });
@@ -1817,12 +1993,21 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // `code` on EVERY 403 this wrapper emits, so an app can treat it as always-present
         // rather than having to test for it. Review found it on 3 of 5; the two it was
         // missing are this one and the context-binding refusal below.
-        res.status(403).json({ error: 'app block is not approved', code: 'app_not_approved' });
+        sendRefusal(res, opts, {
+          kind: 'app_not_approved',
+          status: 403,
+          error: 'app block is not approved',
+          code: 'app_not_approved',
+        });
         return;
       }
       if (approval === 'lookup_failed') {
         if (opts.onApprovalLookupFailure !== 'serve') {
-          res.status(503).json({ error: 'app block status unavailable' });
+          sendRefusal(res, opts, {
+            kind: 'approval_unavailable',
+            status: 503,
+            error: 'app block status unavailable',
+          });
           return;
         }
         // SERVED by this route's declared policy; execution falls through to the handler.
@@ -1869,7 +2054,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // retrying a permission the user withdrew, or reports a consent problem for what
         // is really a manifest/approval gap. The name mirrors RFC 6750's OAuth 2.0 Bearer
         // Token error code, which is the vocabulary an app author already knows.
-        res.status(403).json({
+        sendRefusal(res, opts, {
+          kind: 'insufficient_scope',
+          status: 403,
           error: `missing required scope: ${opts.requiredScope}`,
           code: 'insufficient_scope',
         });
@@ -1889,7 +2076,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
           // array-form query param). A fourth distinct cause, and an app's remedy differs
           // again: re-request the token for the right context rather than re-prompt for
           // consent. `err.message` stays the human half, unchanged.
-          res.status(403).json({ error: err.message, code: 'context_binding' });
+          sendRefusal(res, opts, {
+            kind: 'context_binding',
+            status: 403,
+            error: err.message,
+            code: 'context_binding',
+          });
           return;
         }
         throw err;
@@ -2105,6 +2297,11 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only
+  // `storage` is derivable from the route file; everything after it (collection names,
+  // document keys, tally names, and the route's own `_get` / `counters` / `marks` words)
+  // templates to `:seg` / `:ulid`, which keeps the column bounded.
+  'storage',
   // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
   // key rides the POST body, so no path segment carries a per-item value.
   'sub-listings',

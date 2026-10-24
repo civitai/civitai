@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TRPCError } from '@trpc/server';
 import type * as GetServerStripeModule from '~/server/utils/get-server-stripe';
 import type * as SessionInvalidationModule from '~/server/auth/session-invalidation';
+import type * as ReferralServiceModule from '~/server/services/referral.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -24,9 +25,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * cases where no single correct answer exists and a typed error is the honest answer.
  */
 
-const { mockGetServerStripe, mockRefreshSession } = vi.hoisted(() => ({
+const { mockGetServerStripe, mockRefreshSession, mockBindReferralCodeForUser } = vi.hoisted(() => ({
   mockGetServerStripe: vi.fn(),
   mockRefreshSession: vi.fn(),
+  mockBindReferralCodeForUser: vi.fn(),
 }));
 
 // Surgical: spread the original and override the one symbol, so a module that later gains
@@ -38,6 +40,10 @@ vi.mock('~/server/utils/get-server-stripe', async (importOriginal) => ({
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidationModule>()),
   refreshSession: (...args: unknown[]) => mockRefreshSession(...args),
+}));
+vi.mock('~/server/services/referral.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReferralServiceModule>()),
+  bindReferralCodeForUser: (...args: unknown[]) => mockBindReferralCodeForUser(...args),
 }));
 // The block-attribution validator has its own suite and pulls in the block registry. No
 // test here passes a `blockAttribution`, so the stub is only keeping that import graph out.
@@ -176,6 +182,7 @@ beforeEach(() => {
     coupons: { create: vi.fn(), del: vi.fn().mockResolvedValue({}) },
   });
   mockRefreshSession.mockResolvedValue(undefined);
+  mockBindReferralCodeForUser.mockResolvedValue(undefined);
 
   // env.TIER_METADATA_KEY defaults to 'tier'; the filter keys off its presence.
   dbMock.dbRead.product.findMany.mockResolvedValue([
@@ -450,5 +457,178 @@ describe('createSubscribeSession — a gifted month armed for the plan being lef
     expect(params).not.toHaveProperty('coupon');
     expect(params.discounts).toEqual([]);
     expect(dbMock.dbWrite.membershipGift.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSubscribeSession — an upgrade that is not paid', () => {
+  const HOSTED_INVOICE_URL = 'https://invoice.example.test/pay';
+  const upgrade = (input: { refCode?: string } = {}) => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+    return createSubscribeSession({
+      priceId: GOLD_PRICE_USD,
+      customerId: CUSTOMER_ID,
+      user: USER,
+      ...input,
+    });
+  };
+  const unpaid = (hosted_invoice_url: string | null) => ({
+    id: 'subscription_fixture',
+    status: 'active',
+    pending_update: { expires_at: 1 },
+    latest_invoice: { id: 'invoice_fixture', status: 'open', hosted_invoice_url },
+  });
+
+  it('asks Stripe to hold the plan change until the invoice is paid', async () => {
+    await upgrade();
+
+    expect(mockSubscriptionsUpdate.mock.calls[0][1]).toMatchObject({
+      payment_behavior: 'pending_if_incomplete',
+      expand: ['latest_invoice'],
+    });
+  });
+
+  it('sends the member to pay the invoice, not to the success page', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await expect(upgrade()).resolves.toEqual({ sessionId: null, url: HOSTED_INVOICE_URL });
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+  });
+
+  it('says the membership is unchanged when there is no invoice page to send them to', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(null));
+
+    const error = (await upgrade().catch((e) => e)) as TRPCError;
+
+    expect(error.code).toBe('BAD_REQUEST');
+    expect(error.message).toBe(
+      'Your payment for the upgrade did not go through, so your current membership is unchanged. Please check your payment method and try again.'
+    );
+  });
+
+  it.each([
+    ['an invoice page', HOSTED_INVOICE_URL],
+    ['no invoice page', null],
+  ])(
+    'leaves the gifted month released when the change is held, with %s',
+    async (_label, hostedUrl) => {
+      // Stripe test mode: `coupon: ''` takes effect at once even while the price change is
+      // held, so re-pointing the row at the coupon would arm a month the subscription no
+      // longer carries, and the webhook would then refuse to arm it ('already-armed').
+      dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue({
+        id: 'gift_fixture',
+        armedCouponId: 'gift_coupon_fixture',
+      });
+      mockSubscriptionsUpdate.mockResolvedValue(unpaid(hostedUrl));
+
+      await upgrade().catch(() => undefined);
+
+      expect(mockSubscriptionsUpdate.mock.calls[0][1].coupon).toBe('');
+      expect(dbMock.dbWrite.membershipGift.update.mock.calls).toEqual([
+        [{ where: { id: 'gift_fixture' }, data: { armedCouponId: null, armedAt: null } }],
+      ]);
+    }
+  );
+
+  it('still binds the referral code when the change is held', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await upgrade({ refCode: ' friend1 ' });
+
+    expect(mockBindReferralCodeForUser).toHaveBeenCalledWith(USER.id, 'FRIEND1');
+  });
+
+  it('still sends the member to the invoice when binding the referral code fails', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+    mockBindReferralCodeForUser.mockRejectedValue(new Error('referral service down'));
+
+    await expect(upgrade({ refCode: 'FRIEND1' })).resolves.toEqual({
+      sessionId: null,
+      url: HOSTED_INVOICE_URL,
+    });
+  });
+
+  it('binds nothing when no referral code was given', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue(unpaid(HOSTED_INVOICE_URL));
+
+    await upgrade();
+
+    expect(mockBindReferralCodeForUser).not.toHaveBeenCalled();
+  });
+
+  it('still lands on the success page when the upgrade is paid', async () => {
+    mockSubscriptionsUpdate.mockResolvedValue({ id: 'subscription_fixture', pending_update: null });
+
+    await expect(upgrade()).resolves.toEqual({
+      sessionId: null,
+      url: `/payment/success?cid=${CUSTOMER_ID.slice(-8)}`,
+    });
+  });
+
+  it('leaves a downgrade unheld, so it is not charged and applies at the next renewal', async () => {
+    stubStripe({ customerCurrency: 'usd' });
+    mockSubscriptionsList.mockResolvedValue({
+      data: [
+        {
+          id: 'subscription_fixture',
+          status: 'active',
+          items: {
+            data: [
+              {
+                id: 'subscription_item_fixture',
+                subscription: 'subscription_fixture',
+                price: { id: GOLD_PRICE_USD, product: GOLD_PRODUCT_ID },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    mockPricesRetrieve.mockResolvedValue({
+      id: BRONZE_PRICE_USD,
+      product: BRONZE_PRODUCT_ID,
+      currency: 'usd',
+      recurring: { interval: 'month', interval_count: 1 },
+    });
+
+    await expect(subscribe()).resolves.toEqual({
+      sessionId: null,
+      url: '/user/membership?downgraded=true&tier=bronze',
+    });
+    const params = mockSubscriptionsUpdate.mock.calls[0][1];
+    expect(params.payment_behavior).toBeUndefined();
+    expect(params.expand).toBeUndefined();
+    expect(params.billing_cycle_anchor).toBe('unchanged');
+  });
+
+  it('does not hold the change for a paused subscription it has just resumed unpaid', async () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+    const { data } = await mockSubscriptionsList();
+    mockSubscriptionsList.mockResolvedValue({ data: [{ ...data[0], status: 'paused' }] });
+
+    await subscribe();
+
+    expect(mockSubscriptionsUpdate.mock.calls[0][1].payment_behavior).toBe('default_incomplete');
+  });
+});
+
+describe('createSubscribeSession — membership checkout takes cards only', () => {
+  it('offers only card in a new-membership Checkout, so no bank debit can start one', async () => {
+    // Without this the account's default payment methods apply, bank debit included: the
+    // membership goes active at once and the debit bounces days later. Do not add 'link'
+    // here — Link can pay from a bank account and reopens the same hole.
+    stubStripe({ customerCurrency: null });
+
+    await subscribe();
+
+    expect(mockCheckoutSessionsCreate.mock.calls[0][0].payment_method_types).toEqual(['card']);
+  });
+
+  it('changes an existing plan in place, without a Checkout session', async () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+
+    await subscribe();
+
+    expect(mockSubscriptionsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockCheckoutSessionsCreate).not.toHaveBeenCalled();
   });
 });

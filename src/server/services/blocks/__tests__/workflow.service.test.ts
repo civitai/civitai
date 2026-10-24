@@ -31,6 +31,7 @@ import {
   appBlockTag,
   assertCheckpointVersionSupportsWorkflow,
   MAX_BLOCK_POLL_WAIT_SECONDS,
+  blockPollWaitSecondsInput,
   resolveBlockPollWaitSeconds,
   buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
@@ -1352,7 +1353,7 @@ describe('block input yields populated workflow metadata params (real graph path
   // flux-kontext-graph / qwen-graph). `checkpointVersionId` uses each ecosystem's
   // real locked version id so the modelLocked graph doesn't remap it.
   it.each([
-    ['OpenAI', 'OpenAI', 1733399],
+    ['OpenAI', 'OpenAI', 2880272],
     ['Qwen', 'Qwen', 2558804],
     ['Flux.1 Kontext', 'Flux1Kontext', 1892509],
   ])(
@@ -1809,7 +1810,7 @@ describe('edit-only checkpoint version + no sourceImage', () => {
   // not workflow-scoped at all — both modes must keep working on one version.
   it.each([
     ['Flux.2 D', 'Flux2', 2439067],
-    ['OpenAI', 'OpenAI', 1733399],
+    ['OpenAI', 'OpenAI', 2880272],
   ])(
     'keeps BOTH modes working for the dual-capable ecosystem %s',
     (baseModel, ecoKey, versionId) => {
@@ -2779,9 +2780,16 @@ describe('resolveBlockPollWaitSeconds', () => {
 
   it('FLOORS a fractional value, so 0.9 reads as no hold rather than a hold', () => {
     expect(resolveBlockPollWaitSeconds(0.9)).toBeUndefined();
+    expect(resolveBlockPollWaitSeconds(2.5)).toBe(2);
     expect(resolveBlockPollWaitSeconds(2.9)).toBe(2);
   });
 
+  it('never holds longer than the bound for any finite number a block can send', () => {
+    expect(resolveBlockPollWaitSeconds(90)).toBe(MAX_BLOCK_POLL_WAIT_SECONDS);
+    expect(resolveBlockPollWaitSeconds(Number.MAX_VALUE)).toBe(MAX_BLOCK_POLL_WAIT_SECONDS);
+    expect(resolveBlockPollWaitSeconds(-3)).toBeUndefined();
+    expect(resolveBlockPollWaitSeconds(-Number.MAX_VALUE)).toBeUndefined();
+  });
   it('🔴 stays strictly BELOW the shared getWorkflow abort backstop (20s)', () => {
     // ORCHESTRATOR_GET_TIMEOUT_MS in ~/server/services/orchestrator/workflows is
     // applied unconditionally to every single-workflow read. A bound at or above
@@ -2791,6 +2799,23 @@ describe('resolveBlockPollWaitSeconds', () => {
     expect(MAX_BLOCK_POLL_WAIT_SECONDS).toBeLessThan(20);
     // …and to leave real slack for connect + response, not just one second.
     expect(20 - MAX_BLOCK_POLL_WAIT_SECONDS).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('blockPollWaitSecondsInput', () => {
+  it.each([2.5, 90, -3, 0, Number.MAX_VALUE])('passes the number %s through untouched', (value) => {
+    expect(blockPollWaitSecondsInput.parse(value)).toBe(value);
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['null', null],
+    ['a numeric string', '7'],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['an object', { value: 7 }],
+  ])('turns %s into no hold instead of rejecting', (_label, value) => {
+    expect(blockPollWaitSecondsInput.safeParse(value)).toEqual({ success: true, data: undefined });
   });
 });
 

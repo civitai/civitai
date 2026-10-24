@@ -22,12 +22,11 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //   children. What each mock shadows, and why:
 //
 //   * useAppContext (`~/providers/AppProvider`) — a REQUIRED context hook that
-//     THROWS when there's no <AppProvider>. The component reads ONLY `domain`
-//     (verified by grep: the sole references are `const { domain } = ...` and
-//     `!domain.green && ...`). So the mock returns just `{ domain }` cast `as any`;
-//     every other AppContext field is intentionally omitted — nothing in this
-//     component reads them, so a fuller fixture would add no coverage. The mock
-//     is what makes `isSfwOnly = !domain.green && (sfwOnly || minor)` drivable.
+//     THROWS when there's no <AppProvider>. The component reads ONLY `domain`.
+//     So the mock returns just `{ domain }` cast `as any`; every other AppContext
+//     field is intentionally omitted — nothing in this component reads them, so a
+//     fuller fixture would add no coverage. The mock is what makes the shield
+//     (`domain.green` off, and sfwOnly, minor or an SFW-only base) drivable.
 //
 //   * NumberSlider (`~/libs/form/components/NumberSlider`) — the real one is a
 //     Mantine Slider+NumberInput composite with its own focus/precision/preset
@@ -181,9 +180,7 @@ const makeResource = (over: Record<string, any> = {}): any => ({
   baseModel: 'SD1',
   canGenerate: true,
   hasAccess: true,
-  minStrength: -1,
-  maxStrength: 2,
-  strength: 1,
+  settings: { strength: { min: -1, max: 2, default: 1 } },
   isOwnedByUser: false,
   isPrivate: false,
   model: { id: 42, name: 'My Cool Model', type: 'LORA', sfwOnly: false, minor: false },
@@ -426,7 +423,7 @@ describe('ResourceItemContent (render)', () => {
   });
 
   test('minor model (domain not green) ALSO renders the shield (the || operand)', async () => {
-    // isSfwOnly = !domain.green && (sfwOnly || minor) — the second operand.
+    // The minor operand of the shield condition.
     const r = makeResource({
       model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: false, minor: true },
     });
@@ -441,6 +438,67 @@ describe('ResourceItemContent (render)', () => {
     // shield (green is the SFW-only surface, so the indicator is redundant).
     appContextMock.mockReturnValue({ domain: { green: true, blue: false, red: false } } as any);
     const r = makeResource({ model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: true } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(countIcon('shield')).toBe(0);
+  });
+
+  // The shield is the generator's SFW-only marker on .red: it also covers resources on a base whose
+  // licence bars mature content, with copy about posting, since generation is not refused there.
+  const hoverShield = async () => {
+    const shield = document.querySelector('.tabler-icon-shield');
+    expect(shield, 'shield rendered').toBeTruthy();
+    await page.elementLocator(shield as Element).hover();
+  };
+
+  test.each(['Ideogram 4.5', 'SD 3.5 Large', 'SDXL Turbo'])(
+    '%s checkpoint (domain not green) renders the shield with the posting copy',
+    async (baseModel) => {
+      const r = makeResource({ baseModel, model: { id: 1, name: 'M', type: 'Checkpoint' } });
+      renderWithProviders(<ResourceItemContent resource={r} />);
+
+      await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+      expect(countIcon('shield')).toBe(1);
+      await hoverShield();
+      await expect
+        .element(page.getByText("Mature content can't be posted with this base model."))
+        .toBeInTheDocument();
+    }
+  );
+
+  test('sfwOnly on a restricted base keeps the sfwOnly copy', async () => {
+    const r = makeResource({
+      baseModel: 'SDXL Turbo',
+      model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: true },
+    });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(countIcon('shield')).toBe(1);
+    await hoverShield();
+    await expect
+      .element(page.getByText('This resource cannot be used to generate mature content'))
+      .toBeInTheDocument();
+  });
+
+  test.each(['Illustrious', 'SDXL 1.0', 'Flux.2 D'])(
+    '%s checkpoint renders no shield',
+    async (baseModel) => {
+      const r = makeResource({ baseModel, model: { id: 1, name: 'M', type: 'Checkpoint' } });
+      renderWithProviders(<ResourceItemContent resource={r} />);
+
+      await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+      expect(countIcon('shield')).toBe(0);
+    }
+  );
+
+  test('green domain SUPPRESSES the shield on a restricted base', async () => {
+    appContextMock.mockReturnValue({ domain: { green: true, blue: false, red: false } } as any);
+    const r = makeResource({
+      baseModel: 'Ideogram 4.5',
+      model: { id: 1, name: 'M', type: 'Checkpoint' },
+    });
     renderWithProviders(<ResourceItemContent resource={r} />);
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
@@ -576,12 +634,28 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(page.getByTestId('edge-media')).toHaveAttribute('src', 'x-video');
   });
 
-  test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
-    // Distinct min/max (NOT the -1/2 fallbacks) so the min/max wiring has teeth:
-    // a mutation that hardcodes the isSameMinMaxStrength fallback would be caught.
+  test('a plain LoRA shows no Turbo badge', async () => {
+    const r = makeResource({ model: { id: 1, name: 'M', type: 'LORA' } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Turbo', { exact: true }).query()).toBeNull();
+  });
+
+  test('a turbo LoRA shows the Turbo badge and keeps its strength slider', async () => {
     const r = makeResource({
-      minStrength: 0.1,
-      maxStrength: 1.5,
+      model: { id: 1, name: 'M', type: 'LORA' },
+      turbo: true,
+    });
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
+
+    await expect.element(page.getByText('Turbo', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByTestId('strength-slider')).toBeInTheDocument();
+  });
+
+  test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
+    // Distinct min/max (NOT the -1/2 fallbacks) so the min/max wiring has teeth.
+    const r = makeResource({
+      settings: { strength: { min: 0.1, max: 1.5, default: 1 } },
       model: { id: 1, name: 'M', type: 'LORA' },
     });
     const onStrengthChange = vi.fn();
@@ -597,12 +671,10 @@ describe('ResourceItemContent (render)', () => {
     expect(onStrengthChange).toHaveBeenCalledWith(0.5);
   });
 
-  test('strength slider uses the -1/2 fallback when minStrength === maxStrength', async () => {
-    // isSameMinMaxStrength branch: equal min/max -> the slider gets the -1/2
-    // fallback bounds instead of the (degenerate) resource bounds.
+  test('strength slider uses the -1/2 fallback when the bounds are equal', async () => {
+    // Equal bounds are a version that set none it meant: the slider keeps the full range.
     const r = makeResource({
-      minStrength: 1,
-      maxStrength: 1,
+      settings: { strength: { min: 1, max: 1, default: 1 } },
       model: { id: 1, name: 'M', type: 'LORA' },
     });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
@@ -614,9 +686,10 @@ describe('ResourceItemContent (render)', () => {
   });
 
   test('strength slider passes the disabled prop through and uses the value fallback', async () => {
-    // disabled pass-through + value = strengthValue ?? resource.strength ?? 1.
-    // Here strengthValue is omitted and resource.strength = 0.8 -> 0.8.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />);
 
     const slider = page.getByTestId('strength-slider');
@@ -625,9 +698,11 @@ describe('ResourceItemContent (render)', () => {
     await expect.element(slider).toHaveAttribute('data-value', '0.8');
   });
 
-  test('strength slider prefers strengthValue over resource.strength', async () => {
-    // strengthValue (user-edited) wins the ?? chain over resource.strength.
-    const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
+  test("strength slider prefers strengthValue over the version's default", async () => {
+    const r = makeResource({
+      settings: { strength: { min: -1, max: 2, default: 0.8 } },
+      model: { id: 1, name: 'M', type: 'LORA' },
+    });
     renderWithProviders(
       <ResourceItemContent resource={r} strengthValue={0.3} onStrengthChange={vi.fn()} />
     );

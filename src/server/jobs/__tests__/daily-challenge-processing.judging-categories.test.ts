@@ -150,6 +150,7 @@ const { getJudgedEntries, pickWinnersForChallenge, reviewEntries } = await impor
 );
 const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { Prisma } = await import('@prisma/client');
 
 const VALID_CATEGORIES = [
   { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
@@ -411,7 +412,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     entryPrize: { buzz: 0, points: 0 },
   } as never;
 
-  function mockReviewSequence(source: string, judgingCategories: unknown) {
+  function mockReviewSequence(source: string, judgingCategories: unknown, entryFee = 0) {
     mockGetActiveChallenges.mockResolvedValue([activeChallenge]);
 
     // dbRead.$queryRaw call order inside reviewEntriesForChallenge (reviewCostType: 'None'
@@ -432,6 +433,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
           metadata: null,
           source,
           judgingCategories,
+          entryFee,
         },
       ]) // challengeRecord
       .mockResolvedValueOnce([]) // rejectedUsers
@@ -504,5 +506,30 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
 
     const arg = mockGenerateReview.mock.calls[0][0];
     expect(arg.categories).toBeUndefined();
+  });
+
+  // The recentEntries query is the second dbWrite.$queryRaw call (after userScoredCounts).
+  function recentEntriesSql() {
+    const [strings, ...values] = mockDbWriteQueryRaw.mock.calls[1] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    return Prisma.sql(strings, ...values).sql;
+  }
+
+  it('paid user challenge: an entry whose review failed on an earlier tick is selected again', async () => {
+    mockReviewSequence(ChallengeSource.User, VALID_CATEGORIES, 50);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).not.toContain('"reviewedAt" >=');
+  });
+
+  it('free challenge: keeps the since-last-review window', async () => {
+    mockReviewSequence(ChallengeSource.System, VALID_CATEGORIES);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).toContain('"reviewedAt" >=');
   });
 });

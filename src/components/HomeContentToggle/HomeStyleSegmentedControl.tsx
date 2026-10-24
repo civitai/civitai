@@ -13,8 +13,11 @@ import classes from './HomeStyleSegmentedControl.module.css';
 // Beyond 3 the row falls back to horizontal scroll. Built to mirror the primary
 // subnav (HomeContentToggle) — rounded pill buttons, chip-on-hover at full size.
 const MAX_DENSITY = 3;
+// With `keepLabels` the walk stops after tight padding, so every label stays and the row scrolls.
+const MAX_LABELLED_DENSITY = 1;
 
-export function HomeStyleSegmentedControl({ data, value: activePath, loading }: Props) {
+export function HomeStyleSegmentedControl({ data, value: activePath, loading, keepLabels }: Props) {
+  const maxDensity = keepLabels ? MAX_LABELLED_DENSITY : MAX_DENSITY;
   const containerRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const lastWidthRef = useRef(0);
@@ -50,10 +53,10 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading }: 
   useIsomorphicEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    if (density < MAX_DENSITY && root.scrollWidth > root.clientWidth + 1) {
+    if (density < maxDensity && root.scrollWidth > root.clientWidth + 1) {
       setDensity((d) => d + 1);
     }
-  }, [density, measureNonce, loading, entries.length]);
+  }, [density, maxDensity, measureNonce, loading, entries.length]);
 
   return (
     <div ref={containerRef} className={classes.container} data-density={density}>
@@ -114,5 +117,6 @@ export type DataItem = {
 type Props = {
   value: string;
   loading?: boolean;
+  keepLabels?: boolean;
   data: Record<string, DataItem>;
 };

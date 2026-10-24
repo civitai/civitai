@@ -11,6 +11,27 @@ paths:
 
 Root CLAUDE.md → Tests has the core rules (suite selection, `--project 'unit*'`, covering suites, `vitest related`, `test:lint-rules`, `src/pages`). This file has the rest.
 
+## What earns a test
+
+A test earns its place only if it can catch a bug a caller would notice: a user, another service, a job, or another module that relies on the behaviour. Every test line is maintenance.
+
+- **Test effects, not the source.** Don't assert a constant equals its own literal, grep a source file for a string, or assert a value the test just set. Test what the value does, or nothing. Exceptions (registered convention guards, cross-app parity pins, wire contracts, pins that name their bug) are listed in `.claude/agents/civitai-test-review.md` → Tests that restate the code.
+- **Skip logging, metrics and wiring tests in services** (a log call's arguments, a counter's labels, that A calls B), unless the log or metric is the product. Keep a failure path when it changes what a caller gets.
+- **When a test breaks after a deliberate change, ask whether it tested behaviour.** If it only pinned the old detail, delete it and list it in your report; don't update the expectation to the new literal. In a guarded area (see the lane), update it and say in one line why the old value was wrong.
+- **A bug fix gets a regression test** of the behaviour that broke, at the layer the bug was visible, unless the fix is config-only. Check it fails with the fix reverted.
+- **Tests serve the code.** Don't change production code to satisfy a scenario that cannot happen or is handled elsewhere; delete the test. Injecting a dependency so the real boundary can be tested is not this, and neither is fixing code a convention guard flagged: guards constrain the code on purpose.
+
+## Removing tests
+
+Delete a test when any of these hold, and list each deletion with its reason:
+1. No plausible mutation of its subject turns it red.
+2. Every mutation that turns it red also turns another kept test red.
+3. It restates the code or tests logging, metrics or wiring (above).
+
+In a guarded area (listed in the lane), never delete in bulk: list the candidates for a human to sign off, and fix a test there that cannot fail rather than delete it.
+
+To measure a cleanup, run the full suite before and after on the same `origin/main` sha with the dev-server test cache off, and record tests, files, wall time and the failing-file list. Compare failing files, not exit codes.
+
 ## Running and reading suites
 
 - **CI coverage differs per suite.** See the job comments in `.github/workflows/lint.yml`. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.

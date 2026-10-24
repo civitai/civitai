@@ -16,10 +16,12 @@ const load = async (entityType: string, id = 1) => {
 beforeEach(() => vi.clearAllMocks());
 
 describe('rated-entity profiles', () => {
-  it('registers all six with the spec labels', () => {
-    expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor']);
+  it('registers the rated entities with the spec labels', () => {
+    expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor', 'csam']);
+    expect(getTextScanProfile('Post')?.labels).toEqual(['nsfw', 'csam']);
     expect(getTextScanProfile('Bounty')?.labels).toEqual(['nsfw', 'poi']);
-    for (const t of ['Article', 'Post', 'BountyEntry', 'Challenge'])
+    expect(getTextScanProfile('Article')?.labels).toEqual(['nsfw', 'csam']);
+    for (const t of ['BountyEntry', 'Challenge'])
       expect(getTextScanProfile(t)?.labels).toEqual(['nsfw']);
   });
 
@@ -53,7 +55,7 @@ describe('rated-entity profiles', () => {
     );
   });
 
-  it('Model: every version, tags stripped, boolean nsfw declared as a level', async () => {
+  it('Model: public versions, tags stripped, boolean nsfw declared as a level', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
       {
         id: 1,
@@ -77,8 +79,36 @@ describe('rated-entity profiles', () => {
       'Trained words': 'a, b',
     });
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, deletedAt: null } })
+      expect.objectContaining({
+        where: { id: { in: [1] }, deletedAt: null },
+      })
     );
+  });
+
+  // Every reader but the scan needs non-public models too: a moderator ruling or an appeal on a
+  // model its owner has since unpublished still hashes its text.
+  it.each([
+    ['Draft', 'Public', true],
+    ['Unpublished', 'Public', true],
+    ['Published', 'Public', false],
+    ['Scheduled', 'Public', false],
+    ['Published', 'Private', true],
+  ])('Model: a %s %s model loads, marked notPublic=%s', async (status, availability, notPublic) => {
+    dbMock.dbWrite.model.findMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 9,
+        name: 'x',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: false,
+        status,
+        availability,
+        modelVersions: [],
+      },
+    ]);
+    expect(Boolean((await load('Model')).notPublic)).toBe(notPublic);
   });
 
   it('Model: an nsfw model is declared at the top level', async () => {
@@ -105,6 +135,23 @@ describe('rated-entity profiles', () => {
     expect(subject.declared).toEqual({ nsfwLevel: 2 });
     expect(subject.text).toEqual({ Title: 'T', Content: 'Body' });
   });
+
+  it.each([
+    ['Published', null, false],
+    ['Processing', null, false],
+    ['Draft', new Date('2099-01-01'), false],
+    ['Draft', null, true],
+    ['Unpublished', null, true],
+    ['UnpublishedViolation', null, true],
+  ])(
+    'Article: a %s article scheduled at %s loads, marked notPublic=%s',
+    async (status, scheduledAt, notPublic) => {
+      dbMock.dbWrite.article.findMany.mockResolvedValue([
+        { id: 1, userId: 9, title: 'T', content: null, userNsfwLevel: 1, status, scheduledAt },
+      ]);
+      expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);
+    }
+  );
 
   it('Post, BountyEntry: declared is the stored level', async () => {
     dbMock.dbWrite.post.findMany.mockResolvedValue([
@@ -146,6 +193,20 @@ describe('rated-entity profiles', () => {
     const subject = await load('Challenge');
     expect(subject.userId).toBe(9);
     expect(subject.text).toMatchObject({ 'Theme elements': 'rain, city', Description: 'D' });
+  });
+
+  it.each([
+    [null, true],
+    [new Date('2099-01-01'), false],
+    [new Date('2020-01-01'), false],
+  ])('Post: publishedAt %s loads, marked notPublic=%s', async (publishedAt, notPublic) => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([
+      { id: 1, userId: 9, title: 'T', detail: null, nsfwLevel: 1, publishedAt },
+    ]);
+    expect(Boolean((await load('Post')).notPublic)).toBe(notPublic);
+    expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] } } })
+    );
   });
 
   it('reads the primary, so a scan right after a save sees the new text', async () => {

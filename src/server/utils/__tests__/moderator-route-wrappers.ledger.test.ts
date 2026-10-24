@@ -186,8 +186,11 @@ const FULL_CREDENTIAL = 'full credential';
 const OUTSIDE_WRAPPERS: Record<string, string> = {
   'media/ingest/[mediaId]': FULL_CREDENTIAL,
   'testing/model3d-seed': FULL_CREDENTIAL,
+  'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'service-deals/files/[fileId]/download':
+    'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
@@ -197,6 +200,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
   'v1/permissions/check': 'entity access check that also admits owners and public entities',
+  'webhooks/stripe': 'a lost dispute skips banning a payer who is a moderator; not a caller gate',
 };
 
 /**
@@ -490,17 +494,19 @@ describe('namesIdentifier and callsImported', () => {
 /**
  * Every route under `src/pages/api` that calls `requireFullScopeSession` directly, moderator-only
  * or not, so a route gaining or losing the call has to be listed here on purpose. Routes that get
- * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) are not listed, and this
+ * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) or a shared gate
+ * (`allowTrainingStudio`) are not listed, and this
  * checks only that the call exists; per-route behaviour is pinned in the
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
 const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/preview',
+  'apps/assistant/run-grant',
+  'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
   'auth/freshdesk',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
-  'training-studio/host',
   'user/orchestrator-key',
   'v1/block-tokens/index',
 ];

@@ -11,10 +11,12 @@
 DROP TABLE IF EXISTS "TagsOnImageVote";
 DROP TABLE IF EXISTS "TagsOnModelsVote";
 DROP TABLE IF EXISTS "ModelEngagement";
+DROP TABLE IF EXISTS "ImageReaction";
 -- Created by the array-column seam guard's positive control. Dropped here, before the enum it
 -- depends on, so the suite is re-runnable against the same database.
 DROP TABLE IF EXISTS "_ParityArrayProbe";
 DROP TYPE IF EXISTS "ModelEngagementType";
+DROP TYPE IF EXISTS "ReviewReactions";
 
 CREATE TYPE "ModelEngagementType" AS ENUM ('Favorite', 'Hide', 'Mute', 'Notify');
 
@@ -49,3 +51,16 @@ CREATE TABLE "TagsOnImageVote" (
 );
 CREATE INDEX "TagsOnImageVote_imageId_idx" ON "TagsOnImageVote" USING HASH ("imageId");
 CREATE INDEX "TagsOnImageVote_userId_idx" ON "TagsOnImageVote" USING HASH ("userId");
+
+CREATE TYPE "ReviewReactions" AS ENUM ('Like', 'Dislike', 'Laugh', 'Cry', 'Heart');
+
+CREATE TABLE "ImageReaction" (
+  "id"        SERIAL             NOT NULL,
+  "imageId"   INTEGER            NOT NULL,
+  "userId"    INTEGER            NOT NULL,
+  "reaction"  "ReviewReactions"  NOT NULL,
+  "createdAt" TIMESTAMP(3)       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3)       NOT NULL,
+  CONSTRAINT "ImageReaction_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX "ImageReaction_imageId_userId_reaction_key" ON "ImageReaction"("imageId", "userId", "reaction");

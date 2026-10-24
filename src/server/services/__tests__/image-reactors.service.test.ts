@@ -29,16 +29,27 @@ const OTHER_IMAGE_ID = 556;
 type Row = { userId: number; reaction: string };
 
 /**
- * Answers the two reads the way Postgres would. The image read resolves the owner from `where.id`, so the ownership
- * decision is made by the code under test, not by the fake. The reaction read binds `"imageId" =` from the SQL and
- * returns rows only for that image, so a query that loses or misbinds its image filter returns another image's
- * reactors and the tests below see them.
+ * Answers the two reads the way Postgres would. The image read resolves the row from `where.id` and returns only the
+ * `select`ed columns, so the access decision is made by the code under test, not by the fake, and a column the code
+ * forgets to select arrives as undefined exactly as it would from Prisma. The reaction read binds `"imageId" =` from
+ * the SQL and returns rows only for that image, so a query that loses or misbinds its image filter returns another
+ * image's reactors and the tests below see them.
  */
-function installFakeDb(rowsByImage: Record<number, Row[]>) {
+function installFakeDb(
+  rowsByImage: Record<number, Row[]>,
+  state: { ingestion: string; blockedFor: string | null } = {
+    ingestion: 'Scanned',
+    blockedFor: null,
+  }
+) {
   const reactionReads: { text: string; imageId: unknown; filter: unknown; limit: unknown }[] = [];
 
-  dbMock.dbRead.image.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    where.id === IMAGE_ID || where.id === OTHER_IMAGE_ID ? { userId: OWNER } : null
+  dbMock.dbRead.image.findUnique.mockImplementation(
+    async ({ where, select }: { where: { id: number }; select: Record<string, boolean> }) => {
+      if (where.id !== IMAGE_ID && where.id !== OTHER_IMAGE_ID) return null;
+      const row: Record<string, unknown> = { userId: OWNER, ...state };
+      return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
+    }
   );
 
   dbMock.dbRead.$queryRaw.mockImplementation(
@@ -67,7 +78,7 @@ beforeEach(() => {
   getProfilePicturesForUsers.mockResolvedValue({});
 });
 
-describe('getImageReactors — owner only', () => {
+describe('getImageReactors — owner only, not for a removed image', () => {
   it('refuses a non-owner with NOT_FOUND before reading any reaction', async () => {
     const { reactionReads } = stranger();
 
@@ -86,6 +97,39 @@ describe('getImageReactors — owner only', () => {
       code: 'NOT_FOUND',
     });
     expect(reactionReads).toEqual([]);
+  });
+
+  it.each(['moderated', 'tos', 'CSAM', null])(
+    'refuses the owner of an image blocked for %s, before reading any reaction',
+    async (blockedFor) => {
+      const { reactionReads } = installFakeDb(
+        { [IMAGE_ID]: [{ userId: 1, reaction: 'Like' }] },
+        { ingestion: 'Blocked', blockedFor }
+      );
+
+      await expect(getImageReactors({ imageId: IMAGE_ID, userId: OWNER })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+      expect(reactionReads).toEqual([]);
+    }
+  );
+
+  it.each([
+    ['blocked pending AI verification', { ingestion: 'Blocked', blockedFor: 'AiNotVerified' }],
+    ['scanned with a leftover block reason', { ingestion: 'Scanned', blockedFor: 'moderated' }],
+    ['pending with a leftover block reason', { ingestion: 'Pending', blockedFor: 'moderated' }],
+  ])('still lists reactors to the owner of an image %s', async (_, state) => {
+    const { reactionReads } = installFakeDb(
+      { [IMAGE_ID]: [{ userId: 1, reaction: 'Like' }] },
+      state
+    );
+    getBasicDataForUsers.mockResolvedValue({
+      1: { id: 1, username: 'reactor', deletedAt: null, image: null },
+    });
+
+    const result = await getImageReactors({ imageId: IMAGE_ID, userId: OWNER });
+    expect(result.map((r) => r.username)).toEqual(['reactor']);
+    expect(reactionReads).toHaveLength(1);
   });
 
   it('refuses a missing image the same way as someone else’s', async () => {

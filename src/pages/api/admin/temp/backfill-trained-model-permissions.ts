@@ -97,6 +97,10 @@ import { booleanString } from '~/utils/zod-helpers';
  * is a watched field. That is deliberate — routing 121k rows through the diffing path to record a
  * change every row shares is not worth it — but it means the response and these logs are the only
  * record if a creator later disputes that their licence changed. Keep them.
+ *
+ * ⚠️ For the same reason it writes no ModelPermissionSnapshot row, which is what moderators judge a
+ * merge by. A live run after that table exists leaves every repaired model looking as if it always
+ * had its new permissions; record a snapshot per row (see buildPermissionSnapshots) before re-running.
  */
 
 /**

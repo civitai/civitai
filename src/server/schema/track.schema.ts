@@ -6,6 +6,39 @@ import {
   BRIDGE_MESSAGE_OUTCOMES,
 } from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
+import { measureJsonLength } from '~/server/schema/blocks/json-length';
+import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
+import {
+  USER_MENU_GROUP_IDS,
+  USER_MENU_HEADER_GROUP,
+} from '~/shared/constants/user-menu-groups.constants';
+
+/*
+ * Size caps on free-form tracking input, in JSON characters. Each is measured before anything
+ * serializes the value, without building the string; an unserializable value is left to the code
+ * that serializes it, as before. The filters cap and the action cap leave headroom over the largest
+ * payloads seen for those inputs; view `details` could not be measured, so it shares the action
+ * cap.
+ */
+
+/** The longest `trackSearch` `filters` payload. */
+export const TRACK_FREEFORM_MAX_CHARS = 64 * 1024;
+/** The longest `addView` `details` payload, and the longest whole `addAction` input. */
+export const TRACK_DETAILS_MAX_CHARS = 256 * 1024;
+
+/** A zod refinement refusing a value whose JSON is longer than `maxChars`, naming that limit. */
+function withinChars(maxChars: number) {
+  return [
+    (value: unknown) => measureJsonLength([value], maxChars) !== 'over',
+    { message: `exceeds ${maxChars} serialized characters` },
+  ] as const;
+}
+const boundedFreeform = (maxChars: number) =>
+  z
+    .object({})
+    .passthrough()
+    .optional()
+    .refine(...withinChars(maxChars));
 
 // Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
 // so index + 1 is that ordinal, and the test's snapshot pins it. A value the columns carry but these omit is
@@ -114,7 +147,7 @@ export const addViewSchema = z.object({
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
-  details: z.object({}).passthrough().optional(),
+  details: boundedFreeform(TRACK_DETAILS_MAX_CHARS),
   nsfwLevel: z.number().optional(),
   browsingLevel: z.number().optional(),
 });
@@ -306,7 +339,7 @@ export type TrackSearchInput = z.infer<typeof trackSearchSchema>;
 export const trackSearchSchema = z.object({
   query: z.string().trim(),
   index: z.string(),
-  filters: z.object({}).passthrough().optional(),
+  filters: boundedFreeform(TRACK_FREEFORM_MAX_CHARS),
 });
 
 // action tracking schemas
@@ -837,6 +870,22 @@ const appsBuildActionSchema = z.object({
   }),
 });
 
+// User menu v2 item opens, collected to choose the default pins from use. Client-postable like
+// `AppsBuild_Action`: it feeds an internal ranking nobody benefits from inflating. Every field is
+// closed, so a tampered client cannot put text in the `details` column.
+const userMenuClickSchema = z.object({
+  type: z.literal('UserMenu_Click'),
+  details: z.object({
+    item: z.enum(USER_MENU_ITEM_IDS),
+    // The item's home group in the layout, also when it was opened from the Pinned section;
+    // `header` for the profile and Buzz rows above the menu. Null for a top-level item.
+    group: z.enum([...USER_MENU_GROUP_IDS, USER_MENU_HEADER_GROUP]).nullable(),
+    // Opened from the Pinned section, not merely an item that is pinned.
+    pinned: z.boolean(),
+    surface: z.enum(['desktop', 'mobile']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -863,7 +912,14 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   feedTagBarClickSchema,
   announcementClickSchema,
   appsBuildActionSchema,
+  userMenuClickSchema,
 ]);
+// What `track.addAction` parses: the action, with its whole JSON length capped at
+// `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through
+// `.options`.
+export const trackActionInputSchema = trackActionSchema.refine(
+  ...withinChars(TRACK_DETAILS_MAX_CHARS)
+);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to
 // opened. `views` only records the latter, so every view count on the platform

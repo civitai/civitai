@@ -498,9 +498,8 @@ describe('assertBlockWorkflowTaggedForApp reaches the wire', () => {
 describe('the rate-limit postures reach the wire unchanged', () => {
   /**
    * The poll limiter deliberately RETURNS a non-terminal snapshot rather than
-   * throwing: the SDK host turns a throw into a TERMINAL failure snapshot, so a 429
-   * here would tell the block that a running, PAID generation had finished and stop
-   * its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
+   * throwing: a 429 here can be read by a block as a TERMINAL failure, telling it
+   * that a running, PAID generation had finished and stopping its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
    * exactly that, and only a test that spans both halves can see it.
    */
   it('a shed poll is a 200 non-terminal snapshot, not a 429', async () => {

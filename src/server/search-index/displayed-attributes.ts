@@ -23,6 +23,10 @@
 export const modelsDisplayedAttributes = [
   'id',
   'name',
+  'sfwName',
+  'hasSfwFace',
+  'coverImageId',
+  'sfwCoverImageId',
   'type',
   'nsfw',
   'nsfwLevel',
@@ -70,8 +74,8 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // Filter-only: `coverage-fields.ts` builds `eq('canGenerateNext', true)`. The per-version copy
   // the client actually reads is `versions.canGenerateNext`, which rides along with `versions`.
   'canGenerateNext',
-  // In neither `modelsFilterableAttributes` nor `modelsSortableAttributes`, and read by no search
-  // consumer — `resource-select.service.ts` reads `isOfficial` from the DB, not from a hit.
+  // Ranking-only: `isOfficial:desc` in ./ranking-rules.ts. No search consumer reads it off a hit —
+  // `resource-select.service.ts` reads `isOfficial` from the DB.
   'isOfficial',
   // Written by the OTHER writer into this same index: `src/pages/api/mod/search/models-update.ts`
   // pushes `{ id, flags }`, so `flags` is a top-level key this list must account for even though

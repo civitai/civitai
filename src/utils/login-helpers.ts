@@ -1,6 +1,7 @@
 import { QS } from '~/utils/qs';
 
 export const loginRedirectReasons = {
+  'storyline-early-access': 'You need to be logged in to get early access',
   'download-auth': 'The creator of this asset requires you to be logged in to download it',
   'report-content': 'You need to be logged in to report this content',
   'report-model': 'You need to be logged in to report this model',
@@ -44,6 +45,7 @@ export const loginRedirectReasons = {
   'view-content': 'You need to log in to view this content',
   'create-crucible': 'You need to be logged in to create a crucible',
   'judge-crucible': 'You need to be logged in to judge crucible entries',
+  'submit-appeal': 'You need to be logged in to submit an appeal',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

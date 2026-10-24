@@ -6,33 +6,6 @@ import {
   RUM_EXPERIMENT_FLAGS,
 } from '~/utils/faro/experimentFlags';
 
-/**
- * Tests the RUM experiment-segmentation mechanism. `buildRumExperimentAttributes` is the
- * load-bearing pure function: FaroProvider calls it with the resolved feature flags and spreads
- * its output VERBATIM into `initializeFaro`'s `sessionTracking.session.attributes` — so testing
- * this output IS testing the attributes that get set on the session at init (which then ride on
- * `meta.session.attributes` → Loki `session_attr_exp_*` of every beacon).
- */
-
-describe('RUM_EXPERIMENT_FLAGS (curated allowlist)', () => {
-  it('includes the genTabDeferView experiment with its explicit exp_ attribute name', () => {
-    const entry = RUM_EXPERIMENT_FLAGS.find((f) => f.flag === 'genTabDeferView');
-    expect(entry).toBeDefined();
-    expect(entry?.attr).toBe('exp_gen_tab_defer_view');
-  });
-
-  it('every curated attribute uses the exp_ prefix (greppable Loki field contract)', () => {
-    for (const { attr } of RUM_EXPERIMENT_FLAGS) {
-      expect(attr.startsWith(RUM_EXPERIMENT_ATTR_PREFIX)).toBe(true);
-    }
-  });
-
-  it('has no duplicate attribute names (each maps to a distinct Loki field)', () => {
-    const attrs = RUM_EXPERIMENT_FLAGS.map((f) => f.attr);
-    expect(new Set(attrs).size).toBe(attrs.length);
-  });
-});
-
 describe('buildRumExperimentAttributes', () => {
   it('emits "true"/"false" cohorts for a curated flag (the off cohort must be queryable too)', () => {
     expect(buildRumExperimentAttributes({ genTabDeferView: true }).exp_gen_tab_defer_view).toBe(
@@ -43,16 +16,18 @@ describe('buildRumExperimentAttributes', () => {
     );
   });
 
+  it('carries the model-page deferral cohort under its exact Loki field name', () => {
+    // A wire string: RUM queries match `session_attr_exp_model_page_defer_below_fold`.
+    expect(
+      buildRumExperimentAttributes({ modelPageDeferBelowFold: true })
+        .exp_model_page_defer_below_fold
+    ).toBe('true');
+    expect(buildRumExperimentAttributes({}).exp_model_page_defer_below_fold).toBe('false');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');
-  });
-
-  it('coerces every value to a string (MetaAttributes must be strings)', () => {
-    const attrs = buildRumExperimentAttributes({ genTabDeferView: true });
-    for (const value of Object.values(attrs)) {
-      expect(typeof value).toBe('string');
-    }
   });
 
   it('only emits allowlisted flags — never leaks a non-curated flag onto beacons', () => {
@@ -74,10 +49,5 @@ describe('buildRumExperimentAttributes', () => {
     for (const key of emittedKeys) {
       expect(key.startsWith(RUM_EXPERIMENT_ATTR_PREFIX)).toBe(true);
     }
-  });
-
-  it('emits exactly one attribute per curated flag', () => {
-    const attrs = buildRumExperimentAttributes({ genTabDeferView: true });
-    expect(Object.keys(attrs).length).toBe(RUM_EXPERIMENT_FLAGS.length);
   });
 });

@@ -101,15 +101,17 @@ function GeneratedOutputRemixMenuContent({
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Item
-          leftSection={<IconPhotoUp size={14} stroke={1.5} />}
-          onClick={postThisRemix}
-          // The label claims only what this does. "Post &amp; submit" promised the
-          // half that is deferred — the poster would land in the editor, publish,
-          // and have made no submission, with nothing having gone wrong.
-        >
-          Post this remix to submit it
-        </Menu.Item>
+        {output.canUse('post') && (
+          <Menu.Item
+            leftSection={<IconPhotoUp size={14} stroke={1.5} />}
+            onClick={postThisRemix}
+            // The label claims only what this does. "Post &amp; submit" promised the
+            // half that is deferred — the poster would land in the editor, publish,
+            // and have made no submission, with nothing having gone wrong.
+          >
+            Post this remix to submit it
+          </Menu.Item>
+        )}
         <Menu.Item
           component={NextLink}
           href={`/images/${remixOfId}`}

@@ -178,7 +178,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   // being read are replayed on the next follow, and replaying a change is harmless.
   async function loadHats(event: string) {
     const keys = eventPointKeys(event);
-    const [last] = await deps.redis.xRevRange(keys.hatsLog, '+', '-', { COUNT: 1 });
+    // node-redis 6 types XREVRANGE/XRANGE as possibly null; the server answers an empty array.
+    const [last] = (await deps.redis.xRevRange(keys.hatsLog, '+', '-', { COUNT: 1 })) ?? [];
     const raw = await deps.redis.hGetAll(keys.hats);
     const hats = new Map<string, EventHat>();
     for (const [key, value] of Object.entries(raw ?? {})) {
@@ -196,10 +197,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     prev: Pick<LoadedEvent, 'hats' | 'cursor' | 'topicIds'>
   ): Promise<Pick<LoadedEvent, 'hats' | 'cursor' | 'topicIds'>> {
     const keys = eventPointKeys(event);
-    const entries = await deps.redis.xRange(keys.hatsLog, `(${prev.cursor}`, '+');
+    const entries = (await deps.redis.xRange(keys.hatsLog, `(${prev.cursor}`, '+')) ?? [];
     if (!entries.length) return { hats: prev.hats, cursor: prev.cursor, topicIds: prev.topicIds };
     if (prev.cursor === '0-0') return loadHats(event);
-    const [first] = await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 });
+    const [first] = (await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 })) ?? [];
     if (first && streamIdBefore(prev.cursor, first.id)) return loadHats(event);
     // The log names what changed; the hash says what it is now. Writers race (hash, then log), so a
     // logged value can be older than the hash, but the last entry for a key comes after its last write.
@@ -312,7 +313,17 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       rule.once === 'day' ? day : undefined
     );
     const actor = String(action.actorId);
-    if (!(await deps.redis.sAdd(seenKey, actor))) return undefined;
+    let marked: number;
+    try {
+      marked = await deps.redis.sAdd(seenKey, actor);
+    } catch (error) {
+      // With the mark unknown, write the row anyway: the referee keeps one add per person per
+      // (type, entity) per season or day and applies the cap itself, so a repeat cannot score twice,
+      // while a dropped row is lost for good. The live accounting needs Redis too, so it is skipped.
+      deps.logError('redis', 'eventPoints.seen', error);
+      return { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
+    }
+    if (!marked) return undefined;
     // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
     // person is later removed, the referee lets this one count instead. Once marked seen it must reach
     // the ledger, so a Redis error in the live accounting below only costs the live display.
@@ -421,7 +432,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       } catch (error) {
         // The referee scores from the ledger alone. A first it never received would stay marked
         // seen, so the same action could never earn again: take the marks back so the next one
-        // counts. The live points stay until the referee corrects them.
+        // counts. The live points stay until the referee corrects them. A mark whose write failed may
+        // or may not exist; taking it back is right either way.
         deps.logError('ledger', 'eventPoints.insertLedger', error, { rows: firsts.length });
         await Promise.allSettled(firsts.map((f) => deps.redis.sRem(f.seenKey, f.actor)));
       }

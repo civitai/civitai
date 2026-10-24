@@ -72,6 +72,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 import handler from '~/pages/api/mod/user/delete';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
@@ -191,6 +192,20 @@ describe('user.delete — it delegates, it does not reimplement', () => {
       removeImages: false,
     });
     expect(body).toEqual({ deleted: true, userId: TARGET, auditRecorded: true });
+  });
+
+  // A muted account can't close itself through `user.delete`; a support ticket routes it here. If
+  // this path refused muted accounts too, that person would have no way left to be erased.
+  it('deletes a MUTED account', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({
+      id: TARGET,
+      username: NAME,
+      deletedAt: null,
+      muted: true,
+    });
+    const { status } = await call({ userId: TARGET, username: NAME });
+    expect(status).toBe(200);
+    expect(deleteUser).toHaveBeenCalledWith(expect.objectContaining({ id: TARGET }));
   });
 
   // Stored and typed values are identical here; the trim case below is what pins that the STORED
@@ -478,5 +493,28 @@ describe('user.delete — the retry path, after a deletion reported as failed', 
       message: `User ${TARGET} is already deleted; nothing to delete.`,
     });
     expect(deleteUser).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('user.delete — an account under a legal hold', () => {
+  it('refuses with the neutral text and records no deletion', async () => {
+    deleteUser.mockRejectedValueOnce(new LegalHoldError());
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ message: 'Account under legal hold; contact Legal.' });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(mockUserActivity).not.toHaveBeenCalled();
+  });
+
+  // THE CONTROL: any other failure is not reported as a hold.
+  it('does not dress up another failure as a hold', async () => {
+    deleteUser.mockRejectedValueOnce(new Error('boom'));
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('legal hold');
   });
 });

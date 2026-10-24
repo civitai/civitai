@@ -69,9 +69,9 @@ export function GeneratedItemWorkflowMenu({
   });
   // Hide flag-gated workflows (e.g. img2model3d behind `model3dGenerator`),
   // matching how the workflow picker gates its options.
-  const groups = filterWorkflowsByFeatureFlags(allGroups, features).filter(
-    (g) => g.workflows.length > 0
-  );
+  const groups = image.canUse('derive')
+    ? filterWorkflowsByFeatureFlags(allGroups, features).filter((g) => g.workflows.length > 0)
+    : [];
 
   // ---------------------------------------------------------------------------
   // Handlers

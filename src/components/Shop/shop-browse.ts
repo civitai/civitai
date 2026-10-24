@@ -4,6 +4,8 @@ import { CosmeticShopSort } from '~/server/common/enums';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { stickerSlugSearchTerm } from '~/shared/utils/sticker-token';
+import { removeTags } from '~/utils/string-helpers';
 
 /**
  * Shared filter/sort/page behaviour for every shop grid that already holds its
@@ -22,15 +24,37 @@ export type ShopBrowseItem = {
   id: number;
   cosmeticId: number | null;
   title: string;
+  description?: string | null;
   unitAmount: number;
   reviewedAt?: Date | null;
   availableQuantity?: number | null;
   availableTo?: Date | null;
   meta?: unknown;
-  cosmetic: { type: CosmeticType } | null;
+  cosmetic: { type: CosmeticType; name?: string | null; data?: unknown } | null;
 };
 
 const metaOf = (item: ShopBrowseItem) => (item.meta ?? {}) as CosmeticShopItemMeta;
+
+/**
+ * Whether an item matches the shop search box: listing title, listing
+ * description, the cosmetic's own name, or a sticker's `:slug:`. Mirrors the
+ * `query` clause in `getCommunityCosmetics`.
+ */
+export function shopItemMatchesSearch(item: ShopBrowseItem, search: string | undefined) {
+  const query = search?.trim().toLowerCase();
+  if (!query) return true;
+  if (item.title.toLowerCase().includes(query)) return true;
+  if (item.cosmetic?.name?.toLowerCase().includes(query)) return true;
+  // Stored as HTML: matched as text so "strong" doesn't hit every bold description.
+  if (item.description && removeTags(item.description).toLowerCase().includes(query)) return true;
+
+  const slugTerm = stickerSlugSearchTerm(query);
+  const slug =
+    item.cosmetic?.type === CosmeticType.Sticker
+      ? (item.cosmetic.data as { slug?: unknown } | null | undefined)?.slug
+      : undefined;
+  return !!slugTerm && typeof slug === 'string' && slug.includes(slugTerm);
+}
 
 export function browseShopItems<T>({
   entries,
@@ -54,7 +78,7 @@ export function browseShopItems<T>({
   ownedCosmeticIds: Set<number>;
   wishlistedIds: Set<number>;
 }): T[] {
-  const { cosmeticTypes, modifier, wishlisted, limited, acceptsBlueBuzz } = filters;
+  const { cosmeticTypes, modifier, wishlisted, limited, acceptsBlueBuzz, search } = filters;
 
   const filtered = entries.filter((entry) => {
     const item = shopItemOf(entry);
@@ -81,6 +105,7 @@ export function browseShopItems<T>({
     }
     if (limited && item.availableQuantity == null && item.availableTo == null) return false;
     if (acceptsBlueBuzz && !metaOf(item).acceptsBlueBuzz) return false;
+    if (!shopItemMatchesSearch(item, search)) return false;
     return true;
   });
 
@@ -168,6 +193,7 @@ export function shopBrowseKey(filters: ShopFilters, sort: CosmeticShopSort, page
     !!filters.wishlisted,
     !!filters.limited,
     !!filters.acceptsBlueBuzz,
+    filters.search?.trim() ?? '',
     sort,
     pageSize,
   ]);

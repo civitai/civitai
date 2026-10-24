@@ -47,7 +47,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import type * as Trpc from '~/utils/trpc';
-import { env } from '~/env/client';
+import { ogImageUrl } from '~/components/Meta/og-image-url';
 import { NsfwLevel } from '~/server/common/enums';
 import { ProfileLayout2 } from '~/components/Profile/ProfileLayout2';
 
@@ -99,7 +99,7 @@ afterEach(() => {
 describe('profile head on a shared milestone link', () => {
   it('names the card as the JSON-LD page image and person image, as og:image does', () => {
     const head = headFor({ milestone: 'supernova' }, true);
-    const card = `${env.NEXT_PUBLIC_BASE_URL}/api/og?type=milestone&id=7.supernova`;
+    const card = ogImageUrl('/api/og?type=milestone&id=7.supernova');
     expect(head.ogEndpoint).toBe('/api/og?type=milestone&id=7.supernova');
     expect(head.pageImage).toBe(card);
     expect(head.personImage).toBe(card);
@@ -107,7 +107,7 @@ describe('profile head on a shared milestone link', () => {
 
   it('does the same for a shared achievement, named by its key', () => {
     const head = headFor({ milestone: 'reach:downloads-10000' }, true);
-    const card = `${env.NEXT_PUBLIC_BASE_URL}/api/og?type=milestone&id=7.reach:downloads-10000`;
+    const card = ogImageUrl('/api/og?type=milestone&id=7.reach:downloads-10000');
     expect(head.ogEndpoint).toBe('/api/og?type=milestone&id=7.reach:downloads-10000');
     expect(head.pageImage).toBe(card);
     expect(head.personImage).toBe(card);

@@ -5,7 +5,7 @@ import type {
   UpdateWorkflowRequest,
   Workflow,
   WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -17,7 +17,7 @@ import {
   updateWorkflow as clientUpdateWorkflow,
   handleError,
   refreshBlob,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
@@ -27,7 +27,6 @@ import type {
   TagsPatchSchema,
   workflowIdSchema,
   workflowQuerySchema,
-  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
@@ -44,6 +43,7 @@ import {
   withSpan,
 } from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
 import {
   annotateOrchestratorMissingBlob,
   annotateOrchestratorSubmitFailure,
@@ -389,11 +389,16 @@ export async function submitWorkflow({
     let message = orchestratorErrorMessage(error);
     if (
       body.allowMatureContent === false &&
-      message === 'Prompt requires mature content but workflow does not allow it' &&
-      body.currencies?.includes('green')
-    )
-      message =
-        'The prompt has been blocked due to mature content which is not supported by the current model';
+      message === 'Prompt requires mature content but workflow does not allow it'
+    ) {
+      // `nsfwLevel: 'pg13'` is only set for private or epoch resources (orchestration-new.service).
+      if (body.nsfwLevel === 'pg13')
+        message =
+          'The prompt has been blocked due to mature content, which private and in-training resources cannot generate';
+      else if (body.currencies?.includes('green'))
+        message =
+          'The prompt has been blocked due to mature content, which is not allowed on this site';
+    }
 
     if (!isProd) {
       console.log('----Workflow Error----');
@@ -426,7 +431,7 @@ type ClientSubmitResult = Awaited<ReturnType<typeof clientSubmitWorkflow>>;
  * Merge the ambient W3C trace context into an outbound submit's headers WITHOUT clobbering anything the
  * caller set (caller-supplied values always win, per-key).
  *
- * Why this is not a one-line spread: `@civitai/client`'s `headers` is a UNION — a plain record, a
+ * Why this is not a one-line spread: `@civitai/orchestration-client`'s `headers` is a UNION — a plain record, a
  * `Headers` instance, or a `[name, value][]` array. Spreading a `Headers` instance yields `{}`, which
  * would silently DROP every header the caller set; spreading an array yields index keys. So the plain
  * record (the only shape any caller in this repo actually uses today) is spread, and the other two are
@@ -475,7 +480,7 @@ export type SubmitWorkflowRetryOptions = {
 };
 
 /**
- * Thin wrapper around the `@civitai/client` `submitWorkflow` that re-submits on
+ * Thin wrapper around the `@civitai/orchestration-client` `submitWorkflow` that re-submits on
  * transient infra failures (5xx responses, or a network error / no response) with
  * bounded exponential backoff. 4xx responses are returned immediately — client
  * errors won't recover. Returns the raw client result of the final attempt plus an
@@ -714,17 +719,29 @@ export async function deleteManyWorkflows({
 export async function updateWorkflow({
   workflowId,
   token,
+  throwOnError,
   ...body
-}: UpdateWorkflowRequest & { token: string; workflowId: string }) {
+}: UpdateWorkflowRequest & {
+  token: string;
+  workflowId: string;
+  /**
+   * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
+   * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
+   * resolves on an HTTP error, and the metadata writers have always treated a failed write as done.
+   */
+  throwOnError?: boolean;
+}) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  if (throwOnError && !response?.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
 }
 
 /**
  * Moves the workflow's pending downloads to the high lane. With `whatif` the orchestrator prices the
- * change without charging for it. `@civitai/client`, which every call here goes through, predates
+ * change without charging for it. `@civitai/orchestration-client`, which every call here goes through, predates
  * `downloadPriority` and this route's `whatif` query, hence the casts.
  */
 export async function setWorkflowDownloadPriority({
@@ -776,7 +793,7 @@ export function throwOrchestratorFailure({
   message: string | undefined;
 }): never {
   // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
-  // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+  // @civitai/orchestration-client RESOLVES (it does NOT reject) when the underlying fetch throws —
   // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
   // `{ error, response: undefined }`. We must map that to a retry-able 503 — mirroring the
   // read-path (queryWorkflows/getWorkflow) default — BEFORE the `response.status` switch
@@ -793,11 +810,25 @@ export function throwOrchestratorFailure({
       throw throwAuthorizationError(message);
     case 403:
       throw throwInsufficientFundsError(message);
-    case 429:
+    case 429: {
       // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
       // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
       // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
-      throw throwRateLimitError(message);
+      // Not "too many jobs" for every 429: a free-tier quota 429 carries its own detail.
+      const retryAfter = getRetryAfterSeconds(response);
+      const reason = message || 'Too many requests right now.';
+      // A detail that already says when to retry is left as it is.
+      if (!retryAfter || /try again|retry/i.test(reason)) throw throwRateLimitError(reason);
+      const wait =
+        retryAfter === 1
+          ? 'a second'
+          : retryAfter < 120
+          ? `about ${retryAfter} seconds`
+          : `about ${Math.ceil(retryAfter / 60)} minutes`;
+      throw throwRateLimitError(
+        `${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again in ${wait}.`
+      );
+    }
     default:
       // An unhandled 4xx from the orchestrator is a client/validation fault
       // (e.g. "<resource> is not enabled for generation. Please contact …"),
@@ -826,22 +857,6 @@ export function throwOrchestratorFailure({
         error ?? new Error('orchestrator returned no data', { cause: error })
       );
   }
-}
-
-export async function updateManyWorkflows({
-  workflows,
-  token,
-}: {
-  workflows: z.infer<typeof workflowUpdateSchema>[];
-  token: string;
-}) {
-  const client = createOrchestratorClient(token);
-
-  await Promise.all(
-    workflows.map(({ workflowId, metadata }) =>
-      clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
-    )
-  );
 }
 
 export async function patchWorkflows({

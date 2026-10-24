@@ -23,17 +23,32 @@
     "./rated-entity-sql": "./src/rated-entity-sql.ts",
     "./rating-review": "./src/rating-review.ts",
     "./crucible": "./src/crucible.ts",
+    "./box-odds": "./src/box-odds.ts",
+    "./box-builder": "./src/box-builder.ts",
+    "./box-odds-snapshot": "./src/box-odds-snapshot.ts",
+    "./creator-box-rules": "./src/creator-box-rules.ts",
+    "./item-holder-lock": "./src/item-holder-lock.ts",
+    "./mystery-box": "./src/mystery-box.ts",
     "./json-ld": "./src/json-ld.ts",
-    "./resolution-reasons": "./src/resolution-reasons.ts"
+    "./resolution-reasons": "./src/resolution-reasons.ts",
+    "./site-appeal": "./src/site-appeal.ts",
+    "./post-scheduling": "./src/post-scheduling.ts",
+    "./platform-feedback-version": "./src/platform-feedback-version.ts",
+    "./reaction-privacy": "./src/reaction-privacy.ts",
+    "./merge-permission": "./src/merge-permission.ts",
+    "./service-offering-takedown": "./src/service-offering-takedown.ts"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@civitai/db-schema": "workspace:*"
+    "@civitai/db-schema": "workspace:*",
+    "semver": "^7.6.0",
+    "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@types/semver": "^7.7.1",
     "vitest": "^4.1.11"
   }
 }

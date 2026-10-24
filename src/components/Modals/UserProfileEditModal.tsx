@@ -48,6 +48,7 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
+import { dedupeBadgesByImage, getBadgeImageUrl } from '~/shared/utils/badge-visibility';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -55,10 +56,12 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
+import { changedCosmeticId } from '~/components/Modals/profile-cosmetic-ids';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { UserWithProfile } from '~/types/router';
 
@@ -135,6 +138,7 @@ const schema = z.object({
   profileImage: z.string().nullish(),
   profileDecoration: cosmeticInputSchema.nullish(),
   profileBackground: cosmeticInputSchema.nullish(),
+  cardDecoration: cosmeticInputSchema.nullish(),
 });
 
 const chipProps: Partial<ChipProps> = {
@@ -210,25 +214,14 @@ export default function UserProfileEditModal() {
   const badges = useMemo(
     () =>
       user
-        ? owned
-            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
-            .filter((item, index, self) => {
-              const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              // Keep only the first occurrence of each unique URL
-              return (
-                url &&
-                self.findIndex((b) => {
-                  const bData = (b.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-                  return (bData.url ?? '') === url;
-                }) === index
-              );
-            })
-            .map(({ cosmetic, cosmeticId, ...c }) => ({
-              ...c,
-              ...cosmetic,
-              data: cosmetic.data as BadgeCosmetic['data'],
-            }))
+        ? dedupeBadgesByImage(
+            owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge),
+            (item) => getBadgeImageUrl(item.cosmetic)
+          ).map(({ cosmetic, cosmeticId, ...c }) => ({
+            ...c,
+            ...cosmetic,
+            data: cosmetic.data as BadgeCosmetic['data'],
+          }))
         : [],
     [user, owned]
   );
@@ -275,6 +268,20 @@ export default function UserProfileEditModal() {
     [user, owned]
   );
 
+  const cardDecorations = useMemo(
+    () =>
+      user
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.CardDecoration && !!c.data)
+            .map(({ cosmetic, cosmeticId, ...c }) => ({
+              ...c,
+              ...cosmetic,
+              data: cosmetic.data as CardDecorationCosmetic['data'],
+            }))
+        : [],
+    [user, owned]
+  );
+
   // `getLeaderboards` is already domain-scoped, so this list is whatever is visible
   // on the current host — no second filter on `domain` belongs here.
   const leaderboardOptions = useMemo(
@@ -295,6 +302,7 @@ export default function UserProfileEditModal() {
     nameplateId,
     profileDecoration,
     profileBackground,
+    cardDecoration,
     message,
     bio,
     sfwMessage,
@@ -310,6 +318,7 @@ export default function UserProfileEditModal() {
     'nameplateId',
     'profileDecoration',
     'profileBackground',
+    'cardDecoration',
     'message',
     'bio',
     'sfwMessage',
@@ -341,6 +350,9 @@ export default function UserProfileEditModal() {
       const selectedProfileBackground = equippedCosmetics.find(
         (c) => c.type === CosmeticType.ProfileBackground
       );
+      const selectedCardDecoration = equippedCosmetics.find(
+        (c) => c.type === CosmeticType.CardDecoration
+      );
       const formData = {
         ...user.profile,
         // `profile.bio`/`message`/`coverImage` are resolved for the current domain, so
@@ -370,6 +382,7 @@ export default function UserProfileEditModal() {
         badge: selectedBadge ?? null,
         profileDecoration: selectedProfileDecoration ?? null,
         profileBackground: selectedProfileBackground ?? null,
+        cardDecoration: selectedCardDecoration ?? null,
         leaderboardShowcase: user?.leaderboardShowcase ?? null,
         profilePicture: user.profilePicture
           ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -395,6 +408,7 @@ export default function UserProfileEditModal() {
       nameplateId: prevNameplateId,
       profileDecoration: prevProfileDecorationId,
       profileBackground: prevProfileBackgroundId,
+      cardDecoration: prevCardDecoration,
       leaderboardShowcase: prevLeaderboardShowcase,
       ...prevProfileData
     } = previousData.current ?? {};
@@ -404,6 +418,7 @@ export default function UserProfileEditModal() {
       badge,
       profileDecoration,
       profileBackground,
+      cardDecoration,
       leaderboardShowcase,
       creatorCardStatsPreferences,
       ...profileData
@@ -415,6 +430,7 @@ export default function UserProfileEditModal() {
       nameplateId !== prevNameplateId ||
       profileDecoration !== prevProfileDecorationId ||
       profileBackground !== prevProfileBackgroundId ||
+      changedCosmeticId(cardDecoration, prevCardDecoration) !== undefined ||
       leaderboardShowcase !== prevLeaderboardShowcase;
     const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -427,6 +443,7 @@ export default function UserProfileEditModal() {
         nameplateId,
         profileDecorationId: profileDecoration?.id ?? null,
         profileBackgroundId: profileBackground?.id ?? null,
+        cardDecorationId: changedCosmeticId(cardDecoration, prevCardDecoration),
         leaderboardShowcase,
       });
   };
@@ -479,6 +496,7 @@ export default function UserProfileEditModal() {
     nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
     profileDecoration ? decorations.find((c) => c.id === profileDecoration.id) : undefined,
     profileBackground ? backgrounds.find((c) => c.id === profileBackground.id) : undefined,
+    cardDecoration ? cardDecorations.find((c) => c.id === cardDecoration.id) : undefined,
   ].filter(isDefined);
 
   return (
@@ -573,6 +591,15 @@ export default function UserProfileEditModal() {
                     data={backgrounds}
                     onShopClick={handleClose}
                   />
+                  {/* No shop link: card glows are not in the shop yet. */}
+                  {cardDecorations.length > 0 && (
+                    <InputCosmeticSelect
+                      name="cardDecoration"
+                      label="Creator Card Glow"
+                      description="Select it again to turn the glow off"
+                      data={cardDecorations}
+                    />
+                  )}
                 </>
               )}
 
@@ -583,6 +610,17 @@ export default function UserProfileEditModal() {
                   form.setValue('privacySettings', {
                     ...privacySettings,
                     showBadges: e.currentTarget.checked,
+                  })
+                }
+              />
+              <Switch
+                label="Show what my Creator Score is made of"
+                description="Visitors see the share from models, images, articles and followers, never the score"
+                checked={privacySettings?.showScoreSplit !== false}
+                onChange={(e) =>
+                  form.setValue('privacySettings', {
+                    ...privacySettings,
+                    showScoreSplit: e.currentTarget.checked,
                   })
                 }
               />

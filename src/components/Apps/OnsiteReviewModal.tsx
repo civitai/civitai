@@ -17,6 +17,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
+import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
@@ -127,6 +128,8 @@ export type ReviewedRequestCommon = {
   /** CDN URLs for the app's store listing media, joined on slug by the same reads. */
   iconUrl?: string | null;
   coverUrl?: string | null;
+  /** The same media with levels, plus the civitai.red overrides, for the review's reveal. */
+  reviewMedia?: ListingReviewMedia | null;
   /** Id of the slug-joined store listing; `null` when the request has none of its own. */
   appListingId?: string | null;
   /** Set when approving re-rates a listing from its imagery, starting from `declared`. */

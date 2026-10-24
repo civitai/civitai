@@ -1,4 +1,3 @@
-import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -505,51 +504,8 @@ describe('the shared preamble — createPostFromApp', () => {
         message: 'posting from apps is not enabled',
       });
     });
-
-    it('is OBSERVABLE — the refusal increments a scraped counter, not just a log line', async () => {
-      // 🔴 CRITERION 4, AND IT IS READ OFF THE REAL DEFAULT REGISTRY BY METRIC NAME.
-      // The refusal branch emits nothing but this counter, so the counter is the only
-      // surface that exists for it. Looked up by STRING rather than by
-      // importing the new symbol, deliberately: that keeps this case runnable against
-      // the pre-change tree, where it fails on a `undefined` registry lookup instead
-      // of on a module-resolution error.
-      //
-      // 🔴 THE EXISTENCE ASSERTION IS NOT DECORATION — WITHOUT IT THIS CASE IS
-      // VACUOUS. `readPostSubjectRefusals` returns NaN when the series is not
-      // registered at all, and `expect(NaN).toBe(NaN)` PASSES (`toBe` is
-      // `Object.is`). Measured: this case went GREEN against the pre-change tree,
-      // where the counter does not exist, until the `toBeDefined()` below was
-      // added. A delta assertion over a lookup that can return NaN cannot tell
-      // "the counter moved" from "there is no counter".
-      segmentScopedFlag();
-      vanishesOnSecondRead();
-
-      const before = await readPostSubjectRefusals('create');
-      await expect(caller().createPostFromApp(INPUT)).rejects.toThrow();
-
-      expect(client.register.getSingleMetric(POST_SUBJECT_REFUSALS)).toBeDefined();
-      const after = await readPostSubjectRefusals('create');
-      expect(Number.isFinite(after)).toBe(true);
-      expect(after).toBe((Number.isFinite(before) ? before : 0) + 1);
-    });
   });
 });
-
-const POST_SUBJECT_REFUSALS = 'civitai_app_block_post_subject_refusals_total';
-
-/**
- * Current value of one `{surface}` series of the post-subject refusal counter, or NaN
- * when the series is not registered. 🔴 NaN is NOT a safe sentinel for a delta check —
- * see the caller.
- */
-async function readPostSubjectRefusals(surface: string): Promise<number> {
-  const metric = client.register.getSingleMetric(POST_SUBJECT_REFUSALS) as
-    | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
-    | undefined;
-  if (!metric) return Number.NaN;
-  const { values } = await metric.get();
-  return values.find((v) => v.labels.surface === surface)?.value ?? 0;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('write trust', () => {

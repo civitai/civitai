@@ -93,4 +93,33 @@ describe('upsertBountyEntryHandler', () => {
       'You have reached the maximum number of entries for this bounty'
     );
   });
+
+  describe('bounty schedule', () => {
+    const hour = 60 * 60 * 1000;
+    const bountyStartingAt = (startsAt: Date) =>
+      dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+        userId: OWNER_ID,
+        complete: false,
+        startsAt,
+        entryLimit: 5,
+        entries: [],
+      });
+
+    it('refuses a new entry before the bounty starts', async () => {
+      bountyStartingAt(new Date(Date.now() + 2 * hour));
+
+      await expect(upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) })).rejects.toThrow(
+        'This bounty has not started yet'
+      );
+      expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts a new entry once the bounty has started', async () => {
+      bountyStartingAt(new Date(Date.now() - hour));
+
+      await upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) }).catch(() => null);
+
+      expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
 });

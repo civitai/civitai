@@ -33,6 +33,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
 );
@@ -146,7 +149,12 @@ describe('creator shop item history', () => {
       unitAmount: 900,
       meta: { ...requestedChangesItem.meta, history: afterEdit },
     });
-    await reviewCreatorShopItem({ id: 42, reviewerId: 99, action: 'approve' });
+    await reviewCreatorShopItem({
+      id: 42,
+      reviewerId: 99,
+      action: 'approve',
+      stickersEnabled: false,
+    });
 
     const afterApproval = historyOf(1);
     expect(afterApproval).toHaveLength(4);
@@ -191,6 +199,7 @@ describe('creator shop item history', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'reject',
       rejectionReason: 'Traced artwork',
     });

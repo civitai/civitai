@@ -49,12 +49,18 @@ const fetchImageResources = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const getMultiAccountTransactionsByPrefix = vi.fn();
+const getTransactionByExternalId = vi.fn();
+const refundTransaction = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   getUserBuzzAccount,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
+  getMultiAccountTransactionsByPrefix,
+  getTransactionByExternalId,
+  refundTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -95,6 +101,17 @@ const validCreateInput = {
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   duration: 24,
 };
+
+const REFUNDED = { refundedTransactions: [{ amount: 50 }], totalRefunded: 1 };
+
+/** One leg per prefix, already refunded: a 409 then reads as settled. */
+function legsAlreadyRefunded() {
+  getMultiAccountTransactionsByPrefix.mockImplementation(async (prefix: string) => [
+    { transactionId: `${prefix}-leg`, externalTransactionId: `${prefix}-User`, amount: 50 },
+  ]);
+  getTransactionByExternalId.mockResolvedValue({ type: 'Refund' });
+  refundTransaction.mockResolvedValue({ transactionId: 'refunded' });
+}
 
 describe('crucibleImageSchema', () => {
   it('accepts a Cloudflare id whose variant nibble is not RFC-4122 conformant', () => {
@@ -1152,7 +1169,8 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
     getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
     createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
-    refundMultiAccountTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue(REFUNDED);
+    legsAlreadyRefunded();
   });
 
   const lockedCheck = () => {

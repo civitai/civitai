@@ -432,6 +432,172 @@ describe('store catalog with sub-listings, executed', () => {
     expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
   });
 
+  // T4 — the PARENT fallback goes through the same per-image gate as the parent's own card. It
+  // used to be projected raw, so a child whose own image was not cleared fell back to whatever
+  // the parent's cover was, at any level.
+  it('never falls back to a parent cover the viewer may not see — no cover instead', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 1`);
+    const card = (await page()).find((i) => i.id === CHILD_A);
+    expect(card, 'the child left the page — the cover assertion would be vacuous').toBeDefined();
+    expect(card?.coverUrl).toBeNull();
+    // Positive control: the same parent cover at PG is the fallback, so the null above is the gate.
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 1`);
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+  });
+
+  // THE RED-HOST RULE on the parent fallback: off a red host it is held to exactly the ceiling the
+  // child's own image gets there (viewer ∩ SFW ∩ the card's effective rating); on a red host, that
+  // same non-red ceiling UNION the viewer's opted-in levels — so a viewer who opted into R sees an
+  // R parent cover on a `pg` card there, and nobody else does.
+  it('on a red host the parent fallback admits the viewer’s opted-in levels, and only theirs', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 1;
+      UPDATE app_listings SET content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
+    // A viewer who opted into PG and R (5), on a red host: the R parent cover shows.
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('parent-cover');
+    // The same viewer off a red host: hidden, as before.
+    expect(await cover({ redCapable: false, viewerBrowsingLevel: 5 })).toBeNull();
+    // An anonymous viewer on a red host: hidden — no more than the non-red host shows.
+    expect(await cover({ redCapable: true })).toBeNull();
+  });
+
+  // The ICON counterpart of the test above: the parent icon on a child card follows the same
+  // red-host rule as the parent cover fallback, not the child image's own ceiling.
+  it('on a red host the parent ICON admits the viewer’s opted-in levels, and only theirs', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (5, 'parent-icon', ${OWNER}, 4, NULL);
+      UPDATE app_listings SET icon_id = 5, content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const iconOf = async (opts: Partial<NonNullable<ListOpts>>) =>
+      ((await page(opts)).find((i) => i.id === CHILD_A) as { parent?: { iconUrl: string | null } })
+        ?.parent?.iconUrl;
+    // A viewer who opted into PG and R (5), on a red host: the R parent icon shows.
+    expect(await iconOf({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('parent-icon');
+    // The same viewer off a red host: hidden.
+    expect(await iconOf({ redCapable: false, viewerBrowsingLevel: 5 })).toBeNull();
+    // An anonymous viewer on a red host: hidden.
+    expect(await iconOf({ redCapable: true })).toBeNull();
+  });
+
+  // The child's OWN image takes the same red-host rule as the parent fallback: the card's rating
+  // does not cap it on a red host. So an R item image on a `pg` card shows there to a viewer who
+  // opted into R — and to nobody else, and never off a red host.
+  it('🔴 on a red host the child’s OWN image is not capped by the card rating — opted-in viewers only', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 2;
+      UPDATE app_listings SET content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const card = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) => (await card(opts))?.coverUrl;
+    // A viewer who opted into PG and R (5), on a red host: the R item image shows.
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('item-a');
+    // …and the card's rating badge is still the card's own rating, not the image's.
+    expect((await card({ redCapable: true, viewerBrowsingLevel: 5 }))?.contentRating).toBe('pg');
+    // The same viewer off a red host: unchanged, the parent cover.
+    expect(await cover({ redCapable: false, viewerBrowsingLevel: 5 })).toBe('parent-cover');
+    // An anonymous viewer on a red host: no more than the non-red host shows.
+    expect(await cover({ redCapable: true })).toBe('parent-cover');
+    // A viewer who opted into PG and PG-13 only (3), on a red host: not R.
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 3 })).toBe('parent-cover');
+  });
+
+  // The lift is the VIEWER's level, not "anything goes on red": XXX shows only to a viewer who
+  // opted into XXX, and a Blocked image never shows, whatever the viewer asked for.
+  it('on a red host the child image is held to the viewer’s own levels, and Blocked never shows', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 16 WHERE id = 2;
+      UPDATE app_listings SET content_rating = 'pg' WHERE id = '${PARENT}'`);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 5 })).toBe('parent-cover');
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 17 })).toBe('item-a');
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 2`);
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 63 })).toBe('parent-cover');
+  });
+
+  /**
+   * INVARIANT GUARD, not regression coverage: this also passed before the red-host rule was
+   * introduced (the old code never showed less here either). It pins the "never less on a red host"
+   * property so a future change cannot break it.
+   */
+  it('INVARIANT GUARD: on a red host the parent fallback never shows LESS than off one', async () => {
+    // A PG-13 parent cover on a `pg13` card, for a viewer whose level admits PG-13 (3).
+    await holder.db.exec(`
+      UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2;
+      UPDATE "Image" SET "nsfwLevel" = 2 WHERE id = 1;
+      UPDATE app_listings SET content_rating = 'pg13' WHERE id = '${PARENT}'`);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
+    expect(await cover({ redCapable: false, viewerBrowsingLevel: 3 })).toBe('parent-cover');
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 3 })).toBe('parent-cover');
+  });
+
+  // Every flag column the gate reads, so a swapped, mistyped or dropped SQL alias / mapping for
+  // any one of them is caught — on the parent COVER and on the parent ICON. `needsReview` and
+  // `blockedFor` are text columns: any non-null value is a flag.
+  const PARENT_FLAG_SETS: [string, string][] = [
+    ['poi', 'true'],
+    ['minor', 'true'],
+    ['tosViolation', 'true'],
+    ['acceptableMinor', 'true'],
+    ['needsReview', `'minor'`],
+    ['blockedFor', `'tos'`],
+  ];
+
+  it.each(PARENT_FLAG_SETS)(
+    'the %s flag on the parent cover hides it from the fallback',
+    async (column, value) => {
+      await holder.db.exec(
+        `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`
+      );
+      expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+      await holder.db.exec(`UPDATE "Image" SET "${column}" = ${value} WHERE id = 1`);
+      expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBeNull();
+    }
+  );
+
+  it.each(PARENT_FLAG_SETS)(
+    'the %s flag on the parent icon hides it from the child card',
+    async (column, value) => {
+      await holder.db.exec(`
+        INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (6, 'parent-icon-f', ${OWNER}, 1, NULL);
+        UPDATE app_listings SET icon_id = 6 WHERE id = '${PARENT}'`);
+      const iconOf = async () =>
+        ((await page()).find((i) => i.id === CHILD_A) as { parent?: { iconUrl: string | null } })
+          ?.parent?.iconUrl;
+      // Positive control: the unflagged PG icon is shown.
+      expect(await iconOf()).toBe('parent-icon-f');
+      await holder.db.exec(`UPDATE "Image" SET "${column}" = ${value} WHERE id = 6`);
+      expect(await iconOf()).toBeNull();
+    }
+  );
+
+  it('a moderation flag on the parent cover hides it from the fallback', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`
+    );
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+    await holder.db.exec(`UPDATE "Image" SET "tosViolation" = true WHERE id = 1`);
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBeNull();
+  });
+
+  it('gates the parent ICON on a child card the same way', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (5, 'parent-icon', ${OWNER}, 4, NULL);
+      UPDATE app_listings SET icon_id = 5 WHERE id = '${PARENT}'`);
+    const iconOf = async () =>
+      ((await page()).find((i) => i.id === CHILD_A) as { parent?: { iconUrl: string | null } })
+        ?.parent?.iconUrl;
+    expect(await iconOf()).toBeNull();
+    // Positive control: the same icon at PG is shown, so the null above is the gate.
+    await holder.db.exec(`UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = 5`);
+    expect(await iconOf()).toBe('parent-icon');
+  });
+
   it('orders a parent before its children on a tied sort key', async () => {
     const all = ids(await page({}, 'popular'));
     const p = all.indexOf(PARENT);
@@ -511,7 +677,7 @@ describe('store catalog with sub-listings, executed', () => {
     expect(ids(next.items)).toEqual([OTHER, OFFSITE]);
   });
 
-  it('shows the item image only within the viewer level, on a red host, under its rating', async () => {
+  it('shows the item image only within the viewer level, on a red host', async () => {
     await holder.db.exec(`
       UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 2;
       UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}'`);
@@ -705,6 +871,19 @@ describe('an off-site parent with a link template', () => {
     const onsite = items.find((i) => i.id === CHILD_A) as Record<string, unknown>;
     expect(onsite.runHref).toBe(`/apps/run/custom-generators/g/A?sl=${CHILD_A}`);
     expect(onsite).not.toHaveProperty('external');
+  });
+
+  // Invariant guard: the image projection does not branch on the parent kind, so a catalog
+  // item's image gets the same render-time publicity re-check as an on-site one.
+  it('shows the item image on an off-site card while its post is public, else the parent cover', async () => {
+    await seedOffsiteChild();
+    await setTemplate(OFFSITE, TEMPLATE);
+    await holder.db.exec(`UPDATE app_listings SET cover_id = 1 WHERE id = '${OFFSITE}'`);
+    await holder.db.exec(`UPDATE app_sub_listings SET image_id = 2 WHERE id = '${GAME}'`);
+    const cover = async () => (await page()).find((i) => i.id === GAME)?.coverUrl;
+    expect(await cover()).toBe('item-a');
+    await holder.db.exec(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    expect(await cover()).toBe('parent-cover');
   });
 
   it('hides the child while the parent has no template', async () => {

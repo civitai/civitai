@@ -173,8 +173,9 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
-    CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int,
+      type text NOT NULL DEFAULT 'Badge', source text, "permanentUnlock" boolean, data jsonb);
+    CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int, "itemDefinitionId" int);
     CREATE TABLE "UserCosmeticShopPurchases" (
       "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
       "unitAmount" int NOT NULL, "purchasedAt" timestamp(3) NOT NULL, refunded boolean NOT NULL,
@@ -186,6 +187,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL, "cosmeticId" int NOT NULL, "claimKey" text NOT NULL DEFAULT 'claimed',
+      "equippedAt" timestamp(3),
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
     CREATE TABLE "Model" (
@@ -367,6 +369,17 @@ describe('shop revenue detector', () => {
     expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
     expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
     expect(await held(TESTER)).toEqual([]);
+  });
+
+  // A mystery box listing has no cosmetic either, but it is not its lister's pack.
+  it('does not count a mystery box sale for the moderator who listed it', async () => {
+    await q(
+      `INSERT INTO "CosmeticShopItem" (id, "addedById", "itemDefinitionId") VALUES (60, $1, 9)`,
+      [QUIET]
+    );
+    await addSales([{ cosmeticId: null, shopItemId: 60, amount: 100000, at: '2026-03-01' }]);
+    await run(SHOP);
+    expect(await held(QUIET)).toEqual([]);
   });
 
   it("does not count a creator's purchase of their own cosmetic as a sale", async () => {

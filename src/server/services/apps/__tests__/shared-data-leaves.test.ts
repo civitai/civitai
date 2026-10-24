@@ -125,8 +125,13 @@ describe('collectSharedDataLeaves — caps report overflow instead of truncating
     );
   });
 
-  it('pins the depth cap at 32', () => {
-    expect(SHARED_DATA_MAX_DEPTH).toBe(32);
+  // Literal depths, not the constant: the it.each above moves with it, so this is what notices
+  // the cap itself being raised.
+  it('reads a blob 32 deep and refuses one 33 deep', () => {
+    expect(collectSharedDataLeaves(stored(nested(32)))).toEqual({
+      leaves: [expect.objectContaining({ raw: 'deep text' })],
+    });
+    expect(collectSharedDataLeaves(stored(nested(33)))).toEqual({ overflow: 'depth' });
   });
 
   it('counts object nesting the same as array nesting', () => {

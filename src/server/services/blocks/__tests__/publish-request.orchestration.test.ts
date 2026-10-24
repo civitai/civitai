@@ -158,6 +158,8 @@ const {
       // post-hoist (below) to run its callback against this same write mock.
       appListingModerationEvent: { create: vi.fn<DelegateMock>(async () => ({})) },
       $transaction: vi.fn(),
+      $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+      $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },
@@ -1503,6 +1505,55 @@ describe('approveRequest', () => {
     });
     mockForgejo.ensurePushWebhook.mockResolvedValue(undefined);
     mockForgejo.commitFiles.mockResolvedValue({ sha: 'commit_sha_abc' });
+  });
+
+  it.each(['my--app', 'a---b'])(
+    'refuses a first version of %s before creating the OAuth client, repo or app block',
+    async (slug) => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(
+        `Cannot approve: blockId "${slug}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+      );
+      expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+      expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['my-app', 'a-b-c', 'plainapp'])('approves a first version of %s', async (slug) => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: true });
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+  });
+
+  it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'old--name' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_legacy',
+      appId: 'oc_legacy',
+      repoUrl: 'https://forgejo.example/civitai-apps/old--name',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://old--name.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).resolves.toMatchObject({ isFirstVersion: false, appBlockId: 'apb_legacy' });
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {

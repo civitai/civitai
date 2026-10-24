@@ -25,7 +25,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 }));
 
 const { CreatorScoreExplainer } = await import('~/components/Account/CreatorScoreExplainer');
-const { creatorScorePenalty, creatorScoreSources } = await import(
+const { creatorScorePenalty, creatorScoreSources, creatorScoreStaffAwarded } = await import(
   '~/components/Account/creator-score-copy'
 );
 const { UserScoreDisplay, scoreCategories } = await import('~/components/Account/UserScoreDisplay');
@@ -153,6 +153,79 @@ describe('UserScoreDisplay reports block', () => {
     expect(text).toContain('Actioned');
     expect(text).toContain('Against');
     expect(text).not.toContain(creatorScoreSources.reportsActioned.label);
+  });
+});
+
+describe('UserScoreDisplay helping moderation row', () => {
+  const card = (props: Record<string, unknown>, reportsActioned: number) =>
+    visibleText(
+      render(
+        React.createElement(UserScoreDisplay, {
+          scores: { total: 147860, models: 10, reportsActioned },
+          abbreviate: false,
+          ...props,
+        })
+      )
+    );
+
+  it('shows a non-moderator their points, exact when not abbreviated', () => {
+    const text = card({}, 147850);
+    expect(text).toContain(creatorScoreSources.reportsActioned.label);
+    expect(text).toContain('147,850 pts');
+  });
+
+  it('abbreviates when the card does, and sits beside a reports-against row', () => {
+    const text = visibleText(
+      render(
+        React.createElement(UserScoreDisplay, {
+          scores: { total: 100, models: 10, reportsActioned: 147850, reportsAgainst: -500 },
+        })
+      )
+    );
+    expect(text).toContain('147.9k pts');
+    expect(text).toContain('Reports against');
+  });
+
+  it.each([0, undefined])('shows no row when reportsActioned is %s', (value) => {
+    expect(card({}, value as number)).not.toContain(creatorScoreSources.reportsActioned.label);
+  });
+
+  it('leaves the reports block to showReports, with no second row', () => {
+    const text = card({ showReports: true, owner: true }, 147850);
+    expect(text.split(creatorScoreSources.reportsActioned.label)).toHaveLength(2);
+  });
+});
+
+describe('UserScoreDisplay staff awarded row', () => {
+  const card = (props: Record<string, unknown>, staffAwarded: number | undefined) =>
+    visibleText(
+      render(
+        React.createElement(UserScoreDisplay, {
+          scores: { total: 12510, models: 10, staffAwarded },
+          abbreviate: false,
+          ...props,
+        })
+      )
+    );
+
+  it.each([
+    ['the owner on the journey page', { showReports: true, owner: true }],
+    ['the account card', {}],
+  ])('shows %s its own line with the exact points', (_label, props) => {
+    const text = card(props, 12500);
+    expect(text).toContain(`${creatorScoreStaffAwarded.label}12,500 pts`);
+  });
+
+  it.each([0, undefined])('shows no line when staffAwarded is %s', (value) => {
+    expect(card({ showReports: true, owner: true }, value)).not.toContain(
+      creatorScoreStaffAwarded.label
+    );
+  });
+
+  it('is not listed in the explainer as a way to earn score', () => {
+    const text = visibleText(render(React.createElement(CreatorScoreExplainer)));
+    expect(text).toContain(creatorScoreSources.models.label);
+    expect(text).not.toContain(creatorScoreStaffAwarded.label);
   });
 });
 

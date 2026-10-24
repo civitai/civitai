@@ -85,8 +85,10 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
   claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-      userCosmetic: { create: mocks.userCosmeticCreate },
+      // Not owned under the grant lock: the re-check passes and the grant proceeds.
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: vi.fn(async () => null) },
       cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: vi.fn(),
     })
   )
 );

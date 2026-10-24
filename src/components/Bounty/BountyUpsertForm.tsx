@@ -86,6 +86,8 @@ import { stringToDate } from '~/utils/zod-helpers';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
+const sortedBaseModels = [...activeBaseModels].sort((a, b) => a.localeCompare(b));
+
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
     'Only you will be the supporter of this bounty. This is great if you are offering a good reward for a really specific resource that you want tailored for your specific needs. The number of entries might be limited if the reward you are offering is not enticing enough.',
@@ -192,7 +194,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     schema: formSchema,
     form,
     timeout: 1000,
-    key: `bounty_new`,
+    key: `bounty_${bounty?.id ?? 'new'}`,
     watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
@@ -407,7 +409,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           label="Base model"
                           placeholder="Please select a base model"
                           withAsterisk
-                          data={[...activeBaseModels]}
+                          data={sortedBaseModels}
+                          searchable
                         />
                       )}
                     </Group>

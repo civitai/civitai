@@ -6,6 +6,7 @@ import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const imageService = () => import('~/server/services/image.service');
@@ -126,7 +127,11 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
-    await refreshThumbnailCache(imageIds);
+    // An avatar is gated on its cached rating, so one re-rated here must be re-read too.
+    await Promise.all([
+      refreshThumbnailCache(imageIds),
+      refreshProfilePicturesForImagesLazy(imageIds),
+    ]);
   });
 
   const blockedTagIds = new Set(

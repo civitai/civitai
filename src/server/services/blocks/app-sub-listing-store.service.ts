@@ -3,12 +3,15 @@ import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { PrismaClient } from '@prisma/client';
 import type { ListingKind, SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
-import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { LISTING_COVER_WIDTH } from '~/server/services/blocks/listing-media-url';
 import {
-  LISTING_COVER_WIDTH,
-  listingCoverUrl,
-  listingIconUrl,
-} from '~/server/services/blocks/listing-media-url';
+  gatedListingCoverUrl,
+  gatedListingIconUrl,
+  isListingImageVisible,
+  isModerationFlagSet,
+  redHostMediaCeiling,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
 import {
   effectiveSubListingRating,
   subListingExternalHref,
@@ -39,7 +42,23 @@ type SubListingHydrateRow = {
   parent_category: string | null;
   parent_content_rating: string | null;
   parent_cover_url: string | null;
+  parent_cover_nsfw_level: number | null;
+  parent_cover_ingestion: string | null;
+  parent_cover_needs_review: string | null;
+  parent_cover_poi: boolean | null;
+  parent_cover_minor: boolean | null;
+  parent_cover_tos_violation: boolean | null;
+  parent_cover_acceptable_minor: boolean | null;
+  parent_cover_blocked_for: string | null;
   parent_icon_url: string | null;
+  parent_icon_nsfw_level: number | null;
+  parent_icon_ingestion: string | null;
+  parent_icon_needs_review: string | null;
+  parent_icon_poi: boolean | null;
+  parent_icon_minor: boolean | null;
+  parent_icon_tos_violation: boolean | null;
+  parent_icon_acceptable_minor: boolean | null;
+  parent_icon_blocked_for: string | null;
   parent_link_template: string | null;
   image_url: string | null;
   image_nsfw_level: number | null;
@@ -61,6 +80,32 @@ type SubListingHydrateRow = {
  */
 export const PARENT_LINK_TEMPLATE_SQL = Prisma.sql`(to_jsonb(sp) ->> 'link_template')`;
 
+/**
+ * The image's post, aliased `p`, is published and not Private: what a card needs before it shows
+ * an item image. NULL, so false, for an image with no post. The one definition behind both the
+ * card render (`hydrateSubListingCards`) and the publish check (`isImageInPublicPost`). The image
+ * picker's `publicOnly` list uses the Prisma form, `publicPostImageWhere` (`image.selector.ts`),
+ * which differs only at the boundary instant (`<=` there, `<` here).
+ */
+const IMAGE_POST_PUBLIC_SQL = Prisma.sql`(p."publishedAt" < now() AND p."availability"::text <> 'Private')`;
+
+/**
+ * True when `imageId` is in a published, non-private post. Stricter than `getImage`'s anonymous
+ * read, which also serves a postless image that is an article cover or on a bounty: the card
+ * would not show such an image, so it is not accepted for one.
+ */
+export async function isImageInPublicPost(
+  db: Pick<PrismaClient, '$queryRaw'>,
+  imageId: number
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ id: number }[]>(Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId} AND ${IMAGE_POST_PUBLIC_SQL}
+  `);
+  return rows.length > 0;
+}
+
 export type SubListingViewer = {
   /** The viewer's own browsing level, when signed in. */
   browsingLevel?: number | null;
@@ -68,16 +113,47 @@ export type SubListingViewer = {
 };
 
 /**
- * The levels an item image may carry to be shown to this viewer on this card: the viewer's
- * browsing level, capped at SFW unless the host is red-capable, and capped at the card's own
- * (effective) rating so an image cannot be more mature than the card that carries it.
+ * The levels an image may carry to be shown to this viewer on one sub-listing card — the item's
+ * own image and the parent's cover / icon fallback alike.
+ *
+ * Off a red-capable host: the viewer's browsing level ∩ SFW ∩ the card's own (effective)
+ * rating, so an image there is never more mature than the card that carries it.
+ *
+ * On a red-capable host: that same non-red ceiling, lifted by the shared listing-media red-host
+ * rule (`redHostMediaCeiling`: ∪ the viewer's opted-in levels, Blocked excluded). The card's
+ * rating does NOT cap it there — a `pg` item may show its R image to a viewer who opted into R,
+ * as the main listing's screenshots do. A viewer who has not opted in, anonymous included, sees
+ * exactly what a non-red host shows, never less.
  */
 export function subListingImageCeiling(viewer: SubListingViewer, rating: string | null): number {
   const viewerLevel = onlySelectableLevels(viewer.browsingLevel ?? 0) || publicBrowsingLevelsFlag;
   const ratingMax = nsfwLevelFromContentRating(rating);
   const ratingLevels = flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
-  const hostLevels = viewer.redCapable ? ratingLevels : sfwBrowsingLevelsFlag;
-  return viewerLevel & ratingLevels & hostLevels;
+  return redHostMediaCeiling(
+    { redCapable: viewer.redCapable, viewerBrowsingLevel: viewer.browsingLevel },
+    viewerLevel & ratingLevels & sfwBrowsingLevelsFlag
+  );
+}
+
+/**
+ * One parent image (`parent_cover_*` / `parent_icon_*`) as the listing-media gate reads it, or
+ * null when the parent has none. A row with no `ingestion` (a LEFT JOIN miss) has no image.
+ */
+function parentImage(row: SubListingHydrateRow, which: 'cover' | 'icon'): ListingMediaImage | null {
+  const url = row[`parent_${which}_url` as const];
+  const ingestion = row[`parent_${which}_ingestion` as const];
+  if (!url || ingestion == null) return null;
+  return {
+    url,
+    ingestion,
+    nsfwLevel: row[`parent_${which}_nsfw_level` as const] ?? 0,
+    needsReview: row[`parent_${which}_needs_review` as const],
+    poi: isModerationFlagSet(row[`parent_${which}_poi` as const]),
+    minor: isModerationFlagSet(row[`parent_${which}_minor` as const]),
+    tosViolation: isModerationFlagSet(row[`parent_${which}_tos_violation` as const]),
+    acceptableMinor: isModerationFlagSet(row[`parent_${which}_acceptable_minor` as const]),
+    blockedFor: row[`parent_${which}_blocked_for` as const],
+  };
 }
 
 /** Null when the card has nowhere valid to link to. */
@@ -91,12 +167,16 @@ export function projectSubListingCard(
       : null;
   if (row.parent_kind === 'offsite' && !externalHref) return null;
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
-  const parentCover = listingCoverUrl({ url: row.parent_cover_url }, null);
+  // ONE ceiling for every image on the card — the item's own image and the parent's cover / icon
+  // fallback (see `subListingImageCeiling`; the card rating is the more mature of parent and
+  // child).
+  const ceiling = subListingImageCeiling(viewer, contentRating);
+  const parentCover = gatedListingCoverUrl(parentImage(row, 'cover'), [], ceiling);
   let coverUrl = parentCover;
   // The image was public when it was submitted; this re-checks it on every render, so a post
   // made private or unpublished later stops showing its image on the card.
   if (row.image_url && row.image_ingestion != null && row.image_public) {
-    const verdict = classifyGatedImageForViewer(
+    const visible = isListingImageVisible(
       {
         ingestion: row.image_ingestion,
         nsfwLevel: row.image_nsfw_level ?? 0,
@@ -107,13 +187,10 @@ export function projectSubListingCard(
         acceptableMinor: row.image_acceptable_minor,
         blockedFor: row.image_blocked_for,
       },
-      subListingImageCeiling(viewer, contentRating)
+      ceiling
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
-    coverUrl =
-      verdict.status !== 'visible'
-        ? parentCover
-        : getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH });
+    coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
   }
   return {
     cardType: 'sub-listing',
@@ -133,7 +210,7 @@ export function projectSubListingCard(
       id: row.parent_id,
       slug: row.parent_slug,
       name: row.parent_name,
-      iconUrl: listingIconUrl({ url: row.parent_icon_url }),
+      iconUrl: gatedListingIconUrl(parentImage(row, 'icon'), ceiling),
     },
     ...(externalHref
       ? { runHref: externalHref, external: true as const }
@@ -160,7 +237,18 @@ export async function hydrateSubListingCards(
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
            al.kind AS parent_kind, al.category AS parent_category,
            al.content_rating AS parent_content_rating,
-           pc.url AS parent_cover_url, pi.url AS parent_icon_url,
+           pc.url AS parent_cover_url, pc."nsfwLevel" AS parent_cover_nsfw_level,
+           pc.ingestion::text AS parent_cover_ingestion,
+           pc."needsReview" AS parent_cover_needs_review, pc.poi AS parent_cover_poi,
+           pc.minor AS parent_cover_minor, pc."tosViolation" AS parent_cover_tos_violation,
+           pc."acceptableMinor" AS parent_cover_acceptable_minor,
+           pc."blockedFor" AS parent_cover_blocked_for,
+           pi.url AS parent_icon_url, pi."nsfwLevel" AS parent_icon_nsfw_level,
+           pi.ingestion::text AS parent_icon_ingestion,
+           pi."needsReview" AS parent_icon_needs_review, pi.poi AS parent_icon_poi,
+           pi.minor AS parent_icon_minor, pi."tosViolation" AS parent_icon_tos_violation,
+           pi."acceptableMinor" AS parent_icon_acceptable_minor,
+           pi."blockedFor" AS parent_icon_blocked_for,
            ${PARENT_LINK_TEMPLATE_SQL} AS parent_link_template,
            i.url AS image_url, i."nsfwLevel" AS image_nsfw_level,
            i.ingestion::text AS image_ingestion, i."needsReview" AS image_needs_review,
@@ -168,7 +256,7 @@ export async function hydrateSubListingCards(
            i."tosViolation" AS image_tos_violation,
            i."acceptableMinor" AS image_acceptable_minor,
            i."blockedFor" AS image_blocked_for,
-           (p."publishedAt" < now() AND p."availability"::text <> 'Private') AS image_public
+           ${IMAGE_POST_PUBLIC_SQL} AS image_public
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id

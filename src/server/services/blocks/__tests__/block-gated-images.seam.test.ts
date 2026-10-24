@@ -47,13 +47,11 @@ const EXPECTED_CALL_SITES = [
   'server/services/blocks/block-gated-images.service.ts',
   // The public-Post adoption gate — must REFUSE anything not `visible`.
   'server/services/blocks/block-post.service.ts',
-  // The `kind:'training'` dataset admission — must REFUSE anything not `visible`.
-  // It reads `pending` only to choose WHICH refusal to report ("wait for the
-  // scan"); a pending image is refused exactly like a hidden one and no url leaves.
-  'server/services/blocks/block-training-dataset.service.ts',
-  // The store's sub-listing card image — anything not `visible` falls back to the parent's
-  // cover, so `pending` never yields the item image.
-  'server/services/blocks/app-sub-listing-store.service.ts',
+  // The App Store listing-media gate (`isListingImageVisible`) — every public render of a
+  // listing's icon, cover and screenshots, and a sub-listing card's own image and parent
+  // fallback, decides through it. Anything not `visible` is not shown, so `pending` never
+  // yields a url.
+  'server/services/blocks/listing-media-audience.ts',
   // Block collection covers and items — anything not `visible` is not served (a cover
   // falls back to the newest servable item), so `pending` never yields a url.
   'server/services/blocks/block-collections.service.ts',
@@ -327,10 +325,9 @@ describe(`${SYMBOL} seam`, () => {
     // Named rather than counted: allow-listing the last consumer, or emptying the ledger, would
     // otherwise leave this case iterating nothing and reporting green.
     expect(targets).toEqual([
-      'server/services/blocks/app-sub-listing-store.service.ts',
       'server/services/blocks/block-collections.service.ts',
       'server/services/blocks/block-post.service.ts',
-      'server/services/blocks/block-training-dataset.service.ts',
+      'server/services/blocks/listing-media-audience.ts',
     ]);
 
     for (const rel of targets) {

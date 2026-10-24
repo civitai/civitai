@@ -1,7 +1,7 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,7 +21,6 @@ import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/searc
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import { IndexToLabel } from '~/components/Search/useSearchState';
-import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
@@ -45,6 +44,8 @@ import { resolveSearchTarget } from '~/components/Search/search-target';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 
 // Sentinel option value for the "image search is in maintenance" dropdown item. Not a numeric id,
 // so `hitIds`/`onHits` filter it out and `onItemSelected` is never called with it.
@@ -54,11 +55,7 @@ const IMAGE_SEARCH_MAINTENANCE_VALUE = '__image-search-maintenance__';
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
-  createResilientSearchClient(
-    instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
-      primaryKey: 'id',
-    })
-  )
+  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
@@ -341,6 +338,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
+  const showSfwFace = useShowsSfwFace();
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -366,7 +364,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         'prompt' in hit
           ? truncate(hit.prompt, { length: 50 })
           : 'name' in hit
-          ? hit.name
+          ? searchHitName(hit, showSfwFace)
           : 'title' in hit
           ? hit.title
           : 'username' in hit
@@ -374,7 +372,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           : '',
     }));
     return items;
-  }, [filtered, imageSearchMaintenance]);
+  }, [filtered, imageSearchMaintenance, showSfwFace]);
 
   // Report what is on offer. Keyed on the joined id list rather than on `items`, whose identity
   // changes on every re-render of the memo's inputs — re-firing on an unchanged set would make a

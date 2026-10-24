@@ -2,36 +2,44 @@
   import {
     GENERATOR_RESTRICTION_TYPES,
     RESTRICTION_TYPE,
-    RESTRICTION_TYPE_LABELS,
     RULINGS_WIRED_FOR,
   } from '$lib/restriction-types';
-  import RestrictionQueue from '$lib/components/restrictions/RestrictionQueue.svelte';
-  import type { PageData } from './$types';
+  import RestrictionTriage from '$lib/components/restrictions/RestrictionTriage.svelte';
+  import RestrictionTypeTabs from '$lib/components/restrictions/RestrictionTypeTabs.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Named rather than described: no verdict effects exist for some types, so the resolve and ban
+  // actions refuse their rows server-side. Saying so here stops a moderator reading that refusal as a bug.
+  const subtitle = $derived(
+    RULINGS_WIRED_FOR.includes(data.type)
+      ? 'Raised by the prompt-auditing system, and the rulings on them.'
+      : 'Review only — rulings are not yet wired for this type.'
+  );
 </script>
 
-<header class="page-header">
-  <h1>
-    {data.type === RESTRICTION_TYPE ? 'Generator' : RESTRICTION_TYPE_LABELS[data.type]} Restrictions
-  </h1>
-  {#if data.type === RESTRICTION_TYPE}
-    <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
-  {:else if RULINGS_WIRED_FOR.includes(data.type)}
-    <p>{RESTRICTION_TYPE_LABELS[data.type]} restrictions, and the rulings on them.</p>
-  {:else}
-    <!-- Named rather than described: no verdict effects exist for this type, so the resolve and ban
-         actions refuse these rows server-side. Saying so here is what stops a moderator reading that
-         refusal as a bug. -->
-    <p>
-      {RESTRICTION_TYPE_LABELS[data.type]} restrictions. Review only — rulings are not yet wired for this
-      type.
-    </p>
-  {/if}
-</header>
-
-<RestrictionQueue
-  {data}
-  types={GENERATOR_RESTRICTION_TYPES}
-  fallbackType={RESTRICTION_TYPE}
-/>
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="Generator restrictions"
+    {subtitle}
+    placeholder="Username or user ID"
+    searchLabel="Search restrictions"
+  />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-dark-4">
+    <RestrictionTriage {data} {form} fallbackType={RESTRICTION_TYPE}>
+      {#snippet tabs()}
+        {#if GENERATOR_RESTRICTION_TYPES.length > 1}
+          <RestrictionTypeTabs
+            compact
+            types={GENERATOR_RESTRICTION_TYPES}
+            current={data.type}
+            fallbackType={RESTRICTION_TYPE}
+            counts={data.facets?.type}
+          />
+        {/if}
+      {/snippet}
+    </RestrictionTriage>
+  </div>
+</div>

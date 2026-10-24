@@ -65,3 +65,8 @@ function issueSummary(raw: unknown): string | null {
   const more = parts.length > MAX_ISSUES ? ` (+${parts.length - MAX_ISSUES} more)` : '';
   return parts.slice(0, MAX_ISSUES).join('; ') + more;
 }
+
+/** A failed call after which the far side may have acted: not a refusal, and not proven unsent. */
+export const responseMayHaveLanded = (result: { requestNeverSent?: boolean; status?: number }) =>
+  !result.requestNeverSent &&
+  (result.status === undefined || result.status >= 500 || result.status === 408);

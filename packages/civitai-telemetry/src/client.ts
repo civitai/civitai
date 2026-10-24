@@ -622,15 +622,16 @@ export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   labelNames: ['trigger', 'client'] as const,
 });
 
-// The self-heal watchdog's OWN observation of the wedge: the in-process count of cluster command
-// SLOW-SETTLES in its sliding window (the deadline-hit trigger's input), sampled + published each
-// watchdog tick. This is DISTINCT from redis_command_duration_seconds — it is exactly what the
-// watchdog evaluates against REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD, so a rising series that
+// The self-heal watchdog's OWN observation of the wedge: the deadline-hit trigger's in-process input
+// over its sliding window, sampled + published each watchdog tick — cluster command SLOW-SETTLES
+// (vs REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD), or sys backstop timeouts with no success in
+// the window (vs REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD). This is DISTINCT from
+// redis_command_duration_seconds — it is exactly what the watchdog evaluates, so a rising series that
 // crosses the threshold is the leading indicator of an imminent self-heal reconnect. Added after
 // the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
 export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
   name: 'redis_selfheal_deadline_hits_window',
-  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  help: "The self-heal watchdog's in-process count over its sliding window, by client (cluster: slow settles; sys: command timeouts, 0 while any sys command succeeded in the window); the deadline-hit trigger fires when this crosses the threshold",
   labelNames: ['client'] as const,
 });
 
@@ -746,6 +747,24 @@ export const appStorageLatencyHistogram = registerHistogram({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// App Blocks SHARED (cross-user) storage. Separate from the KV pair, not a `storage` label on it:
+// a shared write can wait on external moderation, so the histogram needs buckets past 2.5s and a
+// histogram has one bucket set; the op and outcome domains also differ. No per-app, per-key or
+// per-user label: the number of apps is unbounded. Exposed names are pinned by
+// `__tests__/app-block-storage-metric-names.test.ts`.
+export const appSharedStorageOpsCounter = registerCounterWithLabels({
+  name: 'block_shared_storage_ops_total',
+  help: 'App Blocks shared storage operations by op and outcome',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+export const appSharedStorageLatencyHistogram = registerHistogram({
+  name: 'block_shared_storage_latency_seconds',
+  help: 'App Blocks shared storage operation latency, including moderation and rate-limit checks',
+  labelNames: ['op'] as const,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
 });
 
 // Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →

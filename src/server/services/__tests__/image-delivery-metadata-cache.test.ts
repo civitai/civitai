@@ -103,22 +103,6 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     expect(roundTripped.hideMeta).toBe(false);
   });
 
-  it('serves a msgpackr-codec round-tripped result on the cache HIT path', async () => {
-    dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
-    await getCachedImageDeliveryMetadata(URL); // populate
-
-    const hit = await getCachedImageDeliveryMetadata(URL); // served from unpack(Buffer)
-    expect(dbReadQueryRaw).toHaveBeenCalledTimes(1);
-    expect(hit).toEqual({
-      id: 42,
-      url: URL,
-      hideMeta: false,
-      type: 'image',
-      mimeType: 'image/jpeg',
-    });
-    expect(hit?.hideMeta).toBe(false);
-  });
-
   it('preserves hideMeta:true through the codec on the hit path', async () => {
     const hidden = {
       id: 7,

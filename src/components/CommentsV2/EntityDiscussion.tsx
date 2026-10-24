@@ -1,4 +1,5 @@
-import { Stack, Group, Text, Loader, Center, Divider, Title, Button } from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider, Title } from '@mantine/core';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -81,14 +82,14 @@ export function EntityDiscussion({ entityType, entityId, userId, limit = 10 }: P
                   </Stack>
                   {showMore && (
                     <Center>
-                      <Button
+                      <LoadMoreButton
                         onClick={toggleShowMore}
                         loading={isFetchingNextPage}
+                        label="Load More Comments"
+                        color="blue"
                         variant="subtle"
                         size="md"
-                      >
-                        Load More Comments
-                      </Button>
+                      />
                     </Center>
                   )}
                   {created.map((comment) => (

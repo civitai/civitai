@@ -17,6 +17,13 @@
 // Workflow Key Types
 // =============================================================================
 
+/**
+ * Where a generated output can be used: in a post (posts, contest entries, comics), as the input of
+ * another workflow, or in a training dataset.
+ */
+export const OUTPUT_USES = ['post', 'derive', 'train'] as const;
+export type OutputUse = (typeof OUTPUT_USES)[number];
+
 /** Output types */
 export type OutputType = 'image' | 'video' | 'audio' | 'model3d';
 
@@ -82,6 +89,21 @@ export interface WorkflowConfig {
    *   featureFlag: 'meshyV7Generator'  // hide unless features.meshyV7Generator is true
    */
   featureFlag?: string;
+
+  /**
+   * What this workflow's outputs can be used for (see `output-uses.ts`). Required, so every new
+   * workflow decides rather than inheriting a default.
+   */
+  outputUses: readonly OutputUse[];
+
+  /** Caps every output at PG-13, whatever the user's own setting. */
+  sfwOnly?: boolean;
+
+  /**
+   * Keeps the prompt and generation details out of the queue and the output info popover, for
+   * workflows that write the prompt for the user.
+   */
+  hideDetails?: boolean;
 
   /** Whether this workflow requires membership */
   memberOnly?: boolean;

@@ -7,7 +7,7 @@
 ## User story
 
 As a creator, I open `/` and immediately see **how much I've earned recently** (totalled and split by source), a handful
-of headline numbers (e.g. earned this period, top-earning model), and my **CP cash pending/settled**. From here I click
+of headline numbers (e.g. earned this period, top-earning model), my **CP cash pending/settled**, and the **Buzz I've banked this month**. From here I click
 into `/models` to manage monetization, `/earnings` for the full breakdown, `/licensing` for bulk fee edits, or
 `/settings`. A non-member still sees any earnings, plus an upsell card pointing at [/join](join.md).
 
@@ -15,7 +15,7 @@ into `/models` to manage monetization, `/earnings` for the full breakdown, `/lic
 
 `@civitai/ui` (shadcn-svelte) primitives — don't hand-build:
 
-- **`card`** — one per headline stat (earned this period, CP cash pending, CP cash settled, top-earning model) and one
+- **`card`** — one per headline stat (earned this period, banked this month, CP cash pending, CP cash settled, top-earning model) and one
   "earnings by source" summary card. **`separator`** between groups.
 - **`badge`** for source labels (comp / license fee / tip) and member/non-member state; **`tooltip`** for metric
   definitions and the pending/settled distinction.
@@ -37,8 +37,10 @@ All scoped to `locals.user.id`. **No monetization writes on this page.**
   a per-creator total and the "top-earning models" widget need the **owner-keyed earnings rollup** MV
   ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)). Until it lands, the
   dashboard either app-side `WHERE modelVersionId IN (…)` (doesn't scale for prolific creators) or drops top-earners.
-- **CP cash** — `creatorProgram.getCash` / `getBanked` / `getCompensationPool` ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices))
-  for pending/settled figures. Not ClickHouse.
+- **CP cash and banked** — read from the buzz service (`@civitai/buzz`), matching the Buzz dashboard; not ClickHouse.
+  "Banked this month" (`$lib/server/banked.ts`) is the creator's balance in the current UTC month's
+  `creatorProgramBank` account, summed over the bankable currencies. A CP member without an active membership also
+  gets a note that Buzz already banked still pays out at month end.
 - **Member `tier`** — `CustomerSubscription → Product.metadata.tier` (via `@civitai/db` kysely) to decide member vs
   upsell rendering. *(Tier vs full-CP gate is a pending confirm — [plan §9](../creator-studio-plan.md#9-decisions--open-questions).)*
 - **Headline counts** — model/version count from `@civitai/db` kysely; period earnings from the rollup above.
@@ -71,7 +73,7 @@ pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
   is [analytics.md](analytics.md) (`/earnings/analytics`).
 - The creator-earnings ClickHouse query logic is **shared with `/earnings`** — build it once as a server-side read
   module, not duplicated here ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
-- CP cash reads (`getCash`/`getBanked`) are the same as [settings.md](settings.md)'s Tipalti/tier surface.
+- CP cash and banked reads are the same buzz-service reads as [settings.md](settings.md)'s Tipalti/tier surface.
 - Nav lives in the shared app-local `nav.ts` ([plan §3](../creator-studio-plan.md#3-page-list-v1)).
 
 ## Open questions

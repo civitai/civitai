@@ -67,6 +67,8 @@ const GRANT = {
     'apps:storage:shared:write',
     'collections:read:self',
     'models:read:self',
+    // The document store's base scope. Consent-exempt, so it renders as a fixed-note row.
+    'apps:storage',
   ],
   revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
   /**
@@ -124,6 +126,9 @@ const EXEMPT_NOTE_MUST_MENTION: Record<string, RegExp> = {
   'collections:read:self': /visibility and ownership/i,
   // The subject is fixed by the page the block is mounted on.
   'models:read:self': /the page you opened/i,
+  // The document store's base scope: its note is the only one naming marks and counts on the
+  // entries the app shares.
+  'apps:storage': /marking or counting/i,
 };
 const EXEMPT_IN_FIXTURE = Object.keys(EXEMPT_NOTE_MUST_MENTION);
 

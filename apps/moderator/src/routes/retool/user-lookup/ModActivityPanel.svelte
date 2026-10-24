@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
@@ -8,9 +9,11 @@
   import { entityUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
-  import type { ModActivityCount, ModActivityCursor } from '$lib/mod-activity';
+  import { activityBadge, type ModActivityCount, type ModActivityCursor } from '$lib/mod-activity';
   import type { ModActivityRow, RetoolActivityRow } from '$lib/server/user-account.service';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
+  import WalkPager from '$lib/components/WalkPager.svelte';
+  import ImageRemovalsPanel from './ImageRemovalsPanel.svelte';
 
   type Row = Omit<ModActivityRow, 'createdAt'> & { createdAt: string };
 
@@ -31,10 +34,10 @@
   // Each request is keyed on only what it depends on: the Retool era on nothing, the filter summary on
   // the ratings toggle (about a second on the largest accounts), and the page on everything.
   const retool = $derived(
-    browser ? fetchJson<RetoolActivityRow[]>(url({ view: 'retool' })) : null
+    browser ? fetchJson<RetoolActivityRow[]>(url({ view: 'retool' })) : SSR_PENDING
   );
   const summary = $derived(
-    browser ? fetchJson<ModActivityCount[]>(url({ view: 'summary', ratings })) : null
+    browser ? fetchJson<ModActivityCount[]>(url({ view: 'summary', ratings })) : SSR_PENDING
   );
 
   const query = $derived(
@@ -58,7 +61,7 @@
       ? fetchJson<{ rows: Row[]; next: ModActivityCursor | null }>(
           cursor ? `${query}&before=${encodeURIComponent(cursor.at)}&beforeId=${cursor.id}` : query
         )
-      : null
+      : SSR_PENDING
   );
 
   const advance = (next: ModActivityCursor) => {
@@ -105,17 +108,12 @@
 </script>
 
 {#snippet pager(next: ModActivityCursor | null)}
-  {#if position.index > 0 || next}
-    <div class="mt-3 flex items-center gap-2">
-      <Button size="xs" variant="outline" disabled={position.index === 0} onclick={back}>
-        Previous
-      </Button>
-      <span class="text-xs text-dark-2">Page {num(position.index + 1)}</span>
-      <Button size="xs" variant="outline" disabled={!next} onclick={() => next && advance(next)}>
-        Next
-      </Button>
-    </div>
-  {/if}
+  <WalkPager
+    index={position.index}
+    hasNext={!!next}
+    onBack={back}
+    onNext={() => next && advance(next)}
+  />
 {/snippet}
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -178,7 +176,7 @@
           {@const link = rowUrl(row)}
           <li class="flex flex-wrap items-baseline gap-x-2">
             <span class="text-dark-2">{dateTime(row.createdAt)}</span>
-            <Badge variant="secondary">{row.activity}</Badge>
+            <Badge variant="secondary">{activityBadge(row.activity)}</Badge>
             {#if link}
               <a href={link} target="_blank" rel="noreferrer" class={LINK_CLASS}>
                 {row.entityType}
@@ -199,6 +197,10 @@
     <p class="text-sm text-red-300">Could not load moderator activity: {e.message}</p>
     {@render pager(null)}
   {/await}
+
+  <!-- Its own list, not merged above: recent removals are in both sources, and these rows come from
+       ClickHouse with no ModActivity id. -->
+  <ImageRemovalsPanel {userId} />
 
   <!-- Pre-migration history from `ReToolActions`, kept in its own list: these rows have no entity link
        and no moderator id (`User` is a Retool display name), so interleaving them would imply a

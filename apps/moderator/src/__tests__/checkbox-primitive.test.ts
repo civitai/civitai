@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { stripComments } from '../test/strip-comments';
+import { svelteFiles } from '../test/svelte-files';
 import { hasAttr, tagsNamed, tokenizeTags, walkTags } from '../test/svelte-tags';
 
 /**
@@ -27,17 +28,7 @@ import { hasAttr, tagsNamed, tokenizeTags, walkTags } from '../test/svelte-tags'
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(dir, '..');
 
-function svelteFiles(from: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(from, { withFileTypes: true })) {
-    const full = path.join(from, entry.name);
-    if (entry.isDirectory()) out.push(...svelteFiles(full));
-    else if (entry.name.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
-
-const files = svelteFiles(SRC).sort();
+const files = svelteFiles(SRC);
 const source = new Map(
   files.map((f) => [path.relative(SRC, f), stripComments(readFileSync(f, 'utf8'))])
 );
@@ -227,6 +218,8 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/retool/user-lookup/CommentList.svelte',
     'routes/retool/user-lookup/IdentityPanel.svelte',
     'routes/retool/user-lookup/ReviewsPanel.svelte',
+    'routes/text-scan/model-rules/AliasBackfill.svelte',
+    'routes/text-scan/model-rules/SuggestAliases.svelte',
   ];
 
   it('is exactly the declared set of files', () => {

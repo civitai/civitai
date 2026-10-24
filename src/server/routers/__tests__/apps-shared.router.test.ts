@@ -171,6 +171,17 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
 }));
+/**
+ * The rows the recorder inserted into one ClickHouse table, or undefined before it has. Read by
+ * TABLE, never by call position: a scanned write inserts into two tables (the hit list and the
+ * per-write denominator), concurrently.
+ */
+const HITS_TABLE = 'appBlocksSharedDataHits';
+const SCANS_TABLE = 'appBlocksSharedDataScans';
+const chRows = (table: string) =>
+  mockChInsert.mock.calls.find(([args]) => args.table === table)?.[0].values as
+    | Array<Record<string, unknown>>
+    | undefined;
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
 }));
@@ -197,6 +208,7 @@ import {
   appendSharedRow,
   appsModRouter,
   appsSharedRouter,
+  assertValidCounterKey,
   incrementSharedCounter,
   reportSharedRow,
   unvoteSharedRow,
@@ -658,6 +670,30 @@ describe('C1 cross-user overwrite', () => {
     expect(insert).toBeTruthy();
     expect((insert![1] as unknown[])[0]).toBe(out.key); // param[0] is the server ULID
     expect((insert![1] as unknown[])[0]).not.toBe('victim-key');
+  });
+
+  it('a key append generated is refused as a counter key, so a counter cannot share it', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    const { key } = await caller().append({ blockToken: 't', value: { title: 'idea' } });
+    expect(() => assertValidCounterKey(key)).toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+    );
+    mockClient.query.mockClear();
+    await expect(incrementSharedCounter('t', key)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'invalid counter key',
+    });
+    expect(mockClient.query).not.toHaveBeenCalled();
   });
 
   it('withdraw only deletes the author’s OWN row (WHERE author_user_id)', async () => {
@@ -2534,8 +2570,8 @@ describe('shared `data` local moderation', () => {
 
     it('records the rejected hit with blocked=1, no row key (a create that never got one) and NO leaf text', async () => {
       await appendData({ x: MINOR }).catch(() => undefined);
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({
           category: 'minor',
@@ -2549,6 +2585,11 @@ describe('shared `data` local moderation', () => {
         })
       );
       expect(JSON.stringify(rows)).not.toContain(MINOR);
+      // ...and the write's denominator row, through the router, says it was rejected.
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'append', mode: 'enforce', blocked: 1, minor: 1 }),
+      ]);
     });
 
     it('🔴 REGRESSION: the scan reads the STORED form — a revived `URL` is scanned as the href it serialises to', async () => {
@@ -2583,6 +2624,12 @@ describe('shared `data` local moderation', () => {
         }),
         'block-audit'
       );
+      // The durable denominator: one ClickHouse row for the clean write, and no hit rows.
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ mode: 'enforce', blocked: 0, leafCount: 3, hitCount: 0 }),
+      ]);
+      expect(chRows(HITS_TABLE)).toBeUndefined();
     });
 
     it('title/body still run first: a bad TITLE is refused by the title/body belt before `data` is read', async () => {
@@ -2610,8 +2657,8 @@ describe('shared `data` local moderation', () => {
         updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { [MINOR]: 1 } })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Content flagged for review' });
       expect(mockPool.connect).not.toHaveBeenCalled();
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toContainEqual(
         expect.objectContaining({
           // Enforce never stores the key verbatim (a counter-anchor row's key is user text); its
           // hash still joins the hit to the row.
@@ -2641,8 +2688,8 @@ describe('shared `data` local moderation', () => {
         key: expect.any(String),
       });
       expect(mockGetFliptBoolean).toHaveBeenCalledWith('user-content-pattern-enforce');
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toEqual([
         expect.objectContaining({ category: 'pattern', blocked: 0, mode: 'enforce' }),
       ]);
       expect(reportReasons()).toEqual([]);
@@ -2732,8 +2779,8 @@ describe('shared `data` local moderation', () => {
     it('🔴 REGRESSION: a flagged term is RECORDED against the committed row — and the write is not refused', async () => {
       const out = await appendData({ x: MINOR, list: [{ [MINOR]: 1 }] });
       expect(insertedValue()).toBeDefined();
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({
           rowKey: out.key,
@@ -2748,11 +2795,22 @@ describe('shared `data` local moderation', () => {
       );
     });
 
+    it('a CLEAN shadow write still records its denominator row, after the write', async () => {
+      await expect(appendData({ label: 'a calm lake' })).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+      expect(chRows(SCANS_TABLE)).toEqual([
+        expect.objectContaining({ surface: 'append', mode: 'shadow', blocked: 0, hitCount: 0 }),
+      ]);
+      expect(chRows(HITS_TABLE)).toBeUndefined();
+    });
+
     it('🔴 REGRESSION: shadow scans the STORED form too — a revived `URL`’s href is recorded', async () => {
       const site = new URL('https://example.com/gallery/loli');
       await appendData({ site });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      const rows = chRows(HITS_TABLE)!;
       expect(rows).toContainEqual(
         expect.objectContaining({ mode: 'shadow', leafPath: 'site', leafText: site.href })
       );
@@ -2760,7 +2818,7 @@ describe('shared `data` local moderation', () => {
 
     it('INVARIANT GUARD: shadow has NO consequences — no Report row, no block alert, no extra belt call', async () => {
       await appendData({ x: MINOR, y: 'emma watson' });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
       await flushImmediates();
       expect(reportReasons()).toEqual([]);
       expect(eventNames()).not.toContain('app-blocks-shared-storage-legal-block');
@@ -2813,8 +2871,8 @@ describe('shared `data` local moderation', () => {
       await expect(
         updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { x: MINOR } })
       ).resolves.toEqual({ ok: true });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toContainEqual(
         expect.objectContaining({
           rowKey: 'ROW-KEY-1',
           surface: 'update',
@@ -2845,8 +2903,8 @@ describe('shared `data` local moderation', () => {
       await expect(appendData(deepArray(33, 'x'))).resolves.toMatchObject({
         key: expect.any(String),
       });
-      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+      await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+      expect(chRows(HITS_TABLE)).toEqual([
         expect.objectContaining({ category: 'overflow', matched: 'depth', mode: 'shadow' }),
       ]);
     });

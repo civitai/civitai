@@ -165,7 +165,7 @@ export default function EventHatPickerModal({ entityType, entityId, image, event
             <Text size="sm" c="dimmed">
               {joined
                 ? 'Your team’s designs are in the event shop, and every hat you wear scores for your team.'
-                : 'Join a team for the birthday and you get a free Party Cap in your team’s colour. More designs are in the event shop, and every hat you wear scores for your team.'}
+                : 'Join a team for the birthday and you get a free Party Cap in your team’s color. More designs are in the event shop, and every hat you wear scores for your team.'}
             </Text>
           </Stack>
           {!joined && !!standings?.teams.length && (

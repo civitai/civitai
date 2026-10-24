@@ -68,7 +68,16 @@ const {
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
+  // For the REST handler case: the scope middleware is a pass-through that supplies claims.
+  withBlockScope:
+    (handler: (req: { blockClaims?: unknown }, res: unknown) => unknown) =>
+    (req: { blockClaims?: unknown }, res: unknown) => {
+      req.blockClaims = {};
+      return handler(req, res);
+    },
+  stashBlockActionDetail: vi.fn(),
 }));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksSharedStorageEnabled: mockIsSharedEnabled,
@@ -95,6 +104,17 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
 }));
+/**
+ * The rows the recorder inserted into one ClickHouse table, or undefined before it has. Read by
+ * TABLE, never by call position: a scanned write inserts into two tables (the hit list and the
+ * per-write denominator), concurrently.
+ */
+const HITS_TABLE = 'appBlocksSharedDataHits';
+const SCANS_TABLE = 'appBlocksSharedDataScans';
+const chRows = (table: string) =>
+  mockChInsert.mock.calls.find(([args]) => args.table === table)?.[0].values as
+    | Array<Record<string, unknown>>
+    | undefined;
 // Cut the shared-content-safety → blocklist/prompt-audit → @civitai/db import
 // chain (mirrors apps-shared.router.test.ts): the counter ops never touch the
 // content-safety belt, and these mocks keep the module graph free of the
@@ -115,7 +135,9 @@ import {
   getTopSharedCounters,
   incrementSharedCounter,
 } from '../apps-shared.router';
+import incrementHandler from '~/pages/api/v1/blocks/shared-storage/increment';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newUlid } from '~/server/utils/app-block-ids';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
@@ -175,6 +197,21 @@ beforeEach(() => {
   mockFindBlocked.mockResolvedValue([]);
 });
 
+// Near misses are cut from a real generated key, so each differs from it in one property.
+function appChosenKeys(): Array<[label: string, key: string]> {
+  const rowKey = newUlid();
+  return [
+    ['prefixed', 'playcount:123'],
+    ['short, no colon', 'plays'],
+    ['64 chars', 'k'.repeat(64)],
+    ['row-key length, with a colon', `playcount:${'7'.repeat(16)}`],
+    ['one char short of a row key', rowKey.slice(0, 25)],
+    ['one char longer than a row key', `${rowKey}0`],
+    ['row-key length, lower case', `${rowKey.slice(0, 25)}a`],
+    ['row-key length, a letter the generator omits', `${rowKey.slice(0, 25)}U`],
+  ];
+}
+
 describe('assertValidCounterKey', () => {
   it('accepts a bounded key', () => {
     expect(assertValidCounterKey('playcount:123')).toBe('playcount:123');
@@ -183,6 +220,14 @@ describe('assertValidCounterKey', () => {
     expect(() => assertValidCounterKey('')).toThrow();
     expect(() => assertValidCounterKey('x'.repeat(65))).toThrow();
     expect(() => assertValidCounterKey(123 as unknown)).toThrow();
+  });
+  it('refuses a key in the shape `append` generates for a feed row', () => {
+    expect(() => assertValidCounterKey(newUlid())).toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'invalid counter key' })
+    );
+  });
+  it.each(appChosenKeys())('still accepts an app-chosen key: %s', (_label, key) => {
+    expect(assertValidCounterKey(key)).toBe(key);
   });
 });
 
@@ -195,6 +240,53 @@ describe('incrementSharedCounter', () => {
     const sql = allClientSql();
     expect(sql).toContain(`${schemaFor('app-voting')}.counters`);
     expect(sql).toContain(`${schemaFor('app-voting')}.shared_kv`);
+  });
+
+  it('refuses a feed-row-shaped key and writes nothing', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    await expect(incrementSharedCounter('tok', newUlid())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'invalid counter key',
+    });
+    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
+    expect(mockCheckVoteRl).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('still increments a key one character short of a row key', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const key = newUlid().slice(0, 25);
+    await expect(incrementSharedCounter('tok', key)).resolves.toEqual({ key, count: 3 });
+    expect(allClientSql()).toContain(`${schemaFor('app-voting')}.counters`);
+  });
+
+  it('REST handler: a feed-row-shaped key → 400, nothing written', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    const sent: { status?: number; body?: unknown } = {};
+    const res = {
+      status(code: number) {
+        sent.status = code;
+        return res;
+      },
+      json(body: unknown) {
+        sent.body = body;
+        return res;
+      },
+      setHeader() {
+        return res;
+      },
+    };
+    const req = {
+      method: 'POST',
+      body: { key: newUlid() },
+      headers: { authorization: 'Bearer tok' },
+    };
+    await incrementHandler(req as never, res as never);
+    expect(sent).toEqual({ status: 400, body: { error: 'invalid counter key' } });
+    expect(mockClient.query).not.toHaveBeenCalled();
   });
 
   it('sub-trust caller (account too new) → FORBIDDEN (anti-inflation min-trust gate)', async () => {
@@ -444,8 +536,8 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-    const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+    await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+    const rows = chRows(HITS_TABLE)!;
     expect(rows).toContainEqual(
       expect.objectContaining({
         rowKey: '',
@@ -464,6 +556,14 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       )
     );
     expect(carrying).toEqual([]);
+    // The write's denominator row: the counter surface, rejected, and the key in no column.
+    await vi.waitFor(() => expect(chRows(SCANS_TABLE)).toBeDefined());
+    expect(chRows(SCANS_TABLE)).toEqual([
+      expect.objectContaining({ surface: 'counter', mode: 'enforce', blocked: 1, leafCount: 1 }),
+    ]);
+    const serialized = JSON.stringify(chRows(SCANS_TABLE));
+    for (const text of [BAD_KEY, 'playcount', '13 year old girl'])
+      expect(serialized).not.toContain(text);
   });
 
   it('both flags on behave as ENFORCE: a flagged key is refused, and scanned once', async () => {
@@ -535,8 +635,8 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       key: BAD_KEY,
       count: 3,
     });
-    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
-    expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+    await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
+    expect(chRows(HITS_TABLE)).toContainEqual(
       expect.objectContaining({
         rowKey: BAD_KEY,
         surface: 'counter',

@@ -365,10 +365,8 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
    * 🔴 A GATE NOTHING CALLS IS NOT A GATE. Everything above tests the function
    * in isolation; none of it would fail if `AppBlockChrome` went back to
    * filtering inline, or if the fail-closed default flipped. The only test that
-   * exercises the real menu lives in the browser (`component`) project, which
-   * only the PR preview pipeline runs — report-only, not a required check, and
-   * skipped whenever the preview build fails — so the wiring is pinned HERE,
-   * structurally, in the suite that runs on every PR.
+   * exercises the real menu lives in the browser (`component`) project, so the
+   * wiring is pinned HERE as well, structurally, in the node tier.
    */
   describe('AppBlockChrome is actually WIRED to this gate', () => {
     const SRC = path.resolve(__dirname, '../../..');
@@ -938,12 +936,20 @@ describe('reconcileRecentApps', () => {
     expect(out.id).toBe('ab_gm');
   });
 
-  it('preserves a recorded iconUrl the card cannot supply', () => {
-    const [out] = reconcileRecentApps(
+  // 🔴 The card's icon is gated per viewer on the server, so its `null` is often the server
+  // HIDING the icon. A recorded icon must not resurrect it.
+  it("the card's icon wins over a recorded one, INCLUDING the card's null", () => {
+    const [hidden] = reconcileRecentApps(
       [legacy({ iconUrl: 'https://cdn.example/old.png' })],
       [onsiteCard({ iconUrl: null })]
     );
-    expect(out.iconUrl).toBe('https://cdn.example/old.png');
+    expect(hidden).not.toHaveProperty('iconUrl');
+    // Positive control: a visible card icon replaces the recorded one.
+    const [shown] = reconcileRecentApps(
+      [legacy({ iconUrl: 'https://cdn.example/old.png' })],
+      [onsiteCard({ iconUrl: 'https://cdn.example/live.png' })]
+    );
+    expect(shown.iconUrl).toBe('https://cdn.example/live.png');
   });
 
   it('is IDEMPOTENT — reconciling a reconciled list changes nothing', () => {

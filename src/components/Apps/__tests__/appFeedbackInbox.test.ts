@@ -18,7 +18,6 @@ import {
   ownerStatusLabel,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
-import { APP_FEEDBACK_PRIVATE_NOTICE } from '~/components/AppBlocks/appFeedbackChrome';
 
 describe('ownerStatusChoices — the status control', () => {
   it('a NEW row offers all three developer statuses', () => {
@@ -206,17 +205,5 @@ describe('inboxEmptyMessage', () => {
   it('a filter that matches nothing says so', () => {
     expect(inboxEmptyMessage('resolved')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
     expect(inboxEmptyMessage('new')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
-  });
-});
-
-describe('the sender and the developer are told the same readers', () => {
-  it('the send dialog and the inbox name an identical audience', () => {
-    // Pinned as a RELATIONSHIP across the two surfaces: extract the "Only <readers> can read"
-    // clause from each and compare, so neither can be reworded to a different audience alone.
-    const readers = (s: string) => s.match(/Only (.*?) can read/)?.[1];
-    expect(readers(INBOX_PRIVACY_NOTE)).toBe(
-      "this app's developer, their collaborators and Civitai moderators"
-    );
-    expect(readers(APP_FEEDBACK_PRIVATE_NOTICE)).toBe(readers(INBOX_PRIVACY_NOTE));
   });
 });

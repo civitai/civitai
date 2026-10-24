@@ -10,7 +10,6 @@ import { seedance } from './seedance.graph';
 import { wan } from './wan.graph';
 import { grokVideo } from './grok.graph';
 import { mochi } from './mochi.graph';
-import { sora } from './sora.graph';
 import { hunyuan } from './hunyuan.graph';
 import { flux3Video } from './flux3-video.graph';
 import { minimax } from './minimax.graph';
@@ -118,7 +117,6 @@ export const videoHub = defineGraph<RootCtx>()
       [['Seedance'], seedance],
       [['Grok'], grokVideo],
       [['Mochi'], mochi],
-      [['Sora2'], sora],
       [['HyV1'], hunyuan],
       [['Flux3Video'], flux3Video],
       [['MiniMaxH3'], minimax],

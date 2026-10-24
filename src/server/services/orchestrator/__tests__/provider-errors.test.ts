@@ -118,6 +118,76 @@ describe('sanitizeStepErrors', () => {
   });
 });
 
+describe('sanitizeStepErrors on a Flux 3 Video provider refusal', () => {
+  const HINT = 'If your source image is rated above PG-13, try MiniMax H3 instead.';
+  // A failed videoGen step as the workflow read returns it.
+  const videoStep = (
+    engine: string,
+    output: Record<string, unknown>,
+    operation = 'imageToVideo'
+  ) => ({
+    $type: 'videoGen',
+    name: '0',
+    status: 'failed',
+    input: { engine, version: 'v3.0', operation, prompt: 'x' },
+    output,
+  });
+
+  it("keeps the provider's refusal and adds the H3 hint", () => {
+    const step = videoStep('flux', {
+      externalTOSViolation: true,
+      message: 'Request rejected by content moderation.',
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `Request rejected by content moderation. ${HINT}`,
+    ]);
+  });
+
+  it('says the content filter refused when the provider gave no text', () => {
+    const step = videoStep('flux', { externalTOSViolation: true, message: null });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `The provider's content filter rejected this request. ${HINT}`,
+    ]);
+  });
+
+  it('does not pair the hint with a system error when the refusal is unsafe to show', () => {
+    const step = videoStep('flux', {
+      externalTOSViolation: true,
+      message: 'Rejected, see https://internal.example/moderation',
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual([
+      `The provider's content filter rejected this request. ${HINT}`,
+    ]);
+  });
+
+  it('adds nothing to a generic Flux 3 failure', () => {
+    const step = videoStep('flux', {
+      errors: ['Timed out waiting for the provider'],
+      message: null,
+    });
+    expect(sanitizeStepErrors(step, 'flux')).toEqual(['Timed out waiting for the provider']);
+  });
+
+  it('adds nothing to a text to video refusal, which had no source image', () => {
+    const step = videoStep(
+      'flux',
+      { externalTOSViolation: true, message: 'Request rejected by content moderation.' },
+      'textToVideo'
+    );
+    expect(sanitizeStepErrors(step, 'flux')).toEqual(['Request rejected by content moderation.']);
+  });
+
+  it('does not point an H3 refusal at H3', () => {
+    const step = videoStep('minimax', {
+      externalTOSViolation: true,
+      message: 'Request rejected by content moderation.',
+    });
+    expect(sanitizeStepErrors(step, 'minimax')).toEqual([
+      'Minimax: Request rejected by content moderation.',
+    ]);
+  });
+});
+
 describe('providerName', () => {
   it('names seedance', () => {
     expect(providerName('seedance')).toBe('Seedance');

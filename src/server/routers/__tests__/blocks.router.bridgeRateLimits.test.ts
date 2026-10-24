@@ -35,11 +35,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * says so rather than implying coverage it has not got.
  *
  * 🔴 `pollWorkflow` IS THE EXCEPTION, AND IT IS THE POINT. It does NOT throw when its bucket
- * refuses — it returns a non-terminal snapshot — because both hosts convert any throw from that
- * mutation into `status: 'failed'`, which the SDK treats as TERMINAL. A thrown 429 there would end
- * the watch loop on a generation the viewer has already paid for. So its cases assert the RETURNED
- * SHAPE and the absence of the orchestrator call, not an error code. See the procedure for the
- * full reasoning.
+ * refuses — it returns a non-terminal snapshot. The current hosts would also turn a thrown
+ * TOO_MANY_REQUESTS into a non-terminal snapshot, but a host bundle loaded before that change turns
+ * any throw into a TERMINAL `failed`, and the REST twin would answer 429; either ends the watch loop
+ * on a generation the viewer has already paid for. So its cases assert the RETURNED SHAPE and the
+ * absence of the orchestrator call, not an error code. See the procedure for the full reasoning.
  *
  * RED/GREEN MATRIX, measured rather than asserted — and the numbers below were WRONG in an earlier
  * revision of this file (it claimed 6 failed / 7 passed, on a "one failure per newly-limited
@@ -312,11 +312,12 @@ describe('blocks.pollWorkflow — the POLL bucket', () => {
   });
 
   it('🔴 DOES NOT THROW, and returns a NON-TERMINAL status — a throw would kill a paid generation', async () => {
-    // 🔴 THE REGRESSION THIS FILE EXISTS FOR, pinned as a VALUE rather than a shape. Both hosts
-    // wrap this mutation in `catch (err) { send('WORKFLOW_STATUS', failureSnapshot(err)) }`, and
-    // `failureSnapshot` returns `status: 'failed'` — a member of the SDK's TERMINAL set. So a
-    // thrown 429 reaches the block as a finished, failed workflow and its watch loop stops, on a
-    // generation whose Buzz is already spent and which the orchestrator is still running.
+    // 🔴 THE REGRESSION THIS FILE EXISTS FOR, pinned as a VALUE rather than a shape. A host bundle
+    // loaded before the hosts classified poll errors wraps this mutation in
+    // `catch (err) { send('WORKFLOW_STATUS', failureSnapshot(err)) }`, and `failureSnapshot`
+    // returns `status: 'failed'` — a member of the SDK's TERMINAL set; the REST twin would answer
+    // 429. Either way a thrown refusal ends the watch loop on a generation whose Buzz is already
+    // spent and which the orchestrator is still running.
     //
     // Asserting "does not throw" alone would be satisfied by a throw-free path that returned
     // `failed` anyway, which is the same bug. The status is checked against the terminal set by
@@ -517,7 +518,7 @@ describe('blocks.estimateWorkflowBatch — one catalog token, plus the cells buc
   });
 });
 
-describe('blocks.getMyBuzzBalance — the one buzz read outside the helper', () => {
+describe('blocks.getMyBuzzBalance', () => {
   it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the buzz service call', async () => {
     mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
 

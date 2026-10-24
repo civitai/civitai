@@ -8,7 +8,7 @@ import type {
   ComfyStepTemplate,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   ComfySd1CreateImageGenInput,
   ComfySdxlCreateImageGenInput,
@@ -164,7 +164,7 @@ export const createStableDiffusionInput = defineHandler<
   const shared = {
     ecosystem,
     operation: 'createImage' as const,
-    model: ctx.airs.getOrThrow(data.model.id),
+    checkpointModel: ctx.airs.getOrThrow(data.model.id),
     prompt: data.prompt ?? '',
     negativePrompt: data.negativePrompt,
     width: data.aspectRatio?.width,

@@ -10,6 +10,7 @@ import { barFreeLabel, freeHintText } from '~/components/Sticker/free-offer';
 import {
   useFreePlacementStanding,
   useImagePlacementSpace,
+  resolveStickerCounts,
   useStickerPlacementCounts,
   useStickerPlacements,
 } from '~/components/Sticker/placement.util';
@@ -68,23 +69,38 @@ export function StickerPlacementBar({
   const { buttonStyling } = useReactionSettingsContext();
   const inviteStyle = useStickerInviteStyle();
 
+  const revealed = useStickerRevealStore(stickersRevealed);
+
+  // The count is approved-only, so an owner whose first placement is still
+  // pending had no entry here at all — and therefore no reveal toggle on the
+  // page the notification just sent them to. Hence the placements for every
+  // signed-in viewer, and for anyone who has revealed (the overlay on this image
+  // is already asking for exactly this, so it is the same cached call).
+  const wantPlacements = !!currentUser || revealed;
+  const {
+    byImage,
+    counts: combinedCounts,
+    isLoading: placementsLoading,
+    isError: placementsError,
+  } = useStickerPlacements([imageId], wantPlacements);
+  // Only where placements are not wanted: the combined call above carries the
+  // counts, and asking for them again was a second request for the same rows.
+  const countsOnly = useStickerPlacementCounts([imageId], !wantPlacements);
   const {
     counts,
     isLoading: countsLoading,
     isError: countsError,
-  } = useStickerPlacementCounts([imageId]);
+  } = resolveStickerCounts({
+    wantPlacements,
+    combined: { data: combinedCounts, isLoading: placementsLoading, isError: placementsError },
+    countsOnly,
+  });
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
-
-  // The count is approved-only, so an owner whose first placement is still
-  // pending had no entry here at all — and therefore no reveal toggle on the
-  // page the notification just sent them to.
-  const { byImage, isLoading: placementsLoading } = useStickerPlacements([imageId], !!currentUser);
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
   const previewing = useStickerPlacementDraftStore((state) => state.previewing);
-  const revealed = useStickerRevealStore(stickersRevealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
   // The creator has not opened this space and nobody has placed anything, so

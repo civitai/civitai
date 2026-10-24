@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { cachedFactory, defineGraph, rootScope, type Scope } from 'form-graph';
+import { cachedFactory, defFamily, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
 import { resolveCompatibleEcosystem } from './ecosystem-gates';
 
@@ -111,6 +111,19 @@ export function makeTextBlock(
     hasNegative(ext) && negativePromptRegistersTarget
       ? (['prompt', 'negativePrompt'] as const)
       : (['prompt'] as const);
+  // One input schema per editor set, so the store sees a stable identity across passes.
+  const snippetsInputFor = defFamily((withNegative: boolean) =>
+    snippetsSchema
+      .optional()
+      .transform((v) =>
+        v
+          ? withTargets(
+              v,
+              withNegative ? (['prompt', 'negativePrompt'] as const) : (['prompt'] as const)
+            )
+          : v
+      )
+  );
 
   return (
     // The text block is stored globally — detach from whatever family
@@ -126,9 +139,7 @@ export function makeTextBlock(
           ? {
               ...SNIPPETS,
               default: withTargets(SNIPPETS.default as SnippetsValue, editorsFor(_ext)),
-              input: snippetsSchema
-                .optional()
-                .transform((v) => (v ? withTargets(v, editorsFor(_ext)) : v)),
+              input: snippetsInputFor(editorsFor(_ext).length === 2),
               coerce: (raw: unknown) => withTargets(raw as SnippetsValue, editorsFor(_ext)),
             }
           : null

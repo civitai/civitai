@@ -2,10 +2,11 @@ import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -13,6 +14,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
+import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
@@ -52,6 +54,7 @@ import type {
 import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   StickerCosmetic,
   NamePlateCosmetic,
@@ -60,8 +63,12 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { countUnclaimedPrizes } from '~/server/services/prize.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
+import { countHeldMysteryBoxes } from '~/server/services/mystery-box-inventory.service';
+import { mysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -122,6 +129,7 @@ import {
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
@@ -135,6 +143,8 @@ import {
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
+import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
@@ -302,6 +312,10 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
+    const unopenedBoxes = countHeldMysteryBoxes(mysteryBoxViewer(ctx)).catch(() => 0);
+    const unclaimedPrizes = ctx.features.userMenuV2
+      ? countUnclaimedPrizes(id).catch(() => 0)
+      : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
     // notifications service over HTTP (with its own retries) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
@@ -313,10 +327,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
-      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
-        total: 0,
-        byCollection: {},
-      })),
+      getPendingCollectionReviewCounts({ userId: id, levels: requestServableLevels(ctx) }).catch(
+        () => ({
+          total: 0,
+          byCollection: {},
+        })
+      ),
     ]);
 
     // `pendingPlacements` rides along here rather than getting its own query:
@@ -345,6 +361,8 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
       // rather than merely zero a count.
       pendingCollectionReviews: collectionReviewCounts.total,
+      unopenedBoxes: await unopenedBoxes,
+      unclaimedPrizes: await unclaimedPrizes,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -599,6 +617,7 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
+    cardDecorationId,
     username,
     source,
     landingPage,
@@ -627,7 +646,11 @@ export const updateUserHandler = async ({
   try {
     const user = await getUserById({
       id,
-      select: { profilePictureId: true, profilePicture: { select: { userId: true } } },
+      select: {
+        username: true,
+        profilePictureId: true,
+        profilePicture: { select: { userId: true } },
+      },
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -658,6 +681,12 @@ export const updateUserHandler = async ({
     else if (profileBackgroundId === null)
       unequipPromises.push(
         unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground })
+      );
+
+    if (cardDecorationId) payloadCosmeticIds.push(cardDecorationId);
+    else if (cardDecorationId === null)
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.CardDecoration })
       );
 
     await Promise.all(unequipPromises);
@@ -741,7 +770,8 @@ export const updateUserHandler = async ({
       usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
     );
 
-    purgeCache({ tags: [`user-creator-${id}`] }).catch();
+    // The name before this save, so a rename also purges responses cached under the old name.
+    await bustUserCreator(id, { usernames: user.username ? [user.username] : [] });
 
     // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
     // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
@@ -758,6 +788,8 @@ export const updateUserHandler = async ({
   }
 };
 
+export const SELF_DELETE_RESTRICTED_MESSAGE = `Restricted accounts can't be closed from account settings. You can still have your account deleted: open a ticket through our support portal at ${SUPPORT_LINKS.portal} and our team will process it.`;
+
 export const deleteUserHandler = async ({
   ctx,
   input,
@@ -771,6 +803,14 @@ export const deleteUserHandler = async ({
   // `/api/mod/user/delete`, which writes a ModActivity row.
   if (id !== currentUser.id) throw throwAuthorizationError();
 
+  // A muted account can't close itself: deletion nulls the email and OAuth links, so the person
+  // could sign up again without the mute. Read from the primary, not the session, so a mute that
+  // landed after the session was issued still counts. Banned accounts never get here (`isAuthed`).
+  // Erasure stays available through support, which deletes via `/api/mod/user/delete`.
+  const self = await dbWrite.user.findUnique({ where: { id }, select: { muted: true } });
+  if (self?.muted)
+    throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
+
   try {
     const user = await deleteUser(input);
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
@@ -782,6 +822,9 @@ export const deleteUserHandler = async ({
 
     return user;
   } catch (error) {
+    // The same refusal as a restricted account, so the two cannot be told apart.
+    if (error instanceof LegalHoldError)
+      throw new TRPCError({ code: 'FORBIDDEN', message: SELF_DELETE_RESTRICTED_MESSAGE });
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
@@ -1270,6 +1313,8 @@ export const getBanContentPreviewHandler = async ({
   return getBanContentPreview({ userId: input.userId });
 };
 
+type OwnedCosmetic<T> = WithClaimKey<T> & { equipped: boolean; withheld: boolean };
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1290,13 +1335,18 @@ export const getUserCosmeticsHandler = async ({
           : null
       )
       .filter(isDefined);
-    const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
+    const coverImages = await getEntityCoverImage({
+      entities: inUseCosmeticEntities,
+      viewer: ctx.user,
+    });
+    const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
     const cosmetics = user.cosmetics.reduce(
       (
         acc,
         {
           obtainedAt,
+          equippedAt,
           equippedToId,
           equippedToType,
           claimKey,
@@ -1313,6 +1363,10 @@ export const getUserCosmeticsHandler = async ({
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,
+          // Also set while a content decoration is placed (that is `inUse`). A withheld cosmetic still
+          // worn from before withholding unequipped it shows to nobody, so it isn't equipped here either.
+          equipped: !!equippedAt && !withheld.has(rest.id),
+          withheld: withheld.has(rest.id),
           equippedToId,
           equippedToType,
           entityImage: coverImages.find(
@@ -1348,16 +1402,19 @@ export const getUserCosmeticsHandler = async ({
           });
         else if (type === CosmeticType.Sticker)
           acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
+        else if (type === CosmeticType.CardDecoration)
+          acc.cardDecorations.push({ ...sharedData, data: data as CardDecorationCosmetic['data'] });
 
         return acc;
       },
       {
-        badges: [] as WithClaimKey<BadgeCosmetic>[],
-        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
-        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
-        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
-        sticker: [] as WithClaimKey<StickerCosmetic>[],
+        badges: [] as OwnedCosmetic<BadgeCosmetic>[],
+        nameplates: [] as OwnedCosmetic<NamePlateCosmetic>[],
+        profileDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        profileBackground: [] as OwnedCosmetic<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as OwnedCosmetic<ContentDecorationCosmetic>[],
+        sticker: [] as OwnedCosmetic<StickerCosmetic>[],
+        cardDecorations: [] as OwnedCosmetic<CardDecorationCosmetic>[],
       }
     );
 
@@ -1573,6 +1630,11 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
  * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
+const TOS_ACCEPTANCE_KEYS = [
+  'tosLastSeenDate',
+  'tosGreenLastSeenDate',
+  'tosRedLastSeenDate',
+] as const;
 
 export const setUserSettingHandler = async ({
   input,
@@ -1639,6 +1701,12 @@ export const setUserSettingHandler = async ({
     // the cached entry's own TTL; a misreported write is not bounded by anything.
     if (sessionProjectedSettingChanged)
       await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
+
+    // The site-wide ToS-update modal records acceptance through this write alone, so the strike-mute
+    // release must run here too.
+    const acceptedTos = TOS_ACCEPTANCE_KEYS.some((key) => restInput[key] !== undefined);
+    if (acceptedTos && couldAwaitTosReacceptance(ctx.user))
+      await releaseStrikeMuteOnTosAcceptance(id).catch(handleLogError);
 
     return newSettings;
   } catch (error) {

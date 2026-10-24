@@ -22,6 +22,7 @@ import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -456,6 +457,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
     hidden: z.boolean().optional(),
+    jumpTo: jumpToMonthSchema.optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
     // The viewer's level before a model gallery's cap narrows `browsingLevel`. A

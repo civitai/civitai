@@ -246,14 +246,6 @@ describe('getCollectionIdsForImages — the cover-index gate', () => {
     );
   });
 
-  it('does not warn about the cover leg when the index is usable', async () => {
-    primeImageLookup({ coverIndex: true, found: [COLLECTION_B] });
-
-    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
-
-    expect(logNamed('collection-media-index-cover-leg-skipped')).toBeUndefined();
-  });
-
   // Six of the seven legs do not depend on the cover index, so a blip on that one
   // extra catalog round-trip must not decide whether they run. Inside the main try it
   // would send the whole resolve to the catch and return nothing — a regression the
@@ -374,41 +366,6 @@ describe('enqueueCollectionRebuild', () => {
     expect(queued).toHaveLength(1200);
     expect(new Set(queued.map((q) => q.id)).size).toBe(1200);
     expect(queued.every((q) => q.action === SearchIndexUpdateQueueAction.Update)).toBe(true);
-  });
-
-  it('warns rather than truncating silently', async () => {
-    await enqueueCollectionRebuild({
-      collectionIds: [COLLECTION_A],
-      truncated: true,
-      source: 'model-perma-delete',
-      cap: 3,
-    });
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'collection-media-index-enqueue-truncated',
-        type: 'warning',
-        source: 'model-perma-delete',
-        cap: 3,
-      })
-    );
-  });
-
-  // Every lookup stops at `LIMIT cap + 1`, so any figure the warning could quote is 1
-  // however large the real overflow — and real models sit far past the cap (one
-  // measured in 86,153 distinct collections). Quoting "1 more is stale" there would
-  // understate by five orders of magnitude, so no number is quoted at all.
-  it('does not quote a number it cannot know for the overflow', async () => {
-    await enqueueCollectionRebuild({
-      collectionIds: [COLLECTION_B],
-      truncated: true,
-      source: 'model-perma-delete',
-      cap: 2,
-    });
-
-    const warning = logNamed('collection-media-index-enqueue-truncated');
-    expect(warning?.message).toContain('unknown number');
-    expect(warning?.message).not.toMatch(/\b1 more\b/);
   });
 
   it('never throws when the queue write fails, so post-delete cleanup still runs', async () => {

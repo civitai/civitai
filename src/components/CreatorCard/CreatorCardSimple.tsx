@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -33,6 +34,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
+import { cardGlowOf } from './card-glow';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
@@ -102,6 +104,15 @@ const CreatorCardSimpleContent = ({
   const isVideo = backgroundImage?.data?.type === 'video';
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
+  const glow = cardGlowOf(
+    cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.CardDecoration)?.cosmetic?.data
+  );
+  const glowProps: Pick<CardProps, 'className' | 'style'> = glow
+    ? {
+        className: clsx(cardProps.className, classes.glow, glow.animated && classes.glowAnimated),
+        style: [glow.style, cardProps.style],
+      }
+    : {};
   const stats = creator?.stats;
 
   const displayStats = data
@@ -111,7 +122,7 @@ const CreatorCardSimpleContent = ({
     : // Avoid displaying stats until we load the data
       [];
   return (
-    <ElementInView component={Card} p="md" withBorder {...cardProps}>
+    <ElementInView component={Card} p="md" withBorder {...cardProps} {...glowProps}>
       <Card.Section style={{ position: 'relative' }}>
         {/* Default background as a base layer so the card always shows an image
             (no blank flash) while a custom cosmetic loads on top of it. */}

@@ -22,6 +22,8 @@ export const studioModelFlagFeatures = {
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
+  'flux3-klein-training': 'flux3KleinTraining',
+  'moss-image-training': 'mossImageTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
 } as const satisfies Record<string, FeatureFlagKey>;
 
@@ -557,7 +559,7 @@ export const trainingModelInfo: {
     type: 'acestep15',
     description: 'ACE-Step 1.5 audio diffusion model for music generation training.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15' },
   },
@@ -567,7 +569,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL Base 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'base' },
   },
@@ -577,7 +579,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL SFT (supervised fine-tuned) 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'sft' },
   },
@@ -890,8 +892,7 @@ export const getDefaultEngine = (
   }
   // When Kohya is disabled via Flipt, pick best available fallback
   if (features && !features.kohyaTraining) {
-    // Flux defaults to rapid (its primary non-Kohya engine)
-    if (baseType === 'flux') return 'rapid';
+    if (baseType === 'flux') return isAiToolkitEnabled('flux', features) ? 'ai-toolkit' : 'rapid';
     // For other models, use AI Toolkit if available
     if (isAiToolkitEnabled(baseType, features)) return 'ai-toolkit';
     // Last resort — ai-toolkit even if not flagged (better than broken kohya)

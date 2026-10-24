@@ -6,6 +6,7 @@ import { cleanup } from 'vitest-browser-react';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure).
 import type * as TrpcMod from '~/utils/trpc';
@@ -312,6 +313,7 @@ describe('IframeHost SET_COLLECTION_FOLLOW (consent-gated follow, model slot)', 
         requestId: 'rq_follow',
         result: { collectionId: 77, followed: true },
       });
+      expectReplyKeys('SET_COLLECTION_FOLLOW', 'success', ['result'], r.payload);
     });
     replies.stop();
   });
@@ -357,6 +359,7 @@ describe('IframeHost SET_COLLECTION_FOLLOW (consent-gated follow, model slot)', 
       const r = replies.last('COLLECTION_FOLLOW_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_no', error: 'declined' });
+      expectReplyKeys('SET_COLLECTION_FOLLOW', 'error', ['error'], r.payload);
     });
     expect(followMutate).not.toHaveBeenCalled();
     expect(unfollowMutate).not.toHaveBeenCalled();

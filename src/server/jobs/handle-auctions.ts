@@ -24,8 +24,8 @@ import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
+import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
@@ -485,7 +485,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
   return true;
 };
 
-const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerType[]) => {
+export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerType[]) => {
   const loserEntities = losers.map((l) => l.entityId);
 
   // Log diagnostic information for manual reruns
@@ -527,7 +527,7 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
 
                 transactionId = res.refundedTransactions[0]?.originalTransactionId ?? null;
               } else {
-                const res = await refundTransaction(tid, 'Lost bid.', {
+                const res = await refundTransactionOnce(tid, 'Lost bid.', {
                   bidId: lostBid.id,
                   auctionId: lostBid.auctionId,
                 });

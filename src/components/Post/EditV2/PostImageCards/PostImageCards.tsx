@@ -1,4 +1,4 @@
-import { Tabs } from '@mantine/core';
+import { Tabs, Text } from '@mantine/core';
 import { IconPencil, IconPhoto } from '@tabler/icons-react';
 import React from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
@@ -7,9 +7,11 @@ import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
+import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 
 export function PostImageCards() {
   const images = usePostEditStore((state) => state.images);
+  const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
 
@@ -38,11 +40,16 @@ export function PostImageCards() {
       <div className="flex flex-col gap-3">
         {[...images]
           .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
-          .map((image) => (
-            <PostImageCard
+          .map((image, i) => (
+            <div
               key={image.type === 'added' ? image.data.id : image.data.url}
-              image={image}
-            />
+              className="flex flex-col gap-1"
+            >
+              <Text size="sm" fw={600} c="dimmed">
+                {i + 1} / {maxItems}
+              </Text>
+              <PostImageCard image={image} />
+            </div>
           ))}
       </div>
     </>

@@ -58,6 +58,14 @@ export const gameFrameReportSchema = z
     violation: z.string().optional(),
     comment: z.string().max(500),
     room: z.string().max(32).optional(),
+    // A report about one player's picture in a room rather than the game: the copy Civitai Games
+    // keeps for review (7 days), and a key that is the same for every report about that picture.
+    image: z
+      .object({
+        url: z.url({ protocol: /^https$/ }),
+        key: z.string().regex(/^[0-9a-f]{32}$/),
+      })
+      .optional(),
   })
   .superRefine((input, ctx) => {
     const expected = GF_REASONS[input.gfReason];
@@ -184,8 +192,11 @@ export async function fileGameFrameReport(
         gfReason: input.gfReason,
         gfReportId: input.gfReportId,
         source: 'game-frame',
+        // What the report is about: the game, or one picture (reports fold only within a subject).
+        subject: input.image ? `image:${input.image.key}` : 'game',
         ...(input.violation ? { violation: input.violation } : {}),
         ...(input.room ? { room: input.room } : {}),
+        ...(input.image ? { image: input.image } : {}),
       };
 
       const existing = await findReportToFoldInto({

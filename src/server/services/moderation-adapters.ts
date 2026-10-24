@@ -5,11 +5,17 @@ import { challengeModerationAdapter } from '~/server/services/challenge-moderati
 import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
-import { textScanShadowAdapters } from '~/server/services/text-scan/adapter';
+import {
+  textScanShadowAdapters,
+  textScanWebSearchAdapters,
+} from '~/server/services/text-scan/adapter';
 import {
   bountyEntryTextScanAdapter,
   collectionTextScanAdapter,
+  imageCaptionTextScanAdapter,
   postTextScanAdapter,
+  retiredModelRulesAdapter,
+  storylineTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
@@ -32,8 +38,13 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   BountyEntry: bountyEntryTextScanAdapter,
   Collection: collectionTextScanAdapter,
   Post: postTextScanAdapter,
+  Storyline: storylineTextScanAdapter,
+  ImageCaption: imageCaptionTextScanAdapter,
   ...textScanShadowAdapters(),
+  ...textScanWebSearchAdapters(),
   ...scamModerationAdapters,
+  ModelRules: retiredModelRulesAdapter,
+  'ModelRules:shadow': retiredModelRulesAdapter,
 };
 
 export function getModerationAdapter(entityType: string): ModerationAdapter | undefined {

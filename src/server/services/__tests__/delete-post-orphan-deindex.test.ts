@@ -69,8 +69,9 @@ const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, dele
 // delete is not stable.
 const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
 
-function primeQueries(images: (typeof OWNER_IMAGE)[]) {
-  const deletable = images.filter((i) => i.deletable);
+/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
+function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
+  const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
@@ -144,6 +145,27 @@ describe('deletePost orphan de-indexing', () => {
       ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
       action: SearchIndexUpdateQueueAction.Delete,
     });
+  });
+
+  it('drops a deletable image the delete kept from search, and never deletes its file', async () => {
+    primeQueries([OWNER_IMAGE, { ...FOREIGN_IMAGE, deletable: true }], [FOREIGN_IMAGE.id]);
+
+    await deletePost({ id: POST_ID, isModerator: true });
+
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateManyImageExistence).toHaveBeenCalledWith([OWNER_IMAGE.id]);
+  });
+
+  it('returns the ids of the images it deleted, and only those', async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    const result = await deletePost({ id: POST_ID });
+
+    expect(result?.deletedImageIds).toEqual([OWNER_IMAGE.id]);
   });
 
   it('deletes only the poster-owned image, and never the foreign one', async () => {

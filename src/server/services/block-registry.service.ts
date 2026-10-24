@@ -1954,7 +1954,8 @@ export class BlockRegistry {
     // #3/#6: surface the page's declared scopes so the host can compute the
     // ACTUAL granted scope set (declared − missing) for BLOCK_INIT, mirroring
     // IframeHost. Money/spend scopes are rejected at mint for a page, so this is
-    // effectively the consent-exempt ambient set (apps:storage:*) once approved.
+    // effectively the consent-exempt ambient set (the exempt storage scopes) once approved;
+    // `apps:storage:publish` is consent-gated, so the host subtracts it while ungranted.
     const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
       ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
       : [];

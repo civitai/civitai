@@ -611,15 +611,23 @@ export async function holdPlacementEscrow({
  * expiry sweep firing during a decline) cannot both settle: the loser matches no
  * rows and moves no money. The winner's per-leg receipts then make the payout
  * itself resumable, which the claim alone cannot do.
+ *
+ * `inTransaction` runs inside the status flip's transaction, only when this call
+ * won the flip, with the row as it stood while pending. It is for a write that
+ * must exist exactly when the new status does (a storyline approval's chapter
+ * edge): a throw rolls the flip and the payout plan back, so the placement stays
+ * pending and no money moves. Postgres only, through `tx` (`no-io-in-transaction`).
  */
 export async function settlePlacement({
   placementId,
   action,
   actorId,
+  inTransaction,
 }: {
   placementId: number;
   action: SettleAction;
   actorId?: number;
+  inTransaction?: (tx: Prisma.TransactionClient, pending: PlacementRow) => Promise<unknown>;
 }) {
   const status = STATUS_FOR_ACTION[action];
   const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
@@ -652,11 +660,13 @@ export async function settlePlacement({
       },
     });
 
-    if (updated.count > 0)
+    if (updated.count > 0) {
       await tx.placementTransaction.createMany({
         data: legs.map((leg) => ({ placementId, ...leg })),
         skipDuplicates: true,
       });
+      if (inTransaction) await inTransaction(tx, before);
+    }
 
     return updated;
   });

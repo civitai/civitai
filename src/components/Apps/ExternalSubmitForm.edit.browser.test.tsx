@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type { ListingEditContext } from './offsiteEditConfig';
 
 /**
@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
   removeScreenshot: vi.fn(),
+  setRedMedia: vi.fn(),
   invalidate: vi.fn(),
 }));
 
@@ -64,6 +65,7 @@ vi.mock('~/utils/trpc', () => {
         removeScreenshot: { useMutation: recording(mocks.removeScreenshot) },
         // ListingAssetStep procs not otherwise exercised.
         persistAssetImage: { useMutation: noopMutation },
+        setRedMedia: { useMutation: recording(mocks.setRedMedia) },
         ingestAssetFromUrl: { useMutation: noopMutation },
         ingestAssetFromDataUri: { useMutation: noopMutation },
         setIcon: { useMutation: noopMutation },
@@ -136,6 +138,7 @@ beforeEach(() => {
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
   mocks.removeScreenshot.mockClear();
+  mocks.setRedMedia.mockClear();
   mocks.invalidate.mockClear();
 });
 
@@ -177,6 +180,36 @@ describe('ExternalSubmitForm — edit mode', () => {
     );
     // No revision for a draft in-place edit.
     expect(mocks.submitRevision).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an APPROVED edit clears a civitai.red cover ON THE SHADOW, and Save submits that revision for review', async () => {
+    renderWithProviders(
+      <ExternalSubmitForm
+        edit={makeApprovedCtx({
+          redMedia: {
+            available: true,
+            icon: { imageId: null, url: null },
+            cover: { imageId: 41, url: LOADABLE_IMAGE_DATA_URI },
+          },
+        })}
+      />
+    );
+    // URL → Details → Assets.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('apps-offsite-remove-red-cover').click();
+    await vi.waitFor(() =>
+      expect(mocks.setRedMedia).toHaveBeenCalledWith({
+        listingId: 'shadow-1',
+        slot: 'cover',
+        imageId: null,
+      })
+    );
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() =>
+      expect(mocks.submitRevision).toHaveBeenCalledWith({ shadowId: 'shadow-1' })
+    );
+    expect(mocks.updateListing).not.toHaveBeenCalled();
   });
 
   test('an APPROVED edit writes the scalar patch to the SHADOW and submits the revision', async () => {

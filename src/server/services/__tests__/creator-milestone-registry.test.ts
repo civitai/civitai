@@ -48,7 +48,8 @@ beforeAll(async () => {
   const db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY);
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int,
+      type text NOT NULL DEFAULT 'Badge', source text, "permanentUnlock" boolean, data jsonb);
   `);
   for (const file of migrations) await db.exec(readFileSync(file, 'utf8'));
   seeded = (

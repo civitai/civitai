@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as CfUploadMod from '~/hooks/useCFImageUpload';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -137,6 +138,17 @@ async function driveToReady() {
   });
 }
 
+/**
+ * Starts the frame's requests once the host has committed ready. Before that a gated request gets
+ * the pre-handshake refusal, a bare `{ requestId }`, and the frame cannot see when that ends.
+ */
+async function goWhenHostReady(el: HTMLIFrameElement) {
+  await vi.waitFor(() => {
+    if (el.getAttribute('data-block-ready') !== 'true') throw new Error('host not ready yet');
+  });
+  el.contentWindow?.postMessage({ __go: true }, '*');
+}
+
 /** Lets any reply that WOULD follow a settled request arrive before asserting there is none. */
 const settle = () => new Promise((r) => setTimeout(r, 150));
 
@@ -170,22 +182,19 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       // The `blockToken` in the first payload is a decoy: the host must use its own.
       el.srcdoc =
         `<script>
-        var sent = false;
         function go() {
-          if (sent) return;
-          sent = true;
           var png = new Uint8Array([${PNG.join(',')}]);
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'fixed meta.png', blockToken: 'tok_evil' } }, '*');
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const uploadReplies = () =>
         echoes.filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT').map((m) => m.data.payload);
@@ -242,17 +251,23 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
-    h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
+  test('a persist refused by a rate limit replies its message once and polls no scan', async () => {
+    h.persist.mockRejectedValueOnce(
+      new Error('This app is handling too many uploads right now, please retry shortly.')
+    );
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_bucket', bytes: pngBytes() });
     await vi.waitFor(() =>
       expect(repliesFor(replies, 'rq_bucket')).toEqual([
-        { requestId: 'rq_bucket', error: 'Rate limit exceeded, please retry shortly.' },
+        {
+          requestId: 'rq_bucket',
+          error: 'This app is handling too many uploads right now, please retry shortly.',
+        },
       ])
     );
+    expectReplyKeys('OPEN_IMAGE_UPLOAD', 'error', ['error'], repliesFor(replies, 'rq_bucket')[0]);
     await settle();
     expect(repliesFor(replies, 'rq_bucket')).toHaveLength(1);
     expect(h.uploadToCF).toHaveBeenCalledTimes(1);
@@ -371,15 +386,13 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     try {
       el.srcdoc =
         `<script>
-        var sent = false;
         var png = new Uint8Array([${PNG.join(',')}]);
         function go() {
-          if (sent) return;
-          sent = true;
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: png.buffer.slice(0) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           if (e.data && e.data.__resend) {
             parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: new Uint8Array(png) } }, '*');
             // Sentinel: same invalid payload on a FRESH id, sent after the re-send. Its reply
@@ -388,11 +401,10 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
             return;
           }
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const repliesTo = (id: string) =>
         echoes
@@ -449,15 +461,13 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     try {
       el.srcdoc =
         `<script>
-        var sent = false;
         var png = new Uint8Array([${PNG.join(',')}]);
         function go() {
-          if (sent) return;
-          sent = true;
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse', bytes: png.buffer.slice(0) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           if (e.data && e.data.__resend) {
             // A PICKER request (no bytes) reusing the in-flight bytes id.
             parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse' } }, '*');
@@ -467,11 +477,10 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
             return;
           }
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const repliesTo = (id: string) =>
         echoes
@@ -525,7 +534,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       offset = 6_000;
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
       await vi.waitFor(() => expect(repliesFor(replies, 'rq_err')).toHaveLength(2));
-      // Past the 60 s upload window too: three uploads already spent it.
+      // Past the 60 s upload window too, so this holds whatever the window's count is.
       offset = 61_000;
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
       await vi.waitFor(() => expect(repliesFor(replies, 'rq_ok')).toHaveLength(2));
@@ -596,22 +605,23 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     }
   });
 
-  test(`the ${
-    UPLOAD_BYTES_MAX_PER_WINDOW + 1
-  }th upload inside the window is busy and never uploads`, async () => {
+  // Literal counts, not the constant: a test that loops to the limit passes at any limit.
+  test('eight uploads inside the window are admitted; the 9th is busy and never uploads', async () => {
     h.gate.mockResolvedValue({ status: 'pending' });
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
-    for (let i = 0; i <= UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
+    for (let i = 0; i < 9; i++) {
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_${i}`, bytes: pngBytes() });
     }
     await vi.waitFor(() =>
-      expect(repliesFor(replies, `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`)).toEqual([
-        { requestId: `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`, error: 'busy' },
-      ])
+      expect(repliesFor(replies, 'rq_8')).toEqual([{ requestId: 'rq_8', error: 'busy' }])
     );
-    await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW));
+    await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(8));
+    await settle();
+    expect(h.uploadToCF).toHaveBeenCalledTimes(8);
+    // The 4th through 8th are in flight (the scan is pending), not refused.
+    for (const i of [3, 4, 5, 6, 7]) expect(repliesFor(replies, `rq_${i}`)).toEqual([]);
     replies.stop();
   });
 

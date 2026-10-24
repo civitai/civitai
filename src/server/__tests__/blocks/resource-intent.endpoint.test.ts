@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { HOSTED_MODEL_CAPABILITIES } from '~/shared/constants/hosted-model-catalog.constants';
 
 import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
+import type * as RegionBlocking from '~/server/utils/region-blocking';
 
 /**
  * Endpoint-contract tests for POST /api/v1/blocks/resource-intent.
@@ -55,6 +57,13 @@ vi.mock('~/server/services/resource-intent.service', () => ({
   getResourceIntent: (...args: unknown[]) => mockGetResourceIntent(...(args as [])),
 }));
 
+// The restricted-region list is read from env at module load, so the region case pins it here.
+const mockIsRegionRestricted = vi.fn<(region: unknown) => boolean>(() => false);
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<typeof RegionBlocking>()),
+  isRegionRestricted: (region: unknown) => mockIsRegionRestricted(region),
+}));
+
 const handler = (await import('~/pages/api/v1/blocks/resource-intent')).default;
 
 const CLAIMS = {
@@ -71,6 +80,14 @@ const CLAIMS = {
 };
 
 const VALID_BODY = { prompt: 'a photorealistic portrait of a knight', baseModel: 'SDXL 1.0' };
+/** What the service is handed with only `resourceIntentJev` on. */
+const FLAGS_OFF_CTX = {
+  browsingLevel: 31,
+  poolMerge: false,
+  v1: false,
+  v1Shadow: false,
+  judgeCapture: false,
+};
 
 const SERVICE_RESULT = {
   degraded: false,
@@ -118,6 +135,7 @@ beforeEach(() => {
   mockGetFeatureFlags.mockReturnValue({ resourceIntentJev: true });
   mockCheckBlockLLMRateLimit.mockResolvedValue({ allowed: true });
   mockGetResourceIntent.mockResolvedValue(SERVICE_RESULT);
+  mockIsRegionRestricted.mockReturnValue(false);
 });
 
 describe('the auth/clamp mirror with generation-resources.ts', () => {
@@ -182,6 +200,36 @@ describe('the auth/clamp mirror with generation-resources.ts', () => {
     expect(mockGetResourceIntent.mock.calls[1][1]).toMatchObject({ poolMerge: true });
   });
 
+  it('🔴 the v1 flags reach the service each as its own field; absent, each is false', async () => {
+    await call({});
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
+    const flags = {
+      resourceIntentV1: 'v1',
+      resourceIntentV1Shadow: 'v1Shadow',
+      resourceIntentJudgeCapture: 'judgeCapture',
+    } as const;
+    for (const [flag, field] of Object.entries(flags)) {
+      mockGetResourceIntent.mockClear();
+      mockGetFeatureFlags.mockReturnValue({ resourceIntentJev: true, [flag]: true });
+      await call({});
+      expect(mockGetResourceIntent.mock.calls[0][1], flag).toEqual({
+        ...FLAGS_OFF_CTX,
+        [field]: true,
+      });
+    }
+  });
+
+  it('the v1 flags alone do not open the route', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentV1: true,
+      resourceIntentV1Shadow: true,
+      resourceIntentJudgeCapture: true,
+    });
+    const { res } = await call({});
+    expect(res.statusCode).toBe(404);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
   it('resourceIntentPoolMerge alone does not open the route', async () => {
     mockGetFeatureFlags.mockReturnValue({ resourceIntentPoolMerge: true });
     const { res } = await call({});
@@ -232,7 +280,7 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     await call({ body: { ...VALID_BODY, kind: 'addon' } });
     expect(mockGetResourceIntent).toHaveBeenCalledTimes(2);
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
-    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
     expect(mockGetResourceIntent.mock.calls[1][0]).toEqual({ ...VALID_BODY, kind: 'addon' });
   });
 
@@ -244,7 +292,7 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     const { res } = await call({ body: CHECKPOINT_BODY });
     expect(res.statusCode).toBe(200);
     expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(CHECKPOINT_BODY);
-    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual(FLAGS_OFF_CTX);
   });
 
   it('🔴 checkpoint mode requires baseModel: 400 even with the flag on', async () => {
@@ -300,5 +348,116 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     const { res } = await call({ body: CHECKPOINT_BODY });
     expect(res.statusCode).toBe(404);
     expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+});
+
+describe('needs → hostedModels', () => {
+  it('🔴 a request without needs gets exactly the body it got before: no hostedModels key', async () => {
+    const { res } = await call({});
+    expect(res.body).toEqual({
+      ...SERVICE_RESULT,
+      maturity: { browsingLevel: 31, sfwOnly: false },
+    });
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
+  });
+
+  it('answers needs from the catalog on a SFW ceiling, and never passes needs to the primitive', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['transparent_background'] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
+    expect(res.body).toMatchObject({
+      ...SERVICE_RESULT,
+      maturity: { browsingLevel: 3, sfwOnly: true },
+      hostedModels: [
+        {
+          key: 'Ming',
+          name: 'Ming Image Design',
+          maker: 'inclusionAI',
+          modelId: 2961930,
+          url: 'https://civitai.com/models/2961930',
+          capabilities: ['design_layout', 'legible_text', 'transparent_background'],
+        },
+      ],
+    });
+  });
+
+  it('ranks and caps at three', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['legible_text', 'design_layout'] },
+    });
+    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
+    expect(hosted.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
+  });
+
+  it('🔴 the browsing ceiling does not change hostedModels: same list for SFW, mature and region-clamped', async () => {
+    const body = { ...VALID_BODY, needs: ['legible_text', 'design_layout'] };
+    const sfw = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
+    const mature = await call({ body });
+    mockIsRegionRestricted.mockReturnValue(true);
+    const clamped = await call({ body });
+    const read = (r: { res: { body: unknown } }) =>
+      r.res.body as { maturity: { sfwOnly: boolean }; hostedModels: { key: string }[] };
+    // The ceilings really differ, so an equal list is not an accident of identical inputs.
+    expect([sfw, mature, clamped].map((r) => read(r).maturity.sfwOnly)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+    expect(read(mature).hostedModels).toEqual(read(sfw).hostedModels);
+    expect(read(clamped).hostedModels).toEqual(read(sfw).hostedModels);
+    // Ideogram and Nano Banana included on a mature ceiling too.
+    expect(read(mature).hostedModels.map((h) => h.key)).toEqual(['Reve', 'Ideogram', 'Ming']);
+    const nano = await call({ body: { ...VALID_BODY, needs: ['character_consistency'] } });
+    expect(read(nano).hostedModels.map((h) => h.key)).toEqual(['NanoBanana', 'HiDream-O1']);
+  });
+
+  it('empty needs is answered with an empty list, not omitted', async () => {
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: [] },
+    });
+    expect((res.body as Record<string, unknown>).hostedModels).toEqual([]);
+  });
+
+  it('an unknown capability is a 400 before the rate limit', async () => {
+    for (const needs of [['legible_text', 'nsfw'], 'legible_text', [1]]) {
+      const { res } = await call({ body: { ...VALID_BODY, needs } });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(mockCheckBlockLLMRateLimit).not.toHaveBeenCalled();
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
+  it('accepts every capability once (8) and refuses a ninth', async () => {
+    const all = [...HOSTED_MODEL_CAPABILITIES];
+    expect(all).toHaveLength(8);
+    expect((await call({ body: { ...VALID_BODY, needs: all } })).res.statusCode).toBe(200);
+    const nine = await call({ body: { ...VALID_BODY, needs: [...all, 'photoreal'] } });
+    expect(nine.res.statusCode).toBe(400);
+  });
+
+  it('needs is stripped on the checkpoint path too', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    const body = { ...VALID_BODY, kind: 'checkpoint', needs: ['photoreal'] };
+    const { res } = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 3 }, body });
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual({ ...VALID_BODY, kind: 'checkpoint' });
+    const hosted = (res.body as { hostedModels: { key: string }[] }).hostedModels;
+    expect(hosted.map((h) => h.key)).toEqual(['MAI']);
+  });
+
+  it('a degraded primitive response still carries the hosted list', async () => {
+    mockGetResourceIntent.mockResolvedValue({ ...SERVICE_RESULT, degraded: true });
+    const { res } = await call({
+      __claims: { ...CLAIMS, maxBrowsingLevel: 3 },
+      body: { ...VALID_BODY, needs: ['transparent_background'] },
+    });
+    expect(res.body).toMatchObject({ degraded: true, hostedModels: [{ key: 'Ming' }] });
   });
 });

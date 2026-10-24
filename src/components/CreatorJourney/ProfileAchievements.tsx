@@ -5,6 +5,7 @@ import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/Crea
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import { MilestoneShareButton } from '~/components/CreatorJourney/MilestoneShareButton';
+import { ScoreSplitBar } from '~/components/CreatorJourney/ScoreSplitBar';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -42,7 +43,7 @@ type Rung = {
   held?: Tier;
   /**
    * Below a held tier but not shown, e.g. its badge hidden from the profile: the score passed it.
-   * Drawn without its art, which the creator chose to hide.
+   * Drawn with the public ladder's art, never the creator's earned date.
    */
   reached?: boolean;
 };
@@ -163,7 +164,7 @@ function TierRungChip({
       >
         <TierBadge
           name={rung.name}
-          badgeUrl={rung.reached ? null : rung.badgeUrl}
+          badgeUrl={rung.badgeUrl}
           state={lit ? 'earned' : 'locked'}
           size={48}
         />
@@ -400,7 +401,10 @@ export function ProfileAchievementsList({
         </Anchor>
       )}
       {data.tiers.length > 0 ? (
-        <TierLadderBand tiers={data.tiers} userId={userId} spotlight={spotlight} />
+        <Stack gap="md">
+          <TierLadderBand tiers={data.tiers} userId={userId} spotlight={spotlight} />
+          {data.scoreSplit && <ScoreSplitBar split={data.scoreSplit} />}
+        </Stack>
       ) : (
         isOwner && <NoTierYet />
       )}

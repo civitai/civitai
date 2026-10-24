@@ -27,9 +27,7 @@ const storeOn = (modelId: number) => {
 
 const ratios = (modelId: number) =>
   (
-    storeOn(modelId).getField('aspectRatio')?.meta as
-      | { options?: { value: string }[] }
-      | undefined
+    storeOn(modelId).getField('aspectRatio')?.meta as { options?: { value: string }[] } | undefined
   )?.options?.map((o) => o.value) ?? [];
 
 describe('Nano Banana 2.1', () => {
@@ -70,7 +68,7 @@ describe('Nano Banana 2.1', () => {
       aspectRatio: '1:8',
       resolution: '2K',
       images: ['https://example.com/a.png'],
-      numImages: 2,
+      quantity: 2,
     });
   });
 });

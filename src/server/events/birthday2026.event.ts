@@ -24,15 +24,16 @@ export const birthday2026 = createEvent(name, {
     headline: 'Civitai turns 4.',
     headlineAccent: 'Pick up a hat.',
     heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+    homeImage: '15d5d13d-42ad-4d93-9bbe-a50179a5240e',
     // The 42-second cut. Its duration is the file's own (mvhd 42411 / 1000); re-read it on a new cut.
     heroVideo: { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 },
     dates: 'Nov 1 to Nov 30',
     summary:
-      'Four colour teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
+      'Four color teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
     steps: [
       {
         title: 'Join',
-        body: 'You land on one of four teams at random and get a free Party Cap in your colour. Your team is yours for the whole event.',
+        body: 'You land on one of four teams at random and get a free Party Cap in your color. Your team is yours for the whole event.',
       },
       {
         title: 'Hat your best work',
@@ -45,7 +46,7 @@ export const birthday2026 = createEvent(name, {
     ],
     prize: {
       title: 'Birthday 2026 Champion badge',
-      body: 'An animated badge in the winning colour, for every member of the winning team whose hats earned points.',
+      body: 'An animated badge in the winning color, for every member of the winning team whose hats earned points.',
     },
     prizeBadge: {
       Yellow: {
@@ -93,7 +94,7 @@ export const birthday2026 = createEvent(name, {
   },
   banner: {
     accent: 'Pick up a hat.',
-    text: 'Four colour teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
+    text: 'Four color teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
     cta: 'Join a team',
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',

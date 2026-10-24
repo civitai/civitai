@@ -16,7 +16,7 @@
  * 🔴 DEPENDENCY-FREE LEAF, DELIBERATELY. No React, no Mantine, no tRPC, no Prisma — so the
  * SERVER service can take the `ScopeGrantOrigin` type from here, both CLIENT consumers can take
  * the copy from here, and the behaviour runs in the node-env `unit` project instead of only in
- * the report-only browser tier. Same precedent as `src/shared/constants/block-effective-scopes.ts`
+ * the browser tier. Same precedent as `src/shared/constants/block-effective-scopes.ts`
  * (the shared effective-scope rule) and `src/components/Apps/appsActivityTabs.ts` (the pure tab
  * resolver). `blocks.router.ts` reaches `user-app-surface.service` exclusively through
  * `await import(...)`; a shared helper placed in that SERVICE rather than in a leaf would make
@@ -154,9 +154,13 @@ export function buildScopeGrantSurfaceLine(surfaces: {
  *     the exact defect class #4790 existed to remove.
  *   · The INVOKED set UNDER-reports as a ceiling and is not even in the vocabulary. Of the 9
  *     distinct `(app, invoked scope)` pairs, FIVE name a scope that is NOT in that app's
- *     `approved_scopes` — and two of those spellings (`apps:storage`, `(any-token)`) appear in
- *     neither `block-scope.constants.ts` nor `SCOPE_DESCRIPTIONS`, so they would render as bare
- *     badges with an italic "(no description)". `w6-ui-dogfood` is the clean counter-example to
+ *     `approved_scopes` — and two of those spellings (`apps:storage`, `(any-token)`) were, when
+ *     measured, in neither `block-scope.constants.ts` nor `SCOPE_DESCRIPTIONS`, so they would
+ *     have rendered as bare badges with an italic "(no description)". ⚠️ `apps:storage` has
+ *     since become a real scope (the document store's base scope), so a legacy telemetry row
+ *     carrying it would now render with that scope's description — which describes the new
+ *     store, not the legacy bridge call that wrote the row. Another reason not to list invoked
+ *     scopes here. `w6-ui-dogfood` is the clean counter-example to
  *     a blanket "declared is wider": it declares ONE scope and invoked TWO.
  *
  * So there is no set to show, nothing was granted, and the row's honest content is the

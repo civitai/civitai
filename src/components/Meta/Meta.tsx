@@ -4,6 +4,7 @@ import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { resolveMetaHref } from '~/components/Meta/canonical';
+import { ogImageUrl } from '~/components/Meta/og-image-url';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { create } from 'zustand';
@@ -94,7 +95,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
     : Number.isInteger(imageNsfwLevel) && getIsSafeBrowsingLevel(imageNsfwLevel as number)
     ? imageUrl
     : undefined;
-  const _ogImageUrl = ogEndpoint ? `${env.NEXT_PUBLIC_BASE_URL}${ogEndpoint}` : _fallbackImageUrl;
+  const _ogImageUrl = ogEndpoint ? ogImageUrl(ogEndpoint) : _fallbackImageUrl;
   const { query } = useBrowserRouter();
   const hasDialogParam = !!(query as Record<string, unknown>)?.dialog;
   const { canIndex } = useAppContext();

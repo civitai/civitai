@@ -69,7 +69,9 @@ export interface ClusterSelfHealConfig {
    * DEADLINE-HIT TRIGGER (the sawtooth-immune signal — see deadlineHitWindowMs note below).
    * If this many cluster command-deadline TIMEOUTS occur within `deadlineHitWindowMs`, force a
    * reconnect IMMEDIATELY (subject to the cooldown), WITHOUT requiring inflight to stay
-   * continuously above the threshold. <= 0 disables this trigger (inflight path only).
+   * continuously above the threshold. <= 0 disables this trigger (inflight path only). (The sys
+   * watchdog feeds this slot with backstop timeouts, 0 while any sys command succeeded in the
+   * window — see ./sys-timeouts.)
    *
    * WHY this exists: the inflight-continuity trigger above can NEVER fire during a real
    * half-open park, because the per-command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS = 15s)
@@ -112,7 +114,8 @@ export interface ClusterSelfHealDeps {
    * Reads the number of cluster command SLOW-SETTLES within the last `deadlineHitWindowMs`
    * (the sawtooth-immune wedge signal — see TRIGGER 1). Receives the window so the recorder owns
    * the windowing. Optional so existing callers/tests that only drive the inflight path can omit
-   * it (treated as 0 → slow-settle trigger inert).
+   * it (treated as 0 → slow-settle trigger inert). The sys watchdog passes its backstop-timeout
+   * count here instead (./sys-timeouts).
    */
   getDeadlineHits?: (windowMs: number) => number;
   /**

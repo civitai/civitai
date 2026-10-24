@@ -194,10 +194,51 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
+  model3d: Model3dOutputLabel[];
 } {
   const media: StepOutputMedia[] = [];
-  const rest = walkPassThroughOutput(output, media, 0);
-  return { media, rest };
+  const model3d: Model3dOutputLabel[] = [];
+  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
+  return { media, rest, model3d };
+}
+
+/**
+ * What a 3D model in a pass-through output IS, beside its url in `media`.
+ *
+ * `mediaFromBlobs` flattens every blob to a bare url, so a `polyGen` job's GLB, FBX,
+ * rigged and animated variants arrive as an undifferentiated list. This keeps the two
+ * facts the flattening drops, ADDITIVELY — `media` and its order are untouched:
+ *   - `format` — the orchestrator `Model3dBlob.format` (`'glb'`, `'fbx'`, …), read off
+ *     the blob itself. The blob is recognised by its own discriminator,
+ *     `type: 'model3d'` (`@civitai/orchestration-client` `Model3dBlob`), never by sniffing a url or
+ *     guessing from a key name.
+ *   - `variant` — the output key path the blob sat at, dot-joined (`'model'`,
+ *     `'riggedFbxModel'`, `'basicAnimations.walkingModel'`; an array index is a
+ *     segment). `''` when the whole output is the blob.
+ *
+ * Only blobs that `mediaFromBlobs` KEPT are labelled, so every label's `url` is one of
+ * the urls in `media` — a dropped (unavailable / blocked) blob gains no label.
+ */
+export type Model3dOutputLabel = { url: string; format: string; variant: string };
+
+/** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
+const MODEL3D_BLOB_TYPE = 'model3d';
+
+type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+
+/** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
+function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
+  const lifted = mediaFromBlobs(value);
+  sink.media.push(...lifted);
+  const blob = value as OrchestratorBlobLike & { type?: unknown; format?: unknown };
+  if (
+    lifted.length === 1 &&
+    blob.type === MODEL3D_BLOB_TYPE &&
+    typeof blob.format === 'string' &&
+    blob.format.length > 0
+  ) {
+    sink.model3d.push({ url: lifted[0].url, format: blob.format, variant: path.join('.') });
+  }
 }
 
 /** The orchestrator training `$type`s, which put a trained CHECKPOINT on every epoch. */
@@ -238,20 +279,25 @@ export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
 export function splitPassThroughStep(
   stepType: string,
   output: unknown
-): { media: StepOutputMedia[]; rest: unknown; trainedEpochs: TrainedEpoch[] } {
+): {
+  media: StepOutputMedia[];
+  rest: unknown;
+  trainedEpochs: TrainedEpoch[];
+  model3d: Model3dOutputLabel[];
+} {
   if (!isTrainingStepType(stepType)) {
     return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
   }
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
   const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
-  const { media, rest } = splitPassThroughStepOutput(stripped);
+  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
   for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
   const approved =
     output !== null &&
     typeof output === 'object' &&
     (output as Record<string, unknown>).moderationStatus === 'approved';
-  return { media, rest, trainedEpochs: approved ? trainedEpochs : [] };
+  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
 }
 
 /**
@@ -301,10 +347,15 @@ function stripTrainingEpochs(
   return { ...(output as Record<string, unknown>), epochs: stripped };
 }
 
-function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: number): unknown {
+function walkPassThroughOutput(
+  value: unknown,
+  sink: PassThroughOutputSink,
+  depth: number,
+  path: string[]
+): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (isOrchestratorBlobLike(value)) {
-    media.push(...mediaFromBlobs(value as OrchestratorBlobLike));
+    liftBlob(value as OrchestratorBlobLike, sink, path);
     return {};
   }
   // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
@@ -316,23 +367,32 @@ function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: 
     // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
     // first and discarded the second from BOTH sides — never published, never
     // forwarded. Lifting per element and walking the rest keeps both.
+    // The key path is extended only for a value that is lifted or descended into, so
+    // a large array of primitives allocates no path per element.
     const out: unknown[] = [];
-    for (const entry of value) {
+    value.forEach((entry, index) => {
       if (isOrchestratorBlobLike(entry)) {
-        media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
-        continue;
+        liftBlob(entry as OrchestratorBlobLike, sink, [...path, String(index)]);
+        return;
       }
-      out.push(walkPassThroughOutput(entry, media, depth + 1));
-    }
+      out.push(
+        entry !== null && typeof entry === 'object'
+          ? walkPassThroughOutput(entry, sink, depth + 1, [...path, String(index)])
+          : entry
+      );
+    });
     return out;
   }
   const rest: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (isOrchestratorBlobLike(entry)) {
-      media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
+      liftBlob(entry as OrchestratorBlobLike, sink, [...path, key]);
       continue;
     }
-    rest[key] = walkPassThroughOutput(entry, media, depth + 1);
+    rest[key] =
+      entry !== null && typeof entry === 'object'
+        ? walkPassThroughOutput(entry, sink, depth + 1, [...path, key])
+        : entry;
   }
   return rest;
 }

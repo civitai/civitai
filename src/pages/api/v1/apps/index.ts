@@ -10,7 +10,7 @@ import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-a
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { enforceAppsCatalogRateLimit } from '~/server/utils/apps-catalog-rate-limit';
 import { getNextPage } from '~/server/utils/pagination-helpers';
-import { isHostForColor } from '~/server/utils/server-domain';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 
 /**
@@ -73,11 +73,6 @@ function firstQuery(v: string | string[] | undefined): string | undefined {
   return first === '' ? undefined : first;
 }
 
-/** RED-capable host membership test — mirrors the store router's maturity gate. */
-function isRedCapableRequest(host: string | undefined): boolean {
-  return !!host && host !== '' && isHostForColor(host, 'red');
-}
-
 const querySchema = getAppListingsListQuery();
 
 export default MixedAuthEndpoint(async function handler(req, res, user) {
@@ -129,7 +124,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     }
 
     const { items, nextCursor } = await listAvailableListings(parsed.data, {
-      redCapable: isRedCapableRequest(req.headers.host),
+      redCapable: isRedCapableHost(req.headers.host),
       scope,
       // 🔴 THE AUDIENCE FLOOR IS NOT LIFTED THE WAY THE SCOPE IS, AND PASSING IT
       // EXPLICITLY IS THE POINT. `resolvePublicAppsCatalogScope` deliberately grants an

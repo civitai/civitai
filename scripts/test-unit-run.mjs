@@ -49,7 +49,9 @@ const POLL_MS = 2000;
  */
 function exitAfterDrain(code) {
   let pending = 2;
-  const done = () => { if (--pending === 0) process.exit(code); };
+  const done = () => {
+    if (--pending === 0) process.exit(code);
+  };
   process.stdout.write('', done);
   process.stderr.write('', done);
   // If the callbacks never fire (e.g. the streams are in an error state), exit anyway after
@@ -58,6 +60,16 @@ function exitAfterDrain(code) {
 }
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * `pnpm run test:unit:run -- --max-workers=4` hands this script a literal leading `--`. Passed on,
+ * it reaches vitest after `run --project unit*`, where it ends option parsing: every flag after it
+ * is silently ignored and the suite runs at the default worker count. Only a LEADING one is pnpm's;
+ * a `--` further in was put there by the caller and is left alone.
+ */
+export function forwardedArgs(argv) {
+  return argv[0] === '--' ? argv.slice(1) : argv;
+}
 
 export function queueDecision(args, env) {
   if (env.CI) return { queue: false, why: 'CI runs the suite directly' };
@@ -181,7 +193,9 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
   if (run.status === 'queued') {
     console.error(
       run.paused
-        ? `Queued at position ${run.position}. Its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0) — nothing starts until \`${run.resumeCommand ?? 'test config 1'}\`.`
+        ? `Queued at position ${run.position}. Its ${
+            run.pausedBy ?? 'lane'
+          } is PAUSED (limit 0) — nothing starts until \`${run.resumeCommand ?? 'test config 1'}\`.`
         : `Queued at position ${run.position} of ${run.queueLength} (${run.running}/${run.concurrency} running).`
     );
   }
@@ -227,7 +241,7 @@ if (
   import.meta.url === `file://${process.argv[1]}` ||
   process.argv[1] === fileURLToPath(import.meta.url)
 ) {
-  const args = process.argv.slice(2);
+  const args = forwardedArgs(process.argv.slice(2));
   const decision = queueDecision(args, process.env);
   if (
     decision.queue &&

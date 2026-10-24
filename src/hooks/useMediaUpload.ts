@@ -87,6 +87,9 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   };
   const activeWorkersRef = useRef(0);
   const jobQueueRef = useRef<UploadJob[]>([]);
+  // `count` only includes a file once its upload completes, so a pick made while another is still
+  // preparing or uploading would reuse its index.
+  const lastIndexRef = useRef(0);
 
   async function runWorker() {
     try {
@@ -188,7 +191,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   ) {
     setLoading(true);
     try {
-      const start = count + 1;
+      const start = Math.max(count, lastIndexRef.current) + 1;
       const { maxSize } = uploadSettings;
       // check for files that exceed the max size
       if (maxSize) {
@@ -205,6 +208,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
 
       // remove extra files that would exceed the max
       const sliced = data.slice(0, remaining);
+      if (sliced.length) lastIndexRef.current = start + sliced.length - 1;
 
       // process media metadata
       const mapped = (
@@ -223,12 +227,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               });
             }
             if (!data) return null;
+            // A generated video's file carries the worker's ComfyUI graph, whose Model path and
+            // engine would override the generator's meta and fail the on-site check.
+            const isOnSiteVideo = data.type === 'video' && !!fileMeta?.civitaiResources;
+            const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
             // Merge civitaiResources arrays by modelVersionId instead of overwriting
             const mergedCivitaiResources = (() => {
               const fileResources = fileMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
-              const exifResources = data.meta?.civitaiResources as
+              const exifResources = embeddedMeta?.civitaiResources as
                 | { modelVersionId: number }[]
                 | undefined;
               if (!fileResources?.length) return exifResources;
@@ -246,12 +254,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               generationWorkflowId,
               meta: {
                 ...fileMeta,
-                ...data.meta,
+                ...embeddedMeta,
                 ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
               },
               file,
             };
-            const { meta } = data;
+            const meta = embeddedMeta;
 
             if (meta) {
               const audit = await auditMetaData(meta, false);

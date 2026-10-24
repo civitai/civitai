@@ -15,11 +15,14 @@ const pipeline = vi.hoisted(() => ({
   resolveScanOutcome: vi.fn(),
   sendIngestionSignal: vi.fn(),
 }));
-const { mockRecordAudit, mockRemoveJobQueue, mockFanOut } = vi.hoisted(() => ({
-  mockRecordAudit: vi.fn(),
-  mockRemoveJobQueue: vi.fn(),
-  mockFanOut: vi.fn(),
-}));
+const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag, mockLabelPrompt } =
+  vi.hoisted(() => ({
+    mockRecordAudit: vi.fn(),
+    mockRemoveJobQueue: vi.fn(),
+    mockFanOut: vi.fn(),
+    mockRecordFlag: vi.fn(),
+    mockLabelPrompt: vi.fn(),
+  }));
 
 // The pipeline imports the whole ingestion stack, and its stages run for real in
 // image-scan-result.test.ts, so this suite pins only what this service passes them.
@@ -34,6 +37,12 @@ vi.mock('~/server/services/job-queue.service', () => ({
   removeImageScanJobQueue: mockRemoveJobQueue,
 }));
 vi.mock('~/server/utils/webhook-debounce', () => ({ fanOutArticleImageUpdates: mockFanOut }));
+vi.mock('~/server/services/scan-label-flag.service', () => ({
+  recordScanLabelFlag: mockRecordFlag,
+}));
+vi.mock('~/server/services/upload-prompt-scan.service', () => ({
+  labelUploadPrompt: mockLabelPrompt,
+}));
 
 import {
   IMAGE_SCANNING_LOG,
@@ -96,6 +105,99 @@ describe('processImageScanningWorkflow', () => {
     pipeline.markImageScanError.mockResolvedValue({ userId: 3, failureClass: 'unknown' });
     pipeline.extractFailedSteps.mockReturnValue(['scan']);
     pipeline.readJobFailureReason.mockResolvedValue('Failed to create container');
+    mockLabelPrompt.mockResolvedValue(undefined);
+  });
+
+  const refusedStep = { ...scanStep, output: { ...scanStep.output, blockedReason: 'refused' } };
+
+  it('records a scan the orchestrator refused as a label for moderators', async () => {
+    await deliver('succeeded', [refusedStep, hashStep]);
+
+    expect(mockRecordFlag).toHaveBeenCalledTimes(1);
+    expect(mockRecordFlag).toHaveBeenCalledWith({
+      imageId: 7,
+      source: 'orchestrator-scan',
+      reason: 'refused',
+      workflowId: 'wf',
+      flaggedAt: expect.any(Date),
+      snapshot: expect.objectContaining({ nsfwLevel: 'pg13', tags: { solo: 0.9 } }),
+    });
+  });
+
+  const rated = (nsfwLevel: string) => [
+    { ...scanStep, output: { ...scanStep.output, nsfwLevel } },
+    hashStep,
+  ];
+
+  it("labels an NSFW upload's prompt after the outcome is signalled", async () => {
+    await deliver('succeeded', rated('x'));
+
+    expect(mockLabelPrompt).toHaveBeenCalledWith({
+      imageId: 7,
+      userId: 3,
+      prompt: 'a prompt',
+      negativePrompt: undefined,
+    });
+    expect(mockLabelPrompt.mock.invocationCallOrder[0]).toBeGreaterThan(
+      pipeline.sendIngestionSignal.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('answers the webhook without waiting for the prompt scan', async () => {
+    mockLabelPrompt.mockReturnValue(new Promise(() => undefined));
+
+    const settled = await Promise.race([
+      deliver('succeeded', rated('x')).then(() => 'answered'),
+      new Promise((resolve) => setTimeout(() => resolve('waited on the scan'), 1_000)),
+    ]);
+
+    expect(mockLabelPrompt).toHaveBeenCalledTimes(1);
+    expect(settled).toBe('answered');
+  });
+
+  it("does not label a safe-for-work upload's prompt", async () => {
+    await deliver('succeeded', rated('pg13'));
+
+    expect(mockLabelPrompt).not.toHaveBeenCalled();
+  });
+
+  it('does not label an upload with no prompt', async () => {
+    pipeline.loadImageForScan.mockResolvedValue({ ...image, meta: { prompt: '  ' } });
+
+    await deliver('succeeded', rated('xxx'));
+
+    expect(mockLabelPrompt).not.toHaveBeenCalled();
+  });
+
+  it('records no label for a scan the orchestrator passed', async () => {
+    await deliver('succeeded', [scanStep, hashStep]);
+
+    expect(mockRecordFlag).not.toHaveBeenCalled();
+  });
+
+  it("decides a refused image's outcome exactly as it would without the refusal", async () => {
+    const decide = async (steps: unknown[]) => {
+      vi.clearAllMocks();
+      pipeline.loadImageForScan.mockResolvedValue(image);
+      pipeline.resolveScanOutcome.mockResolvedValue({
+        ingestion: 'Scanned',
+        blockedFor: null,
+        reviewKey: null,
+      });
+      await deliver('succeeded', steps);
+      return {
+        outcome: pipeline.resolveScanOutcome.mock.calls,
+        tags: pipeline.buildAndInsertScanTags.mock.calls,
+        sideEffects: pipeline.applyIngestionSideEffects.mock.calls,
+        signal: pipeline.sendIngestionSignal.mock.calls,
+      };
+    };
+
+    const passed = await decide([scanStep, hashStep]);
+    const refused = await decide([refusedStep, hashStep]);
+
+    expect(refused.outcome).toHaveLength(1);
+    expect(refused).toEqual(passed);
   });
 
   it('writes the scan through the shared pipeline without a hard block', async () => {
@@ -294,6 +396,7 @@ describe('parseImageScanningSteps', () => {
       csam: false,
       ageDetections: [detection('21-24', false)],
       minorDetected: false,
+      blockedReason: null,
       aiRecognition: { label: 'AI', score: 0.9 },
       animeRecognition: { label: 'real', score: 0.7 },
       perceptualHash: '6F51B11C49611E0E',
@@ -303,6 +406,7 @@ describe('parseImageScanningSteps', () => {
   const riskyFrame = scanOutput({
     nsfwLevel: 'x',
     csam: true,
+    blockedReason: 'refused',
     aiRecognition: { label: 'AI', score: 0.9 },
     animeRecognition: { label: 'anime', score: 0.95 },
     tagging: { ran: true, tags: [{ tag: 'solo', category: 'general', score: 0.7 }] },
@@ -340,6 +444,7 @@ describe('parseImageScanningSteps', () => {
       tags: { solo: 0.7 },
       csam: true,
       minorDetected: true,
+      blockedReason: 'refused',
       aiRecognition: { label: 'AI', score: 0.9 },
       animeRecognition: { label: 'anime', score: 0.95 },
     });
@@ -347,6 +452,15 @@ describe('parseImageScanningSteps', () => {
     expect(scan.ageDetections).toEqual(
       expect.arrayContaining([detection('13-15', true), detection('21-24', false)])
     );
+  });
+
+  it('reads a refused scan, and an empty reason as a pass', () => {
+    const reasonOf = (blockedReason: unknown) =>
+      parseImageScanningSteps([parserScanStep(scanOutput({ blockedReason }))], 'wf').blockedReason;
+    expect(reasonOf('refused')).toBe('refused');
+    expect(reasonOf(null)).toBeNull();
+    expect(reasonOf(undefined)).toBeNull();
+    expect(reasonOf('')).toBeNull();
   });
 
   it('reports csam as absent only when no frame reported it', () => {

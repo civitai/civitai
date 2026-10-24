@@ -5,7 +5,9 @@ import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
 import { bustCachedObject } from './cache';
+import { bustAfterWrite } from './bust-after-write';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
 import { getMediaProbeStorage } from './storage';
@@ -332,18 +334,24 @@ export async function resolveIngestionError({
     nsfwLevelReason: 'Moderator ingestion error review',
   };
 
-  await dbWrite
+  // Only an image still in Error: one re-scanned since the queue loaded may now be Blocked.
+  const result = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
       nsfwLevelLocked: true,
       ingestion: 'Scanned',
+      blockedFor: null,
       scannedAt: new Date(),
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
+    .where('ingestion', '=', 'Error')
+    .executeTakeFirst();
+  if (Number(result?.numUpdatedRows ?? 0) === 0)
+    throw new Error('Image is no longer in an ingestion error state; reload the queue.');
   await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   // Cast to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which won't match the
   // function's int[] signature.
@@ -354,8 +362,10 @@ export async function resolveIngestionError({
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  await Promise.all([
-    bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
-    bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
-  ]);
+  await bustAfterWrite('ingestion-error-cache-bust', () =>
+    Promise.all([
+      bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+      bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
+    ])
+  );
 }

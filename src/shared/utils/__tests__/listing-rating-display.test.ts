@@ -6,6 +6,7 @@ import {
   assetRating,
   declaredListingRating,
   describeRatingAssets,
+  listingRatingAssetLabel,
   listingRatingAssetsFromView,
   summarizeListingRating,
   type ListingRatingDisplayAsset,
@@ -182,6 +183,35 @@ describe('listingRatingAssetsFromView', () => {
       { kind: 'screenshot', position: 1, nsfwLevel: NsfwLevel.PG },
       { kind: 'screenshot', position: 2, nsfwLevel: NsfwLevel.R },
     ]);
+  });
+
+  it('🔴 appends the civitai.red overrides last, each marked as one, with its own level', () => {
+    expect(
+      listingRatingAssetsFromView({
+        iconId: 51,
+        iconNsfwLevel: NsfwLevel.PG,
+        coverId: null,
+        coverNsfwLevel: null,
+        screenshots: [],
+        redIconId: 71,
+        redIconNsfwLevel: NsfwLevel.XXX,
+        redCoverId: 72,
+        redCoverNsfwLevel: NsfwLevel.R,
+      })
+    ).toEqual([
+      { kind: 'icon', nsfwLevel: NsfwLevel.PG },
+      { kind: 'red-icon', nsfwLevel: NsfwLevel.XXX, redSlot: true },
+      { kind: 'red-cover', nsfwLevel: NsfwLevel.R, redSlot: true },
+    ]);
+  });
+
+  it('labels the overrides by host', () => {
+    expect(listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: 1, redSlot: true })).toBe(
+      'civitai.red icon'
+    );
+    expect(listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: 1, redSlot: true })).toBe(
+      'civitai.red cover'
+    );
   });
 });
 

@@ -89,6 +89,7 @@ export const HAT_COUNT_FIELDS = {
   comment: 'comments',
   sticker: 'stickers',
   remix: 'remixes',
+  modelLike: 'modelLikes',
 } as const satisfies Partial<Record<EventPointType, string>>;
 export type HatCounts = Record<(typeof HAT_COUNT_FIELDS)[keyof typeof HAT_COUNT_FIELDS], number>;
 const HAT_COUNT_TYPES = Object.entries(HAT_COUNT_FIELDS) as [

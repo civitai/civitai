@@ -3,6 +3,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import { eventTagSchema, eventTagsSchema } from '~/server/schema/event-tag.schema';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -346,6 +347,14 @@ export const getJudgingPairSchema = z.object({
   judgingSessionId: judgingSessionIdSchema,
 });
 
+export const crucibleEventTagSchema = eventTagSchema;
+
+export type SetCrucibleEventTagsSchema = z.infer<typeof setCrucibleEventTagsSchema>;
+export const setCrucibleEventTagsSchema = z.object({
+  id: z.number(),
+  eventTags: eventTagsSchema,
+});
+
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted
 // keys, overwriting the stored value.
 export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
@@ -424,12 +433,19 @@ export const getUserCrucibleStatsSchema = z.object({});
 
 // User crucible stats response type
 export type UserCrucibleStats = {
-  totalCrucibles: number;
+  /** Crucibles entered while running or ended; cancelled ones are left out. */
+  cruciblesEntered: number;
+  /** Ended crucibles entered: the denominator of the win rate. */
+  cruciblesEnded: number;
+  /** Ended crucibles in which the user took a prize of more than 0 Buzz. */
+  cruciblesWon: number;
+  /** Gross prize Buzz, including prizes awarded but not yet claimed. */
   buzzWon: number;
-  bestPlacement: number | null;
+  /** Best rank among creators, with how many creators placed in that crucible. */
+  bestFinish: { position: number; fieldSize: number } | null;
   /** Average finish as the top percent of the field; null until enough crucibles count. */
   avgFinishTopPercent: number | null;
-  prizesWon: number;
+  votesCast: number;
 };
 
 // Schema for getting user's active crucibles (no input needed - uses authenticated user)

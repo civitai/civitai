@@ -51,9 +51,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
-//      of strangers' traffic. The `:poll:`, `:post:` and `:training-dataset:`
-//      buckets below do NOT inherit this: each puts the viewer in the key, and the
-//      poll bucket says why.
+//      of strangers' traffic. The `:poll:` and `:post:` buckets below do NOT
+//      inherit this: each puts the viewer in the key, and the poll bucket says why.
 //   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
 //      audit. #569 first added FIVE bridge procedures to this bucket against an
 //      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
@@ -96,6 +95,9 @@ export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 // call. 60 published images / 5-minute window is generous for a real benchmark
 // grid (which publishes a handful of results once) but hard-caps a token that
 // tries to drive a sustained fetch/upload/scan fan-out onto the origin.
+//
+// KEYED ON THE INSTALL ALONE, so on a page app it is one allowance shared by every
+// viewer of that app.
 export const BLOCK_PUBLISH_RATE_LIMIT_MAX = 60;
 export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 
@@ -191,7 +193,7 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
 // FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
-// bucket and the training-dataset bucket follow this one instead). The catalog,
+// bucket follows this one instead). The catalog,
 // publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
 // not a person — a MODEL-SLOT install is served to every visitor of its model page —
 // and for a PAGE app the sharing is widest:
@@ -228,53 +230,26 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
 //     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
 //     │
-//     │  THE BARRIER IS GONE. NOTHING IS THROUGH IT YET.
+//     │  THE BRIDGE FORWARDS THE HOLD. THE REST ROUTE ACCEPTS IT; NOTHING CALLS IT YET.
 //     │
-//     │  Gone: `/api/v1/blocks/workflows/poll` (#5068) takes `waitSeconds` off the wire
-//     │  and forwards it with no host in the path, so the host choke point does not
-//     │  apply to that transport.
-//     │  Not through: no shipped client calls that route yet, and over the BRIDGE the
-//     │  hosts still drop the field — so no hold reaches the server today.
-//     │  Therefore: the ~300-concurrent-hold figure below is what the FIRST REST
-//     │  adopter produces at the 15 s default, and the concurrency cap it calls for is
-//     │  still not implemented. Size for it; do not claim it is already happening.
-//     │
-//     │  ⚠️ THIS BLOCK EXISTS BECAUSE THE STATUS WAS PREVIOUSLY RESTATED SIX TIMES IN
-//     │  THIS COMMENT, IN SIX WORDINGS. Two successive rounds each corrected one copy
-//     │  and left the others, and the copies then contradicted each other ten lines
-//     │  apart ("NO HOLD REACHES THE SERVER TODAY" beside "IS NO LONGER TRUE", and
-//     │  "LIVE, not prospective" beside "nothing is holding today"). Both retracted.
-//     │  A status with six homes has six edit sites and no greppable anchor, which is
-//     │  how it re-arms. If you are about to restate it below, don't — amend this box.
+//     │  Bridge: both hosts forward a block's finite numeric `waitSeconds`, and any
+//     │  value that resolves to a whole second or more asks the orchestrator for a hold.
+//     │  REST: `/api/v1/blocks/workflows/poll` (#5068) takes the field off the wire with
+//     │  no host in the path; no shipped client calls that route yet.
+//     │  Concurrency: `acquireBlockPollHoldSlot` caps held polls per (install, viewer)
+//     │  at `MAX_BLOCK_POLL_CONCURRENT_HOLDS`; past it a poll is answered with no hold.
 //     └─
 //
-//     EVIDENCE — for the BRIDGE arm: neither host passes `waitSeconds` (zero occurrences
-//     of the identifier in `components/AppBlocks/`), and `@civitai/app-sdk`'s
-//     `POLL_WORKFLOW` payload type (0.14.0, the version this repo installs) carries
-//     `requestId` and `workflowId` only. The hosts are the choke point.
+//     EVIDENCE — for the BRIDGE arm: `PageBlockHost` and `IframeHost` pass the field
+//     into `blocks.pollWorkflow`, whose `resolveBlockPollWaitSeconds` decides the hold.
+//     Which blocks SEND it is a fact about another repo: `@civitai/blocks-react`'s `watch` defaults `waitSeconds` to 15
+//     (`DEFAULT_WATCH_WAIT_SECONDS`) from a loop that awaits each poll.
 //
-//     EVIDENCE — for the REST arm: `@civitai/blocks-react`'s `watch` defaults
-//     `waitSeconds` to 15 (`DEFAULT_WATCH_WAIT_SECONDS`, v0.57.1), and a whole-tree
-//     sweep of `civitai-app-starters` finds no reference to `/api/v1/blocks/workflows/*`
-//     outside prose.
+//     EVIDENCE — for the REST arm: a whole-tree sweep of `civitai-app-starters` found no
+//     reference to `/api/v1/blocks/workflows/*` outside prose.
 //
-//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the evidence lives in another repo, so nothing
-//     in this tree asserts on it and the "not through it yet" half will go stale
-//     SILENTLY the day a block adopts the route. Re-check it rather than trusting it.
-//
-//     An earlier revision also got this WRONG by generalising from the app-sdk payload
-//     to "no shipped client takes that path". The round-0 audit reports that
-//     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
-//     `watch` defaulting it to 15 — and the server already accepts the field. That
-//     package is not installed in this repo, so it is recorded here as the audit's
-//     finding rather than as something measured at this call site. ✅ IT HOLDS, and this
-//     hedge is now RESOLVED rather than left standing beside the paragraph above that
-//     asserts it: `DEFAULT_WATCH_WAIT_SECONDS = 15` in
-//     `packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts` (v0.57.1). So blocks
-//     ARE already asking and the bridge hosts ARE dropping it: over the BRIDGE the
-//     ~300-concurrent-hold figure below is one line in each host away. Over the REST
-//     twin the host is gone entirely and no line is needed — see the paragraph above
-//     for what that does and does not mean. Size for it rather than against it.
+//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the sender-side evidence lives in another repo,
+//     so nothing in this tree asserts on it. Re-check it rather than trusting it.
 //   - the pathological shape the resolver warns about — `setInterval(poll, 2000)` against
 //     a 15 s hold, stacking ~7 concurrent requests per workflow — fits at ~5 concurrent
 //     workflows for one viewer.
@@ -284,10 +259,8 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //
 // ⚠️ THIS IS A RATE CEILING AND THE RESOURCE THAT ACTUALLY FAILS IS CONCURRENCY. With a
 // 15 s hold, 20/s sustained is ~300 simultaneously-held request slots per (install,
-// viewer) by Little's law, and `pollWorkflow` is a plain `publicProcedure` with no
-// bulkhead admission control. Nothing here caps concurrent holds; this bucket does not
-// pretend to. That is the number a GA reviewer should be looking at, and the control for
-// it is a concurrency cap, not a smaller rate.
+// viewer) by Little's law. This bucket does not cap that; the per-(install, viewer) hold
+// slots in `~/server/utils/block-poll-hold-slots` do, by answering without a hold.
 //
 // DELIBERATELY GENEROUS, because the two failure directions are not symmetric: a
 // too-tight poll ceiling degrades a generation the viewer already paid for, while a
@@ -524,8 +497,9 @@ export async function checkBlockPostRateLimit(
  *
  * Same fail-open posture as every sibling limiter. 🔴 But unlike them, the CALLER
  * must not turn a refusal into a throw: `pollWorkflow` returns a non-terminal
- * snapshot instead, because both hosts convert any throw from that mutation into a
- * `status: 'failed'` snapshot, which the SDK treats as terminal — so a thrown 429
+ * snapshot instead. The current hosts would turn a thrown TOO_MANY_REQUESTS into a
+ * non-terminal snapshot too, but an older host bundle still open in a browser turns
+ * any throw into a terminal `failed`, and the REST twin would answer 429 — either
  * ends the watch loop on a generation the viewer has already paid for. The reasoning
  * lives at the call site; this note exists so a second caller does not inherit the
  * fail-open posture and miss the return-don't-throw one.
@@ -594,30 +568,46 @@ export async function checkBlockPostAppRateLimit(
 // one page app is the same trade the catalog bucket already makes. Same stated
 // limits as every bucket in this file: FIXED window and FAILS OPEN on a Redis
 // error — it is a spend ceiling, not a security control.
-/**
- * `kind:'training'` dataset preparation: images imported per (install, viewer) per
- * hour. Room for a few full datasets (`BLOCK_TRAINING_DATASET_MAX_ITEMS` = 50) an
- * hour per viewer; each image is a server-side fetch plus an orchestrator import.
- */
-export const BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX = 150;
-export const BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS = 3600;
+// UPLOAD bucket (blocks.persistAppUploadImage, the server half of an app's upload
+// from bytes). One token per upload: each one creates a real, scanned Image row.
+// It is the ONLY bucket an upload charges.
+//
+// KEYED ON `claims.appId`, like the app-aggregate post bucket: the app's identity
+// across every install and surface, and the id an uploaded image is stamped with. So
+// it bounds an app's uploads across all of its viewers and installs, and keeps one
+// app within a share of the capacity every app's uploads draw on.
+//
+// NOT the per-install publish bucket, which an upload used to charge: a page app's
+// `blockInstanceId` is one string shared by every viewer of that app, so one
+// viewer's uploads used up the allowance `publishGenerationOutputs` and post
+// creation draw on for everyone.
+//
+// NO PER-VIEWER UPLOAD BUCKET, deliberately. The procedure's 60/h per-user
+// `rateLimit` middleware is strictly tighter than a 60-per-300-s viewer bucket for
+// every prod non-moderator, and the host's 8-per-60-s bytes window
+// (`src/components/AppBlocks/imageUploadBytes.ts`) holds a single-page moderator to
+// 40 per 300 s. Accepted cost: a moderator calling the procedure directly, or with
+// many pages open, is bounded only by this bucket.
+//
+// 600 per 300 s. Not data-derived; a starting value.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A
+// refused call still counts toward this window.
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_MAX = 600;
+export const BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS = 300;
 
 /**
- * Records a training-dataset preparation of `imageCount` images against this
- * (install, viewer)'s window. Keyed on the viewer too, for the reason the poll
- * bucket is: a page app's `blockInstanceId` is shared by every viewer of it. Own
- * `:training-dataset:` sub-namespace; fail-open like every sibling limiter.
+ * Records ONE upload from bytes against `appId`'s upload window. Own `:upload-app:`
+ * sub-namespace, so it never contends with the publish bucket or any other; fail-open
+ * like every sibling limiter.
  */
-export async function checkBlockTrainingDatasetRateLimit(
-  blockInstanceId: string,
-  userId: number,
-  imageCount: number
+export async function checkBlockUploadAppRateLimit(
+  appId: string
 ): Promise<BlockCatalogRateLimitResult> {
   return checkFixedWindow(
-    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:training-dataset:${blockInstanceId}:${userId}`,
-    BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX,
-    BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS,
-    Math.max(1, Math.floor(imageCount))
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload-app:${appId}`,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_MAX,
+    BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS
   );
 }
 
@@ -632,7 +622,7 @@ export async function checkBlockTrainingDatasetRateLimit(
 // COUNT, before any cell runs.
 //
 // 🔴 KEYED ON THE INSTALL ALONE, LIKE THE CATALOG BUCKET, AND NOT ON THE VIEWER —
-// THE OPPOSITE OF THE POLL AND TRAINING-DATASET BUCKETS, DELIBERATELY. Those two put
+// THE OPPOSITE OF THE POLL BUCKET, DELIBERATELY. That one puts
 // the viewer in the key so a page app's strangers cannot throttle each other, and
 // accept that the app-wide total then scales with the number of viewers. Here that
 // trade is the wrong one: the quantity being bounded is upstream cost quotes, which

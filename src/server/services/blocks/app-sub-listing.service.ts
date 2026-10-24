@@ -6,7 +6,10 @@ import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
-import { PARENT_LINK_TEMPLATE_SQL } from '~/server/services/blocks/app-sub-listing-store.service';
+import {
+  isImageInPublicPost,
+  PARENT_LINK_TEMPLATE_SQL,
+} from '~/server/services/blocks/app-sub-listing-store.service';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
@@ -228,7 +231,6 @@ type ResolvedParent = {
   id: string;
   slug: string;
   contentRating: string | null;
-  blockId: string;
   enabled: boolean;
   maxPerAuthor: number;
 };
@@ -242,7 +244,7 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
         id: true,
         slug: true,
         contentRating: true,
-        appBlock: { select: { blockId: true } },
+        appBlock: { select: { id: true } },
         subListingParent: { select: { enabled: true, maxPerAuthor: true } },
       },
     });
@@ -251,7 +253,6 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
       id: listing.id,
       slug: listing.slug,
       contentRating: listing.contentRating,
-      blockId: listing.appBlock.blockId,
       enabled: listing.subListingParent?.enabled ?? false,
       maxPerAuthor: listing.subListingParent?.maxPerAuthor ?? 0,
     };
@@ -260,29 +261,43 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
   }
 }
 
-export type SharedItemRead = { authorUserId: number; hidden: boolean } | null;
+export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
 
-/** The app's shared-storage row for `key`, including a hidden one. */
+/**
+ * The app's shared item stored under `key`, hidden included, from the document store when the
+ * app's approved manifest declares an item collection (shared and viewer-authored), else from
+ * the legacy shared storage
+ * (`resolveSharedItem`). A key that does not name one item reads as not
+ * found. A document with no user author has `authorUserId: null`, which matches no publisher.
+ * A store that cannot be read is a 503, never "not found".
+ */
 export async function readSharedItemForSubListing(
-  blockId: string,
+  appBlockId: string,
   key: string
 ): Promise<SharedItemRead> {
-  const { sanitizeAppSlug, appSchemaIdent } = await import('~/server/utils/apps-slug');
-  const slug = sanitizeAppSlug(blockId);
-  if (!slug) return null;
-  const { requireAppsDb } = await import('~/server/db/appsDb');
-  let rows: { author_user_id: number; hidden: boolean }[];
   try {
-    rows = (
-      await requireAppsDb().query<{ author_user_id: number; hidden: boolean }>(
-        `SELECT author_user_id, hidden_at IS NOT NULL AS hidden FROM ${appSchemaIdent(
-          slug
-        )}.shared_kv WHERE key = $1 LIMIT 1`,
-        [key]
-      )
-    ).rows;
+    const block = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { blockId: true, manifest: true },
+    });
+    if (!block) return null;
+    const { resolveSharedItem } = await import('~/server/services/apps/shared-item-key');
+    const item = await resolveSharedItem({
+      appBlockId,
+      blockId: block.blockId,
+      manifest: block.manifest,
+      key,
+    });
+    if (item.kind === 'ambiguous') {
+      logToAxiom({
+        name: 'app-sub-listing-shared-key-ambiguous',
+        type: 'warning',
+        appBlockId,
+      }).catch(() => null);
+    }
+    return item.kind === 'found' ? { authorUserId: item.authorUid, hidden: item.hidden } : null;
   } catch (err) {
-    // An unprovisioned schema or an unavailable apps database cannot prove the item exists.
+    // A store we cannot read cannot prove the item is missing.
     logToAxiom({
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
@@ -290,24 +305,44 @@ export async function readSharedItemForSubListing(
     }).catch(() => null);
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
-  const row = rows[0];
-  return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
 }
 
 /**
- * Owner of `imageId` if an anonymous viewer may see it, else null. A card shows its image to
- * every store visitor, so this reuses `getImage`'s non-moderator read rather than restating
- * its visibility rule. Render re-checks that the image's post is still public and the
- * per-viewer maturity (`hydrateSubListingCards` / `projectSubListingCard`).
+ * Owner of `imageId` if a store visitor would see it on a card, else null. Two reads: `getImage`'s
+ * non-moderator read (reviewed, not Blocked, readable by an anonymous viewer), reused rather than
+ * restating its visibility rule; and the card's own requirement that the image is in a published,
+ * non-private post (`isImageInPublicPost`), which `getImage` does not impose on a postless article
+ * cover or bounty image. Render re-checks the post and the per-viewer maturity
+ * (`hydrateSubListingCards` / `projectSubListingCard`).
  */
 async function publicImageOwner(imageId: number): Promise<number | null> {
   const { getImage } = await import('~/server/services/image.service');
+  let owner: number;
   try {
-    const image = await getImage({ id: imageId, isModerator: false });
-    return image.user.id;
+    owner = (await getImage({ id: imageId, isModerator: false })).user.id;
   } catch (err) {
     if (err instanceof TRPCError && err.code === 'NOT_FOUND') return null;
     throw err;
+  }
+  return (await isImageInPublicPost(dbRead, imageId)) ? owner : null;
+}
+
+/**
+ * The image rule for a card, shared by the in-app publish and the catalog sync: `imageId` must
+ * be publicly visible, in a published non-private post, and uploaded by the item's author.
+ */
+async function assertCardImage(imageId: number | null, authorUserId: number): Promise<void> {
+  if (imageId == null) return;
+  const owner = await publicImageOwner(imageId);
+  if (owner == null) {
+    throw new SubListingError(
+      400,
+      'image_not_public',
+      'The image must be public: in a published post and reviewed'
+    );
+  }
+  if (owner !== authorUserId) {
+    throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
   }
 }
 
@@ -361,25 +396,13 @@ export async function upsertSubListing(args: {
     );
   }
 
-  const item = await readSharedItemForSubListing(parent.blockId, itemKey);
+  const item = await readSharedItemForSubListing(args.appBlockId, itemKey);
   if (!item || item.hidden) throw new SubListingError(404, 'item_not_found', 'Item not found');
   if (item.authorUserId !== user.id) {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
   }
 
-  if (content.imageId != null) {
-    const owner = await publicImageOwner(content.imageId);
-    if (owner == null) {
-      throw new SubListingError(
-        400,
-        'image_not_public',
-        'The image must be public: in a published post and reviewed'
-      );
-    }
-    if (owner !== user.id) {
-      throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
-    }
-  }
+  await assertCardImage(content.imageId, user.id);
 
   try {
     const safe = await assertSharedTextSafe({
@@ -726,6 +749,7 @@ export const upsertCatalogItemBodySchema = z
   .object({
     title: z.string().max(1000),
     tagline: z.string().max(2000).nullish(),
+    imageId: z.number().int().positive().nullish(),
     contentRating: z.enum(APP_SUB_LISTING_CONTENT_RATINGS).nullish(),
     creatorUserId: z.number().int().positive().nullish(),
   })
@@ -795,6 +819,7 @@ export async function upsertCatalogSubListing(args: {
     itemKey: args.externalId,
     title: parsed.data.title,
     tagline: parsed.data.tagline,
+    imageId: parsed.data.imageId,
     subPath: args.externalId,
     contentRating: parsed.data.contentRating,
   });
@@ -845,6 +870,8 @@ export async function upsertCatalogSubListing(args: {
       rate.retryAfterSeconds
     );
   }
+
+  await assertCardImage(content.imageId, author.id);
 
   try {
     const safe = await assertSharedTextSafe({
@@ -1237,7 +1264,10 @@ export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
   itemKey: string;
   change: 'withdrawn' | 'hidden';
-  /** For `withdrawn`: only the author's own item follows their withdraw. */
+  /**
+   * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
+   * alone may name another author's item (the document store: one key in several collections).
+   */
   authorUserId?: number;
   /** For `hidden`: the moderator who hid the shared row. */
   moderatorId?: number;
@@ -1262,7 +1292,7 @@ export async function syncSubListingForSharedRow(
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
       itemKey: args.itemKey,
-      ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
+      ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
     // its compare-and-set. Best-effort on its own: a failed touch must not stop the transition.
@@ -1309,7 +1339,16 @@ const QUEUE_WHERE = {
   OR: [{ status: 'pending' }, { status: 'approved', pendingSubmittedAt: { not: null } }],
 } satisfies Prisma.AppSubListingWhereInput;
 
-const imageSelect = { select: { url: true } } as const;
+// `nsfwLevel` is for the moderator review's click-to-reveal only: this read is behind
+// `moderatorProcedure` (`listSubListingQueue`), never a public projection.
+const imageSelect = { select: { url: true, nsfwLevel: true } } as const;
+
+/**
+ * The image a queue row shows, as the moderator review's click-to-reveal reads it: its level
+ * (`ReviewMediaReveal`). `imageUrl` is the stored image key; `imageNsfwLevel` is null when the
+ * row has no image.
+ */
+type SubListingQueueImage = { imageUrl: string | null; imageNsfwLevel: number | null };
 
 export type SubListingQueueRow = {
   id: string;
@@ -1320,8 +1359,8 @@ export type SubListingQueueRow = {
   author: { id: number; username: string | null; image: string | null };
   /** Where an off-site parent's card links to; null for an on-site parent. */
   externalHref: string | null;
-  live: SubListingContent & { imageUrl: string | null };
-  pending: (SubListingContent & { imageUrl: string | null; submittedAt: Date }) | null;
+  live: SubListingContent & SubListingQueueImage;
+  pending: (SubListingContent & SubListingQueueImage & { submittedAt: Date }) | null;
   createdAt: Date;
   moderatedAt: Date | null;
   /** Echoed back by `moderateSubListing`, so a decision applies only to what was shown. */
@@ -1387,6 +1426,7 @@ export async function listSubListingQueue(
           subPath: r.subPath,
           contentRating: r.contentRating,
           imageUrl: r.image?.url ?? null,
+          imageNsfwLevel: r.image?.nsfwLevel ?? null,
         },
         pending:
           r.pendingSubmittedAt && r.pendingTitle != null && r.pendingSubPath != null
@@ -1397,6 +1437,7 @@ export async function listSubListingQueue(
                 subPath: r.pendingSubPath,
                 contentRating: r.pendingContentRating,
                 imageUrl: r.pendingImage?.url ?? null,
+                imageNsfwLevel: r.pendingImage?.nsfwLevel ?? null,
                 submittedAt: r.pendingSubmittedAt,
               }
             : null,
@@ -1439,12 +1480,12 @@ async function isSharedItemLive(row: {
 }): Promise<boolean> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
-    select: { kind: true, appBlock: { select: { blockId: true } } },
+    select: { kind: true, appBlockId: true },
   });
   // An off-site parent's items have no shared row: its platform withdraws them instead.
   if (parent?.kind === 'offsite') return true;
-  if (!parent?.appBlock) return false;
-  const item = await readSharedItemForSubListing(parent.appBlock.blockId, row.itemKey);
+  if (!parent?.appBlockId) return false;
+  const item = await readSharedItemForSubListing(parent.appBlockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.
   return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }

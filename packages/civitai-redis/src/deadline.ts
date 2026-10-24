@@ -11,7 +11,8 @@
  * readers degrade through.
  *
  * SCOPE: cluster client. The system (sysRedis) client gets its own, longer backstop through
- * `withTimeout` below (REDIS_SYS_COMMAND_TIMEOUT_MS), on top of the app's withSysReadDeadline.
+ * `withTimeout` below (REDIS_SYS_COMMAND_TIMEOUT_MS), on top of the app's withSysReadDeadline;
+ * its timeouts feed the sys self-heal's timeout-rate trigger (./sys-timeouts).
  * What #2556/#2586 reverted on the sys client was a socket-level `socketTimeout`, which TEARS
  * THE SOCKET DOWN and turned a transient half-open into a reconnect storm; a promise race like
  * this one only stops the caller waiting and never touches the connection.
@@ -40,12 +41,28 @@ export function withCommandDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
  *
  * Also used to bound the self-heal reconnects (a `connect()` that eagerly dials a dead node never
  * settles on its own) and the sys client's per-command backstop.
+ *
+ * `onTimeout` runs when the timer fires, before the rejection; the sys backstop uses it to count
+ * timeouts for the sys self-heal (./sys-timeouts).
  */
-export function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+export function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  message: string,
+  onTimeout?: () => void
+): Promise<T> {
   if (!ms || ms <= 0) return p;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => {
+      try {
+        onTimeout?.();
+      } catch {
+        // Observability only: a throwing hook must neither stop the rejection (the caller would
+        // wait forever) nor escape the timer as an uncaught exception.
+      }
+      reject(new Error(message));
+    }, ms);
   });
   return Promise.race([p, deadline]).finally(() => {
     if (timer) clearTimeout(timer);

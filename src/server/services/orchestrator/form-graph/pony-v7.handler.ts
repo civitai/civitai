@@ -1,6 +1,6 @@
 /** Pony V7 handler for the form-graph lane — Euler-fixed. */
 
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import type { ComfyPonyV7CreateImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';

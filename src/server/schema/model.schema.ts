@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { publishedDateSchema } from '~/shared/utils/published-range';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
@@ -30,6 +31,11 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
+import {
+  metricVisibilityChoicesSchema,
+  metricVisibilityMetaFromChoices,
+  type MetricVisibilitySettings,
+} from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
@@ -89,10 +95,9 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
-  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
-  // default because an empty result is the correct answer on a browse feed — the
-  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
-  periodFallback: z.boolean().optional(),
+  /** First and last day published, UTC `YYYY-MM-DD`, both inclusive. */
+  publishedFrom: publishedDateSchema.optional(),
+  publishedTo: publishedDateSchema.optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -139,13 +144,16 @@ export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
 /** Query contract for /api/v1/models, which parses it off `req.query` where every value is a string. */
-export const modelsEndpointSchema = getAllModelsSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
-  nsfw: booleanString().optional(),
-  primaryFileOnly: booleanString().optional(),
-  favorites: booleanString().optional().default(false),
-  hidden: booleanString().optional().default(false),
-});
+export const modelsEndpointSchema = getAllModelsSchema
+  // Not part of the documented public contract.
+  .omit({ publishedFrom: true, publishedTo: true })
+  .extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
+    nsfw: booleanString().optional(),
+    primaryFileOnly: booleanString().optional(),
+    favorites: booleanString().optional().default(false),
+    hidden: booleanString().optional().default(false),
+  });
 
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
@@ -211,11 +219,28 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const checkSfwFaceSchema = z.object({
+  sfwName: z.string().max(255).optional(),
+  sfwDescription: z.string().max(50000).optional(),
+  modelId: z.number().optional(),
+});
+export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
+
+export const draftSfwFaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  description: z.string().max(50000).nullish(),
+  modelId: z.number().optional(),
+});
+
 export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
+  sfwName: z.string().trim().max(255).nullish(),
+  sfwDescription: getSanitizedStringSchema().nullish(),
+  coverImageId: z.number().int().positive().nullish(),
+  sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),
@@ -236,8 +261,14 @@ export const modelUpsertSchema = z.object({
       hideBuzz: z.boolean().nullish(),
       hideDownloads: z.boolean().nullish(),
       hideGenerations: z.boolean().nullish(),
+      metricVisibility: metricVisibilityChoicesSchema.optional(),
     })
-    .transform((val) => val as ModelMeta | null)
+    .transform(
+      ({ metricVisibility, ...val }) =>
+        (metricVisibility
+          ? { ...val, ...metricVisibilityMetaFromChoices(metricVisibility) }
+          : val) as ModelMeta | null
+    )
     .nullish(),
   availability: z.enum(Availability).optional(),
 });
@@ -319,6 +350,8 @@ export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean()
 
 export type SetModelSfwOnlyInput = z.infer<typeof setModelSfwOnlySchema>;
 export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boolean() });
+export type SetModelPoiInput = z.infer<typeof setModelPoiSchema>;
+export const setModelPoiSchema = z.object({ id: z.number(), poi: z.boolean() });
 
 export type MinorFlagSnapshot = {
   at: string;
@@ -331,6 +364,19 @@ export type MinorFlagSnapshot = {
   prevGalleryLevel?: number | null;
   prevLockedProperties?: string[];
   prevMinorImageIds?: number[];
+};
+
+/** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
+export type PoiFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
 };
 
 export type ModelMeta = Partial<{
@@ -382,12 +428,33 @@ export type ModelMeta = Partial<{
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  poiFlagSnapshot: PoiFlagSnapshot;
+  /** A file shared with a real-person model that nothing has been applied for: a moderator's lead. */
+  poiHashMatch: { at: string; hash: string };
+  /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
+  poiHashCleared: { at: string };
   textScanFlags: TextScanFlags;
+  /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
+  modelRules: {
+    ruleIds: number[];
+    workflowId: string;
+    textHash: string;
+    at: string;
+    /** Absent for an LLM match. A literal one carries a synthetic `workflowId` of `literal:<textHash>`. */
+    source?: 'literal';
+  };
+  /**
+   * Rules a moderator approved by republishing, for the text they reviewed: a rescan of that same
+   * text does not act on them again, while edited text is judged afresh.
+   */
+  modelRulesCleared: { ruleIds: number[]; textHash: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
+  // Legacy: read as `true` = hide, otherwise inherit. Saves now write `metricVisibility` and clear these.
   hideBuzz: boolean | null;
   hideDownloads: boolean | null;
   hideGenerations: boolean | null;
+  metricVisibility: MetricVisibilitySettings;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
@@ -530,12 +597,22 @@ export const getResourceSelectSchema = z.object({
   filterTypes: z.enum(ModelType).array().default([]),
   filterBaseModels: z.string().array().default([]),
   filterLoaded: z.boolean().default(false),
+  filterTurbo: z.boolean().default(false),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),
+  // A pasted model / version link: the same query scoped to that id, without the type and
+  // base-model scope so the picker can say which of them hid it.
+  lookup: z
+    .object({
+      modelId: z.number().int().positive().optional(),
+      modelVersionId: z.number().int().positive().optional(),
+    })
+    .refine((x) => x.modelId || x.modelVersionId)
+    .optional(),
 });
 
 export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;

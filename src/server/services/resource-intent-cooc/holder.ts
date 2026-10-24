@@ -26,6 +26,9 @@ import {
  * callers share one in-flight check. Once a snapshot is held, a check never blocks a request.
  *
  * Study: a pinned study snapshot by content hash, refused once its pin passes.
+ *
+ * `resource-intent-tags/holder.ts` copies this check/flight/timeout state machine (adding a flag
+ * gate, an abort and no overlapping loads): a fix to one likely applies to the other.
  */
 
 export const COOC_SNAPSHOT_POLL_MS = 5 * 60_000;

@@ -13,7 +13,8 @@
  */
 import { execFileSync } from 'node:child_process';
 
-const IMAGE = process.env.REDIS_CLUSTER_IT_IMAGE ?? 'redis:7.4-alpine';
+/** Image for every integration-test container (REDIS_CLUSTER_IT_IMAGE overrides it). */
+export const IMAGE = process.env.REDIS_CLUSTER_IT_IMAGE ?? 'redis:7.4-alpine';
 const PORT = 6379;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -34,7 +35,7 @@ const RUN_ID = (process.env.REDIS_CLUSTER_IT_RUN_ID ?? String(process.pid)).repl
 /** Candidate /24s: 172.29.0.0/24 .. 172.29.255.0/24, tried from a per-name, per-run offset. */
 const SUBNET_CANDIDATES = 256;
 
-function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
+export function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
   try {
     return execFileSync('docker', args, {
       encoding: 'utf8',
@@ -47,6 +48,54 @@ function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
   }
 }
 
+/**
+ * `docker rm -f` each named container, then re-check and retry: a `docker run` killed by
+ * DOCKER_CALL_TIMEOUT_MS can still be created by the daemon after the first `rm -f`, and a
+ * timed-out `rm` is swallowed by allowFail.
+ */
+export function removeContainers(names: readonly string[]): void {
+  for (const c of names) docker(['rm', '-f', c], { allowFail: true });
+  for (let recheck = 0; recheck < 2; recheck++) {
+    const left = names.filter(
+      (c) => docker(['ps', '-aq', '--filter', `name=^${c}$`], { allowFail: true }).trim() !== ''
+    );
+    if (left.length === 0) return;
+    for (const c of left) docker(['rm', '-f', c], { allowFail: true });
+  }
+}
+
+/** `name` with this run's suffix, so concurrent runs never share a container or network name. */
+export function runScopedName(name: string): string {
+  return `${name}-${RUN_ID}`;
+}
+
+/**
+ * Create a docker network named `name` on the first free candidate /24; returns its first 3
+ * octets. Each run claims its own /24 — docker rejects a network whose subnet overlaps an
+ * existing one, so this walks candidate subnets until one is free.
+ */
+export function createRunNetwork(name: string): string {
+  let offset = 0;
+  for (const ch of name) offset = (offset * 31 + ch.charCodeAt(0)) % SUBNET_CANDIDATES;
+  let lastErr = '';
+  for (let k = 0; k < SUBNET_CANDIDATES; k++) {
+    const prefix = `172.29.${(offset + k) % SUBNET_CANDIDATES}`;
+    try {
+      docker(['network', 'create', '--subnet', `${prefix}.0/24`, name]);
+      return prefix;
+    } catch (err) {
+      lastErr = String((err as { stderr?: unknown }).stderr ?? err);
+      if (!/overlap/i.test(lastErr)) {
+        throw new Error(`docker network create ${name} failed: ${lastErr.trim()}`);
+      }
+    }
+  }
+  throw new Error(
+    `no free /24 under 172.29.0.0/16 for ${name} (every candidate overlaps an existing ` +
+      `docker network). Last error: ${lastErr.trim()}`
+  );
+}
+
 export class DockerRedisCluster {
   /** Current address of each node, by index (set by `start()`). */
   readonly ips: string[] = [];
@@ -56,7 +105,7 @@ export class DockerRedisCluster {
 
   /** @param name unique per test file; the per-run suffix is appended to it. */
   constructor(name: string) {
-    this.name = `${name}-${RUN_ID}`;
+    this.name = runScopedName(name);
     this.containers = [1, 2, 3].map((i) => `${this.name}-${i}`);
   }
 
@@ -72,7 +121,7 @@ export class DockerRedisCluster {
 
   async start(): Promise<void> {
     this.teardown(); // only this run's names: a leftover from a crashed run with the same id
-    this.subnetPrefix = this.createNetwork();
+    this.subnetPrefix = createRunNetwork(this.name);
     this.ips.splice(0, this.ips.length, ...[11, 12, 13].map((h) => this.addr(h)));
     this.containers.forEach((c, i) =>
       docker([
@@ -107,31 +156,8 @@ export class DockerRedisCluster {
     await this.waitHealthy();
   }
 
-  /** Create this run's network on the first free candidate /24; returns its first 3 octets. */
-  private createNetwork(): string {
-    let offset = 0;
-    for (const ch of this.name) offset = (offset * 31 + ch.charCodeAt(0)) % SUBNET_CANDIDATES;
-    let lastErr = '';
-    for (let k = 0; k < SUBNET_CANDIDATES; k++) {
-      const prefix = `172.29.${(offset + k) % SUBNET_CANDIDATES}`;
-      try {
-        docker(['network', 'create', '--subnet', `${prefix}.0/24`, this.name]);
-        return prefix;
-      } catch (err) {
-        lastErr = String((err as { stderr?: unknown }).stderr ?? err);
-        if (!/overlap/i.test(lastErr)) {
-          throw new Error(`docker network create ${this.name} failed: ${lastErr.trim()}`);
-        }
-      }
-    }
-    throw new Error(
-      `no free /24 under 172.29.0.0/16 for ${this.name} (every candidate overlaps an existing ` +
-        `docker network). Last error: ${lastErr.trim()}`
-    );
-  }
-
   teardown(): void {
-    for (const c of this.containers) docker(['rm', '-f', c], { allowFail: true });
+    removeContainers(this.containers);
     docker(['network', 'rm', this.name], { allowFail: true });
   }
 
@@ -178,8 +204,24 @@ export class DockerRedisCluster {
     return Date.now();
   }
 
+  /** Raw `redis-cli` on node `i` (e.g. to drive a slot migration); returns trimmed stdout. */
+  redisCli(i: number, args: string[]): string {
+    return this.cli(i, args);
+  }
+
+  /** Cluster node id of node `i`. */
+  nodeId(i: number): string {
+    return this.cli(i, ['cluster', 'myid']);
+  }
+
   stop(i: number): void {
     docker(['stop', '-t', '1', this.containers[i]]);
+  }
+
+  /** Start node `i` again after `stop(i)` (same address); resolves once the cluster is healthy. */
+  async restart(i: number): Promise<void> {
+    docker(['start', this.containers[i]]);
+    await this.waitHealthy();
   }
 
   private async waitHealthy(): Promise<void> {

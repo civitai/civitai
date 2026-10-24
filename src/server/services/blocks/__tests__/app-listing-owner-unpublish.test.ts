@@ -146,6 +146,12 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       // Writes `content_rating` only, and is recorded right after a go-live's own status
       // event — so it is routinely the newest event and must not displace that one.
       'rating-change',
+      // Document-store takedowns: they change a row in the app's document store, nothing
+      // in `app_listings`.
+      'storage-doc-hide',
+      'storage-doc-unhide',
+      'storage-doc-delete',
+      'storage-doc-dismiss',
     ]);
   });
 
@@ -169,6 +175,12 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     // `app_listings` is written at all — the rows live in a per-app schema in a
     // different database; this taxonomy only records that it happened.
     'purge-user-storage',
+    // A moderator hid, unhid or deleted one user-authored document in the app's
+    // document store — a different database; nothing in `app_listings` moves.
+    'storage-doc-hide',
+    'storage-doc-unhide',
+    'storage-doc-delete',
+    'storage-doc-dismiss',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

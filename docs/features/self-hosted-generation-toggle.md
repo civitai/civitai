@@ -39,7 +39,7 @@ The implementation followed the plan; the notable specifics and deviations:
 
 ## The crux: what "self-hosted" means in code
 
-The input types that route to our GPUs (provided by `@dev`, from `@civitai/client`):
+The input types that route to our GPUs (provided by `@dev`, from `@civitai/orchestration-client`):
 
 | Input type                | Routed to   |
 | ------------------------- | ----------- |

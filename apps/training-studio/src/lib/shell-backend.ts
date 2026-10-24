@@ -10,6 +10,7 @@ import type {
 } from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
+import type { TrainingServiceStatus } from '$lib/service-status-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -109,12 +110,13 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
-  epochArchive: async (workflowId) => {
-    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
-      method: 'POST',
-    });
+  epochArchive: async (workflowId, kind) => {
+    const res = await fetch(
+      `/api/epoch-archive?id=${encodeURIComponent(workflowId)}&kind=${kind}`,
+      { method: 'POST' }
+    );
     if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
-    return (await res.json()) as EpochArchive;
+    return (await res.json()) as EpochArchive[];
   },
 
   deleteTraining: async (workflowId) => {
@@ -124,13 +126,15 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
   },
 
-  continueQuote: async (workflowId, fromEpoch, addEpochs) => {
-    const res = await fetch(
-      `/api/continue-training?id=${encodeURIComponent(
-        workflowId
-      )}&fromEpoch=${fromEpoch}&addEpochs=${addEpochs}`
-    );
-    if (!res.ok) throw new Error(await res.text().catch(() => 'Could not price the continuation.'));
+  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
+    const params = new URLSearchParams({
+      id: workflowId,
+      fromEpoch: String(fromEpoch),
+      addEpochs: String(addEpochs),
+    });
+    for (const currency of currencies) params.append('currencies', currency);
+    const res = await fetch(`/api/continue-training?${params}`);
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
     return (await res.json()) as { cost: number | null; steps?: number };
   },
 
@@ -140,10 +144,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies }),
     });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(detail || 'Could not start training.');
-    }
+    if (!res.ok) throw new Error(await messageOf(res, 'Could not start training.'));
     return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
@@ -166,5 +167,11 @@ export const shellBackend: StudioBackend = {
     const res = await fetch('/api/buzz');
     if (!res.ok) return null;
     return (await res.json()) as { yellow: number; green: number; blue: number } | null;
+  },
+
+  getServiceStatus: async () => {
+    const res = await fetch('/api/training-status');
+    if (!res.ok) return null;
+    return (await res.json()) as TrainingServiceStatus;
   },
 };

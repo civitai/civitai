@@ -31,20 +31,40 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
       "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
       "needsReview" text, "userId" int DEFAULT 1, index int DEFAULT 0, "postId" int,
-      poi boolean, minor boolean, ingestion text DEFAULT 'Scanned',
-      "modelRestricted" boolean DEFAULT false
+      poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+      "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
+      "scanJobs" jsonb
     );
-    CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp);
+    CREATE TABLE "Article" (
+      id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,
+      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned'
+    );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, status text);
-    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, index int, status text);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public'
+    );
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY, "modelId" int, index int, status text, "publishedAt" timestamp,
+      availability "Availability" DEFAULT 'Public'
+    );
     CREATE TABLE "Post" (
-      id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp
+      id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp,
+      availability "Availability" DEFAULT 'Public', "collectionId" int
+    );
+    CREATE TABLE "Bounty" (
+      id int PRIMARY KEY, "userId" int DEFAULT 1, availability "Availability" DEFAULT 'Public'
+    );
+    CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL);
+    CREATE TABLE "CollectionContributor" (
+      "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
     );
   `);
   const raw = pgliteRaw(db);
@@ -52,7 +72,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "Image", "Article", "ImageConnection";`);
+  await db.exec(`TRUNCATE "Image", "Article", "ImageConnection", "Bounty", "Post";`);
 });
 
 const coverOf = async (entityId: number, entityType = 'Article') => {
@@ -96,6 +116,7 @@ describe('getEntityCoverImage, an Article with content images', () => {
   it('keeps a bounty on its lowest connected image', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, url) VALUES (40, 'a'), (50, 'b');
+      INSERT INTO "Bounty" (id) VALUES (7);
       INSERT INTO "ImageConnection" VALUES (50, 7, 'Bounty'), (40, 7, 'Bounty');
     `);
     expect(await coverOf(7, 'Bounty')).toBe(40);
@@ -103,7 +124,10 @@ describe('getEntityCoverImage, an Article with content images', () => {
 
   it('keeps each entity in a mixed batch on its own cover', async () => {
     await db.exec(`
-      INSERT INTO "Image" (id, url) VALUES (10, 'content'), (20, 'cover'), (40, 'bounty'), (60, 'image');
+      INSERT INTO "Image" (id, url, "postId") VALUES
+        (10, 'content', null), (20, 'cover', null), (40, 'bounty', null), (60, 'image', 2);
+      INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (2, 1, now() - interval '1 day');
+      INSERT INTO "Bounty" (id) VALUES (1);
       INSERT INTO "Article" VALUES (1, 20, now());
       INSERT INTO "ImageConnection" VALUES (10, 1, 'Article'), (40, 1, 'Bounty');
     `);

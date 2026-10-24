@@ -10,6 +10,11 @@ import {
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  readListingMediaSplit,
+  readListingRedSlotAssets,
+} from '~/server/services/blocks/listing-media-split.service';
+import { ratingFloorAssets } from '~/shared/utils/listing-media-split';
 
 export const RATING_CHANGE_ACTION =
   'rating-change' satisfies (typeof APP_LISTING_MODERATION_ACTIONS)[number];
@@ -28,12 +33,14 @@ export type ListingRatingAsset = {
   imageId: number;
   nsfwLevel: number | null;
   ingestion: string | null;
+  /** A civitai.red icon / cover override (`ratingFloorAssets` leaves it out of a split's floor). */
+  redSlot?: boolean;
 };
 
 type RatingEventWriter = Pick<Prisma.TransactionClient, 'appListingModerationEvent'>;
 type RatingAssetReader = Pick<
   Prisma.TransactionClient,
-  'appListing' | 'appListingScreenshot' | 'image'
+  'appListing' | 'appListingScreenshot' | 'image' | '$queryRaw'
 >;
 
 const ratingLabel = (rating: string | null) =>
@@ -92,7 +99,11 @@ export async function recordListingRatingChange(
   return true;
 }
 
-/** A listing's attached assets (icon, cover, screenshots) with their current levels. */
+/**
+ * A listing's attached assets (icon, cover, screenshots, then its civitai.red icon / cover
+ * overrides, marked `redSlot`) with their current levels. An image used both in its own slot and
+ * as an override appears once for each, so a split, which drops the override, still keeps it.
+ */
 export async function loadListingRatingAssets(
   db: RatingAssetReader,
   appListingId: string
@@ -106,6 +117,7 @@ export async function loadListingRatingAssets(
     where: { appListingId, imageId: { not: null } },
     select: { imageId: true },
   });
+  const redSlots: ListingRatingAsset[] = await readListingRedSlotAssets(db, appListingId);
   const imageIds = [
     ...new Set(
       [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
@@ -113,17 +125,20 @@ export async function loadListingRatingAssets(
       )
     ),
   ];
-  if (imageIds.length === 0) return [];
+  if (imageIds.length === 0) return redSlots;
   const images = await db.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, nsfwLevel: true, ingestion: true },
   });
   const byId = new Map(images.map((i) => [i.id, i]));
-  return imageIds.map((imageId) => ({
-    imageId,
-    nsfwLevel: byId.get(imageId)?.nsfwLevel ?? null,
-    ingestion: byId.get(imageId)?.ingestion ?? null,
-  }));
+  return [
+    ...imageIds.map((imageId) => ({
+      imageId,
+      nsfwLevel: byId.get(imageId)?.nsfwLevel ?? null,
+      ingestion: byId.get(imageId)?.ingestion ?? null,
+    })),
+    ...redSlots,
+  ];
 }
 
 /**
@@ -143,7 +158,10 @@ export async function recordListingRatingChangeAfterCommit(args: {
 }): Promise<void> {
   if (args.before === args.after) return;
   try {
-    const assets = await loadListingRatingAssets(dbWrite, args.appListingId);
+    const assets = ratingFloorAssets(
+      await loadListingRatingAssets(dbWrite, args.appListingId),
+      await readListingMediaSplit(dbWrite, args.appListingId)
+    );
     // A raise that lands exactly on what the media derives to is the media's doing; any
     // other move (a lowering, an override above the media) was the review's.
     const afterLevel = nsfwLevelFromContentRating(args.after);
@@ -172,7 +190,9 @@ const isSettled = (asset: ListingRatingAsset) =>
  * The rating a listing should carry after a moderator re-rated one of its images, or `null`
  * to leave it alone.
  *
- * The target is `max(declared, derived from the current assets)`. RAISING to it is
+ * The target is `max(declared, derived from the current assets)`, where a split listing's
+ * assets are only its civitai.com-eligible ones, judged by each image's level on the side of
+ * the re-rate being compared (`ratingFloorAssets`). RAISING to it is
  * unconditional. LOWERING to it is the dangerous direction on a maturity gate, so it needs
  * all of:
  *   - a declared rating to floor at (see the `declared` parameter).
@@ -199,8 +219,10 @@ export function resolveReDerivedListingRating(args: {
   previousNsfwLevel: number | null;
   /** The `after` of the listing's newest `review` rating-change event, if any. */
   reviewedRating: string | null;
+  mediaSplit: boolean;
 }): string | null {
-  const { stored, assets } = args;
+  const { stored } = args;
+  const assets = ratingFloorAssets(args.assets, args.mediaSplit);
   const storedLevel = nsfwLevelFromContentRating(stored);
   // A declared value outside the ladder is no floor at all: it is never written back, and
   // it must not be read as the lowest rung, which would let a rating drop to it.
@@ -217,8 +239,12 @@ export function resolveReDerivedListingRating(args: {
   if (!floor) return null;
   if (!assets.every(isSettled)) return null;
   const derivedBefore = deriveContentRatingFromAssets(
-    assets.map((a) =>
-      a.imageId === args.reratedImageId ? { nsfwLevel: args.previousNsfwLevel } : a
+    ratingFloorAssets(
+      args.assets.map((a) =>
+        // Spread, so a civitai.red override keeps its `redSlot` mark on the "before" side too.
+        a.imageId === args.reratedImageId ? { ...a, nsfwLevel: args.previousNsfwLevel } : a
+      ),
+      args.mediaSplit
     )
   );
   if (Math.max(nsfwLevelFromContentRating(derivedBefore), floorLevel) !== storedLevel) return null;

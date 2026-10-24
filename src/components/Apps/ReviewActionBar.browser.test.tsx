@@ -374,6 +374,7 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     mocks.assets.data = assetsWithShot2At(4);
     bar(reRated({ approveRating: null }));
     await approveVisibleWithoutAlert();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
     expect(mocks.assetsQuery).not.toHaveBeenCalled();
   });
 
@@ -387,10 +388,12 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     );
   });
 
-  test('while the levels are loading it says it is checking, and approve stays available', async () => {
+  test('🔴 while the levels are loading it says it is checking, and approve waits for them', async () => {
     bar(reRated());
     await expect.element(page.getByTestId('apps-onsite-rating-checking')).toBeInTheDocument();
     await approveVisibleWithoutAlert();
+    // Approving now would send a split decision nobody has seen.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
   });
 
   test('a failed asset read is said out loud rather than read as "nothing to warn about"', async () => {
@@ -399,5 +402,71 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     await expect.element(page.getByTestId('apps-onsite-rating-unchecked')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-rating-mismatch').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-onsite-rating-checking').elements()).toHaveLength(0);
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
+  });
+
+  test('🔴 a split the app cannot read: no choice, a note, and the on-site approve sends no decision', async () => {
+    // `null` = the write role cannot read the record. The operator's rule (2026-10-18): approve
+    // proceeds with NO split decision, exactly as before the split existed.
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: null };
+    bar(reRated());
+    // The WHOLE note, pinned literally: it states what this approve does, so a reword is a claim
+    // change (the on-site approve floors the rating by all media; an earlier split is not applied).
+    const note = page.getByTestId('apps-media-split-unreadable');
+    await expect.element(note).toBeInTheDocument();
+    expect((note.element().textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
+      'This environment cannot read whether this listing’s media is split between civitai.com and civitai.red. Approving approves the listing with its rating covering all of its media, as before media splits existed. Any split recorded earlier is kept on file but not applied while this environment cannot read it. Split choices are unavailable until the database grant for the media-split record is fixed.'
+    );
+    expect(page.getByTestId('apps-media-split').elements()).toHaveLength(0);
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const [name, vars] = mocks.mutate.mock.calls[0];
+    expect(name).toBe('approve');
+    expect(vars).toEqual({ publishRequestId: 'req-1', approvalNotes: undefined });
+    expect(vars).not.toHaveProperty('mediaSplit');
+  });
+
+  test('🔴 an already-split listing keeps its split by default on the on-site approve', async () => {
+    mocks.assets.data = { ...assetsWithShot2At(4), mediaSplitApproved: true };
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split-current')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
+  });
+
+  test('🔴 the media split: the warning follows the choice and approve sends it', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    await page.getByTestId('apps-media-split-split').click();
+    // Split: only the civitai.com-eligible images floor the rating — the PG-13 cover now leads.
+    await expect
+      .element(page.getByTestId('apps-onsite-rating-mismatch'))
+      .toHaveTextContent('Approving raises the store listing to PG-13.');
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'split',
+    });
+  });
+
+  test('without a choice approve sends rate-mature', async () => {
+    mocks.assets.data = assetsWithShot2At(4);
+    bar(reRated());
+    await expect.element(page.getByTestId('apps-media-split')).toBeInTheDocument();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      approvalNotes: undefined,
+      mediaSplit: 'rate-mature',
+    });
   });
 });

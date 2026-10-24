@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as GatedImagesLogic from '~/server/services/blocks/block-gated-images.logic';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
@@ -111,6 +111,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
 }));
 
 import handler from '~/pages/api/v1/blocks/collections/[id]/index';
+import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /** A scanned image with no moderation flags: what `isPublicCollectionImage` serves. */
 const SCANNED = {
@@ -323,4 +324,38 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     expect(res._status()).toBe(200);
     expect((res._json() as any).items.map((i: any) => i.mediaId)).toEqual([1, 2]);
   });
+});
+
+describe('GET /api/v1/blocks/collections/[id] — reactTicket (app reactions provenance)', () => {
+  it('each served media item carries a ticket bound to (that item, this app, this viewer)', async () => {
+    const SECRET = 'collection-endpoint-secret';
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
+    const img = (id: number) => ({
+      type: 'image',
+      data: { ...SCANNED, id, url: `i${id}`, type: 'image', width: 1, height: 1, nsfwLevel: 1 },
+    });
+    mockItems.mockResolvedValueOnce({ items: [img(11), img(12)], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const items = (res._json() as any).items as Array<{ mediaId: number; reactTicket?: string }>;
+    expect(items.map((i) => i.mediaId)).toEqual([11, 12]);
+    for (const item of items) {
+      const subject = {
+        entityType: 'image' as const,
+        entityId: item.mediaId,
+        appBlockId: 'apb',
+        sub: 'user:42',
+      };
+      expect(verifyReactTicket(item.reactTicket, subject, { secret: SECRET }).ok).toBe(true);
+      expect(
+        verifyReactTicket(item.reactTicket, { ...subject, sub: 'user:7' }, { secret: SECRET }).ok
+      ).toBe(false);
+    }
+  });
+});
+
+// The ticket cases stub a signing secret; hand it back so no case added later inherits one.
+afterEach(() => {
+  vi.unstubAllEnvs();
 });

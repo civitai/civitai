@@ -364,6 +364,9 @@ export function getCruciblePrizeWinners({
     }));
 }
 
+/** A place with a 0-Buzz amount is not a prize; every surface that lists or counts winners must filter through this. */
+export const isPaidPrize = ({ prizeAmount }: { prizeAmount: number }) => prizeAmount > 0;
+
 /** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
 export const AVG_FINISH_MIN_FIELD = 5;
 /** Below this, one lucky crucible would read as the creator's standing. */
@@ -407,6 +410,81 @@ export function getCrucibleMinVotes({
   if (!entryCount) return 0;
   // Integer division keeps an exact share exact; a float 0.75 × average can land just above it.
   return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
+}
+
+/** The fewest votes the time-adjusted bar asks for, unless the old bar is lower. */
+export const CRUCIBLE_MIN_VOTES_FLOOR = 25;
+
+type TimedVoteEntry = { voteCount: number; createdAt: Date };
+
+/** Milliseconds an entry is live between `from` and `to`, never before the crucible started. */
+function getLiveMs(createdAt: Date, startAt: Date | null, to: Date) {
+  const liveFrom = Math.max(createdAt.getTime(), startAt?.getTime() ?? 0);
+  return Math.max(0, to.getTime() - liveFrom);
+}
+
+/** 75% of the votes an entry expects, never below the floor and never above the old bar. */
+function getTimeAdjustedBar({
+  totalVotes,
+  entryCount,
+  liveMs,
+  totalLiveMs,
+}: {
+  totalVotes: number;
+  entryCount: number;
+  liveMs: number;
+  totalLiveMs: number;
+}) {
+  const oldBar = getCrucibleMinVotes({ totalVotes, entryCount });
+  if (totalLiveMs <= 0) return oldBar;
+  // Integer arithmetic so an exact 75% stays exact, as in getCrucibleMinVotes.
+  const share = Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs));
+  return Math.min(Math.max(share, CRUCIBLE_MIN_VOTES_FLOOR), oldBar);
+}
+
+/**
+ * Votes each entry needs to place when the bar follows the time it was live: a share of the votes
+ * an entry expects given how long it ran, so late entries aren't judged against the full run.
+ * Same order as `entries`. Without any live time it falls back to getCrucibleMinVotes.
+ */
+export function getCrucibleTimeAdjustedMinVotes(
+  entries: TimedVoteEntry[],
+  { startAt, endAt }: { startAt: Date | null; endAt: Date }
+) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const liveMs = entries.map((entry) => getLiveMs(entry.createdAt, startAt, endAt));
+  const totalLiveMs = liveMs.reduce((sum, ms) => sum + ms, 0);
+  return liveMs.map((ms) =>
+    getTimeAdjustedBar({ totalVotes, entryCount: entries.length, liveMs: ms, totalLiveMs })
+  );
+}
+
+/**
+ * Votes an entry submitted `now` needs to place, from the vote rate so far projected over the time
+ * left. Falls back to getCrucibleMinVotes before any entry has been live.
+ */
+export function getCrucibleLiveMinVotes({
+  entries,
+  startAt,
+  endAt,
+  now,
+}: {
+  entries: TimedVoteEntry[];
+  startAt: Date | null;
+  endAt: Date;
+  now: Date;
+}) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const totalLiveMs = entries.reduce(
+    (sum, entry) => sum + getLiveMs(entry.createdAt, startAt, now),
+    0
+  );
+  return getTimeAdjustedBar({
+    totalVotes,
+    entryCount: entries.length,
+    liveMs: Math.max(0, endAt.getTime() - now.getTime()),
+    totalLiveMs,
+  });
 }
 
 /**
@@ -531,3 +609,9 @@ export function getCrucibleJudgingBadge(
   if (judging.votesUsedUp) return { kind: 'caughtUp', label: "You're caught up here" };
   return null;
 }
+
+/** Its start has passed, but it opens only once its review finishes. */
+export const isCrucibleAwaitingReviewToStart = (
+  crucible: { status: CrucibleStatus; startAt: Date | null },
+  now = new Date()
+) => crucible.status === CrucibleStatus.Pending && !!crucible.startAt && crucible.startAt <= now;

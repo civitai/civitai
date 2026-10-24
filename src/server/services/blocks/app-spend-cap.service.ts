@@ -219,7 +219,8 @@ async function denyAppSpend(
  *     pinned key) and deny — the whole submit is rejected, so we never leave a
  *     partial reservation. A `cost <= 0` gen (cache-hit / 0-cost) adds nothing
  *     to the daily total but STILL counts toward velocity below.
- *   - Velocity: INCR the current fixed-window bucket by 1. If it exceeds the
+ *   - Velocity: INCR the current fixed-window bucket by `units` (1 unless a
+ *     multi-step workflow passes its step count). If it exceeds the
  *     max, REFUND the daily reservation and deny. The velocity counter itself
  *     is NOT refunded on a velocity-deny — a denied ATTEMPT still consumed a
  *     rate slot (standard fixed-window limiter), and the bucket self-expires.
@@ -245,9 +246,17 @@ async function denyAppSpend(
  */
 export async function reserveAppSpend(
   appBlockId: string,
-  cost: number
+  cost: number,
+  /**
+   * `units` is how many generations this reservation counts as against the
+   * VELOCITY ceiling. 1 for every single-step submit; a multi-step workflow
+   * passes its step count, so N steps cannot run for one velocity slot.
+   */
+  opts: { units?: number } = {}
 ): Promise<ReserveAppSpendResult> {
   const want = Math.max(0, Math.ceil(cost));
+  const units =
+    Number.isInteger(opts.units) && (opts.units as number) > 1 ? (opts.units as number) : 1;
   const dailyKey = appSpendDailyKey(appBlockId);
 
   let dailyReserved = 0;
@@ -287,8 +296,8 @@ export async function reserveAppSpend(
 
     // 2) VELOCITY reserve (always — 0-cost gens still count as gens).
     const velocityKey = appSpendVelocityKey(appBlockId);
-    const velocityCount = await sysRedis.incrBy(velocityKey, 1);
-    if (velocityCount <= 1) {
+    const velocityCount = await sysRedis.incrBy(velocityKey, units);
+    if (velocityCount <= units) {
       await sysRedis.expire(velocityKey, BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS);
     } else {
       const ttl = await sysRedis.ttl(velocityKey);

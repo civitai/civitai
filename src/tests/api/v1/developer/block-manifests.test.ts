@@ -91,6 +91,50 @@ beforeEach(() => {
 });
 
 describe('POST /api/v1/developer/block-manifests', () => {
+  describe('consecutive hyphens in a NEW blockId', () => {
+    const bodyFor = (blockId: string) => ({
+      ...VALID_BODY,
+      manifest: { ...VALID_BODY.manifest, blockId },
+    });
+
+    it.each(['my--app', 'a---b'])('422s a new block %s without writing', async (blockId) => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor(blockId) }), res);
+      expect(res._status).toBe(422);
+      expect(res._body).toEqual({
+        error: 'Invalid manifest',
+        details: [
+          `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`,
+        ],
+      });
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each(['my-app', 'a-b-c', 'plainapp'])('accepts a new block %s', async (blockId) => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor(blockId) }), res);
+      expect(res._status).toBe(200);
+      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts an update to an EXISTING block whose blockId contains consecutive hyphens', async () => {
+      mockDbRead.appBlock.findUnique.mockResolvedValue({
+        id: 'ab_legacy',
+        manifest: { something: 'old' },
+        status: 'approved',
+        trustTier: 'unverified',
+        renderMode: 'iframe',
+      });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('old--name') }), res);
+      expect(res._status).toBe(200);
+      expect(mockDbWrite.appBlock.upsert).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('H-1: update branch sets status=pending (re-enters moderation)', async () => {
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'ab_existing',

@@ -19,6 +19,7 @@ describe('friendly names', () => {
       'Real person definition',
       'Minor definition',
       'Scam / phishing definition',
+      'CSAM definition',
     ]);
   });
 

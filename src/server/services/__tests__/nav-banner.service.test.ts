@@ -129,7 +129,7 @@ describe('the birthday promo, through the real access rule', () => {
       homeBlock: {
         eyebrow: "Civitai's 4th Birthday",
         title: 'Civitai turns 4.',
-        body: 'Four colour teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
+        body: 'Four color teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
         cta: 'See the event',
       },
     });

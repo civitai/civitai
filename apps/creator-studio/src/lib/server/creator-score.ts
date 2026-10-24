@@ -10,6 +10,7 @@ const SCORE_KEYS = [
   'users',
   'reportsActioned',
   'reportsAgainst',
+  'staffAwarded',
 ] as const;
 
 type Scores = Partial<Record<(typeof SCORE_KEYS)[number] | 'total', number | string>>;

@@ -11,6 +11,7 @@ import {
   getUnpopulatedLeaderboards,
   isLeaderboardPopulated,
 } from '~/server/services/leaderboard.service';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
@@ -26,15 +27,54 @@ const log = createLogger('leaderboard', 'blue');
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
 // Applied uniformly across every population path so exclusion lives at the system level, not per-query.
 // Mutes only count once confirmed by a moderator (mutedAt set); an unconfirmed `muted` flag does not exclude.
-const eligibleAccountSql = (alias = 'u') =>
-  `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL`;
+// Unlike `leaderboardExcludedSql`, metric exclusion has no non-public-board waiver.
+const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
+  `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL
+    AND ${alias}.id <> ALL(${intArrayLiteral(excludedUserIds)})`;
+
+// Moderators are excluded by role, not the flag: the flag also bars event earnings, which moderators keep.
+// `isModerator` is nullable: `IS TRUE` keeps a NULL from excluding the account.
+const leaderboardExcludedSql = (alias = 'u') =>
+  `(${alias}."excludeFromLeaderboards" OR ${alias}."isModerator" IS TRUE)`;
+
+function intArrayLiteral(ids: number[]) {
+  if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
+  return `'{${ids.join(',')}}'::int[]`;
+}
+
+/** Must run before the board is sliced, or an excluded account costs the board a slot. */
+function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserIds: number[]) {
+  const excluded = new Set(excludedUserIds);
+  return rows.filter((row) => !excluded.has(row.userId));
+}
+
+const EXCLUSION_RETRY_MS = 30_000;
+
+/**
+ * Fails open after retries: readers serve today's date only, so failing closed would leave every board empty
+ * until the next run, a bigger break than listed accounts ranking for one more day.
+ */
+async function getExcludedUserIdsOrUnfiltered() {
+  try {
+    return await withRetries(getMetricExcludedUserIdsOrThrow, 3, EXCLUSION_RETRY_MS);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-metric-exclusion-unavailable',
+      message: (e as Error).message,
+    }).catch();
+    return [];
+  }
+}
 
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   log('Leaderboard job start');
 
-  await setCoverImageNsfwLevel();
+  const excludedUserIds = await getExcludedUserIdsOrUnfiltered();
+
+  await setCoverImageNsfwLevelOrLog();
 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
@@ -69,7 +109,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           }
 
           const includesCTE = query.includes('WITH ');
-          const context = { jobContext, id, query, includesCTE, addDays };
+          const context = { jobContext, id, query, includesCTE, addDays, excludedUserIds };
 
           const start = Date.now();
           log(`Leaderboard ${id} - Starting`);
@@ -95,8 +135,12 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   try {
     await limitConcurrency(tasks, 3);
     log('Leaderboards - Done');
-    await updateLegendsBoardResults();
+    await updateLegendsBoardResults(excludedUserIds);
     await setLastRun();
+    // The routers cache these boards for a day. Without this, a board read before the job
+    // finished (a late or re-run job) keeps serving that read until clear-leaderboard-cache
+    // runs at midnight: on 2026-10-19 that was an empty board, all day.
+    await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
     logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
@@ -182,7 +226,7 @@ type LegendsBoardResult = {
   metrics: Record<string, number>;
   position: number; // 1-1000
 };
-async function updateLegendsBoardResults() {
+async function updateLegendsBoardResults(excludedUserIds: number[]) {
   log('Legacy Board - Fetching');
   const legendsBoardDataRes = await pgDbReadLong.cancellableQuery<LegendsBoardResult>(`
     WITH scores AS (
@@ -206,10 +250,10 @@ async function updateLegendsBoardResults() {
       WHERE date <= now()
         AND position <= 100
         AND (
-          NOT u."excludeFromLeaderboards"
+          NOT ${leaderboardExcludedSql()}
           OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
         )
-        AND ${eligibleAccountSql()}
+        AND ${eligibleAccountSql(excludedUserIds)}
       GROUP BY "userId", "leaderboardId"
     ), positions AS (
       SELECT
@@ -244,6 +288,7 @@ type LeaderboardContext = {
   query: string;
   includesCTE: boolean;
   addDays?: number;
+  excludedUserIds: number[];
 };
 
 const updateUserLeaderboardRank = createJob(
@@ -291,10 +336,10 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     FROM scores s
     JOIN "User" u ON u.id = s."userId"
     WHERE (
-      NOT u."excludeFromLeaderboards"
+      NOT ${leaderboardExcludedSql()}
       OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
     )
-      AND ${eligibleAccountSql()}
+      AND ${eligibleAccountSql(ctx.excludedUserIds)}
     ORDER BY score DESC
     LIMIT 1000
   `);
@@ -431,11 +476,13 @@ async function imageLeaderboardPopulation(
   }
 
   // Rank
-  const userScoresArray = Object.entries(userScores)
-    .map(([userId, score]) => ({
+  const userScoresArray = withoutExcluded(
+    Object.entries(userScores).map(([userId, score]) => ({
       userId: parseInt(userId),
       ...score,
-    }))
+    })),
+    ctx.excludedUserIds
+  )
     .sort((a, b) => b.score - a.score)
     .slice(0, 1100); // Overfetch to account for deleted users
 
@@ -453,8 +500,8 @@ async function imageLeaderboardPopulation(
       row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
-    WHERE ${eligibleAccountSql()} AND u.id > 0
-      AND NOT u."excludeFromLeaderboards"
+    WHERE ${eligibleAccountSql(ctx.excludedUserIds)} AND u.id > 0
+      AND NOT ${leaderboardExcludedSql()}
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);
@@ -466,8 +513,44 @@ async function imageLeaderboardPopulation(
 type NsfwLevelRow = {
   id: number;
   nsfw: string;
+  metaType: string | null;
 };
-async function setCoverImageNsfwLevel() {
+
+/**
+ * Fails open: the boards only read the levels this writes, so a failure leaves them a day stale, while
+ * throwing here builds no board at all.
+ */
+export async function setCoverImageNsfwLevelOrLog() {
+  try {
+    await setCoverImageNsfwLevel();
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-cover-nsfw-level-failed',
+      message: (e as Error).message,
+    }).catch();
+  }
+}
+
+/**
+ * `jsonb_set` throws on a meta that is not an object, failing its whole chunk. On 2026-10-18 four
+ * array-shaped `Model.meta` rows did that and no board was built for the next day.
+ * SQL NULL counts as malformed on purpose: `meta` is NOT NULL on both tables, so one cannot occur.
+ */
+function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersion') {
+  const isWritable = (row: NsfwLevelRow) => row.metaType === 'object' || row.metaType === 'null';
+  const malformed = rows.filter((row) => !isWritable(row));
+  if (malformed.length)
+    logToAxiom({
+      type: 'error',
+      name: 'leaderboard-malformed-meta',
+      // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+      error: { table, count: malformed.length, ids: malformed.slice(0, 100).map((row) => row.id) },
+    }).catch();
+  return rows.filter(isWritable);
+}
+
+export async function setCoverImageNsfwLevel() {
   log('Setting cover image nsfw level - version');
   const { rows: versionLevels } = await pgDbReadLong.query<NsfwLevelRow>(`
     -- get version nsfw image level based on post nsfw level
@@ -479,7 +562,7 @@ async function setCoverImageNsfwLevel() {
       WHERE mv.status = 'Published'
       ORDER BY mv.id, mv.index, p.id
     )
-    SELECT level.*
+    SELECT level.*, jsonb_typeof(mv.meta) "metaType"
     FROM model_version_nsfw_level level
     JOIN "ModelVersion" mv ON mv.id = level.id
     WHERE
@@ -488,10 +571,11 @@ async function setCoverImageNsfwLevel() {
         OR (mv.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
-  const tasks = chunk(versionLevels, 500).map((level) => async () => {
-    const levelJson = JSON.stringify(level);
-    log('Setting cover image nsfw level - version');
-    const query = await pgDbWrite.cancellableQuery(`
+  const tasks = chunk(withoutMalformedMeta(versionLevels, 'ModelVersion'), 500).map(
+    (level) => async () => {
+      const levelJson = JSON.stringify(level);
+      log('Setting cover image nsfw level - version');
+      const query = await pgDbWrite.cancellableQuery(`
       -- set version nsfw image level based on post nsfw level
       WITH model_version_nsfw_level AS (
         SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
@@ -500,10 +584,11 @@ async function setCoverImageNsfwLevel() {
       SET
         meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_version_nsfw_level level
-      WHERE level.id = mv.id;
+      WHERE level.id = mv.id AND jsonb_typeof(mv.meta) IN ('object', 'null');
     `);
-    await query.result();
-  });
+      await query.result();
+    }
+  );
   await limitConcurrency(tasks, 2);
 
   log('Setting cover image nsfw level - model');
@@ -516,7 +601,7 @@ async function setCoverImageNsfwLevel() {
       FROM "ModelVersion" mv
       ORDER BY mv."modelId", mv.index
     )
-    SELECT level.*
+    SELECT level.*, jsonb_typeof(m.meta) "metaType"
     FROM model_nsfw_level level
     JOIN "Model" m ON m.id = level.id
     WHERE
@@ -525,10 +610,11 @@ async function setCoverImageNsfwLevel() {
         OR (m.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
-  const modelTasks = chunk(modelLevels, 500).map((level) => async () => {
-    const levelJson = JSON.stringify(level);
-    log('Setting cover image nsfw level - model');
-    const query = await pgDbWrite.cancellableQuery(`
+  const modelTasks = chunk(withoutMalformedMeta(modelLevels, 'Model'), 500).map(
+    (level) => async () => {
+      const levelJson = JSON.stringify(level);
+      log('Setting cover image nsfw level - model');
+      const query = await pgDbWrite.cancellableQuery(`
       -- set model nsfw image level based on version nsfw level
       WITH model_nsfw_level AS (
         SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
@@ -537,10 +623,11 @@ async function setCoverImageNsfwLevel() {
       SET
         meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_nsfw_level level
-      WHERE level.id = m.id;
+      WHERE level.id = m.id AND jsonb_typeof(m.meta) IN ('object', 'null');
     `);
-    await query.result();
-  });
+      await query.result();
+    }
+  );
   await limitConcurrency(modelTasks, 2);
 }
 
@@ -554,8 +641,11 @@ const CLICKHOUSE_INSERT_BATCH_SIZE = 500;
 export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): Promise<boolean> {
   if (!clickhouse) return false;
   log('Leaderboard', ctx.id, 'Clickhouse');
-  const scores = (await clickhouse.$query<ClickhouseScores>(ctx.query))
-    ?.slice(0, 1000)
+  const scores = withoutExcluded(
+    (await clickhouse.$query<ClickhouseScores>(ctx.query)) ?? [],
+    ctx.excludedUserIds
+  )
+    .slice(0, 1000)
     .map((s) => ({
       ...s,
       metrics: JSON.parse(s.metrics),
@@ -573,8 +663,8 @@ export async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext): 
         s.*,
         (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
       FROM scores s
-      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND ${eligibleAccountSql()}
-      WHERE NOT u."excludeFromLeaderboards"
+      JOIN "User" u ON u.id = s."userId" AND ${eligibleAccountSql(ctx.excludedUserIds)}
+      WHERE NOT ${leaderboardExcludedSql()}
     `);
     ctx.jobContext.on('cancel', query.cancel);
     await query.result();

@@ -4,39 +4,25 @@ import {
   PROM_PREFIX,
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
+import { cachedRead } from './cached-read';
 
 export const COOC_RETENTION_HEARTBEAT_METRIC =
   PROM_PREFIX + 'resource_intent_cooc_retention_last_success_timestamp_seconds';
-const READ_TTL_MS = 60_000;
 
 /**
  * A gauge whose value comes from the persisted heartbeat, so it survives pod restarts. `collect()`
  * never waits on the database: it exports the last value read and starts at most one background
- * refresh once that is older than a minute, so a saturated read pool cannot stall the scrape.
- * With no heartbeat known, the series is absent rather than 0.
+ * refresh once that is older than a minute (`cachedRead`), so a saturated read pool cannot stall the
+ * scrape. With no heartbeat known, the series is absent rather than 0.
  */
 export function createCoocRetentionHeartbeatGauge(
   read: () => Promise<Date | null>,
   registry: client.Registry,
   now: () => number = Date.now
 ) {
-  let value: Date | null = null;
-  let readAt = -Infinity;
-  let inflight: Promise<void> | null = null;
-  const refresh = () =>
-    (inflight ??= read()
-      .then(
-        (v) => {
-          value = v;
-        },
-        () => undefined
-      )
-      .finally(() => {
-        readAt = now();
-        inflight = null;
-      }));
+  const heartbeat = cachedRead(read, 60_000, now);
   return {
-    refresh,
+    refresh: heartbeat.refresh,
     gauge: new client.Gauge({
       name: COOC_RETENTION_HEARTBEAT_METRIC,
       help: 'Unix seconds at which the co-occurrence snapshot retention sweep last succeeded (persisted)',
@@ -45,7 +31,7 @@ export function createCoocRetentionHeartbeatGauge(
       labelNames: ['job'],
       registers: [registry],
       collect() {
-        if (now() - readAt >= READ_TTL_MS) void refresh();
+        const value = heartbeat.current();
         this.reset();
         if (value)
           this.set({ job: 'resource-intent-cooc-retention' }, Math.floor(value.getTime() / 1000));

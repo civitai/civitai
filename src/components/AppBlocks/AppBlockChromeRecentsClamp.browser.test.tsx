@@ -31,8 +31,16 @@
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// The row's icon is a live `appListings.getAppDetail` read (`ChromeRecentAppIcon`). This file
+// measures row height only, so the shared inert proxy answers it (no data ⇒ the generic glyph).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(),
+}));
 
 // eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';

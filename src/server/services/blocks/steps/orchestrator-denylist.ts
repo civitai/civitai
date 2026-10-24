@@ -1,3 +1,5 @@
+import { TRAINING_STEP_TYPES } from './output';
+
 /**
  * PLATFORM-INTERNAL ORCHESTRATOR STEP TYPES — the denylist for App Blocks.
  *
@@ -70,7 +72,7 @@
  *
  * 🔴 DO NOT TRUST A COUNT COPIED FROM A DOCUMENT. The live orchestrator spec
  * gained three step types between 2026-08-05 and 2026-09-16 (`imageScanning`,
- * `preprocessVideo`, `yuE2`), and the pinned `@civitai/client` did not have
+ * `preprocessVideo`, `yuE2`), and the pinned `@civitai/orchestration-client` did not have
  * them. Re-derive the population when you touch this:
  *
  *   curl -s https://orchestration.civitai.com/openapi/v2-consumers.json \
@@ -149,7 +151,7 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
  * only looked as though it did.
  */
 const PLATFORM_INTERNAL_LOOKUP = new Set<string>(
-  PLATFORM_INTERNAL_STEP_TYPES.map((t) => t.toLowerCase())
+  PLATFORM_INTERNAL_STEP_TYPES.map(foldStepTypeCase)
 );
 
 /**
@@ -194,13 +196,51 @@ export class PlatformInternalStepTypeError extends Error {
  * an entry whose lowercasing could collide with a legitimate type.
  */
 export function isPlatformInternalStepType(stepType: string): boolean {
-  return PLATFORM_INTERNAL_LOOKUP.has(stepType.toLowerCase());
+  return PLATFORM_INTERNAL_LOOKUP.has(foldStepTypeCase(stepType));
+}
+
+/**
+ * THE one case fold for comparing a caller-supplied `$type` against a server-owned
+ * list. The comparisons that use it: `isPlatformInternalStepType` (the denylist) and
+ * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
+ * listed there), so two lists cannot disagree about what "the same step type" means.
+ */
+export function foldStepTypeCase(stepType: string): string {
+  return stepType.toLowerCase();
+}
+
+const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
+  TRAINING_STEP_TYPES.map(foldStepTypeCase)
+);
+
+/**
+ * True when a CALLER-SUPPLIED `$type` names a training step type, matched
+ * case-insensitively — consistent with `isPlatformInternalStepType`, and for the same
+ * reason: how the orchestrator matches `$type` case is not knowable from here, so a
+ * refusal keyed on this must hold for either answer.
+ *
+ * 🔴 EVERY TRAINING CHECK ON A CALLER-SUPPLIED `$type` USES THIS. The sites, all in
+ * `blocks.router`:
+ *   - `assertNotTrainingStepType` — a training type is never a confirmed step;
+ *   - `refuseUnquotedTraining` — an unquoted training step is refused;
+ *   - `buildPassThroughWorkflowTags` — a training step carries `TRAINING_WORKFLOW_TAG`;
+ *   - `buildMultiStepWorkflowTags` / `multiStepTrainingType` — the same two rules for
+ *     every step of a `kind:'workflow'` body.
+ *
+ * `isTrainingStepType` (exact) is kept ONLY where the `$type` was read off a workflow
+ * the orchestrator RETURNED, and as the type guard narrowing to `TrainingStepType`:
+ *   - `splitPassThroughStep` (`steps/output.ts`) — splitting a returned step's output;
+ *   - `hasBlockTrainingStep` / `projectAppWorkflow` (`workflow.service.ts`) — reading a
+ *     returned training step.
+ */
+export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
+  return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));
 }
 
 /**
  * Fail-closed assertion for a single orchestrator `$type`.
  *
- * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has TWO
+ * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has THREE
  * enforcement sites, and they are different in kind:
  *
  *   - the registry invariant in `assertStepInvariants` — no registered entry may
@@ -208,13 +248,18 @@ export function isPlatformInternalStepType(stepType: string): boolean {
  *   - `assertPassThroughStepTypeAllowed` in `blocks.router` — the PASS-THROUGH
  *     arm (`kind:'step'` with a bare `$type`, note the SINGULAR `step`; an
  *     earlier draft of this paragraph called it `kind:'steps'` and the plural
- *     greps to nothing), which lets a block name a `$type` directly and is
- *     therefore the site where this set is the only bound. It runs on both the
+ *     greps to nothing), which lets a block name a `$type` directly, so
+ *     this set is the only bound there. It runs on both the
  *     estimate and the submit, BEFORE any orchestrator call and before any spend
  *     reservation. A denylist that the wire does not consult is decoration.
+ *   - `prepareMultiStepWorkflow` in `blocks.router` — the `kind:'workflow'` arm,
+ *     which runs it on EVERY step at the same point on both paths.
+ *
+ * Both router sites also check the step a `repeat` runs
+ * (`collectBlockStepTypes`).
  *
  * The match is case-folded (see `isPlatformInternalStepType`), so a re-cased
- * `$type` is refused on the pass-through arm too.
+ * `$type` is refused on both router arms too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {

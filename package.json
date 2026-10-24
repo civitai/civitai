@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.249",
+  "version": "5.1.360",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -61,6 +61,10 @@
     "release:training-studio:patch": "node scripts/release-app.mjs apps/training-studio training-studio-v patch",
     "release:training-studio:minor": "node scripts/release-app.mjs apps/training-studio training-studio-v minor",
     "release:training-studio:major": "node scripts/release-app.mjs apps/training-studio training-studio-v major",
+    "release:assistant-runner": "pnpm run release:assistant-runner:patch",
+    "release:assistant-runner:patch": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v patch",
+    "release:assistant-runner:minor": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v minor",
+    "release:assistant-runner:major": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v major",
     "yolo": "pnpm run release",
     "seed:scanner-policies": "tsx --env-file=.env scripts/seed-scanner-policies.ts",
     "prebuild": "pnpm build:workers",
@@ -109,7 +113,7 @@
     "test:packages:run": "node scripts/queued-check.mjs packages",
     "test:apps": "vitest --project 'app:*'",
     "test:apps:run": "node scripts/queued-check.mjs apps",
-    "test:lint-rules": "vitest run --project 'unit*' src/server/notifications/__tests__/notification-settings-polarity.test.ts src/server/schema/__tests__/track.addView.schema.test.ts src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/poi-checks-strip-benign-phrases.test.ts src/server/services/__tests__/video-leaderboard-badge-staging.test.ts src/server/services/__tests__/no-agent-ground-truth-write.test.ts src/server/services/__tests__/no-bound-make-interval.test.ts src/server/services/__tests__/no-claude-md-bloat.test.ts src/server/services/__tests__/no-coerce-boolean-in-api.test.ts src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts src/server/services/__tests__/no-direct-shared-module-mock.test.ts src/server/services/__tests__/no-divergent-active-sales-cap.test.ts src/server/services/__tests__/no-divergent-author-fee-base.test.ts src/server/services/__tests__/no-divergent-can-generate-derivation.test.ts src/server/services/__tests__/no-divergent-coverage-read.test.ts src/server/services/__tests__/no-divergent-generation-file.test.ts src/server/services/__tests__/no-divergent-generation-type-support.test.ts src/server/services/__tests__/no-divergent-generator-readiness.test.ts src/server/services/__tests__/no-divergent-hash-attribution-rule.test.ts src/server/services/__tests__/no-divergent-model-recency-derivation.test.ts src/server/services/__tests__/no-divergent-paid-gate-derivation.test.ts src/server/services/__tests__/no-divergent-prompt-derivation.test.ts src/server/services/__tests__/no-divergent-safetensor-rule.test.ts src/server/services/__tests__/no-doubled-free-slot-noun.test.ts src/server/services/__tests__/no-hand-enumerated-trpc-mock.test.ts src/server/services/__tests__/no-hand-typed-redis-key-constants.test.ts src/server/services/__tests__/no-image-service-import-cycle.test.ts src/server/services/__tests__/no-import-cycle-growth.test.ts src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-job-kind-on-remix-mint.test.ts src/server/services/__tests__/no-lint-rules-script-drift.test.ts src/server/services/__tests__/no-lossy-generation-submit-payload.test.ts src/server/services/__tests__/no-menu-target-tooltip-nesting.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-pk-addressed-engagement-write.test.ts src/server/services/__tests__/no-retired-index-in-purge-targets.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-sharp-outside-native-project.test.ts src/server/services/__tests__/no-ssr-divergent-media-query.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-static-html2canvas-import.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unbumped-draft-status-write.test.ts src/server/services/__tests__/no-uncorrected-constrained-def.test.ts src/server/services/__tests__/no-unfiltered-reaction-metric-sum.test.ts src/server/services/__tests__/no-unguarded-billable-submit.test.ts src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts src/server/services/__tests__/no-unguarded-block-rest-token.test.ts src/server/services/__tests__/no-unguarded-user-text.test.ts src/server/services/__tests__/no-unhydrated-home-block-reactions.test.ts src/server/services/__tests__/no-unledgered-ad-sdk-callback.test.ts src/server/services/__tests__/no-unledgered-settle-caller.test.ts src/server/services/__tests__/no-unlimited-block-bridge-proc.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts src/server/services/__tests__/no-unmoderated-blob-retraction.test.ts src/server/services/__tests__/no-unmuteable-comment-processor.test.ts src/server/services/__tests__/no-unoffered-trial-exhaustion.test.ts src/server/services/__tests__/no-unpriced-default-model.test.ts src/server/services/__tests__/no-unroled-image-resource-match.test.ts src/server/services/__tests__/no-unscoped-email-verification-exemption.test.ts src/server/services/__tests__/no-unthreaded-private-run-claim.test.ts src/server/services/__tests__/no-untruthy-query-gate.test.ts src/server/services/__tests__/no-unverified-provenance-write.test.ts src/server/services/__tests__/no-unwrapped-knob-rotation.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
+    "test:lint-rules": "vitest run --project 'unit*' src/server/notifications/__tests__/notification-settings-polarity.test.ts src/server/schema/__tests__/track.addView.schema.test.ts src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/poi-checks-strip-benign-phrases.test.ts src/server/services/__tests__/video-leaderboard-badge-staging.test.ts src/server/services/__tests__/no-agent-ground-truth-write.test.ts src/server/services/__tests__/no-bound-make-interval.test.ts src/server/services/__tests__/no-claude-md-bloat.test.ts src/server/services/__tests__/no-client-ui-in-notifications-graph.test.ts src/server/services/__tests__/no-coalesce-meta-concat.test.ts src/server/services/__tests__/no-coerce-boolean-in-api.test.ts src/server/services/__tests__/no-csam-original-image-import.test.ts src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts src/server/services/__tests__/no-direct-shared-module-mock.test.ts src/server/services/__tests__/no-divergent-active-sales-cap.test.ts src/server/services/__tests__/no-divergent-author-fee-base.test.ts src/server/services/__tests__/no-divergent-can-generate-derivation.test.ts src/server/services/__tests__/no-divergent-coverage-read.test.ts src/server/services/__tests__/no-divergent-generation-file.test.ts src/server/services/__tests__/no-divergent-generation-type-support.test.ts src/server/services/__tests__/no-divergent-generator-readiness.test.ts src/server/services/__tests__/no-divergent-hash-attribution-rule.test.ts src/server/services/__tests__/no-divergent-model-recency-derivation.test.ts src/server/services/__tests__/no-divergent-paid-gate-derivation.test.ts src/server/services/__tests__/no-divergent-prompt-derivation.test.ts src/server/services/__tests__/no-divergent-safetensor-rule.test.ts src/server/services/__tests__/no-doubled-free-slot-noun.test.ts src/server/services/__tests__/no-hand-enumerated-trpc-mock.test.ts src/server/services/__tests__/no-hand-typed-redis-key-constants.test.ts src/server/services/__tests__/no-image-service-import-cycle.test.ts src/server/services/__tests__/no-import-cycle-growth.test.ts src/server/services/__tests__/no-io-in-transaction.test.ts src/server/services/__tests__/no-job-kind-on-remix-mint.test.ts src/server/services/__tests__/no-lint-rules-script-drift.test.ts src/server/services/__tests__/no-lossy-generation-submit-payload.test.ts src/server/services/__tests__/no-menu-target-tooltip-nesting.test.ts src/server/services/__tests__/no-misapplied-block-bridge-middleware.test.ts src/server/services/__tests__/no-module-scope-cache.test.ts src/server/services/__tests__/no-pk-addressed-engagement-write.test.ts src/server/services/__tests__/no-retired-index-in-purge-targets.test.ts src/server/services/__tests__/no-server-infra-in-app-graph.test.ts src/server/services/__tests__/no-sharp-outside-native-project.test.ts src/server/services/__tests__/no-ssr-divergent-media-query.test.ts src/server/services/__tests__/no-stale-moderator-route-probe.test.ts src/server/services/__tests__/no-static-html2canvas-import.test.ts src/server/services/__tests__/no-tradable-item-flag-read.test.ts src/server/services/__tests__/no-unbounded-paging-fake.test.ts src/server/services/__tests__/no-unbumped-draft-status-write.test.ts src/server/services/__tests__/no-uncorrected-constrained-def.test.ts src/server/services/__tests__/no-unfiltered-reaction-metric-sum.test.ts src/server/services/__tests__/no-unguarded-billable-submit.test.ts src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts src/server/services/__tests__/no-unguarded-block-rest-token.test.ts src/server/services/__tests__/no-unguarded-user-text.test.ts src/server/services/__tests__/no-unhydrated-home-block-reactions.test.ts src/server/services/__tests__/no-unledgered-ad-sdk-callback.test.ts src/server/services/__tests__/no-unledgered-settle-caller.test.ts src/server/services/__tests__/no-unlimited-block-bridge-proc.test.ts src/server/services/__tests__/no-unloadable-image-fixture.test.ts src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts src/server/services/__tests__/no-unmoderated-blob-retraction.test.ts src/server/services/__tests__/no-unmuteable-comment-processor.test.ts src/server/services/__tests__/no-unoffered-trial-exhaustion.test.ts src/server/services/__tests__/no-unpriced-default-model.test.ts src/server/services/__tests__/no-unroled-image-resource-match.test.ts src/server/services/__tests__/no-unscoped-email-verification-exemption.test.ts src/server/services/__tests__/no-unthreaded-private-run-claim.test.ts src/server/services/__tests__/no-untruthy-query-gate.test.ts src/server/services/__tests__/no-unverified-provenance-write.test.ts src/server/services/__tests__/no-unwrapped-knob-rotation.test.ts src/server/services/__tests__/no-wholesale-module-mock.test.ts",
     "test:component": "node scripts/queued-check.mjs component",
     "test:component:watch": "vitest --project component",
     "test:geometry": "node scripts/queued-check.mjs geometry",
@@ -131,11 +135,11 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/app-sdk": "^0.14.0",
+    "@civitai/app-sdk": "^0.65.1",
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
-    "@civitai/client": "0.2.0-beta.98",
-    "@civitai/components-chat": "^0.4.0",
+    "@civitai/components": "^0.13.0",
+    "@civitai/components-chat": "^0.25.0",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
@@ -144,7 +148,7 @@
     "@civitai/mod-utils": "workspace:*",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
-    "@civitai/orchestration-client": "0.2.0-beta.120",
+    "@civitai/orchestration-client": "0.2.0-beta.125",
     "@civitai/sdk": "^0.11.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
@@ -314,7 +318,7 @@
     "react-markdown": "^9.0.1",
     "react-social-media-embed": "^2.5.9",
     "recheck": "^4.5.0",
-    "redis": "^5.8.3",
+    "redis": "6.3.0",
     "rehype-raw": "^7.0.0",
     "rehype-stringify": "^10.0.1",
     "remark-breaks": "^4.0.0",
@@ -334,6 +338,7 @@
     "source-map": "^0.7.4",
     "sqids": "^0.3.0",
     "stacktrace-parser": "^0.1.10",
+    "standardwebhooks": "^1.1.1",
     "stream-to-blob": "^2.0.1",
     "stripe": "^11.6.0",
     "superjson": "^2.2.6",
@@ -346,6 +351,8 @@
     "viem": "^2.30.6",
     "xml2js": "^0.6.2",
     "yaml": "^2.8.1",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1",
     "zod": "^4.0.17",
     "zustand": "^4.3.7"
   },
@@ -385,6 +392,8 @@
     "@types/uuid": "^9.0.0",
     "@types/vimeo__player": "^2.18.3",
     "@types/xml2js": "^0.4.14",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "@vitest/browser": "^4.1.11",
@@ -402,6 +411,7 @@
     "eslint-plugin-tailwindcss": "^3.15.1",
     "husky": "^9.1.1",
     "jsdom": "^27.4.0",
+    "kysely": "^0.28.7",
     "pg-format": "^1.0.4",
     "playwright": "^1.57.0",
     "postcss": "^8.5.3",
@@ -457,7 +467,8 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch",
+      "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch"
     }
   }
 }

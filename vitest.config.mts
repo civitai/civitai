@@ -76,6 +76,24 @@ const nativePoolPlugin = {
   },
 };
 
+// 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
+// optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
+// `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/orchestration-client` until the cache was deleted.
+const optimizerCacheKeyPlugin = {
+  name: 'civitai:fs-cache-optimizer-key',
+  configureVitest({
+    experimental_defineCacheKeyGenerator,
+  }: {
+    experimental_defineCacheKeyGenerator: any;
+  }) {
+    experimental_defineCacheKeyGenerator(({ environment }: { environment: any }) => {
+      const metadata = environment.depsOptimizer?.metadata;
+      return metadata ? `${metadata.hash}:${metadata.browserHash}` : undefined;
+    });
+  },
+};
+
 // Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
 // (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
 // node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
@@ -103,6 +121,12 @@ const civitaiWorkspacePkgs = [
   // Same story as notifications: not symlinked into root node_modules, so without
   // this alias every suite touching the buzz chain fails to collect.
   'buzz',
+  // `@civitai/post-planner` (packages/civitai-post-planner) is imported by the planner REST route
+  // and its service; resolved through tsconfig paths in the app build, not symlinked into root.
+  'post-planner',
+  // `@civitai/app-assistant` (packages/civitai-app-assistant): App Assistant's gate, prompt and
+  // sandbox client, shared by the page and apps/assistant-runner. Not symlinked into root either.
+  'app-assistant',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
@@ -170,9 +194,99 @@ const sharpExecutingTestFiles = [
   'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
   'src/server/utils/__tests__/listing-asset-exif-fixture.test.ts',
   'src/server/utils/__tests__/stored-image-probe.test.ts',
+  'src/server/utils/__tests__/service-deal-preview.test.ts',
   'src/server/utils/__tests__/og-image-helpers.test.ts',
   'src/tests/api/og.milestone.test.ts',
 ];
+
+// 🔴 THE WHOLE MANTINE FAMILY, OR NONE OF IT. Each sibling imports `@mantine/core` itself, so a
+// sibling left native loads a second, native copy of core beside the pre-bundled one: duplicate
+// contexts, and the import cost moves instead of disappearing. Mantine is ESM, so its named-only
+// mock factories keep working (see the `default` note on `deps.optimizer`).
+const mantineFamily = [
+  '@mantine/core',
+  '@mantine/hooks',
+  '@mantine/dates',
+  '@mantine/dropzone',
+  '@mantine/modals',
+  '@mantine/notifications',
+  '@mantine/nprogress',
+  '@mantine/tiptap',
+  'mantine-react-table',
+];
+
+// Packages pre-bundled for the unit projects' node environment. The hazards to check before adding
+// one are on `deps.optimizer` inside `unitTestConfig`.
+const prebundledDeps = [
+  'lodash-es',
+  'googleapis',
+  '@tiptap/html',
+  '@axiomhq/axiom-node',
+  '@aws-sdk/s3-request-presigner',
+  // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
+  // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
+  // subpath import still resolves through the module runner to the original files and the
+  // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
+  // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
+  // is the shape that breaks, e.g. `error instanceof z.ZodError` in
+  // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
+  // package whose identity is compared with `instanceof`.
+  'zod',
+  // 'react' is NOT here on purpose. Vitest hardcodes
+  // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
+  // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
+  // react-dom.js but no react.js. Listing it would read as a delivered win that never
+  // happened.
+  'react-dom',
+  'zustand',
+  'immer',
+  'clsx',
+  'uuid',
+  'prom-client',
+  '@tanstack/react-query',
+  '@paddle/paddle-node-sdk',
+  // Resolvable from the root only because it is a root devDependency; otherwise the
+  // optimizer logs "Failed to resolve dependency" and the package stays native.
+  'kysely',
+  'kysely/helpers/postgres',
+  'remark-gfm',
+  'remark-parse',
+  'remark-rehype',
+  'rehype-stringify',
+  'unified',
+  'stripe',
+  'jose',
+  'pg',
+  'form-graph',
+  'form-graph/react',
+  'sanitize-html',
+  '@openrouter/sdk',
+  '@openrouter/sdk/models',
+  '@openrouter/sdk/models/errors',
+  'nodemailer',
+  'obscenity',
+  'superjson',
+  'htmlparser2',
+  '@discordjs/rest',
+  'redis',
+  '@aws-sdk/client-s3',
+  '@aws-sdk/lib-storage',
+  // Subpath: not covered by the bare entry above.
+  '@tiptap/html/server',
+  // Both forms are imported by `utils/metadata`; a subpath left out is a separate native copy.
+  '@civitai/generation-metadata',
+  '@civitai/generation-metadata/civitai',
+  // CommonJS and mocked: its factory must keep `default`.
+  'cloudflare',
+  ...mantineFamily,
+];
+
+// The `client` optimizer's list: only browser-safe ESM packages. A server CommonJS package bundled
+// for the browser target loses its Node built-ins (`redis` died on `util.inherits is not a
+// function`, and every happy-dom file that reached it collected zero tests), and a package that is
+// also reached through a native copy splits in two (`@tanstack/react-query`, via `@trpc/*`, failed
+// with "No QueryClient set").
+const clientPrebundledDeps = ['lodash-es', ...mantineFamily];
 
 // Shared by `unit` and `unit-native`, which differ ONLY in pool and in which files they claim.
 // Every other setting has to stay identical or the split changes behaviour as well as scheduling.
@@ -220,21 +334,18 @@ const unitTestConfig = {
     // once per file that reaches it. Pre-bundling collapses a package's many-hundred-file native
     // load into one chunk, paid once for the run.
     //
-    // 🔴 The list is confined to packages NOTHING mocks, and that is load-bearing rather than
-    // conservative. Pre-bundling wraps a package as a CJS-interop chunk, so a `vi.mock` factory
-    // that returns only named exports stops satisfying its consumers:
+    // 🔴 A MOCKED CommonJS package needs `default` in every factory before it goes on this list.
+    // Pre-bundling wraps it as a CJS-interop chunk (`export default require_x()`), so a `vi.mock`
+    // factory that returns only named exports stops satisfying its consumers, and the file collects
+    // zero tests (an ESM package such as Mantine bundles to named exports and is not affected):
     //   Error: [vitest] No "default" export is defined on the "redis" mock.
-    // The `importOriginal` form does NOT protect against this — it guards a different failure
-    // (exports going missing as the graph grows). Measured: adding `redis` and `@aws-sdk/client-s3`
-    // here takes four mock-holding files from 92 tests passing to 7 collected.
+    // An `importOriginal` spread does NOT cover it: return `{ ...mocked, default: mocked }`, or the
+    // consumer reaches the REAL module through `default`. `redis` and the `@aws-sdk/*` packages
+    // below are mocked this way.
     //
-    // Before adding a package, check `vi.mock('<pkg>'` across `src`, `test`, `packages` and `apps`
-    // returns nothing — a subpath form (`vi.mock('pg/lib/x')`) counts. The four excluded on those
-    // grounds:
-    //   `redis`, `@aws-sdk/client-s3`, `@aws-sdk/lib-storage` (5 / 2 / 3 mocking files) — worth
-    //     ~275s, and need `default` added to six mock factories first.
-    //   `pg` (2 mocking files, both in `packages/civitai-db`) — dropped from this list for exactly
-    //     that reason, not because it is cheap.
+    // Before adding a package, find its `vi.mock('<pkg>'` callers across `src`, `scripts` and
+    // `test` — a subpath form (`vi.mock('pg/lib/x')`) counts. `packages/*` and `apps/*` run under
+    // their own configs, so their mocks (e.g. `pg` in packages/civitai-db) do not see this list.
     //
     // 🔴 A zero-mocker package can still be unsafe, for a SECOND reason: a package that loads a
     // non-JS SIDECAR at runtime breaks when it is relocated. `@electric-sql/pglite` passes the
@@ -245,48 +356,17 @@ const unitTestConfig = {
     // Measured: 7 `*.behavior.test.ts` files went from 87 passing to 0, reported as SKIPPED rather
     // than failed, so the suite total stayed at 22,636 while 87 fewer tests actually executed.
     // Compare the PASSED count, never the total, when changing this list.
-    // The three biggest fan-in packages measured over the test-reachable graph are blocked the same
-    // way and are the follow-up this list is building toward:
-    //   `@tabler/icons-react` 5,952 package files / 166 importers — 2 mocking files
-    //   `next`                3,459 / 114                        — 10 mocking files
-    //   `@mantine/core`       1,180 / 249                        — 4 mocking files
+    // Two more fail in ways neither check above catches: `msgpackr`'s bundle does not load
+    // (`SyntaxError: Identifier 'createRequire' has already been declared`), and
+    // `@opentelemetry/api` bundles with `SpanStatusCode` undefined, so every caught error in
+    // packages/civitai-telemetry's span helpers becomes `reading 'ERROR'` (12 files red).
+    // `@tabler/icons-react` and `next` are not listed: their `vi.mock` callers have not been checked
+    // against pre-bundling.
     optimizer: {
-      ssr: {
-        enabled: true,
-        include: [
-          'lodash-es',
-          'googleapis',
-          '@tiptap/html',
-          '@axiomhq/axiom-node',
-          '@aws-sdk/s3-request-presigner',
-          // Added below: each verified to have ZERO `vi.mock` callers anywhere in the workspace,
-          // and the whole suite re-run to confirm the PASSED count is unchanged. Not the total —
-          // see the PGlite note above, where the total stayed put while 87 tests stopped running.
-          //
-          // 🔴 A THIRD HAZARD CLASS, beyond mock-callers and non-JS sidecars: SUBPATH DUAL-INSTANCE.
-          // `noDiscovery: true` + `entries: []` means only the BARE specifier is pre-bundled, so a
-          // subpath import still resolves through the module runner to the original files and the
-          // two forms become distinct copies. Live here today: `zod/v4` (4 files), `zustand/*`
-          // (50), `react-dom/*` (26). No failure observed — but `instanceof` across the two copies
-          // is the shape that breaks, e.g. `error instanceof z.ZodError` in
-          // src/pages/api/admin/manage-sanity-checks.ts. Check subpath usage before adding a
-          // package whose identity is compared with `instanceof`.
-          'zod',
-          // 'react' is NOT here on purpose. Vitest hardcodes
-          // `exclude = ['vitest', 'react', 'vue']` in resolveOptimizerConfig and filters `include`
-          // against it, so an entry for it is silently dropped — measured: `deps_ssr/` contains
-          // react-dom.js but no react.js. Listing it would read as a delivered win that never
-          // happened.
-          'react-dom',
-          'zustand',
-          'immer',
-          'clsx',
-          'uuid',
-          'prom-client',
-          '@tanstack/react-query',
-          '@paddle/paddle-node-sdk',
-        ],
-      },
+      ssr: { enabled: true, include: prebundledDeps },
+      // `@vitest-environment happy-dom`/`jsdom` files run in Vite's client environment, which has its
+      // own optimizer; `ssr` alone leaves them loading these natively.
+      client: { enabled: true, include: clientPrebundledDeps },
     },
   },
   // A transform cache on disk, keyed per module and shared between separate `vitest run`
@@ -300,8 +380,8 @@ const unitTestConfig = {
   // Widening it is a follow-up with its own verification, not a freebie.
   //
   // Staleness is self-correcting rather than something to remember: the cache carries a format
-  // version, and `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
-  // when it moves, so a dependency bump can't leave a stale transform behind. It writes to
+  // version, `ensureCacheIntegrity()` hashes the lockfile on startup and nukes the whole cache
+  // when it moves, and `optimizerCacheKeyPlugin` keys entries on the optimizer's output. It writes to
   // `node_modules/.experimental-vitest-cache`, so it is gitignored with the rest of `node_modules`.
   experimental: { fsModuleCache: true },
 };
@@ -391,6 +471,7 @@ const browserOptimizeDeps = {
 // `|component (chromium)|`, which is a run report naming the wrong tier — the
 // most expensive kind of wrong, because it points every reader at the wrong
 // setup file. Each project gets its own object.
+const isFirefoxRun = process.env.GEOMETRY_BROWSER === 'firefox';
 const browserModeOptions = () => ({
   enabled: true as const,
   // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
@@ -409,15 +490,22 @@ const browserModeOptions = () => ({
   // tests on NixOS". A mismatch does not say "no browser" — it collects every file
   // and executes none, which reads as a broken suite.
   provider: playwright({
+    // Opt-in, local only: `GEOMETRY_DPR=2.25` runs at a fractional device pixel ratio (CI is DPR 1).
+    ...(process.env.GEOMETRY_DPR
+      ? { contextOptions: { deviceScaleFactor: Number(process.env.GEOMETRY_DPR) } }
+      : {}),
     launchOptions: {
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      args: isFirefoxRun ? [] : ['--no-sandbox', '--disable-dev-shm-usage'],
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
         ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
         : {}),
     },
   }),
   headless: true as const,
-  instances: [{ browser: 'chromium' }],
+  // Opt-in, local only: `GEOMETRY_BROWSER=firefox` runs the browser projects in Firefox. CI stays
+  // on Chromium (no Firefox in the runner image). A Firefox run needs
+  // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pointed at the Firefox binary if the bundle isn't installed.
+  instances: [{ browser: isFirefoxRun ? ('firefox' as const) : ('chromium' as const) }],
 });
 
 /** Everything a browser project needs outside its own `test` block. */
@@ -507,6 +595,7 @@ export default defineConfig({
       'apps/*/vitest.config.mts',
       {
         resolve: { alias },
+        plugins: [optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit',
@@ -524,7 +613,7 @@ export default defineConfig({
       },
       {
         resolve: { alias },
-        plugins: [nativePoolPlugin],
+        plugins: [nativePoolPlugin, optimizerCacheKeyPlugin],
         test: {
           ...unitTestConfig,
           name: 'unit-native',

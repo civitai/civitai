@@ -1,4 +1,4 @@
-import { callModEndpoint } from '../user-actions.service';
+import { callModEndpoint, callModEndpointAs, type JsonResult } from '../user-actions.service';
 import { LabError } from './errors';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { chunk } from '$lib/text-scan-lab/chunk';
@@ -13,21 +13,55 @@ const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends LabError {
-  constructor(message: string) {
+  /** True when the request is known not to have taken effect (`isRejected` for a save, `isRefused` for a scan).
+   *  `authRefused`: refused for the session itself (none to forward, 401, 403). */
+  constructor(message: string, readonly refused = false, readonly authRefused = false) {
     super(message, 502);
   }
 }
 
-const postHarness = (action: string, params: Record<string, unknown>, label: string) =>
-  callModEndpoint('text-scan', { action, ...params }, label, HARNESS_TIMEOUT_MS);
+export class StalePromptError extends LabError {
+  constructor(message: string) {
+    super(message, 409);
+  }
+}
+
+/** `credential`: a session cookie read earlier, for work that outlives its request. */
+const postHarness = (
+  action: string,
+  params: Record<string, unknown>,
+  label: string,
+  credential?: string
+) =>
+  credential === undefined
+    ? callModEndpoint('text-scan', { action, ...params }, label, HARNESS_TIMEOUT_MS)
+    : callModEndpointAs(credential, 'text-scan', { action, ...params }, label, HARNESS_TIMEOUT_MS);
+
+const isAuthRefusal = (result: JsonResult) =>
+  !result.ok && (result.noSession === true || result.status === 401 || result.status === 403);
+
+/** The request is known not to have taken effect: never sent, or rejected as invalid or unauthorised. */
+export const isRefused = (result: JsonResult) =>
+  !result.ok &&
+  (result.requestNeverSent === true ||
+    result.status === 400 ||
+    result.status === 401 ||
+    result.status === 403);
+
+/** A write that was never sent or got any 4xx back did not happen; only a 5xx or a timeout leaves it unknown. */
+export const isRejected = (result: JsonResult) =>
+  !result.ok &&
+  (result.requestNeverSent === true ||
+    (result.status !== undefined && result.status >= 400 && result.status < 500));
 
 async function callHarness<T>(
   action: string,
   params: Record<string, unknown>,
-  label: string
+  label: string,
+  credential?: string
 ): Promise<T> {
-  const result = await postHarness(action, params, label);
-  if (!result.ok) throw new LabHarnessError(result.error);
+  const result = await postHarness(action, params, label, credential);
+  if (!result.ok) throw new LabHarnessError(result.error, false, isAuthRefusal(result));
   return result.body as T;
 }
 
@@ -67,21 +101,38 @@ export type LabPromptVersion = LabPrompt & {
   createdById: number | null;
   createdAt: string;
 };
+export type LabPromptLatest = { id: number; createdAt: string; createdById: number | null };
 export type LabPrompts = {
   active: Record<string, LabPrompt>;
-  config: { model: string; maxInputChars: number; thinking: boolean };
+  config: { model: string; maxInputChars: number; maxSegments?: number; thinking: boolean };
   history?: LabPromptVersion[];
+  /** Absent from a main app older than the lab workspaces. */
+  latest?: Record<string, LabPromptLatest>;
 };
 
 export const getPrompts = (history?: string) =>
   callHarness<LabPrompts>('getPrompts', history ? { history } : {}, 'Load text-scan prompts');
 
-export const putPrompt = (key: string, content: string, note: string) =>
-  callHarness<{ id: number; key: string }>(
+/** `baseId`: the version the draft started from (null: none); the save is refused if it moved. */
+export async function putPrompt(
+  key: string,
+  content: string,
+  opts: { note?: string; baseId?: number | null } = {}
+): Promise<{ id: number; key: string }> {
+  const result = await postHarness(
     'putPrompt',
-    { key, content, note },
-    'Publish text-scan prompt'
+    {
+      key,
+      content,
+      ...(opts.note ? { note: opts.note } : {}),
+      ...(opts.baseId !== undefined ? { baseId: opts.baseId } : {}),
+    },
+    'Save text-scan prompt'
   );
+  if (result.ok) return result.body as { id: number; key: string };
+  if (result.status === 409) throw new StalePromptError(result.reason ?? result.error);
+  throw new LabHarnessError(result.error, isRejected(result));
+}
 
 type HarnessScanResult =
   | {
@@ -92,6 +143,7 @@ type HarnessScanResult =
       parse: { ok: true; output: Record<string, unknown> } | { ok: false; reason: string };
       rawContent?: string;
       elapsedMs: number;
+      segments?: number;
     }
   | { key: string; ok: false; error: string; workflowId?: string };
 
@@ -111,8 +163,17 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
     output: r.parse.ok ? r.parse.output : null,
     ...(r.parse.ok ? {} : { parseError: r.parse.reason, rawContent: r.rawContent }),
     elapsedMs: r.elapsedMs,
+    ...(r.segments && r.segments > 1 ? { segments: r.segments } : {}),
   };
 }
+
+export type LabOverrides = { prompts?: Record<string, string> };
+export type LabRun = {
+  results: LabScanResult[];
+  system: string | null;
+  /** A request after the first was refused for the session; its texts carry that refusal as errors. */
+  authRefused?: true;
+};
 
 /**
  * Chunks run one after another. A failed chunk becomes a per-text error and the run continues,
@@ -125,43 +186,73 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
 export async function scanTexts(
   entityType: LabEntityType,
   texts: LabText[],
-  promptOverrides?: Record<string, string>
-): Promise<LabScanResult[]> {
+  overrides: LabOverrides = {},
+  credential?: string
+): Promise<LabRun> {
   const { fitting, oversize } = splitOversize(texts);
   const byKey = new Map(oversize.map((r) => [r.key, r]));
+  let system: string | null = null;
   let sent = 0;
+  let authRefused = false;
   for (const batch of chunkTexts(fitting, SCAN_CHUNK_SIZE)) {
     const result = await postHarness(
       'scanTexts',
       {
         entityType,
         texts: batch,
-        promptOverrides,
+        promptOverrides: overrides.prompts,
         concurrency: SCAN_CONCURRENCY,
         wait: SCAN_WAIT_SECONDS,
       },
-      'Text-scan scan'
+      'Text-scan scan',
+      credential
     );
     sent++;
     if (result.ok) {
-      for (const r of (result.body.results as HarnessScanResult[]).map(toLabScanResult))
-        byKey.set(r.key, r);
+      const body = result.body as {
+        results: HarnessScanResult[];
+        system?: string | null;
+      };
+      system ??= body.system ?? null;
+      for (const r of body.results.map(toLabScanResult)) byKey.set(r.key, r);
       continue;
     }
     const error = nameTexts(result.error, batch);
-    const refused =
-      result.requestNeverSent ||
-      result.status === 400 ||
-      result.status === 401 ||
-      result.status === 403;
-    if (refused && sent === 1) throw new LabHarnessError(error);
+    const auth = isAuthRefusal(result);
+    if (isRefused(result) && sent === 1) throw new LabHarnessError(error, false, auth);
+    authRefused ||= auth;
     for (const { key } of batch) byKey.set(key, { key, ok: false, error });
   }
-  return texts.flatMap(({ key }) => {
-    const r = byKey.get(key);
-    return r ? [r] : [];
-  });
+  return {
+    results: texts.flatMap(({ key }) => {
+      const r = byKey.get(key);
+      return r ? [r] : [];
+    }),
+    system,
+    ...(authRefused ? { authRefused: true as const } : {}),
+  };
 }
+
+export type LabQuote = { count: number; quoted: number; maxCostTotal: number | null };
+
+/** Prices a sample without scanning it. `credential`: see `postHarness`. */
+export const quoteTexts = (
+  entityType: LabEntityType,
+  texts: LabText[],
+  prompts: Record<string, string> | undefined,
+  credential?: string
+) =>
+  callHarness<LabQuote>(
+    'quoteTexts',
+    {
+      entityType,
+      texts,
+      ...(prompts && Object.keys(prompts).length ? { promptOverrides: prompts } : {}),
+      concurrency: SCAN_CONCURRENCY,
+    },
+    'Text-scan quote',
+    credential
+  );
 
 export type LabComposedEntity =
   | {
@@ -193,14 +284,16 @@ function toLabComposed(r: HarnessComposedEntity): LabComposedEntity {
 
 export async function composeEntities(
   entityType: LabEntityType,
-  ids: number[]
+  ids: number[],
+  credential?: string
 ): Promise<LabComposedEntity[]> {
   const results: LabComposedEntity[] = [];
   for (const entityIds of chunk(ids, HARNESS_LIMITS.textsPerRequest)) {
     const body = await callHarness<{ results: HarnessComposedEntity[] }>(
       'composeEntities',
       { entityType, entityIds },
-      'Load entity text'
+      'Load entity text',
+      credential
     );
     results.push(...body.results.map(toLabComposed));
   }

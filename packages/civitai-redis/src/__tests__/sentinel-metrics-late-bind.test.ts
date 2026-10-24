@@ -79,11 +79,8 @@ describe('sysRedis Sentinel counters — resolved at event time', () => {
 
     const serving = sentinels[0];
     serving.emit('topology-change', { type: 'MASTER_CHANGE', node: { host: 'h-topo', port: 1 } });
-    serving.emit('client-error', {
-      type: 'MASTER',
-      node: { host: 'h-err', port: 2 },
-      error: new Error('boom'),
-    });
+    // A master connection's error, as RedisSentinel forwards it (passthroughClientErrorEvents).
+    serving.emit('error', new Error('Master Client (h-err:2): boom', { cause: new Error('boom') }));
 
     expect(incsA).toEqual([]);
     expect(incsB).toEqual([

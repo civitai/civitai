@@ -16,7 +16,12 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
+  import {
+    BAN_REASONS,
+    BAN_REASONS_REMOVING_CONTENT,
+    alwaysRemovesMedia,
+    type BanReasonCode,
+  } from '$lib/enforcement';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -60,6 +65,10 @@
   // so a latched tick would arm the NEXT, unrelated cohort.
   let mediaTouched = $state(false);
   let commentsTouched = $state(false);
+
+  // No opt-out for these: the box shows ticked and locked, and the server removes the media anyway.
+  const mediaLocked = $derived(alwaysRemovesMedia(reasonCode));
+  const mediaRemoved = $derived(removeMedia || mediaLocked);
 
   const pickReason = (value: string) => {
     reasonCode = value;
@@ -387,7 +396,7 @@
                 Ban <strong>{num(bannable.length)}</strong> accounts? Each is banned individually, with
                 its own notification. The run stops after 5 consecutive failures.
               </p>
-              <!-- The endpoint blocks media only for `SexualMinor` unless this is set, so without it a
+              <!-- The endpoint blocks media only for minor-safety reasons unless this is set, so without it a
                    Nudify or Harassment ban leaves every image up. MODELS are not covered by this box:
                    `banAll` sends no `removeModels`, and the endpoint treats absent as ON. -->
               <!-- `name`/`value` stay on the control: the primitive renders the hidden input that
@@ -399,10 +408,11 @@
                   id="bulk-ban-remove-media-{uid}"
                   name="removeMedia"
                   value="true"
-                  bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))}
+                  disabled={mediaLocked}
+                  bind:checked={() => mediaRemoved, (v) => ((mediaTouched = true), (removeMedia = v))}
                 />
                 <Label for="bulk-ban-remove-media-{uid}" class="text-xs leading-snug font-normal text-dark-2">
-                  Also remove their images
+                  {mediaLocked ? 'Their images are always removed for this reason' : 'Also remove their images'}
                 </Label>
               </div>
               <div class="mb-2 flex items-center gap-2" data-touch-target>
@@ -432,8 +442,8 @@
                 <input type="hidden" name="reasonCode" value={reasonCode} />
                 <p class="mb-2 w-full rounded border border-red-500/50 bg-red-500/15 p-2 text-xs text-white">
                   <strong>Confirming unpublishes every model on all {num(bannable.length)} accounts</strong>
-                  — that happens on every bulk ban and there is no opt-out here.{#if removeMedia || removeComments}
-                    Their {[removeMedia ? 'images' : null, removeComments ? 'comments' : null]
+                  — that happens on every bulk ban and there is no opt-out here.{#if mediaRemoved || removeComments}
+                    Their {[mediaRemoved ? 'images' : null, removeComments ? 'comments' : null]
                       .filter(Boolean)
                       .join(' and ')} go too; untick above to leave those up.{/if}
                 </p>

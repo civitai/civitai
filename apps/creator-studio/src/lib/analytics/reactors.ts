@@ -40,6 +40,21 @@ export function parseInt4Id(raw: string): number | null {
   return n <= MAX_INT4 ? n : null;
 }
 
+export function parseKeysetCursor(
+  params: URLSearchParams
+): { ok: true; value: ReactorCursor } | { ok: false; message: string } {
+  const after = params.get('after');
+  const before = params.get('before');
+  if (after !== null && before !== null)
+    return { ok: false, message: 'Pass either after or before, not both' };
+
+  const raw = after ?? before;
+  if (raw === null) return { ok: true, value: null };
+  const userId = parseInt4Id(raw);
+  if (userId === null) return { ok: false, message: 'Invalid cursor' };
+  return { ok: true, value: { dir: after !== null ? 'after' : 'before', userId } };
+}
+
 export function parseReactorQuery(
   params: URLSearchParams
 ): { ok: true; value: ReactorQuery } | { ok: false; message: string } {
@@ -47,23 +62,13 @@ export function parseReactorQuery(
   if (rawReaction !== null && !isReactorType(rawReaction))
     return { ok: false, message: 'Unknown reaction type' };
 
-  const after = params.get('after');
-  const before = params.get('before');
-  if (after !== null && before !== null)
-    return { ok: false, message: 'Pass either after or before, not both' };
-
-  let cursor: ReactorCursor = null;
-  const raw = after ?? before;
-  if (raw !== null) {
-    const userId = parseInt4Id(raw);
-    if (userId === null) return { ok: false, message: 'Invalid cursor' };
-    cursor = { dir: after !== null ? 'after' : 'before', userId };
-  }
+  const parsed = parseKeysetCursor(params);
+  if (!parsed.ok) return parsed;
   // A cursor only means something within one reaction's list.
-  if (cursor && rawReaction === null)
+  if (parsed.value && rawReaction === null)
     return { ok: false, message: 'A cursor needs a reaction type' };
 
-  return { ok: true, value: { reaction: rawReaction, cursor } };
+  return { ok: true, value: { reaction: rawReaction, cursor: parsed.value } };
 }
 
 export function emptyCounts(): Record<ReactorType, number> {

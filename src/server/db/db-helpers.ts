@@ -31,7 +31,8 @@ export type ClientInstanceType =
   | 'primaryRead'
   | 'primaryReadLong'
   | 'datapacketRead'
-  | 'apps';
+  | 'apps'
+  | 'appdata';
 
 export type GetClientOptions = Partial<DbConfig> & {
   instance?: ClientInstanceType;
@@ -58,11 +59,20 @@ export function getClient(options: GetClientOptions = {}) {
     // App Blocks KV datastore — empty-string sentinel when unset; appsDb never calls getClient
     // unless APPS_DATABASE_URL is configured (see src/server/db/appsDb.ts).
     apps: config.appsUrl ?? '',
+    // App Blocks document store (least-privilege role) — same sentinel; appdataDb
+    // never calls getClient unless APPDATA_DATABASE_URL is configured.
+    appdata: config.appdataUrl ?? '',
   };
 
   const envUrl = instanceUrlMap[instance];
   const appBaseName =
-    instance === 'datapacketRead' ? 'dp-read-pg' : instance === 'apps' ? 'apps-pg' : 'node-pg';
+    instance === 'datapacketRead'
+      ? 'dp-read-pg'
+      : instance === 'apps'
+      ? 'apps-pg'
+      : instance === 'appdata'
+      ? 'appdata-pg'
+      : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter — datapacketRead sets
   // it per-connection via SET instead (createPool wires it).

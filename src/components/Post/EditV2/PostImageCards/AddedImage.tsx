@@ -26,6 +26,7 @@ import {
   IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
+  IconArrowsExchange,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
@@ -45,7 +46,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
@@ -53,6 +53,8 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
@@ -63,6 +65,7 @@ import {
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import {
   DEFAULT_EDGE_IMAGE_WIDTH,
@@ -92,6 +95,7 @@ import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import {
+  canAddManualResources,
   getManualResourceLimitError,
   getManualResourceUsage,
   manualResourceLimitMessages,
@@ -131,6 +135,8 @@ type State = {
   needsReview: string | null;
   isMinor: boolean;
   onDelete: () => void;
+  /** Absent when the image cannot be moved out of this post. */
+  onMove?: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
   isUpdating: boolean;
@@ -185,9 +191,14 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
   return [];
 };
 
-const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
-  return type === MediaType.video || !isMadeOnSite(meta);
-};
+/** Moves models just added by hand to the top of the resource picker's "recently added" list. */
+export function rememberManuallyAddedModels(resources: Pick<ResourceHelper, 'modelId'>[]) {
+  const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
+  queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
+    if (!old) return;
+    return uniq([...resources.map((r) => r.modelId).filter(isDefined), ...old]);
+  });
+}
 
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
@@ -196,19 +207,23 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const storedImage = useImageStore(image);
   const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId] = usePostEditStore((state) => [
-    state.images,
-    state.updateImage,
-    state.setImages,
-    state.post?.id,
-  ]);
+  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
+    (state) => [
+      state.images,
+      state.updateImage,
+      state.setImages,
+      state.post?.id,
+      state.post?.publishedAt,
+      state.collectionId,
+    ]
+  );
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
-    .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
+    .filter((data) => data.id !== id && canAddManualResources(data));
 
   const { generation } = useCurrentUserSettings();
   const advancedMode = generation?.advancedMode ?? false;
@@ -229,20 +244,22 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
-  const canAdd = canAddFunc(type, meta);
+  const canAdd = canAddManualResources({ type, meta });
   // #endregion
 
   // #region [delete image]
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => {
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-      if (postId)
-        queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-          if (!old) return old;
+  const removeFromEditor = (id: number) => {
+    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
+    if (postId)
+      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+        if (!old) return old;
 
-          return { ...old, images: old.images?.filter((x) => x.id !== id) };
-        });
-    },
+        return { ...old, images: old.images?.filter((x) => x.id !== id) };
+      });
+  };
+
+  const deleteImageMutation = trpc.image.delete.useMutation({
+    onSuccess: (_, { id }) => removeFromEditor(id),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -259,6 +276,28 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         },
       });
     else deleteImageMutation.mutate({ id: image.id });
+  };
+  // #endregion
+
+  // #region [move image]
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const { collection: contestCollection } = usePostContestCollectionDetails(
+    { id: postId ?? 0 },
+    { enabled: !!postId && !!collectionId }
+  );
+  const canMove =
+    isOwner &&
+    !!postId &&
+    id > 0 &&
+    !contestCollection &&
+    !!postPublishedAt &&
+    new Date(postPublishedAt) <= new Date();
+  const handleMove = () => {
+    if (!postId) return;
+    dialogStore.trigger({
+      component: MoveImageToPostModal,
+      props: { fromPostId: postId, imageId: id, onMoved: () => removeFromEditor(id) },
+    });
   };
   // #endregion
 
@@ -293,12 +332,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         updateImage(id, (image) => {
           image.resourceHelper = image.resourceHelper.concat(resp);
         });
-
-        const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
-        queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
-          if (!old) return;
-          return uniq([...resp.map((r) => r.modelId).filter(isDefined), ...old]);
-        });
+        rememberManuallyAddedModels(resp);
       }
     },
     onError(error) {
@@ -329,6 +363,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         needsReview: needsReview ?? null,
         isMinor,
         onDelete: handleDelete,
+        onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isPending,
         isUpdating: updateImageMutation.isPending,
@@ -359,6 +394,9 @@ function Preview() {
   return (
     <div className="flex flex-col">
       <PostImage />
+      <div className="p-3 empty:hidden">
+        <StorylineCaption />
+      </div>
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
@@ -751,6 +789,7 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
                   this narrow column is the one on the RIGHT. Renders nothing
                   without remix provenance, which is the ordinary case. */}
@@ -1239,9 +1278,16 @@ function EditDetail() {
   );
 }
 
+function StorylineCaption() {
+  const { image } = useAddedImageContext();
+  const post = usePostEditStore((state) => state.post);
+  if (!post) return null;
+  return <StorylineCaptionSlot post={post} image={image} />;
+}
+
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
+  const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
     useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel, poi } = image;
   // Only the owner can hat their images; a moderator editing this post would be refused.
@@ -1317,6 +1363,11 @@ function PostImage() {
               <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                 <PlacementSpaceToggle level="image" entityId={image.id} />
               </div>
+            )}
+            {!isBlocked && onMove && (
+              <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
+                Move to another post
+              </Menu.Item>
             )}
             <Menu.Item
               color="red"

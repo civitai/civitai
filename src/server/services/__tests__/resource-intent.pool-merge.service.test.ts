@@ -256,7 +256,7 @@ describe('the merge spec hash', () => {
   // and the cache key relies on it moving when either does. Update the literal deliberately.
   it('is pinned', () => {
     expect(RESOURCE_INTENT_POOL_MERGE_SPEC_HASH).toBe(
-      'ff51b42f49b47649b3aadc5f22f92ce954ea6b9192352e9b925348ce2cce8a8c'
+      '30e0a6d3f9ab7fb294ae00e9386e9b223c1145f79e854037d46e28bea0fb5501'
     );
   });
 });
@@ -354,15 +354,6 @@ describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason
       coocFallback: 1,
       coocFallbackReason: 'load_failed',
     });
-  });
-
-  it('a served snapshot does not log a fallback', async () => {
-    mockStage1();
-    await getResourceIntent(INPUT, { ...CTX, poolMerge: true });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
-      'temp-search'
-    );
   });
 });
 

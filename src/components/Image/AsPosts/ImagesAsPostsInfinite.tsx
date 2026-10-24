@@ -29,6 +29,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { getEffectiveGalleryHiddenUserIds } from '~/components/Image/AsPosts/gallery-hidden-users';
+import { mergePostPages } from '~/components/Image/AsPosts/gallery-posts';
 import {
   useGallerySettings,
   useModel3DGallerySettings,
@@ -188,7 +189,10 @@ export function ImagesAsPostsInfinite({
       : [];
   }, [source.kind, selectedVersionId, gallerySettings, model3dGallerySettings]);
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const flatData = useMemo(
+    () => (data ? mergePostPages(data.pages.map((x) => x?.items)) : undefined),
+    [data]
+  );
   // A sponsored post was checked against this gallery's settings when the host
   // accepted it, and a host cannot end an accepted run, so only the viewer's own
   // preferences apply to it here.

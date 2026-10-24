@@ -25,6 +25,11 @@ export function mediaOfExt(ext: string): Media | undefined {
   return KINDS.find((k) => k.ext === lower)?.media;
 }
 
+/** The accepted extensions for the given medias, in KINDS order — what the drop zone lists. */
+export function extsOfMedia(medias: readonly Media[]): string[] {
+  return KINDS.filter((k) => medias.includes(k.media)).map((k) => k.ext);
+}
+
 export function mimeOfExt(ext: string): string | undefined {
   const lower = ext.toLowerCase();
   return KINDS.find((k) => k.ext === lower)?.mime;

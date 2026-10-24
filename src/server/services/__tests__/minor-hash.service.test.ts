@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // The replica/primary distinction is the point of these two: `resolveMinorFlagAppeal` re-reads
@@ -14,10 +16,14 @@ const {
   mockGrantModelTextScanPoi,
   mockStampModelTextScanAppeal,
   mockReassertModelPoiRestrictions,
-  mockLoadTextScanTextHash,
-  mockQueueTextScanRescan,
+  mockLoadGrantTextHash,
   mockStampModeratorTextScanRuling,
+  mockSettleFlagAppeals,
+  mockConfirmPoiHashAutoFlag,
+  mockRevertPoiHashAutoFlag,
 } = vi.hoisted(() => ({
+  mockConfirmPoiHashAutoFlag: vi.fn(),
+  mockRevertPoiHashAutoFlag: vi.fn(),
   mockSetModelMinor: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
@@ -25,9 +31,9 @@ const {
   mockGrantModelTextScanPoi: vi.fn(),
   mockStampModelTextScanAppeal: vi.fn(),
   mockReassertModelPoiRestrictions: vi.fn(),
-  mockLoadTextScanTextHash: vi.fn(),
-  mockQueueTextScanRescan: vi.fn(),
+  mockLoadGrantTextHash: vi.fn(),
   mockStampModeratorTextScanRuling: vi.fn(),
+  mockSettleFlagAppeals: vi.fn(),
 }));
 
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
@@ -36,6 +42,10 @@ const {
 vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
+}));
+vi.mock('~/server/services/poi-hash.service', () => ({
+  confirmPoiHashAutoFlag: mockConfirmPoiHashAutoFlag,
+  revertPoiHashAutoFlag: mockRevertPoiHashAutoFlag,
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 
@@ -53,9 +63,9 @@ vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
   reassertModelPoiRestrictions: mockReassertModelPoiRestrictions,
 }));
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
-  loadTextScanTextHash: mockLoadTextScanTextHash,
-  queueTextScanRescan: mockQueueTextScanRescan,
+  loadGrantTextHash: mockLoadGrantTextHash,
   stampModeratorTextScanRuling: mockStampModeratorTextScanRuling,
+  settleFlagAppealsAfterModeratorLift: mockSettleFlagAppeals,
 }));
 
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -98,7 +108,7 @@ beforeEach(() => {
   mockReplicaModelFindUnique.mockResolvedValue({ minor: true });
   mockPrimaryModelFindUnique.mockResolvedValue({ minor: true });
   mockLogToAxiom.mockResolvedValue(undefined);
-  mockLoadTextScanTextHash.mockResolvedValue('h-text');
+  mockLoadGrantTextHash.mockResolvedValue('h-text');
 });
 
 describe('findMinorHashMatches', () => {
@@ -953,6 +963,77 @@ describe('confirmMinorHashAutoFlag', () => {
   });
 });
 
+describe('confirmMinorHashAutoFlag — text-scan ruling', () => {
+  const verdictMeta = { textScanFlags: { minor: { workflowId: 'wf-1', textHash: 'h1' } } };
+
+  it('upholds the text-scan minor flag as a moderator ruling with the reason and note', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+
+    await confirmMinorHashAutoFlag({
+      modelId: 100,
+      userId: 4,
+      reason: 'Minor depicted',
+      note: 'n',
+    });
+
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+      modelId: 100,
+      userId: 4,
+      decision: 'appealUpheld',
+      labels: ['minor'],
+      via: 'moderator',
+      reason: 'Minor depicted',
+      note: 'n',
+    });
+  });
+
+  it('reports whether a verdict existed and the ruling landed', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: true,
+    });
+
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: false,
+      stamped: false,
+    });
+  });
+
+  it('records nothing when the flag has no text-scan verdict', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: { minorFlagSnapshot: {} } });
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      meta: { textScanFlags: { minor: { appealGranted: { by: 1 } } } },
+    });
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+  });
+
+  it('still signs the flag off when the ruling cannot be recorded', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ meta: verdictMeta });
+    mockStampModelTextScanAppeal.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(confirmMinorHashAutoFlag({ modelId: 100, userId: 4 })).resolves.toEqual({
+      hadVerdict: true,
+      stamped: false,
+    });
+
+    expect(mockTrackModActivity).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name: 'text-scan' }));
+  });
+
+  it('leaves the verdict alone when the caller records the ruling itself', async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4, recordTextScanRuling: false });
+
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).toHaveBeenCalled();
+  });
+});
+
 describe('revertMinorHashAutoFlag', () => {
   it('rolls back exactly that model and audits the revert', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
@@ -968,6 +1049,68 @@ describe('revertMinorHashAutoFlag', () => {
       activity: 'rollbackMinorAutoHash',
     });
   });
+
+  it("settles the model's pending appeal after a moderator's revert, once the lift has run", async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({ modelId: 77, userId: 4, recordTextScanRuling: true });
+
+    expect(mockSettleFlagAppeals).toHaveBeenCalledWith({
+      modelId: 77,
+      userId: 4,
+      liftedLabels: ['minor'],
+      recordRulings: false,
+    });
+    expect(mockSettleFlagAppeals.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockSetModelMinor.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("passes the moderator's reason and note to the recorded ruling", async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({
+      modelId: 77,
+      userId: 4,
+      recordTextScanRuling: true,
+      reason: 'Adult',
+      note: 'n',
+    });
+
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith({
+      modelId: 77,
+      userId: 4,
+      label: 'minor',
+      reason: 'Adult',
+      note: 'n',
+    });
+  });
+
+  it('rules against the hash the moderator saw when one is given', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+
+    await revertMinorHashAutoFlag({
+      modelId: 77,
+      userId: 4,
+      recordTextScanRuling: true,
+      textHash: 'seen-h',
+    });
+
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: 77, label: 'minor', textHash: 'seen-h' })
+    );
+  });
+
+  it('leaves appeals alone when the caller is the appeal resolution itself', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+
+    await revertMinorHashAutoFlag({ modelId: 77, userId: 4 });
+
+    expect(mockSettleFlagAppeals).not.toHaveBeenCalled();
+  });
 });
 
 describe('dismissMinorHashMatch', () => {
@@ -975,10 +1118,11 @@ describe('dismissMinorHashMatch', () => {
     await dismissMinorHashMatch({ modelId: 100, userId: 7 });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('COALESCE(meta');
-    expect(text).toContain('|| jsonb_build_object');
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Prisma.sql(strings as TemplateStringsArray, ...values).sql;
+    expect(text.replace(/\s+/g, ' ')).toContain(
+      `meta = ${asJsonbObject('meta')} || jsonb_build_object('minorHashDismissed'`
+    );
     expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
       entityType: 'model',
       entityId: 100,
@@ -1363,20 +1507,8 @@ describe('rollbackMinorHashAutoFlags', () => {
 });
 
 describe('acceptExpiredMinorAutoFlags', () => {
-  // A resolved appeal already had a human look at it; sweeping it up as "nobody
-  // objected" would overwrite that decision with a presumption.
-  it('skips any model with an appeal of any status', async () => {
-    mockDbWrite.$executeRaw.mockResolvedValue(0);
-
-    await acceptExpiredMinorAutoFlags({ dryRun: false, limit: 500 });
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('"Appeal"');
-    expect(text).toContain('NOT EXISTS');
-    expect(text).not.toContain(`status = 'Pending'`);
-  });
-
+  // Which appeals hold a model back is covered against Postgres in
+  // minor-hash-accept-sweep.behavior.test.ts.
   it('writes nothing on a dry run', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ count: 4 }]);
 
@@ -1388,6 +1520,15 @@ describe('acceptExpiredMinorAutoFlags', () => {
 });
 
 describe('getMinorFlagAppealsForReview', () => {
+  // A text pin: it sees the predicate is written, not that it selects the right rows. The moderator
+  // app's twin of this query has the behavioural case (minor-flag-appeals.pglite.test.ts).
+  it('lists in-app appeals only, never a site-form appeal on the model', async () => {
+    await getMinorFlagAppealsForReview({ limit: 10 });
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toMatch(/WHERE a\."entityType" = 'Model' AND a\.category IS NULL\n/);
+  });
+
   it('returns poi and the text-scan verdict so a moderator can read the reason', async () => {
     await getMinorFlagAppealsForReview({ limit: 10 });
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
@@ -1451,8 +1592,14 @@ describe('getMinorFlagAppealsForReview', () => {
 });
 
 describe('resolveMinorFlagAppeal', () => {
-  it('upholds by confirming the flag and rejecting the appeal', async () => {
-    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+  it("upholds by confirming the flag and rejecting the appeal with the moderator's reason", async () => {
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: true,
+      userId: 7,
+      resolvedReason: 'other',
+      internalNotes: 'school uniform tag',
+    });
 
     expect(mockTrackModActivity).toHaveBeenCalledWith(
       7,
@@ -1463,8 +1610,31 @@ describe('resolveMinorFlagAppeal', () => {
         ids: [42],
         entityType: EntityType.Model,
         status: AppealStatus.Rejected,
+        resolvedReason: 'other',
+        internalNotes: 'school uniform tag',
         userId: 7,
       })
+    );
+  });
+
+  // Each stamp records one label-store label; a moderator-kind one would count the appeal outcome
+  // toward consensus.
+  it('records an upheld minor appeal once, as the appeal outcome', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { textScanFlags: { minor: { workflowId: 'wf-1', textHash: 'h-1' } } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledTimes(1);
+    const [stamp] = mockStampModelTextScanAppeal.mock.calls[0] as [{ via?: string }];
+    expect(stamp).toMatchObject({ decision: 'appealUpheld', labels: ['minor'] });
+    expect(stamp.via ?? 'appeal').toBe('appeal');
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ entityId: 42, activity: 'setMinor' })
     );
   });
 
@@ -1599,13 +1769,12 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      currentHash: 'h-text',
+      grantHash: 'h-text',
     });
     expect(grantStamps()).toEqual([]);
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ status: AppealStatus.Approved })
     );
-    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
   });
 
   // Review Focus 4.
@@ -1647,7 +1816,7 @@ describe('resolveMinorFlagAppeal', () => {
         textScanFlags: { poi: poiEntry, minor: poiEntry },
       },
     });
-    mockLoadTextScanTextHash.mockResolvedValue('h-current');
+    mockLoadGrantTextHash.mockResolvedValue('h-current');
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
@@ -1668,13 +1837,13 @@ describe('resolveMinorFlagAppeal', () => {
         userId: 7,
         decision: 'appealGranted',
         labels: ['minor'],
-        currentHash: 'h-current',
+        grantHashes: { minor: 'h-current', poi: 'h-current' },
       },
     ]);
     expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      currentHash: 'h-current',
+      grantHash: 'h-current',
     });
   });
 
@@ -1735,7 +1904,7 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      currentHash: 'h-text',
+      grantHash: 'h-text',
     });
     expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'appealUpheld', labels: ['minor'] })
@@ -1746,6 +1915,57 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
+  describe('a real-person flag the hash match applied', () => {
+    const hashed = { poiFlagSnapshot: { at: 'x', source: 'auto' } };
+
+    it('is overturned by reverting it, without the appeal being settled underneath', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({ minor: false, poi: true, meta: hashed });
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+      expect(mockRevertPoiHashAutoFlag).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        fromAppeal: true,
+      });
+      expect(mockLoadGrantTextHash).not.toHaveBeenCalled();
+      expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ status: AppealStatus.Approved })
+      );
+    });
+
+    it('is upheld by confirming it', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({ minor: false, poi: true, meta: hashed });
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+      expect(mockConfirmPoiHashAutoFlag).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
+      expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ status: AppealStatus.Rejected })
+      );
+    });
+
+    it('with a text-scan flag too, the grant lifts it rather than the hash revert', async () => {
+      mockPrimaryModelFindUnique.mockResolvedValue({
+        minor: false,
+        poi: true,
+        meta: { ...hashed, textScanFlags: { poi: { workflowId: 'wf-1', textHash: 'h-1' } } },
+      });
+      mockLoadGrantTextHash.mockResolvedValue('h-text');
+
+      await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+      expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+        modelId: 42,
+        userId: 7,
+        grantHash: 'h-text',
+      });
+      expect(mockRevertPoiHashAutoFlag).not.toHaveBeenCalled();
+    });
+  });
+
   it('refuses a per-label decision on a label that is not flagged', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({ minor: true, poi: false, meta: {} });
 
@@ -1753,6 +1973,65 @@ describe('resolveMinorFlagAppeal', () => {
       resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7, labels: { poi: 'overturn' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  describe('the ruling reason is checked against the status the ruling writes', () => {
+    type Labels = Parameters<typeof resolveMinorFlagAppeal>[0]['labels'];
+    const rule = (uphold: boolean, labels: Labels, resolvedReason: string) =>
+      resolveMinorFlagAppeal({ modelId: 42, uphold, userId: 7, labels, resolvedReason });
+
+    beforeEach(() =>
+      mockPrimaryModelFindUnique.mockResolvedValue({
+        minor: true,
+        poi: true,
+        meta: {
+          minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+          textScanFlags: { poi: poiEntry, minor: poiEntry },
+        },
+      })
+    );
+
+    it.each([
+      ['an uphold that lifts poi', true, { poi: 'overturn' }, 'not-a-real-person'],
+      ['an overturn that keeps both', false, { minor: 'uphold', poi: 'uphold' }, 'flag-confirmed'],
+      [
+        'an overturn naming only minor, which lifts poi',
+        false,
+        { minor: 'uphold' },
+        'terms-misread',
+      ],
+    ] as const)('records the reason for %s', async (_, uphold, labels, reason) => {
+      await rule(uphold, labels, reason);
+      expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ resolvedReason: reason })
+      );
+    });
+
+    it.each([
+      ['an uphold that lifts poi', true, { poi: 'overturn' }, 'flag-confirmed'],
+      [
+        'an overturn that keeps both',
+        false,
+        { minor: 'uphold', poi: 'uphold' },
+        'not-a-real-person',
+      ],
+      [
+        'an overturn naming only minor, which lifts poi',
+        false,
+        { minor: 'uphold' },
+        'flag-confirmed',
+      ],
+      ['a lift of poi alone', false, { minor: 'uphold', poi: 'overturn' }, 'not-a-minor'],
+    ] as const)(
+      'refuses a mismatched reason on %s before any write',
+      async (_, uphold, labels, reason) => {
+        await expect(rule(uphold, labels, reason)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+        expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+        expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+        expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+      }
+    );
   });
 
   // Review Focus 4: an appeal never rolls a moderator's own flag back to a pre-state.
@@ -1798,7 +2077,7 @@ describe('resolveMinorFlagAppeal', () => {
       poi: true,
       meta: { textScanFlags: { poi: poiEntry } },
     });
-    mockLoadTextScanTextHash.mockResolvedValue(null);
+    mockLoadGrantTextHash.mockResolvedValue(null);
 
     await expect(
       resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })
@@ -1808,20 +2087,58 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
-  // Review Focus 2.
-  it('queues a rescan when the text changed while the appeal was pending', async () => {
+  // The ruling is stamped against the text the moderator reviewed, so a rescan of it would only
+  // re-apply a verdict the grant already covers.
+  it('grants against the scanned text and reports no rescan, though the text changed', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
-      minor: false,
+      minor: true,
       poi: true,
-      meta: { textScanFlags: { poi: { ...poiEntry, textHash: 'h-flagged' } } },
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: {
+          poi: { ...poiEntry, textHash: 'h-flagged' },
+          minor: { ...poiEntry, textHash: 'h-flagged' },
+        },
+      },
     });
+    mockLoadGrantTextHash.mockResolvedValue('h-current');
 
     expect(await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).toEqual({
-      rescanQueued: true,
+      rescanQueued: false,
     });
-    expect(mockQueueTextScanRescan).toHaveBeenCalledWith('Model', 42);
-    expect(mockResolveEntityAppeal.mock.invocationCallOrder[0]).toBeLessThan(
-      mockQueueTextScanRescan.mock.invocationCallOrder[0]
+    expect(grantStamps()).toEqual([
+      expect.objectContaining({ grantHashes: { minor: 'h-current', poi: 'h-current' } }),
+    ]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      grantHash: 'h-current',
+    });
+  });
+
+  // The web-search pass can own a label, so each overturned label asks for its own hash.
+  it('grants each overturned label against the hash of the row that owns it', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockLoadGrantTextHash.mockImplementation(async (_type, _id, label) =>
+      label === 'minor' ? 'h-search' : 'h-main'
+    );
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Model', 42, 'minor');
+    expect(mockLoadGrantTextHash).toHaveBeenCalledWith('Model', 42, 'poi');
+    expect(grantStamps()).toEqual([
+      expect.objectContaining({ grantHashes: { minor: 'h-search', poi: 'h-main' } }),
+    ]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith(
+      expect.objectContaining({ grantHash: 'h-main' })
     );
   });
 
@@ -1835,7 +2152,7 @@ describe('resolveMinorFlagAppeal', () => {
     await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
 
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
-    expect(mockLoadTextScanTextHash).not.toHaveBeenCalled();
+    expect(mockLoadGrantTextHash).not.toHaveBeenCalled();
     expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,

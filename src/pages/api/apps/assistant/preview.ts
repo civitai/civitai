@@ -10,7 +10,8 @@ const querySchema = z.object({ blockId: z.string().min(1).max(64) });
 
 /**
  * GET ?blockId= → the preview pane's frame: the caller's own app over its live dev tunnel, with a
- * freshly signed entry URL. 404 when the app is not theirs; 409 when no tunnel is up yet.
+ * freshly signed entry URL, or `{ preparing: true }` while the tunnel's host is not resolvable yet.
+ * 404 when the app is not theirs; 409 when no tunnel is up yet.
  */
 export default AuthedEndpoint(async (req, res, user) => {
   if (!requireFullScopeSession(req, res)) return;
@@ -25,6 +26,8 @@ export default AuthedEndpoint(async (req, res, user) => {
   switch (preview.status) {
     case 'ok':
       return res.json(preview.frame);
+    case 'preparing':
+      return res.json({ preparing: true });
     case 'forbidden':
       return res.status(403).json({ error: preview.error });
     case 'not-found':

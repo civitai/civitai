@@ -9,6 +9,7 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { LINK_CLASS, num } from '$lib/format';
   import { MIN_FLAGGED } from '$lib/reactions';
   import { fetchReactions, type Reactions } from './reactions';
@@ -16,7 +17,7 @@
   let { userId }: { userId: number } = $props();
 
   // Its own fetch — see `/api/user-reactions`.
-  const reactions = $derived(browser ? fetchReactions(userId) : null);
+  const reactions = $derived(browser ? fetchReactions(userId) : SSR_PENDING);
 
   type Target = Reactions['targets'][number];
 

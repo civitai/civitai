@@ -75,6 +75,8 @@ let lockStatements: string[];
 /** Every store call, in order, tagged with the client it went through. */
 let ops: string[];
 let failUpdateFor: string | null;
+/** Listings a moderator granted a media split (`app_listing_red_media`). */
+let splitListings: Set<string>;
 
 type Fn = { mockImplementation: (f: (...a: never[]) => unknown) => void };
 const fake = (node: unknown, impl: (...a: never[]) => unknown) =>
@@ -95,6 +97,12 @@ function client(via: 'pool' | 'tx', undo: Array<() => void>) {
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const stmt = Prisma.sql(strings, ...(values as Prisma.Sql[]));
       const text = stmt.text.replace(/\s+/g, ' ').trim();
+      if (text.includes("to_regclass('app_listing_red_media')")) {
+        ops.push(`${via}:split`);
+        return [{ present: true, can_select: true, can_insert: true, can_update: true }];
+      }
+      if (text.includes('FROM app_listing_red_media'))
+        return [{ split: splitListings.has(stmt.values[0] as string) }];
       ops.push(`${via}:lock`);
       lockStatements.push(text);
       const [id] = stmt.values as [string];
@@ -294,6 +302,7 @@ beforeEach(() => {
   lockStatements = [];
   ops = [];
   failUpdateFor = null;
+  splitListings = new Set();
   resolveCalls.length = 0;
   seedMisScanned();
   installStore();
@@ -652,12 +661,17 @@ describe('which listings are touched', () => {
 
     expect(ops).toEqual([
       'pool:lookup',
+      // The civitai.red-override lookup's probe (`listListingIdsWithRedSlotImage`), on the pool.
+      'pool:split',
       'tx:lock',
       'tx:listing',
       'tx:listing',
       'tx:shots',
+      // The overrides read under the lock (`loadListingRatingAssets`), inside the transaction.
+      'tx:split',
       'tx:images',
       'tx:reviewed',
+      'tx:split',
       'tx:update',
       'tx:event',
     ]);
@@ -675,6 +689,64 @@ describe('which listings are touched', () => {
     expect(lockStatements).toEqual([
       `SELECT "id" FROM "app_listings" WHERE "id" = $1 AND "status" = 'approved' AND "revision_of_id" IS NULL FOR UPDATE`,
     ]);
+  });
+});
+
+describe('a listing a moderator split (civitai.red-only mature media)', () => {
+  /** Declared g, stored g, every asset PG — then one of them is re-rated. */
+  function seedSfw() {
+    seedMisScanned({ contentRating: 'g' });
+    for (const i of images) i.nsfwLevel = NsfwLevel.PG;
+  }
+
+  it('🔴 a screenshot re-rated PG → R leaves a split listing at its rating', async () => {
+    seedSfw();
+    splitListings.add('apl_a');
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.R);
+
+    expect(ratingOf('apl_a')).toBe('g');
+    expect(changed).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it('🔴 so does the icon re-rated PG → R: the listing stays on civitai.com', async () => {
+    seedSfw();
+    splitListings.add('apl_a');
+
+    await moderatorRerates(ICON, NsfwLevel.R);
+
+    expect(ratingOf('apl_a')).toBe('g');
+  });
+
+  it('invariant guard: without the split the same re-rate still raises the listing', async () => {
+    seedSfw();
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.R);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(changed).toEqual([{ appListingId: 'apl_a', before: 'g', after: 'r' }]);
+  });
+
+  it('a split still raises for a re-rate that stays within SFW', async () => {
+    seedSfw();
+    splitListings.add('apl_a');
+
+    await moderatorRerates(SHOT, NsfwLevel.PG13);
+
+    expect(ratingOf('apl_a')).toBe('pg13');
+  });
+
+  it('the split is read per listing: a sibling sharing the image is raised', async () => {
+    seedSfw();
+    listings.push({ ...listings[0], id: 'apl_b', slug: 'app-b' });
+    shots.push({ appListingId: 'apl_b', imageId: SHOT });
+    splitListings.add('apl_a');
+
+    await moderatorRerates(SHOT, NsfwLevel.R);
+
+    expect(ratingOf('apl_a')).toBe('g');
+    expect(ratingOf('apl_b')).toBe('r');
   });
 });
 

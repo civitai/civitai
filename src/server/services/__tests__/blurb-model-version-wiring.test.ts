@@ -93,7 +93,7 @@ const storedVersion = {
   usageControl: 'Download',
   flags: 0,
   licensingFee: null,
-  model: { meta: {} },
+  model: { id: MODEL_ID, meta: {} },
   monetization: null,
 };
 
@@ -155,9 +155,10 @@ describe('upsertModelVersion — blurb expansion', () => {
     // The first guard saw the client's html. Drop the `data.description = expansion.html`
     // assignment and the re-check runs against the same unexpanded string, so a blocked domain
     // that arrived inside the blurb body is never seen.
+    // The re-check is the LAST call; the name/trained-words diff runs between the two.
     const checked = checkedTexts();
     expect(checked[0]).toContain(CLIENT_HTML);
-    expect(checked[1]).toEqual([EXPANDED_HTML]);
+    expect(checked[checked.length - 1]).toEqual([EXPANDED_HTML]);
   });
 
   it('expands against the owner, not the moderator doing the saving', async () => {

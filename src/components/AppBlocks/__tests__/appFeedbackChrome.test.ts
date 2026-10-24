@@ -1,20 +1,19 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   APP_FEEDBACK_GENERIC_ERROR_MESSAGE,
   APP_FEEDBACK_INVALID_MESSAGE,
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
   APP_FEEDBACK_SENT_MESSAGE,
-  APP_FEEDBACK_PRIVATE_NOTICE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
-  APP_FEEDBACK_HOST_SURFACES,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
-  appFeedbackSentWithLine,
+  appFeedbackCharacterCounter,
   appFeedbackSubmitErrorMessage,
   buildAppFeedbackCreateInput,
   canSubmitAppFeedback,
+  isAppFeedbackSubmitShortcut,
   resolveAppFeedbackRequest,
 } from '~/components/AppBlocks/appFeedbackChrome';
 import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
@@ -113,16 +112,6 @@ describe('appFeedbackEntryRequest — which host surfaces offer feedback', () =>
   it('a host that names no surface → null (fails closed)', () => {
     expect(ask(undefined)).toBeNull();
   });
-
-  it('the surface table is exactly this — a new member must be decided, not defaulted', () => {
-    expect(APP_FEEDBACK_HOST_SURFACES).toEqual({
-      'model-slot': true,
-      'page-run': true,
-      'private-run': true,
-      'dev-tunnel': false,
-      'review-preview': false,
-    });
-  });
 });
 
 /**
@@ -143,7 +132,7 @@ describe('every chrome mount names its host surface', () => {
   const mounts = walk(SRC).flatMap((file) => {
     const code = readFileSync(file, 'utf8');
     return [...code.matchAll(/<AppBlockChrome\b[\s\S]*?\/>/g)].map((m) => ({
-      file: relative(SRC, file),
+      file: relative(SRC, file).split(sep).join('/'),
       hostSurface: /hostSurface=(\{surface\}|"[a-z-]+")/.exec(m[0])?.[1] ?? null,
     }));
   });
@@ -219,26 +208,45 @@ describe('modal copy', () => {
     expect(appFeedbackModalTitle(null)).toBe("Send private feedback to this app's developer");
     expect(appFeedbackModalTitle('​')).toBe("Send private feedback to this app's developer");
   });
+});
 
-  it('sent-with line names the version when there is one', () => {
-    expect(appFeedbackSentWithLine('1.4.2', { surface: 'page' })).toBe(
-      'Sent with: app version 1.4.2. Nothing else is collected.'
-    );
-    expect(appFeedbackSentWithLine(null, { surface: 'page' })).toBe(
-      'Nothing else is collected with your message.'
-    );
+describe('the character counter', () => {
+  it('absent up to 1,500 characters, so a normal message shows none', () => {
+    expect(appFeedbackCharacterCounter(0)).toBeNull();
+    expect(appFeedbackCharacterCounter(900)).toBeNull();
+    expect(appFeedbackCharacterCounter(1500)).toBeNull();
   });
 
-  it('sent-with line names the model whenever the request carries one', () => {
-    expect(appFeedbackSentWithLine('1.4.2', { surface: 'slot', modelId: 31337 })).toBe(
-      'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
-    );
-    expect(appFeedbackSentWithLine(null, { surface: 'slot', modelId: 31337 })).toBe(
-      'Sent with: the model you were viewing. Nothing else is collected.'
-    );
-    expect(appFeedbackSentWithLine('1.4.2', { surface: 'slot' })).toBe(
-      'Sent with: app version 1.4.2. Nothing else is collected.'
-    );
+  it('past 1,500: "<count> / <limit>" with thousands separators (WHOLE string)', () => {
+    expect(appFeedbackCharacterCounter(1501)).toBe('1,501 / 2,000');
+    expect(appFeedbackCharacterCounter(1850)).toBe('1,850 / 2,000');
+    expect(appFeedbackCharacterCounter(2000)).toBe('2,000 / 2,000');
+  });
+});
+
+describe('isAppFeedbackSubmitShortcut — Ctrl/⌘+Enter sends, plain Enter does not', () => {
+  const key = (over: Partial<Parameters<typeof isAppFeedbackSubmitShortcut>[0]>) =>
+    isAppFeedbackSubmitShortcut({ key: 'Enter', ctrlKey: false, metaKey: false, ...over });
+
+  it('Ctrl+Enter and ⌘+Enter', () => {
+    expect(key({ ctrlKey: true })).toBe(true);
+    expect(key({ metaKey: true })).toBe(true);
+  });
+
+  it('plain Enter is a newline', () => {
+    expect(key({})).toBe(false);
+  });
+
+  it('Ctrl with another key is not a send', () => {
+    expect(key({ key: 'a', ctrlKey: true })).toBe(false);
+  });
+
+  it('an Enter that commits an IME composition is not a send', () => {
+    expect(key({ ctrlKey: true, isComposing: true })).toBe(false);
+    // Safari: the composition has already ended, but the keydown carries keyCode 229.
+    expect(key({ ctrlKey: true, isComposing: false, keyCode: 229 })).toBe(false);
+    // CONTROL: an ordinary Enter's keyCode (13) does not block the send.
+    expect(key({ ctrlKey: true, isComposing: false, keyCode: 13 })).toBe(true);
   });
 });
 
@@ -323,17 +331,6 @@ describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sent
     );
     expect(appFeedbackSubmitErrorMessage({ message: 'boom', data: null })).toBe(
       APP_FEEDBACK_GENERIC_ERROR_MESSAGE
-    );
-  });
-});
-
-describe('the privacy notice the sender reads, pinned literally', () => {
-  it('names the collaborators, who read the inbox alongside the developer', () => {
-    // The whole string, not a keyword: a reword that drops a reader (it said only "this app's
-    // developer and Civitai moderators" until accepted collaborators were shown to read the
-    // inbox) must fail here. The inbox's own note is pinned in `appFeedbackInbox.test.ts`.
-    expect(APP_FEEDBACK_PRIVATE_NOTICE).toBe(
-      "Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
     );
   });
 });

@@ -1,7 +1,12 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { COOC_ELIGIBLE_REST } from '~/server/services/resource-intent-cooc/build';
+import {
+  COOC_ELIGIBLE_ATTACHMENTS,
+  COOC_ELIGIBLE_IMAGE,
+  COOC_ELIGIBLE_POST,
+  COOC_ELIGIBLE_REST,
+} from '~/server/services/resource-intent-cooc/build';
 
 /**
  * The index trains on the images the M3 registration calls eligible. Its fragment must stay
@@ -26,6 +31,14 @@ describe('cooc eligibility fragment', () => {
     expect(rest).not.toBeNull();
     expect(rest).toBe(COOC_ELIGIBLE_REST);
     expect(COOC_ELIGIBLE_REST.length).toBe(628);
+  });
+
+  it('is its image, post and attachment parts in order, so a drift in any part fails above', () => {
+    expect(COOC_ELIGIBLE_IMAGE + COOC_ELIGIBLE_POST + COOC_ELIGIBLE_ATTACHMENTS).toBe(
+      COOC_ELIGIBLE_REST
+    );
+    expect(COOC_ELIGIBLE_IMAGE).toMatch(/^  AND i\./);
+    expect(COOC_ELIGIBLE_POST).toMatch(/^  AND p\./);
   });
 
   it('the comparison sees a one-byte change in the registration (negative control)', () => {

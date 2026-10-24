@@ -3,9 +3,7 @@
  *
  * The report-row → action-set + status → chip logic for the mod report queue +
  * the per-listing moderation-history view, extracted so the correctness gate lives
- * in the node `unit` project (the civitai browser-mode component suites are
- * REPORT-ONLY / non-blocking — so the real, blocking coverage for this logic lives
- * here, mirroring `appListingReportView` / `appListingCardView`).
+ * in the node `unit` project, mirroring `appListingReportView` / `appListingCardView`.
  *
  * No React, no Mantine imports — the color strings are plain Mantine color names
  * the component maps onto <Badge color=…>. This keeps the module pure + trivially
@@ -130,6 +128,12 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // The label is therefore written for the MOD queue and names whose data moved —
   // "User storage purged", not the second-person voice the `owner-*` labels use.
   'purge-user-storage': { label: 'User storage purged', color: 'red' },
+  // Document-store takedowns of one user-authored shared document; mod-view only, like
+  // `purge-user-storage` (`OWNER_HIDDEN_MODERATION_ACTIONS`).
+  'storage-doc-hide': { label: 'Stored document hidden', color: 'orange' },
+  'storage-doc-unhide': { label: 'Stored document unhidden', color: 'blue' },
+  'storage-doc-delete': { label: 'Stored document deleted', color: 'red' },
+  'storage-doc-dismiss': { label: 'Stored document reports dismissed', color: 'blue' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

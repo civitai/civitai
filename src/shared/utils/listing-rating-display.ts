@@ -12,7 +12,13 @@ import {
 export const SFW_STORE_HOST = 'civitai.com';
 export const MATURE_STORE_HOST = 'civitai.red';
 
-export type ListingRatingDisplayAssetKind = 'icon' | 'cover' | 'screenshot';
+/** `red-icon` / `red-cover` are the civitai.red-only overrides of the icon and cover. */
+export type ListingRatingDisplayAssetKind =
+  | 'icon'
+  | 'cover'
+  | 'screenshot'
+  | 'red-icon'
+  | 'red-cover';
 
 export type ListingRatingDisplayAsset = {
   kind: ListingRatingDisplayAssetKind;
@@ -20,6 +26,11 @@ export type ListingRatingDisplayAsset = {
   position?: number;
   /** The image's detected level. `null`/`0` = not rated yet, which raises nothing. */
   nsfwLevel: number | null | undefined;
+  /**
+   * Set exactly for the `red-icon` / `red-cover` kinds: the marker `ratingFloorAssets` reads, so a
+   * split never floors the rating by an image civitai.com never shows.
+   */
+  redSlot?: boolean;
 };
 
 export type ListingRatingState = {
@@ -103,6 +114,8 @@ export function assetRating(nsfwLevel: number | null | undefined): OffsiteRating
 export function listingRatingAssetLabel(asset: ListingRatingDisplayAsset): string {
   if (asset.kind === 'icon') return 'Icon';
   if (asset.kind === 'cover') return 'Cover';
+  if (asset.kind === 'red-icon') return `${MATURE_STORE_HOST} icon`;
+  if (asset.kind === 'red-cover') return `${MATURE_STORE_HOST} cover`;
   return asset.position != null ? `Screenshot ${asset.position}` : 'Screenshot';
 }
 
@@ -142,9 +155,15 @@ export function declaredListingRating(input: {
 export type ListingAssetLevels = Pick<
   ListingAssetsView,
   'iconId' | 'coverId' | 'iconNsfwLevel' | 'coverNsfwLevel'
-> & { screenshots: Pick<ListingAssetsView['screenshots'][number], 'imageId' | 'nsfwLevel'>[] };
+> &
+  Partial<
+    Pick<ListingAssetsView, 'redIconId' | 'redCoverId' | 'redIconNsfwLevel' | 'redCoverNsfwLevel'>
+  > & { screenshots: Pick<ListingAssetsView['screenshots'][number], 'imageId' | 'nsfwLevel'>[] };
 
-/** Those levels as rating assets in display order; a read that has not arrived is empty. */
+/**
+ * Those levels as rating assets in display order (the civitai.red overrides last); a read that
+ * has not arrived is empty.
+ */
 export function listingRatingAssetsFromView(
   view: Partial<ListingAssetLevels>
 ): ListingRatingDisplayAsset[] {
@@ -154,6 +173,12 @@ export function listingRatingAssetsFromView(
     ...(view.screenshots ?? [])
       .filter((s) => s.imageId != null)
       .map((s, i) => ({ kind: 'screenshot' as const, position: i + 1, nsfwLevel: s.nsfwLevel })),
+    ...(view.redIconId != null
+      ? [{ kind: 'red-icon' as const, nsfwLevel: view.redIconNsfwLevel, redSlot: true }]
+      : []),
+    ...(view.redCoverId != null
+      ? [{ kind: 'red-cover' as const, nsfwLevel: view.redCoverNsfwLevel, redSlot: true }]
+      : []),
   ];
 }
 

@@ -1,4 +1,4 @@
-import type { WorkflowStepEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/orchestration-client';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -89,9 +89,18 @@ export function mergeSignaledStep(
   // keeping the old one strands a stale position and ETA on the card for the rest of the session.
   step.queuePosition = stepMatch.queuePosition;
   step.preparation = stepMatch.preparation;
-  // Merge updated images by id, then append ones the client has not seen. Multi-step workflows
-  // (e.g. Wan 2.2 interpolation) start the later step with zero images and only materialize
-  // outputs on completion, which a per-index loop drops until reload.
+  mergeStepOutput(step, stepMatch);
+}
+
+/**
+ * Merges updated outputs by id, then appends ones the client has not seen. Multi-step workflows
+ * (e.g. Wan 2.2 interpolation) start the later step with zero outputs and only materialize them on
+ * completion, which a per-index loop drops until reload.
+ */
+function mergeStepOutput(
+  step: Pick<NormalizedStep, 'output'>,
+  stepMatch: Pick<SignaledStep, 'output'>
+) {
   for (const [index, item] of step.output.entries()) {
     const itemMatch = stepMatch.output.find((x) => x.id === item.id);
     if (itemMatch) step.output[index] = itemMatch;
@@ -156,27 +165,44 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
 
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteTextToImageRequests) => {
-      if (!old) return;
-      outerLoop: for (const page of old.pages) {
-        for (const item of page.items) {
-          if (!updates.length) break outerLoop;
-          const index = updates.findIndex((x) => x.id === item.id);
-          if (index > -1) {
-            const update = updates.splice(index, 1)[0];
-            if (update && !COMPLETE_STATUSES.includes(item.status)) {
-              item.status = update.status;
-              item.downloadPriority = update.downloadPriority;
-
-              for (const step of item.steps) {
-                const stepMatch = update.steps?.find((x) => x.name === step.name);
-                if (stepMatch) mergeSignaledStep(step, stepMatch);
-              }
-            }
-          }
-        }
-      }
+      if (old) applyStatusUpdates(old, updates);
     })
   );
+}
+
+/** Writes refetched workflows onto the cached pages in place — `data` is an immer draft. */
+export function applyStatusUpdates(
+  data: InfiniteTextToImageRequests,
+  allUpdates: NonNullable<WorkflowStatusUpdate>[]
+) {
+  // Each cached query gets the whole list, so consume a copy.
+  const updates = [...allUpdates];
+  outerLoop: for (const page of data.pages) {
+    for (const item of page.items) {
+      if (!updates.length) break outerLoop;
+      const index = updates.findIndex((x) => x.id === item.id);
+      if (index > -1) {
+        const update = updates.splice(index, 1)[0];
+        if (!update) continue;
+        // A finished workflow keeps its status, but still takes outputs: the orchestrator can
+        // finish a workflow before it has rated the last output.
+        const finished = COMPLETE_STATUSES.includes(item.status);
+        // Outside the `!finished` guard on purpose: the orchestrator can set the cap after submit.
+        item.nsfwCap = update.nsfwCap ?? item.nsfwCap;
+        if (!finished) {
+          item.status = update.status;
+          item.downloadPriority = update.downloadPriority;
+        }
+
+        for (const step of item.steps) {
+          const stepMatch = update.steps?.find((x) => x.name === step.name);
+          if (!stepMatch) continue;
+          if (finished) mergeStepOutput(step, stepMatch);
+          else mergeSignaledStep(step, stepMatch);
+        }
+      }
+    }
+  }
 }
 
 async function updateSignaledWorkflows() {

@@ -13,6 +13,15 @@ import {
   withIndefiniteArticle,
 } from '~/server/notifications/comment.notifications';
 
+// Edits re-emit the comment's key, relying on UserNotification's unique (notificationId, userId) to
+// skip people already told. Those rows are cleaned up, so don't widen the window to old comments.
+// An author can still edit a comment moderation removed, hence the visibility filters.
+const liveCommentCreatedOrEditedSince = (lastSent: string) =>
+  `c."createdAt" > '${lastSent}'::timestamp - interval '1 day'
+          AND (c."createdAt" > '${lastSent}' OR c."updatedAt" > '${lastSent}')
+          AND c."tosViolation" = false
+          AND c.hidden IS NOT TRUE`;
+
 // Moveable (possibly)
 
 export const mentionNotifications = createNotificationProcessor({
@@ -77,6 +86,7 @@ export const mentionNotifications = createNotificationProcessor({
                 root."bountyEntryId",
                 root."challengeId",
                 root."crucibleId",
+                root."storylineId",
                 root."model3dId",
                 root."comicProjectId",
                 t."imageId",
@@ -90,6 +100,7 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyEntryId",
                 t."challengeId",
                 t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."comicProjectId"
              ),
@@ -105,6 +116,7 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+              WHEN COALESCE(root."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
@@ -125,6 +137,7 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyEntryId",
                 t."challengeId",
                 t."crucibleId",
+                t."storylineId",
                 t."model3dId",
                 t."commentId"
              ),
@@ -140,6 +153,7 @@ export const mentionNotifications = createNotificationProcessor({
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
                 WHEN t."crucibleId" IS NOT NULL THEN 'crucible'
+                WHEN t."storylineId" IS NOT NULL THEN 'storyline'
                 WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
@@ -150,7 +164,7 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "Thread" t ON t.id = c."threadId"
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
         ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
-        WHERE (c."createdAt" > '${lastSent}')
+        WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
@@ -177,7 +191,7 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
-          AND (c."createdAt" > '${lastSent}')
+          AND ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c.content LIKE '%"mention:%'
 
         UNION

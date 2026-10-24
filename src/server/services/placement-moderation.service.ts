@@ -3,6 +3,8 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { settlePlacement } from '~/server/services/placement-escrow.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
+import { tombstoneChaptersForPlacements } from '~/server/services/storyline-chapter-removal.service';
+import { isAnswerableParentChapter } from '~/shared/utils/storyline-placement';
 
 /**
  * Whether either user has blocked the other.
@@ -18,14 +20,19 @@ import { onPlacementsTakenDown } from '~/server/events/points/hooks';
  * `getBlockedPairIds` already unions both and a one-sided guard here would let
  * someone place on a user who blocked them.
  */
-export async function isPlacementBlocked({
-  ownerId,
-  placerId,
-}: {
-  ownerId: number;
-  placerId: number;
-}) {
-  const rows = await dbWrite.$queryRaw<{ exists: boolean }[]>`
+export async function isPlacementBlocked(
+  {
+    ownerId,
+    placerId,
+  }: {
+    ownerId: number;
+    placerId: number;
+  },
+  // A caller inside a transaction passes its client, so the check reads what that
+  // transaction sees and runs on its connection.
+  db: Prisma.TransactionClient | typeof dbWrite = dbWrite
+) {
+  const rows = await db.$queryRaw<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM "UserEngagement"
       WHERE type = 'Block'
@@ -112,17 +119,87 @@ export async function declinePlacementsOnBlock({
 
   const pending = await dbWrite.placement.findMany({
     where: { ownerId, placerId, status: 'pending' },
-    select: { id: true },
+    select: { id: true, surface: true, targetType: true, targetId: true },
     take: limit,
   });
+  const orphaned = await orphanedContinuationIds(pending);
 
   return settleEach(pending, (id) =>
     settlePlacement({
       placementId: id,
-      action: waiveFee ? 'declineByBlock' : 'decline',
+      // A continuation the owner could never accept is refunded in full, as it
+      // would be without the block: the block must not earn the owner its fee.
+      action: orphaned.has(id) ? 'expire' : waiveFee ? 'declineByBlock' : 'decline',
       actorId: ownerId,
     })
   );
+}
+
+/**
+ * The storyline continuations among `rows` whose parent chapter is not answerable
+ * (`isAnswerableParentChapter`): removed, its post deleted (no chapter holds the
+ * post), or in a taken-down storyline. The same rule the owner's own answer is
+ * refused by.
+ */
+async function orphanedContinuationIds(
+  rows: { id: number; surface: string; targetType: string; targetId: number }[]
+) {
+  const continuations = rows.filter(
+    (row) => row.surface === 'storyline' && row.targetType === 'post'
+  );
+  if (!continuations.length) return new Set<number>();
+
+  const chapters = await dbWrite.storylineChapter.findMany({
+    where: { postId: { in: continuations.map((row) => row.targetId) } },
+    select: { postId: true, removedAt: true, storyline: { select: { tosViolation: true } } },
+  });
+  const live = new Set(chapters.filter(isAnswerableParentChapter).map((chapter) => chapter.postId));
+  return new Set(continuations.filter((row) => !live.has(row.targetId)).map((row) => row.id));
+}
+
+/**
+ * Takes approved placements down and, in the same transaction, tombstones any storyline chapter
+ * one of them added. Tombstoned, not deleted: the chapters after it stay reachable, and the row
+ * keeps holding its post, so that post cannot be submitted again.
+ *
+ * The tombstone is written for every id asked about, not only the rows this call flipped, so a
+ * retry after a partial failure still finishes the job.
+ */
+const takeDownApproved = (
+  placementIds: number[],
+  where: Prisma.PlacementWhereInput,
+  data: Prisma.PlacementUpdateManyMutationInput
+) =>
+  dbWrite.$transaction(async (tx) => {
+    const result = await tx.placement.updateMany({ where, data });
+    await tombstoneChaptersForPlacements({ placementIds }, tx);
+    return result;
+  });
+
+/**
+ * Refunds the pending continuations of the chapters these takedowns removed.
+ *
+ * After the commit, because settling moves Buzz. A failure is logged, not
+ * thrown: the takedown has happened, and from its commit those rows can no
+ * longer be answered; the orphaned-continuation job settles whatever this left.
+ * Imported on use, because the storyline layer imports this module.
+ */
+async function settleContinuationsOf(placementIds: number[]) {
+  if (!placementIds.length) return;
+  try {
+    const { settleOrphanedContinuations } = await import(
+      '~/server/services/storyline-placement.service'
+    );
+    await settleOrphanedContinuations({ removedPlacementIds: placementIds });
+  } catch (error) {
+    await logToAxiom({
+      name: 'placement-moderation',
+      type: 'error',
+      message: 'settling continuations of removed chapters failed',
+      placementIds,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
 }
 
 /**
@@ -177,18 +254,21 @@ export async function removePlacementsByUser({
     take: limit,
   });
 
-  const { count: takenDown } = await dbWrite.placement.updateMany({
-    where: { id: { in: approved.map((row) => row.id) }, status: 'approved' },
-    data: {
+  const approvedIds = approved.map((row) => row.id);
+  const { count: takenDown } = await takeDownApproved(
+    approvedIds,
+    { id: { in: approvedIds }, status: 'approved' },
+    {
       status: 'removed',
       removedBy: 'moderator',
       // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
       // is the one path whose purpose is a moderation record.
       takenDownAt: new Date(),
       takenDownById: actorId,
-    },
-  });
-  if (takenDown > 0) void onPlacementsTakenDown(approved.map((row) => row.id));
+    }
+  );
+  if (takenDown > 0) void onPlacementsTakenDown(approvedIds);
+  await settleContinuationsOf(approvedIds);
 
   return {
     ...settled,
@@ -234,22 +314,27 @@ export async function removePlacementByModerator({
     return { removed: settled, wasLive: false };
   }
 
-  if (placement.status !== 'approved')
+  if (placement.status !== 'approved') {
+    // Pressing remove again finishes a takedown whose refunds did not all go through.
+    if (placement.status === 'removed') await settleContinuationsOf([placementId]);
     throw new Error(`placement: that placement is already ${placement.status}`);
+  }
 
-  const { count } = await dbWrite.placement.updateMany({
-    where: { id: placementId, status: 'approved' },
-    data: {
+  const { count } = await takeDownApproved(
+    [placementId],
+    { id: placementId, status: 'approved' },
+    {
       status: 'removed',
       removedBy: 'moderator',
       // Not `resolvedAt`/`resolvedById`: those record who approved it, and this
       // is the one path whose purpose is a moderation record.
       takenDownAt: new Date(),
       takenDownById: actorId,
-    },
-  });
+    }
+  );
 
   if (count > 0) void onPlacementsTakenDown([placementId]);
+  await settleContinuationsOf([placementId]);
   return { removed: count > 0, wasLive: true };
 }
 

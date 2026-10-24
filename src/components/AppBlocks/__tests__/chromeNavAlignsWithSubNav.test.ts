@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * destinations the way the STORE draws them. Node `unit` project — the tier that
  * EXECUTES this assertion (report-only on a pull request, an honest verdict on a
  * push to `main`). The behavioural companion in
- * `AppBlockChromePlatformNav.browser.test.tsx` is in the REPORT-ONLY browser tier.
+ * `AppBlockChromePlatformNav.browser.test.tsx` is in the browser tier (`Component tests`).
  * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this
  * repo, so this is a signal a reviewer must read, not a door that stays shut.
  *

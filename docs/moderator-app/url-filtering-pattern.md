@@ -3,8 +3,10 @@
 Established in the **reports** page and meant to be reused on the other filter-heavy moderator queues
 (images, models, image-tags, downleveled-review, etc.). Reference implementation:
 
-- Load + canonical redirect + actions → [`apps/moderator/src/routes/reports/[slug]/+page.server.ts`](../../apps/moderator/src/routes/reports/[slug]/+page.server.ts)
-- UI (MultiCombobox / Pagination / Input) → [`apps/moderator/src/routes/reports/[slug]/+page.svelte`](../../apps/moderator/src/routes/reports/[slug]/+page.svelte)
+- Parsing + canonical redirect → [`apps/moderator/src/lib/server/report-queue-load.ts`](../../apps/moderator/src/lib/server/report-queue-load.ts) (`loadReportQueue`)
+- UI (MultiCombobox / Input) → [`apps/moderator/src/lib/components/ReportFilters.svelte`](../../apps/moderator/src/lib/components/ReportFilters.svelte)
+- A queue whose load is a LAYOUT has one more rule — read the URL key by key — in
+  [`report-queue-pattern.md`](report-queue-pattern.md).
 - Tag multi-select → [`packages/civitai-ui/…/multi-combobox`](../../packages/civitai-ui/src/lib/components/ui/multi-combobox/)
 
 ## Principles
@@ -94,6 +96,10 @@ function applyMulti(key: string, values: string[]) {
 Validate every param with a **type guard** before use (`isStatus`, `isReason`, `isEntity`) — never trust the URL.
 
 ## Canonicalize defaults into the URL
+
+The `/reports/[slug]` tables do this; the user and model report queues do not
+(`loadReportQueue(…, { canonicalize: false })`), because their filter control shows the defaults as
+selected without it, and defaults spelled out in every link read as filters someone had set.
 
 On a bare landing, redirect so the active default filters are **explicit in the URL**. Only fill **absent**
 params (leave a present-but-empty sentinel alone, so it doesn't undo a clear), and guard against loops

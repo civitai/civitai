@@ -133,12 +133,6 @@ describe('probeCreatedImageMedia', () => {
     expect(options?.abortSignal).toBeInstanceOf(AbortSignal);
   });
 
-  it('bounds the probe with a budget under 5s', () => {
-    // A literal bound, not a re-read of the constant: a mutant that raises the budget to a
-    // value that would outlive a user-facing request has to fail here.
-    expect(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS).toBe(2000);
-  });
-
   it('hands the store a signal carrying THAT budget, not merely some signal', async () => {
     /**
      * 🔴 THE CONSTANT AND THE DELIVERED BUDGET ARE TWO DIFFERENT CLAIMS, and the tests

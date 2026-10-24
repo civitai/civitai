@@ -248,6 +248,16 @@ let fetchedAt = new Map<number, number>();
 let unsubscribe: (() => void) | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let flushListenersAttached = false;
+/**
+ * Ids marked known only because their fetch FAILED: known in memory so a mounted control stays
+ * usable, but never written to storage, or one blip would read as "not engaged" across reloads
+ * for the whole TTL.
+ */
+let unpersisted = new Set<number>();
+
+export function excludeFromEngagedPersistence(modelIds: Iterable<number>): void {
+  for (const id of modelIds) unpersisted.add(id);
+}
 
 /** Stamp any newly-known id `now` so its TTL clock starts (idempotent per id). */
 function stampNewIds(queried: ReadonlySet<number>, now: number): void {
@@ -268,9 +278,12 @@ function persistNow(): void {
   for (const id of fetchedAt.keys()) {
     if (!queried.has(id)) fetchedAt.delete(id);
   }
+  const persistable = unpersisted.size
+    ? new Set([...queried].filter((id) => !unpersisted.has(id)))
+    : queried;
   const blob = buildBlob(
     initializedUserId,
-    queried,
+    persistable,
     membership,
     fetchedAt,
     now,
@@ -340,6 +353,7 @@ export function initEngagedModelsPersistence(userId: number | null | undefined):
     // User changed (or logged out): drop the old user's in-memory + on-disk state.
     useEngagedModelsStore.getState().reset();
     fetchedAt = new Map();
+    unpersisted = new Set();
     safeRemove();
   }
 
@@ -384,6 +398,7 @@ export function __resetEngagedModelsPersistenceForTests(): void {
   teardownSubscription();
   initializedUserId = null;
   fetchedAt = new Map();
+  unpersisted = new Set();
   flushListenersAttached = false;
 }
 

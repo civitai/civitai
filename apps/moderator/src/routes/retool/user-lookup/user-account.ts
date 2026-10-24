@@ -1,4 +1,6 @@
+import type { GrantableBox } from '$lib/server/mystery-box-builder.service';
 import type {
+  GrantedBox as GrantedBoxRow,
   UserReview,
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
@@ -118,6 +120,8 @@ export type ShopPurchase = {
 
 export type AvailableCosmetic = { id: number; name: string };
 
+export type GrantedBox = Jsonified<GrantedBoxRow>;
+
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
@@ -131,12 +135,21 @@ export type Account = {
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
   availableBadges: AvailableCosmetic[];
+  grantedBoxes: Capped<GrantedBox>;
+  grantableBoxes: GrantableBox[];
 };
 
 /** `version` is part of the URL so bumping it rebuilds the derived promise — a Buzz send has to move
  *  the balance above the form, and this data does not come from `load`. */
 export async function fetchAccount(userId: number, version = 0): Promise<Account> {
   const r = await fetch(`/api/user-account/${userId}?v=${version}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+/** Review id → image count. Its own endpoint — see `/api/user-review-image-counts`. */
+export async function fetchReviewImageCounts(userId: number): Promise<Record<number, number>> {
+  const r = await fetch(`/api/user-review-image-counts/${userId}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

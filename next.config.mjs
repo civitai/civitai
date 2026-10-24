@@ -210,10 +210,14 @@ export default defineNextConfig(
       // won't resolve the out-of-root symlink without transpiling it
       'form-graph',
       'superjson',
+      // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
+      // left external; bundling it lets Turbopack resolve the directory.
+      '@civitai/orchestration-client',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
@@ -224,6 +228,7 @@ export default defineNextConfig(
       '@civitai/notifications',
       '@civitai/moderation',
       '@civitai/mod-utils',
+      '@civitai/app-assistant',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
@@ -335,6 +340,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
+      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
+      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
       //
@@ -346,7 +354,7 @@ export default defineNextConfig(
       // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
       // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
-        '@civitai/client',
+        '@civitai/orchestration-client',
         './src/libs/form',
         'lodash-es',
         '@tabler/icons-react',
@@ -461,6 +469,13 @@ export default defineNextConfig(
         {
           source: '/apps/installed',
           destination: '/apps/activity',
+          statusCode: 301,
+        },
+        // `/events` page removed; the sitemap and external links still point at it. Official
+        // articles are now the Civitai Official chip on `/articles`.
+        {
+          source: '/events',
+          destination: '/articles',
           statusCode: 301,
         },
         {

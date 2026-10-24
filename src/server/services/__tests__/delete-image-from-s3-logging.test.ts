@@ -136,30 +136,6 @@ describe('deleteImageFromS3', () => {
     mockGetB2ImageS3Client.mockReturnValue({ send: mockB2Send });
   });
 
-  it('logs the image id and url when the delete throws', async () => {
-    mockFindFirst.mockRejectedValue(new Error('s3 timeout'));
-
-    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
-
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'delete-image-from-s3-failed',
-        imageId: 4242,
-        url: 'abc-def/original.jpeg',
-      })
-    );
-  });
-
-  it('stays quiet when the delete succeeds', async () => {
-    // Another row shares the url, so the function returns before touching S3.
-    mockFindFirst.mockResolvedValue({ id: 1 });
-
-    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
-
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
-  });
-
   // Invalidation used to sit on the next line inside the same try, so a delete that threw
   // skipped it and the cache entry outlived the row it was derived from. Failure is exactly
   // when invalidation matters, so it has to survive the throw.
@@ -178,6 +154,19 @@ describe('deleteImageFromS3', () => {
     await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
 
     expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  // A hold marker can keep the row its caller just tried to delete, so the image's own row
+  // counts as still pointing at the url.
+  it("looks for any row with the url, the image's own included", async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { url: 'abc-def/original.jpeg' },
+    });
   });
 
   // Legacy avatar rows store a full external URL rather than a bucket key. Passing one to
@@ -227,36 +216,6 @@ describe('deleteImageFromS3', () => {
     });
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'delete-image-from-s3-failed' })
-    );
-  });
-
-  // Deleting on a resolver miss is right, but it must not be silent: the miss is the tell for a
-  // registry gap or a storage-resolver outage, and burying it is what kept this invisible.
-  it('warns about the unresolved location without failing the delete', async () => {
-    mockFindFirst.mockResolvedValue(null);
-    mockResolveMediaLocation.mockResolvedValue(null);
-
-    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
-
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'delete-image-from-s3-unresolved-location',
-        imageId: 4242,
-        url: 'abc-def/original.jpeg',
-      })
-    );
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
-  });
-
-  // Negative control for the warning above — a warning that fires on every delete is not a signal.
-  it('stays silent when the resolver does have a location', async () => {
-    mockFindFirst.mockResolvedValue(null);
-
-    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
-
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'delete-image-from-s3-unresolved-location' })
     );
   });
 

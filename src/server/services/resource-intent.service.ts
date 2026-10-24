@@ -27,9 +27,32 @@ import {
   findCheckpointCandidates,
   findPoolMergeCandidates,
   findResourceIntentCandidates,
+  findRankedCandidates,
+  V1_TAGS_LIST_MODELS,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
+import {
+  tagIndexSnapshotHolder,
+  type ServedTagIndex,
+  type TagIndexFallbackReason,
+  type TagIndexServing,
+} from '~/server/services/resource-intent-tags/holder';
+import {
+  ecosystemBaseModelGate,
+  gateEligibleEcosystems,
+  modalityEligibleEcosystems,
+  RESOURCE_INTENT_V1_GATE_SPEC_HASH,
+  V1_TAGS_REQUEST_MEDIA_TYPE,
+} from '~/server/services/resource-intent-tags/gate';
+import {
+  scoreTagRequest,
+  TAG_SCORE_PARAMS,
+  type TagIndex,
+  type TagKind,
+  type TagRequest,
+  type TagScoreResult,
+} from '~/server/services/resource-intent-tags/score';
 import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
 import {
   coocSnapshotHolder,
@@ -156,6 +179,9 @@ const INSIGHT_FALLBACK_CACHE_TTL_SECONDS = 60;
 /** A POOL_MERGE response served without a snapshot is retried as soon as one may have loaded. */
 const COOC_FALLBACK_CACHE_TTL_SECONDS = 60;
 
+/** A v1_tags response that fell back to the POOL_MERGE list, likewise. */
+const V1_FALLBACK_CACHE_TTL_SECONDS = 60;
+
 /**
  * The cache lifetime of a response, for both modes (checkpoint responses never carry
  * `insightFallback`, so the ladder is the same for them).
@@ -184,10 +210,12 @@ function responseCacheTtl(response: ResourceIntentResponse): number {
     ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
     : response.coocFallback
     ? COOC_FALLBACK_CACHE_TTL_SECONDS
+    : response.v1Fallback
+    ? V1_FALLBACK_CACHE_TTL_SECONDS
     : CACHE_TTL_SECONDS;
 }
 
-export type ResourceIntentArm = 'hybrid_10' | 'pool_merge';
+export type ResourceIntentArm = 'hybrid_10' | 'pool_merge' | 'v1_tags';
 
 /** The snapshot term of a POOL_MERGE cache key when no snapshot is served. */
 export const COOC_FALLBACK_SNAPSHOT_KEY = 'fallback';
@@ -271,6 +299,37 @@ export function resourceIntentCacheKey(input: {
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
 }
 
+/**
+ * The v1_tags arm's key. `snapshot` is the held tag index's payload sha256 (which covers its
+ * vocabulary and tables), or `COOC_FALLBACK_SNAPSHOT_KEY` when none is held; `tagsSpecHash` is
+ * `RESOURCE_INTENT_TAGS_SPEC_HASH` ('' when none is held); `RESOURCE_INTENT_V1_GATE_SPEC_HASH` covers
+ * the request-time gate and floor, which neither of those does. The stage-1 hash is the last term,
+ * which ends no other mode's key, so no other key can equal one of these.
+ */
+export function v1TagsCacheKey(input: {
+  prompt: string;
+  baseModel?: string;
+  browsingLevel: number;
+  cap: number;
+  snapshot: string;
+  tagsSpecHash: string;
+}) {
+  const terms = [
+    'v1_tags',
+    input.prompt,
+    input.baseModel ?? '',
+    String(input.browsingLevel),
+    String(input.cap),
+    'addon',
+    input.snapshot,
+    input.tagsSpecHash,
+    RESOURCE_INTENT_V1_GATE_SPEC_HASH,
+    RESOURCE_INTENT_SPEC_HASH,
+  ];
+  const hash = createHash('sha256').update(terms.join('|')).digest('hex');
+  return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
+}
+
 async function hydrateSuggestions(
   ordered: ResourceIntentShortlistEntry[],
   browsingLevel: number
@@ -339,9 +398,11 @@ type ShadowEvent = {
   stage1NoneProbability: number | null;
   stage3NoneProbability: number | null;
 } & Partial<PoolMergeShadow> &
-  Partial<CheckpointShadow>;
+  Partial<CheckpointShadow> &
+  Partial<V1ServedShadow> &
+  Partial<V1ShadowColumns>;
 
-/** Sent on POOL_MERGE and checkpoint rows only; a HYBRID_10 row reads the columns' defaults. */
+/** Sent on POOL_MERGE, checkpoint and served v1_tags rows; a HYBRID_10 row reads the columns' defaults. */
 type PoolMergeShadow = {
   arm: ResourceIntentArm | CheckpointArm;
   coocSnapshotHash: string;
@@ -356,6 +417,179 @@ type CheckpointShadow = {
   kind: 'checkpoint';
   checkpointSpecHash: string;
 };
+
+/** `2026-10-17-resource-intent-shadow-v1.sql`: what the v1_tags arm read for this prompt. */
+type V1TagColumns = {
+  tagSnapshotHash: string;
+  vocabVersion: string;
+  tagsSpecHash: string;
+  literalTagCount: number;
+  explicitTagsRemoved: number;
+  ecosystemSource: '' | 'caller' | 'tags';
+  ecosystemTop3: string[];
+};
+
+/** Sent on served v1_tags rows only. */
+type V1ServedShadow = Partial<V1TagColumns> & { v1Fallback: 0 | 1; v1FallbackReason: string };
+
+/** Sent on rows of other arms whose request ran the v1_tags shadow. */
+type V1ShadowColumns = Partial<V1TagColumns> & {
+  shadowArm: 'v1_tags';
+  shadowDegraded: 0 | 1;
+  shadowReason: string;
+  shadowSuggestionIds: number[];
+  shadowLatencyMs: number;
+};
+
+/**
+ * Why the v1_tags arm served the POOL_MERGE list: the holder's reason, the scorer's, or
+ * `no_candidates` (nothing ranked survived the gates and hydration).
+ */
+export type V1FallbackReason =
+  | TagIndexFallbackReason
+  | Exclude<TagScoreResult['status'], 'ok'>
+  | 'no_candidates';
+
+/** Resolves after the current turn's microtasks, i.e. after the route has written the response. */
+const afterResponse = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+const v1ModelTypes = (kind: TagKind) =>
+  kind === 'checkpoint' ? (['Checkpoint'] as const) : RESOURCE_INTENT_COOC_SPEC.addonTypes;
+
+/**
+ * The v1 score. A caller's baseModel is the ecosystem and the tags choose none (`scoreTagRequest`);
+ * without one, the tags choose only an ecosystem with enough resources under its gate whose base
+ * model generates the request's media type.
+ */
+function scoreV1Tags(index: TagIndex, req: TagRequest): TagScoreResult {
+  const gated = gateEligibleEcosystems(index, req.kind, v1ModelTypes(req.kind));
+  const modality = modalityEligibleEcosystems(index, V1_TAGS_REQUEST_MEDIA_TYPE);
+  const rankable = new Set([...gated].filter((id) => modality.has(id)));
+  return scoreTagRequest(index, req, TAG_SCORE_PARAMS, rankable);
+}
+
+/** The scored candidates through the gates and hydration; `fallbackReason` null when v1 has a list. */
+async function listV1Tags(
+  score: TagScoreResult,
+  req: {
+    kind: TagKind;
+    baseModel: string | undefined;
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+  }
+): Promise<{
+  entries: ResourceIntentShortlistEntry[];
+  suggestions: ResourceIntentSuggestion[];
+  fallbackReason: V1FallbackReason | null;
+}> {
+  if (score.status !== 'ok' || !score.ecosystem)
+    return {
+      entries: [],
+      suggestions: [],
+      fallbackReason: score.status === 'ok' ? 'unknown_ecosystem' : score.status,
+    };
+  const modelTypes = v1ModelTypes(req.kind);
+  const entries = await findRankedCandidates({
+    maxModels: V1_TAGS_LIST_MODELS,
+    modelIds: score.candidates.map((c) => c.modelId),
+    modelTypes,
+    baseModel: req.baseModel
+      ? score.ecosystem
+      : ecosystemBaseModelGate(score.ecosystem, modelTypes),
+    browsingLevel: req.browsingLevel,
+    coverage: req.coverage,
+    cap: req.cap,
+  });
+  const suggestions = await hydrateSuggestions(entries, req.browsingLevel);
+  return { entries, suggestions, fallbackReason: suggestions.length ? null : 'no_candidates' };
+}
+
+function v1TagColumns(
+  snapshot: ServedTagIndex,
+  score: TagScoreResult | null,
+  baseModel: string | undefined
+): V1TagColumns {
+  return {
+    tagSnapshotHash: snapshot.payloadSha256,
+    vocabVersion: snapshot.vocabVersion,
+    tagsSpecHash: snapshot.specHash,
+    literalTagCount: score?.foundTagIds.length ?? 0,
+    explicitTagsRemoved: score ? score.foundTagIds.length - score.weights.size : 0,
+    ecosystemSource: !score ? '' : baseModel ? 'caller' : score.ecosystem ? 'tags' : '',
+    ecosystemTop3: score?.ecosystems ?? [],
+  };
+}
+
+/**
+ * Per pod. The shadow's search shares the foreground's `withMeiliResourceSelect` limiter, which
+ * queues; past this cap a shadow is skipped instead, so shadows add at most 4 to its load.
+ */
+const V1_SHADOW_MAX_IN_FLIGHT = 4;
+let v1ShadowsInFlight = 0;
+
+/**
+ * The v1_tags list this request would have been served, for the shadow columns of its row. Makes no
+ * vendor call. Never throws: a failure is reported in the columns.
+ */
+async function v1TagsShadow(
+  input: ResourceIntentInput,
+  kind: TagKind,
+  ctx: ResourceIntentContext,
+  cap: number
+): Promise<V1ShadowColumns> {
+  const startedAt = Date.now();
+  let tags: Partial<V1TagColumns> = {};
+  const columns = (outcome: { shadowReason: string; shadowDegraded?: 0 | 1; ids?: number[] }) => ({
+    ...tags,
+    shadowArm: 'v1_tags' as const,
+    shadowDegraded: outcome.shadowDegraded ?? 0,
+    shadowReason: outcome.shadowReason,
+    shadowSuggestionIds: outcome.ids ?? [],
+    shadowLatencyMs: Date.now() - startedAt,
+  });
+  if (v1ShadowsInFlight >= V1_SHADOW_MAX_IN_FLIGHT) return columns({ shadowReason: 'skipped' });
+  v1ShadowsInFlight++;
+  try {
+    const serving = await tagIndexSnapshotHolder().resolve();
+    if (!serving.snapshot) return columns({ shadowReason: serving.fallbackReason });
+    const req = { kind, browsingLevel: ctx.browsingLevel, baseModel: input.baseModel };
+    const score = scoreV1Tags(serving.snapshot.index, { ...req, prompt: input.prompt });
+    tags = v1TagColumns(serving.snapshot, score, input.baseModel);
+    const coverage = ctx.coverage ?? (await coverageAudience(undefined));
+    const listed = await listV1Tags(score, { ...req, coverage, cap });
+    return columns({
+      shadowReason: listed.fallbackReason ?? '',
+      ids: listed.suggestions.map((s) => s.versionId),
+    });
+  } catch {
+    return columns({ shadowReason: 'error', shadowDegraded: 1 });
+  } finally {
+    v1ShadowsInFlight--;
+  }
+}
+
+export const JUDGE_SAMPLE_TABLE = 'p2m_restricted.routeJudgeSample';
+
+/**
+ * One judge-capture row (`2026-10-17-resource-intent-route-judge-sample.sql`). Carries no caller
+ * field, but joins its request's shadow row by `promptHash`; the table's row policies are the
+ * read control. Never logged anywhere else: with no ClickHouse client the row is dropped.
+ */
+async function writeJudgeSample(row: {
+  time: string;
+  promptHash: string;
+  prompt: string;
+  browsingLevel: number;
+  baseModel: string;
+}): Promise<void> {
+  if (!clickhouse) return;
+  try {
+    await clickhouse.insert({ table: JUDGE_SAMPLE_TABLE, values: [row], format: 'JSONEachRow' });
+  } catch {
+    // Not logged: the error text could carry the prompt.
+  }
+}
 
 async function writeShadowEvent(event: ShadowEvent): Promise<void> {
   try {
@@ -383,7 +617,10 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
 
 function degradedResponse(
   insightFallback: boolean,
-  armFields: Pick<ResourceIntentResponse, 'coocFallback' | 'kind' | 'checkpointArm'>,
+  armFields: Pick<
+    ResourceIntentResponse,
+    'coocFallback' | 'kind' | 'checkpointArm' | 'arm' | 'v1Fallback'
+  >,
   model: string = DEGRADED_MODEL
 ): ResourceIntentResponse {
   return {
@@ -427,6 +664,12 @@ export type ResourceIntentContext = {
   coocSnapshotId?: string;
   /** Checkpoint mode's arm; `attach_bm` (the served arm) when absent. The study sets `base_bm`. */
   checkpointArm?: CheckpointArm;
+  /** Serve the v1_tags list (flag `resourceIntentV1`), over `poolMerge`. Add-on mode only; not in study mode. */
+  v1?: boolean;
+  /** Compute the v1_tags list after responding and record it on the row (`resourceIntentV1Shadow`). */
+  v1Shadow?: boolean;
+  /** Record the prompt for the judged comparison (`resourceIntentJudgeCapture`). Add-on mode only. */
+  judgeCapture?: boolean;
 };
 
 export async function getResourceIntent(
@@ -439,12 +682,15 @@ export async function getResourceIntent(
   // be computed on the miss path only.
   const cap = resolveSuggestionLimit(input.limit);
   const study = ctx.coocSnapshotId !== undefined;
-  const arm: ResourceIntentArm = ctx.poolMerge || study ? 'pool_merge' : 'hybrid_10';
+  const arm: ResourceIntentArm =
+    ctx.v1 && !study ? 'v1_tags' : ctx.poolMerge || study ? 'pool_merge' : 'hybrid_10';
 
   // The snapshot is part of the POOL_MERGE cache key, so it is resolved before the cache read.
   let cooc: ServedCooc | null = null;
   let coocServing: CoocServing | null = null;
   let studyFailure: { error: unknown } | null = null;
+  // Likewise the tag index for v1_tags. That arm reads the co-occurrence snapshot only on a fallback.
+  let tagServing: TagIndexServing | null = null;
   if (study) {
     try {
       cooc = await coocStudySnapshots().get(ctx.coocSnapshotId!, (ctx.now ?? (() => new Date()))());
@@ -454,22 +700,45 @@ export async function getResourceIntent(
   } else if (arm === 'pool_merge') {
     coocServing = await coocSnapshotHolder().resolve();
     cooc = coocServing.snapshot;
+  } else if (arm === 'v1_tags') {
+    tagServing = await tagIndexSnapshotHolder().resolve();
   }
-  const coocFallback = arm === 'pool_merge' && !study && !cooc;
+  let coocFallback = arm === 'pool_merge' && !study && !cooc;
+  let tagScore: TagScoreResult | null = null;
+  let v1FallbackReason: V1FallbackReason | 'cached_fallback' | null =
+    tagServing && !tagServing.snapshot ? tagServing.fallbackReason : null;
 
-  const cacheInput = {
-    prompt: input.prompt,
-    baseModel: input.baseModel,
-    browsingLevel: ctx.browsingLevel,
-    cap,
-    ...(arm === 'pool_merge' && {
-      poolMerge: {
-        snapshot: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? COOC_FALLBACK_SNAPSHOT_KEY,
-      },
-    }),
-  };
-  // Spread only on this arm, so a HYBRID_10 response is unchanged.
-  const armFields = arm === 'pool_merge' ? { coocFallback } : {};
+  const cacheKey = tagServing
+    ? v1TagsCacheKey({
+        prompt: input.prompt,
+        baseModel: input.baseModel,
+        browsingLevel: ctx.browsingLevel,
+        cap,
+        snapshot: tagServing.snapshot?.payloadSha256 ?? COOC_FALLBACK_SNAPSHOT_KEY,
+        // The snapshot's own hash, not an import of spec.ts, which fingerprints fixtures on load.
+        tagsSpecHash: tagServing.snapshot?.specHash ?? '',
+      })
+    : resourceIntentCacheKey({
+        prompt: input.prompt,
+        baseModel: input.baseModel,
+        browsingLevel: ctx.browsingLevel,
+        cap,
+        ...(arm === 'pool_merge' && {
+          poolMerge: {
+            snapshot: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? COOC_FALLBACK_SNAPSHOT_KEY,
+          },
+        }),
+      });
+  // Spread only on these arms, so a HYBRID_10 response is unchanged.
+  let armFields: Pick<
+    ResourceIntentResponse,
+    'coocFallback' | 'arm' | 'v1Fallback' | 'ecosystems'
+  > =
+    arm === 'pool_merge'
+      ? { coocFallback }
+      : arm === 'v1_tags'
+      ? { arm, v1Fallback: !tagServing?.snapshot }
+      : {};
 
   let stage1Model = DEGRADED_MODEL;
   let shortlistCount = 0;
@@ -494,7 +763,7 @@ export async function getResourceIntent(
   // every caller — by the time we are here the feature is enabled.
   if (!response) {
     try {
-      const cached = await redis.packed.get<unknown>(resourceIntentCacheKey(cacheInput));
+      const cached = await redis.packed.get<unknown>(cacheKey);
       if (cached != null) {
         const parsed = resourceIntentResponseSchema.safeParse(cached);
         if (parsed.success) {
@@ -509,7 +778,7 @@ export async function getResourceIntent(
 
   if (!response) {
     const baseModel = input.baseModel ?? null;
-    // Resolved only on a cache miss — the matcher is the sole consumer.
+    // Resolved on a cache miss only (see the route's comment).
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
       const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
@@ -527,7 +796,8 @@ export async function getResourceIntent(
       let suggestions: ResourceIntentSuggestion[] = [];
       const stage1NoneProbability = intent.role.distribution['none'] ?? null;
 
-      if (criteria.role !== 'none' && arm === 'pool_merge') {
+      const poolMerge = async () => {
+        if (criteria.role === 'none') return;
         const coocCandidates = cooc
           ? rankCooc(
               cooc.scores,
@@ -544,6 +814,41 @@ export async function getResourceIntent(
         });
         shortlistCount = merged.entries.length;
         suggestions = await hydrateSuggestions(merged.entries, ctx.browsingLevel);
+      };
+
+      if (arm === 'v1_tags') {
+        // Role-free: stage 1 runs only for `intent`/`criteria` (and the fallback's role filter).
+        if (tagServing?.snapshot) {
+          tagScore = scoreV1Tags(tagServing.snapshot.index, {
+            prompt: input.prompt,
+            baseModel: input.baseModel,
+            kind: 'addon',
+            browsingLevel: ctx.browsingLevel,
+          });
+          const listed = await listV1Tags(tagScore, {
+            kind: 'addon',
+            baseModel: input.baseModel,
+            browsingLevel: ctx.browsingLevel,
+            coverage,
+            cap,
+          });
+          shortlistCount = listed.entries.length;
+          suggestions = listed.suggestions;
+          v1FallbackReason = listed.fallbackReason;
+        }
+        if (v1FallbackReason) {
+          coocServing = await coocSnapshotHolder().resolve();
+          cooc = coocServing.snapshot;
+          coocFallback = !cooc;
+          armFields = { arm, v1Fallback: true, coocFallback };
+          shortlistCount = 0;
+          suggestions = [];
+          await poolMerge();
+        } else if (!input.baseModel && tagScore) {
+          armFields = { ...armFields, ecosystems: tagScore.ecosystems };
+        }
+      } else if (criteria.role !== 'none' && arm === 'pool_merge') {
+        await poolMerge();
       } else if (criteria.role !== 'none') {
         const matched = await findResourceIntentCandidates(criteria, {
           browsingLevel: ctx.browsingLevel,
@@ -622,7 +927,7 @@ export async function getResourceIntent(
 
   if (!cachedHit && !studyFailure) {
     try {
-      await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
+      await redis.packed.set(cacheKey, response, {
         EX: responseCacheTtl(response),
       });
     } catch {
@@ -642,14 +947,31 @@ export async function getResourceIntent(
       // separately from the vendor failures that caused them.
       degradedReason = 'cached_degrade';
     }
+    // A held snapshot's fallback reason was not cached; without one, the holder's still applies.
+    if (response.v1Fallback && tagServing?.snapshot) v1FallbackReason = 'cached_fallback';
   }
 
+  // Taken now: the row describes the response, not the shadow work that runs after it.
+  const time = clickhouseDateTime64((ctx.now ?? (() => new Date()))());
+  const latencyMs = Date.now() - startedAt;
+  const promptHash = createHash('sha256').update(input.prompt).digest('hex');
+  const shadowV1 = !!ctx.v1Shadow && arm !== 'v1_tags';
   void (async () => {
+    if (shadowV1 || ctx.judgeCapture) await afterResponse();
+    if (ctx.judgeCapture)
+      void writeJudgeSample({
+        time,
+        promptHash,
+        prompt: input.prompt,
+        browsingLevel: ctx.browsingLevel,
+        baseModel: input.baseModel ?? '',
+      });
+    const shadow = shadowV1 ? await v1TagsShadow(input, 'addon', ctx, cap) : null;
     const answer = response?.intent;
     // Degraded rows carry zero/empty summary columns; `degraded` discriminates.
     await writeShadowEvent({
-      time: clickhouseDateTime64((ctx.now ?? (() => new Date()))()),
-      promptHash: createHash('sha256').update(input.prompt).digest('hex'),
+      time,
+      promptHash,
       promptLength: input.prompt.length,
       baseModel: input.baseModel ?? '',
       browsingLevel: ctx.browsingLevel,
@@ -660,7 +982,7 @@ export async function getResourceIntent(
       model: response?.model ?? DEGRADED_MODEL,
       degraded: response?.degraded ? 1 : 0,
       degradedReason: degradedReason ?? '',
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
       role: answer?.role.value ?? '',
       styleFamily: answer?.styleFamily.value ?? '',
       contentType: answer?.contentType.value ?? '',
@@ -682,6 +1004,19 @@ export async function getResourceIntent(
         coocFallback: coocFallback ? 1 : 0,
         coocFallbackReason: coocServing?.fallbackReason ?? '',
       }),
+      ...(arm === 'v1_tags' && {
+        arm,
+        // The POOL_MERGE columns describe the fallback list, and are blank on v1's own.
+        coocSnapshotHash: cooc?.contentHash ?? '',
+        coocSpecHash: response.v1Fallback ? RESOURCE_INTENT_COOC_SPEC_HASH : '',
+        poolMergeSpecHash: response.v1Fallback ? RESOURCE_INTENT_POOL_MERGE_SPEC_HASH : '',
+        coocFallback: response.coocFallback ? 1 : 0,
+        coocFallbackReason: coocServing?.fallbackReason ?? '',
+        v1Fallback: response.v1Fallback ? 1 : 0,
+        v1FallbackReason: v1FallbackReason ?? '',
+        ...(tagServing?.snapshot && v1TagColumns(tagServing.snapshot, tagScore, input.baseModel)),
+      }),
+      ...shadow,
     });
   })();
 
@@ -877,42 +1212,51 @@ async function getCheckpointIntent(
   }
 
   const final = response;
-  void writeShadowEvent({
-    time: clickhouseDateTime64(now()),
-    promptHash: createHash('sha256').update(input.prompt).digest('hex'),
-    promptLength: input.prompt.length,
-    baseModel,
-    browsingLevel: ctx.browsingLevel,
-    // No question spec ran: blank, and specVersion 0 keeps these rows out of the spec-pinned
-    // role-mix query.
-    specHash: '',
-    stage3SpecHash: '',
-    specVersion: 0,
-    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-    model: final.model,
-    degraded: final.degraded ? 1 : 0,
-    degradedReason: degradedReason ?? '',
-    latencyMs: Date.now() - startedAt,
-    role: '',
-    styleFamily: '',
-    contentType: '',
-    specificity: 0,
-    needsResource: 0,
-    injectionPresent: 0,
-    shortlistCount,
-    suggestionIds: final.suggestions.map((suggestion) => suggestion.versionId),
-    noneProbability: 0,
-    stage1NoneProbability: null,
-    stage3NoneProbability: null,
-    arm,
-    coocSnapshotHash: snapshotHash,
-    coocSpecHash: arm === 'attach_bm' ? RESOURCE_INTENT_COOC_SPEC_HASH : '',
-    poolMergeSpecHash: '',
-    coocFallback: coocFallback ? 1 : 0,
-    coocFallbackReason: fallbackReason ?? '',
-    kind: 'checkpoint',
-    checkpointSpecHash: RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
-  });
+  const time = clickhouseDateTime64(now());
+  const latencyMs = Date.now() - startedAt;
+  // Checkpoints stay on this mode's arms; v1_tags is only shadowed here.
+  const shadowV1 = !!ctx.v1Shadow;
+  void (async () => {
+    if (shadowV1) await afterResponse();
+    const shadow = shadowV1 ? await v1TagsShadow(input, 'checkpoint', ctx, cap) : null;
+    await writeShadowEvent({
+      time,
+      promptHash: createHash('sha256').update(input.prompt).digest('hex'),
+      promptLength: input.prompt.length,
+      baseModel,
+      browsingLevel: ctx.browsingLevel,
+      // No question spec ran: blank, and specVersion 0 keeps these rows out of the spec-pinned
+      // role-mix query.
+      specHash: '',
+      stage3SpecHash: '',
+      specVersion: 0,
+      criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+      model: final.model,
+      degraded: final.degraded ? 1 : 0,
+      degradedReason: degradedReason ?? '',
+      latencyMs,
+      role: '',
+      styleFamily: '',
+      contentType: '',
+      specificity: 0,
+      needsResource: 0,
+      injectionPresent: 0,
+      shortlistCount,
+      suggestionIds: final.suggestions.map((suggestion) => suggestion.versionId),
+      noneProbability: 0,
+      stage1NoneProbability: null,
+      stage3NoneProbability: null,
+      arm,
+      coocSnapshotHash: snapshotHash,
+      coocSpecHash: arm === 'attach_bm' ? RESOURCE_INTENT_COOC_SPEC_HASH : '',
+      poolMergeSpecHash: '',
+      coocFallback: coocFallback ? 1 : 0,
+      coocFallbackReason: fallbackReason ?? '',
+      kind: 'checkpoint',
+      checkpointSpecHash: RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
+      ...shadow,
+    });
+  })();
 
   return final;
 }

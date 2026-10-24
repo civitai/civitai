@@ -8,7 +8,7 @@ import {
 
 registerTextScanProfile({
   entityType: 'Comment',
-  labels: ['scam'],
+  labels: ['scam', 'csam'],
   load: async (ids) => {
     // Primary, not replica: the scan is queued in the same request as the insert. `updatedAt`, not
     // `createdAt`: an edit is rescanned, and its text dates from the edit.

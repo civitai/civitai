@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   getDataEnabled: [] as unknown[],
   join: vi.fn(async () => undefined),
   trigger: vi.fn(),
+  teamsLive: [] as unknown[][],
+  hatsLive: [] as { topicIds: string[]; inView: boolean }[],
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
@@ -69,8 +71,30 @@ vi.mock('~/components/Events/ScoredEvent/JoinEventButton', () => ({
 // Media and the feed-card thumb need the CDN and image guard; their src is what matters here.
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  EdgeMedia: ({ src, alt }: { src: string; alt?: string }) =>
-    React.createElement('img', { 'data-src': src, alt }),
+  EdgeMedia: ({ src, alt, className }: { src: string; alt?: string; className?: string }) =>
+    React.createElement('img', { 'data-src': src, alt, className }),
+}));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
+// The live pushes need the signals connection; what the block asks them to follow is measured here.
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  useEventTeamsLivePoints: (...args: unknown[]) => {
+    h.teamsLive.push(args);
+  },
+  MyHatsLivePoints: (props: { topicIds: string[]; inView: boolean }) => {
+    h.hatsLive.push(props);
+    return null;
+  },
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
   EventContentThumb: ({ hat }: { hat: { url: string } }) =>
@@ -93,6 +117,9 @@ vi.mock('cookies-next', async (importOriginal) => ({
 }));
 
 const { setCookie } = await import('cookies-next');
+const { HAT_ALLOWANCE } = await import(
+  '~/components/Cosmetics/EventDecoration/event-decoration-placement'
+);
 const { ScoredEventHomeBlock } = await import('~/components/HomeBlocks/ScoredEventHomeBlock');
 const { EventHomeBlock } = await import('~/components/HomeBlocks/EventHomeBlock');
 const PlaceHatModal = (await import('~/components/Events/ScoredEvent/PlaceHatModal')).default;
@@ -148,6 +175,7 @@ const STANDINGS = {
 const placed = (n: number, points: number) => ({
   cosmeticId: n,
   claimKey: 'k',
+  topicId: `topic-${n}`,
   name: `Hat ${n}`,
   points,
   data: { url: `hat-${n}` },
@@ -170,6 +198,8 @@ beforeEach(() => {
   h.inView = true;
   h.cosmeticLoading = false;
   h.getDataEnabled = [];
+  h.teamsLive = [];
+  h.hatsLive = [];
   vi.mocked(setCookie).mockClear();
   h.join.mockClear();
   h.trigger.mockClear();
@@ -191,11 +221,11 @@ function mount(node: React.ReactElement) {
   act(() => root!.render(React.createElement(MantineProvider, null, node)));
   return host;
 }
-const block = (collapsed = false) =>
+const block = (collapsed = false, eventData = data) =>
   mount(
     React.createElement(ScoredEventHomeBlock, {
       event: 'birthday2026',
-      data,
+      data: eventData,
       collapsed,
       onClose,
       onExpand,
@@ -222,8 +252,20 @@ describe('not joined', () => {
       'cap-pink',
     ]);
     expect(el.querySelector('[data-testid="event-home-block-standings"]')).toBeNull();
+    // Shows no standings, so follows no team totals.
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
     act(() => button(el, 'Join and get your free hat')!.click());
     expect(h.join).toHaveBeenCalledWith({ event: 'birthday2026' });
+  });
+
+  // To whoever lets the accent flow inline again: it wrapped as "Civitai turns 4. Pick / up a hat."
+  // on desktop. Justin asked for the break after the title, always, and the accent unbroken
+  // (2026-10-14).
+  it('puts the accent on its own line and never breaks it', () => {
+    const accent = [...block().querySelectorAll('span')].find((s) => text(s) === 'Pick up a hat.')!;
+    expect(accent.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['block', 'whitespace-nowrap', 'w-fit'])
+    );
   });
 
   it('plays the film with a join offer under it', () => {
@@ -236,6 +278,24 @@ describe('not joined', () => {
     const [[arg]] = h.trigger.mock.calls as [[{ component: unknown; props: { onJoin?: unknown } }]];
     expect(arg.component).toBe(EventVideoModal);
     expect(arg.props.onJoin).toBeTypeOf('function');
+  });
+
+  // To whoever moves it to a corner again: Justin preferred it centered on the art (2026-10-13),
+  // made see-through so the art still shows behind it.
+  it('centers the film button on the art, see-through', () => {
+    const play = block().querySelector('button[aria-label="Watch the Hats On video"]')!;
+    const classes = play.className.split(/\s+/);
+    expect(classes).toEqual(
+      expect.arrayContaining(['left-1/2', 'top-1/2', '-translate-x-1/2', '-translate-y-1/2'])
+    );
+    expect(classes.filter((c) => /^(left|right|top|bottom)-/.test(c))).toEqual([
+      'left-1/2',
+      'top-1/2',
+    ]);
+    const disc = play.firstElementChild!.className.split(/\s+/);
+    const fill = disc.filter((c) => c.startsWith('bg-'));
+    expect(fill).toEqual(['bg-white/30']);
+    expect(disc).toContain('backdrop-blur-md');
   });
 });
 
@@ -257,6 +317,32 @@ describe('joined', () => {
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
       '/events/birthday2026#team-hats'
     );
+  });
+
+  // To whoever puts the longer copy back: "Get another hat / One more post scoring" wrapped to four
+  // lines in the 104px tile. Justin chose this hat-tile layout, two short unbroken lines (2026-10-14).
+  it('lays the get-a-hat tile out like a hat tile, in two lines that do not wrap', () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 512)];
+    const tile = block().querySelector('[data-testid="event-home-block-get-hat"]')!;
+    const lines = [...tile.querySelectorAll('span.truncate')];
+    expect(lines.map((l) => text(l))).toEqual(['Another hat', '+1 post scoring']);
+    expect(text(tile)).toBe('Another hat+1 post scoring');
+  });
+
+  // To whoever shortens these again: compacted to "122.4K", a live total that moves by a few
+  // points never visibly changes, which hid the live counting Justin asked to see (2026-10-13).
+  it('shows each team total in full, with commas, so a live change is visible', () => {
+    joinAs('Pink');
+    h.standings = {
+      ...STANDINGS,
+      teams: [
+        { team: 'Blue', rank: 1, score: 1_234_567 },
+        { team: 'Pink', rank: 2, score: 122_431 },
+      ],
+    };
+    const rows = block().querySelectorAll('[data-testid="event-home-block-standings"] > div');
+    expect([...rows].map((r) => text(r))).toEqual(['#1Blue1,234,567', '#2Pink122,431']);
   });
 
   it('offers Place it on an unplaced hat, and counts the hats that do not fit', () => {
@@ -304,13 +390,97 @@ describe('joined', () => {
   });
 });
 
+describe('the art', () => {
+  it('uses the art made for the block, and falls back to the hero', () => {
+    const art = (el: HTMLElement) =>
+      el.querySelector('[data-testid="event-home-block"]')!.lastElementChild!.querySelector('img');
+    const page = (data as unknown as { page: object }).page;
+    const own = { ...data, page: { ...page, homeImage: 'home-id' } } as typeof data;
+    expect(art(block(false, own))?.getAttribute('data-src')).toBe('home-id');
+    act(() => root?.unmount());
+    expect(art(block())?.getAttribute('data-src')).toBe('hero-id');
+  });
+
+  // To whoever simplifies this back to a gradient overlay: a fixed colour painted over the art
+  // never matches the block's radial background behind it, and the seam it left is what Justin
+  // asked to remove (2026-10-12). The art fades out through its own alpha instead.
+  it('fades the art out by its own alpha, with no colour painted over it', () => {
+    const container = block().querySelector('[data-testid="event-home-block"]')!.lastElementChild!;
+    expect(container.querySelector('img')?.className).toContain('[mask-image:linear-gradient(');
+    expect(container.querySelector('[class*="from-["]')).toBeNull();
+  });
+});
+
+describe('Your hats', () => {
+  // To whoever narrows this room again: at 8px a feed-size hat was pushed about 15px into its tile,
+  // the cramped look Justin asked to fix (2026-10-12). Wide, the hats get a feed card's room; where
+  // the row scrolls, exactly the padding the scroller leaves them, so it crops none.
+  it("gives each hat a feed card's room past the corner, and a scrolling row's padding", () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 1)];
+    const row = block().querySelector('[data-testid="event-home-block-hat"]')!.parentElement!;
+    const classes = row.className.split(/\s+/);
+    const wide = '@[82.5rem]:';
+    expect(classes).toContain(`${wide}[--event-decoration-allowance:${HAT_ALLOWANCE.corner}px]`);
+    expect(classes).toContain(`${wide}overflow-visible`);
+    const narrow = classes.find((c) => c.startsWith('[--event-decoration-allowance:'));
+    const padding = classes.find((c) => c.startsWith('px-['));
+    expect(narrow).toBe(`[--event-decoration-allowance:${padding?.slice(4, -1)}]`);
+    expect(classes).toContain('overflow-x-auto');
+  });
+
+  it('follows the team totals and its hats live while the block is on screen', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
+    h.hats = [placed(1, 1), placed(2, 1)];
+    block();
+    expect(h.teamsLive.at(-1)).toEqual(['birthday2026', 'teams', true]);
+    expect(h.hatsLive.at(-1)).toEqual(
+      expect.objectContaining({ topicIds: ['topic-1', 'topic-2'], inView: true })
+    );
+  });
+
+  it('follows nothing off screen', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
+    h.hats = [placed(1, 1)];
+    h.inView = false;
+    block();
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
+    expect(h.hatsLive.at(-1)?.inView).toBe(false);
+  });
+
+  it('follows nothing while the scoring engine is switched off', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: false };
+    h.hats = [placed(1, 1)];
+    block();
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
+    expect(h.hatsLive.at(-1)?.inView).toBe(false);
+  });
+
+  it('follows nothing behind the collapsed bar', () => {
+    joinAs('Pink');
+    h.standings = { ...STANDINGS, teamsTopicId: 'teams', liveTotals: true };
+    h.hats = [placed(1, 1)];
+    block(true);
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
+  });
+});
+
 describe('ended', () => {
   it('names the settled winner with the prize and the final standings, and offers no join', () => {
     vi.setSystemTime(new Date('2026-12-05T00:00:00Z'));
     h.banners = [];
-    h.standings = { ...STANDINGS, updatedAt: new Date('2026-12-04T00:00:00Z') };
+    h.standings = {
+      ...STANDINGS,
+      updatedAt: new Date('2026-12-04T00:00:00Z'),
+      teamsTopicId: 'teams',
+    };
     const el = block();
     expect(text(el)).toContain('Team Blue wins.');
+    // Frozen, so the winner it names is the settled one.
+    expect(h.teamsLive.at(-1)?.[2]).toBe(false);
     expect(text(el)).toContain('Champion badge');
     expect(srcs(el)).toContain('blue-anim');
     expect(

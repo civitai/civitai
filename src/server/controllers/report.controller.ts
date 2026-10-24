@@ -13,6 +13,7 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
+  isAppealBlockedByHoldMarker,
   getLatestAppeal,
   reopenAppeal,
 } from '~/server/services/report.service';
@@ -30,6 +31,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   getAppealRefusal,
+  getStorylineAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   isAppealableModel3D,
@@ -61,7 +63,7 @@ export async function createReportHandler({
       });
     }
 
-    return result;
+    return null;
   } catch (e) {
     // The reported entity was deleted between the client rendering it and the
     // report landing, so the entity-report FK has nothing to point at. Search
@@ -107,6 +109,10 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
+        // A hold marker's kept image reads as a moderator block. Refused in the same words, so the
+        // refusal says no more than that.
+        if (await isAppealBlockedByHoldMarker({ imageId: image.id, userId }))
+          throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
       case EntityType.Model3D:
@@ -159,6 +165,24 @@ export async function createEntityAppealHandler({
         skipFee = true;
         break;
       }
+      case EntityType.Storyline: {
+        const storyline = await dbRead.storyline.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, tosViolationByScan: true, tosViolationByModerator: true },
+        });
+        if (!storyline) throw throwNotFoundError('Storyline not found');
+        if (storyline.userId !== userId) throw throwAuthorizationError();
+        const refusal = getStorylineAppealRefusal(storyline);
+        if (refusal) throw throwBadRequestError(refusal);
+
+        const existing = await getLatestAppeal({ ...input, userId });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your appeal for this storyline is already under review');
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+
+        skipFee = true;
+        break;
+      }
       default:
         throw throwDbCustomError('Entity type not supported for appeals');
     }
@@ -186,9 +210,8 @@ export async function getRecentAppealsHandler({
 }) {
   const sessionUser = ctx.user;
   try {
-    const userId = input.userId ?? sessionUser.id;
     const count = await getAppealCount({
-      userId,
+      userId: sessionUser.id,
       status: [AppealStatus.Pending, AppealStatus.Rejected],
       startDate: input.startDate ?? dayjs.utc().subtract(30, 'days').toDate(),
     });

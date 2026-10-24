@@ -23,6 +23,7 @@ const counts = () => ({
   pendingStickerPlacements: 9,
   pendingRemixSubmissions: 3,
   pendingCollectionReviews: 5,
+  unopenedBoxes: 2,
 });
 
 describe('mark all as read', () => {
@@ -54,6 +55,12 @@ describe('mark all as read', () => {
     const next = applyMarkReadToCounts(counts(), {});
 
     expect(next.pendingCollectionReviews).toBe(5);
+  });
+
+  it('leaves the unopened box count alone — the Inventory badge is not a notification', () => {
+    const next = applyMarkReadToCounts(counts(), {});
+
+    expect(next.unopenedBoxes).toBe(2);
   });
 });
 

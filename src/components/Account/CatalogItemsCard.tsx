@@ -90,6 +90,7 @@ export function CatalogItemsCard({ flat }: { flat?: boolean } = {}) {
   return (
     <CardOrSection
       flat={flat}
+      id="store-items"
       title="Store items listed under your name"
       description="Items that connected apps added to the App Store as yours. Revoking an app's access withdraws its items."
     >

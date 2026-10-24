@@ -43,7 +43,10 @@ import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
-import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import {
+  deleteUserProfilePictureCache,
+  refreshProfilePicturesForImages,
+} from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
@@ -52,6 +55,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -507,8 +511,9 @@ export type ScanOutcome = {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it. imageScanning never passes `blocked`, so on that path only
- *    `audit.blockedFor` and moderation rules re-block.
+ *    rescan can clear it, unless the owner is banned or the image is under appeal.
+ *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
+ *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
  *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
  *    takes precedence over the audit decision.
@@ -616,11 +621,7 @@ export async function resolveScanOutcome({
   if ((await getPendingAppealImageIds([image.id])).size) {
     toUpdate.needsReview = 'appeal';
     reviewKey = 'appeal';
-    const wasBlocked =
-      image.ingestion === ImageIngestionStatus.Blocked ||
-      image.nsfwLevel === NsfwLevel.Blocked ||
-      image.blockedFor != null;
-    if (wasBlocked && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    if (hasBlockMarker(image) && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -632,6 +633,29 @@ export async function resolveScanOutcome({
   if (image.needsReview === 'csam') {
     toUpdate.needsReview = 'csam';
     reviewKey = 'csam';
+  }
+
+  // A block on a banned owner's image is the ban's decision, not a stale automated one, so a scan
+  // never lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
+  if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    const [current] = await dbWrite.$queryRaw<
+      {
+        ingestion: ImageIngestionStatus;
+        blockedFor: string | null;
+        nsfwLevel: number;
+        ownerBanned: boolean;
+      }[]
+    >`
+      SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId"
+      WHERE i.id = ${image.id}
+    `;
+    if (current?.ownerBanned && hasBlockMarker(current)) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    }
   }
 
   await dbWrite.$executeRaw`
@@ -911,6 +935,7 @@ export async function applyIngestionSideEffects({
     // it so the next index pass re-evaluates visibility against the
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
+    await refreshProfilePicturesForImages([image.id]);
     return;
   }
 
@@ -930,6 +955,9 @@ export async function applyIngestionSideEffects({
       (image.metadata as MediaMetadata | undefined)?.profilePicture
     ) {
       await deleteUserProfilePictureCache(image.userId);
+    } else {
+      // A rescan of an image picked as an avatar after its upload can change its rating too.
+      await refreshProfilePicturesForImages([image.id]);
     }
 
     if (image.postId) {

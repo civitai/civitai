@@ -24,10 +24,13 @@ export type ScanVerdict = {
   poi?: boolean;
   minor?: boolean;
   scam?: boolean;
+  csam?: boolean;
   blocked?: boolean;
   /** The system's own labels: XGuard triggered labels, Clavata matches, text scan triggered labels. */
   tags?: string[];
   mode?: 'shadow' | 'active';
+  /** Text scan's second, web-search pass (Model poi/minor); absent for the main pass. */
+  variant?: 'web-search';
   textHash?: string;
   workflowId?: string;
 };

@@ -1,6 +1,12 @@
 import type { GetByIdInput } from './../schema/base.schema';
-import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import type {
+  CommentV2Model,
+  CommentV2WithCachedUser,
+} from '~/server/selectors/commentv2.selector';
+import {
+  commentV2Select,
+  commentV2WithCachedUserSelect,
+} from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 import {
   MAX_THREAD_CHAIN_DEPTH,
@@ -23,6 +29,7 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -43,6 +50,7 @@ import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
+import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
 
 export type CommentThread = {
   id: number;
@@ -80,7 +88,7 @@ async function getReplyThreads({
   sort: ThreadSort;
   excludedUserIds: number[];
   isModerator?: boolean;
-}): Promise<{ threads: ReplyThread[]; childlessCommentIds: number[] }> {
+}): Promise<{ threads: ReplyThread<CommentV2WithCachedUser>[]; childlessCommentIds: number[] }> {
   const empty = { threads: [], childlessCommentIds: [] };
   if (!commentIds.length || depth < 1) return empty;
 
@@ -115,7 +123,7 @@ async function getReplyThreads({
         tosViolation: isModerator ? undefined : false,
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       },
-      select: commentV2Select,
+      select: commentV2WithCachedUserSelect,
     }),
     // The CTE carries `Thread.commentCount`, which a ToS flag never decrements. This seeds the
     // client's reply count, so it must agree with `getCommentCount`: same predicate, and no
@@ -136,7 +144,7 @@ async function getReplyThreads({
 
   const threads = groupReplyThreads({
     threads: selected,
-    comments: comments as CommentV2Model[],
+    comments,
     commentCounts,
     sort,
     limit,
@@ -238,6 +246,10 @@ export async function getThreadEntityOwnerId({
     case 'crucible':
       return findUserId(
         dbRead.crucible.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'storyline':
+      return findUserId(
+        dbRead.storyline.findUnique({ where: { id: entityId }, select: { userId: true } })
       );
     case 'comicChapter': {
       const row = await dbRead.comicChapter.findUnique({
@@ -681,21 +693,92 @@ export async function getCommentThreadCrucibleId(threadId: number): Promise<numb
   return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
 }
 
+/**
+ * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
+ * or on any chain thread's `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted
+ * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
+ */
+const storylineAboveSql = (seed: string) => Prisma.sql`
+  ${Prisma.raw(muteableThreadsCte(seed))}
+  SELECT th."storylineId"
+  FROM (
+    SELECT mt."id" FROM muteable_threads mt
+    UNION ALL
+    SELECT t."rootThreadId" FROM muteable_threads mt JOIN "Thread" t ON t.id = mt."id"
+  ) chain
+  JOIN "Thread" th ON th.id = chain."id"
+  WHERE th."storylineId" IS NOT NULL
+  LIMIT 1`;
+
+export const storylineOfThreadSql = (threadId: number) =>
+  storylineAboveSql(String(Number(threadId)));
+
+export const storylineOfCommentSql = (commentId: number) =>
+  storylineAboveSql(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+
+const firstStorylineId = async (sql: Prisma.Sql) =>
+  (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
+
+export const getCommentThreadStorylineId = (threadId: number) =>
+  firstStorylineId(storylineOfThreadSql(threadId));
+
+export const getCommentStorylineId = (commentId: number) =>
+  firstStorylineId(storylineOfCommentSql(commentId));
+
 export const deleteComment = async ({ id }: { id: number }) => {
   const deleted = await dbWrite.commentV2.delete({ where: { id } });
   void onCommentsRemoved([deleted]);
   return deleted;
 };
 
-export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Read before the delete, for the event points removal; a failed read only skips that.
-  const removed = await dbWrite.commentV2
-    .findMany({ where: { id: { in: ids } }, select: { userId: true, threadId: true } })
-    .catch(() => []);
-  const result = await dbWrite.commentV2.deleteMany({ where: { id: { in: ids } } });
-  void onCommentsRemoved(removed);
-  return { count: result.count };
+/**
+ * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
+ * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
+ * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
+ * anywhere below it.
+ */
+export async function deleteCommentsV2UnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
+    DELETE FROM "CommentV2" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
+          UNION
+          SELECT t.id FROM "Thread" t
+          JOIN "CommentV2" k ON t."commentId" = k.id
+          JOIN below b ON k."threadId" = b.id
+        )
+        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+      )
+    RETURNING c."userId", c."threadId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+/** What follows a committed `deleteCommentsV2UnlessHeld`. */
+export async function afterCommentsV2Deleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteCommentsV2UnlessHeld>>) {
+  if (retained.length)
+    await logHoldRetained(
+      'commentV2.bulkDelete',
+      retained.map((r) => r.userId)
+    );
+  void onCommentsRemoved(deleted);
 }
 
 /**
@@ -739,7 +822,10 @@ export async function bulkSetCommentV2TosViolation({
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Actioned}::"ReportStatus"
+      UPDATE "Report" r SET
+        status = ${enums.ReportStatus.Actioned}::"ReportStatus",
+        "statusSetAt" = now(),
+        "statusSetBy" = ${actor.id}
       FROM "CommentV2Report" c
       WHERE c."reportId" = r.id
         AND c."commentV2Id" = ${id}
@@ -765,7 +851,7 @@ export async function bulkSetCommentV2TosViolation({
       .then(() => {
         notified += 1;
       })
-      .catch(() => {});
+      .catch(() => undefined);
   }
 
   return { count, notified, rewardedReports };
@@ -1086,7 +1172,7 @@ export async function getCommentsInfinite({
             tosViolation: isModerator ? undefined : false,
           },
           orderBy: { pinnedAt: 'desc' },
-          select: commentV2Select,
+          select: commentV2WithCachedUserSelect,
         })
       : [];
 
@@ -1103,7 +1189,7 @@ export async function getCommentsInfinite({
     // 4. If a target comment was requested (notification deep-link) and it isn't already
     //    in this first-page batch, fetch it separately so the client can render + scroll
     //    to it without forcing the user to click "Load More" until they hit it.
-    let targetComment: CommentV2Model | null = null;
+    let targetComment: CommentV2WithCachedUser | null = null;
     if (!cursor && targetCommentId) {
       const alreadyIncluded =
         pinnedComments.some((c) => c.id === targetCommentId) ||
@@ -1116,9 +1202,9 @@ export async function getCommentsInfinite({
             tosViolation: isModerator ? undefined : false,
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
           },
-          select: commentV2Select,
+          select: commentV2WithCachedUserSelect,
         });
-        if (candidate) targetComment = candidate as CommentV2Model;
+        if (candidate) targetComment = candidate;
       }
     }
 
@@ -1126,11 +1212,15 @@ export async function getCommentsInfinite({
     const nextCursor =
       regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
 
-    const comments = !cursor ? [...pinnedComments, ...regularComments] : regularComments;
+    const commentIds = [
+      ...pinnedComments.map((x) => x.id),
+      ...regularComments.map((x) => x.id),
+      ...(targetComment ? [targetComment.id] : []),
+    ];
 
     const replies = repliesDepth
       ? await getReplyThreads({
-          commentIds: [...comments, ...(targetComment ? [targetComment] : [])].map((x) => x.id),
+          commentIds,
           depth: repliesDepth,
           limit: repliesLimit,
           budget: constants.comments.autoExpandBudget,
@@ -1140,11 +1230,25 @@ export async function getCommentsInfinite({
         })
       : { threads: [], childlessCommentIds: [] };
 
+    const replyComments = replies.threads.flatMap((thread) => thread.comments);
+    const userCosmetics = await getCosmeticsAndProfilePicturesForUsers(
+      [...pinnedComments, ...replyComments, ...(targetComment ? [targetComment] : [])].map(
+        (x) => x.user.id
+      )
+    );
+    const withUserCosmetics = (comment: CommentV2WithCachedUser): CommentV2Model => ({
+      ...comment,
+      user: { ...comment.user, ...userCosmetics(comment.user.id) },
+    });
+
     return {
-      comments,
+      comments: [...pinnedComments.map(withUserCosmetics), ...regularComments],
       nextCursor,
-      targetComment,
-      replyThreads: replies.threads,
+      targetComment: targetComment ? withUserCosmetics(targetComment) : null,
+      replyThreads: replies.threads.map((thread) => ({
+        ...thread,
+        comments: thread.comments.map(withUserCosmetics),
+      })),
       childlessCommentIds: replies.childlessCommentIds,
     };
   });

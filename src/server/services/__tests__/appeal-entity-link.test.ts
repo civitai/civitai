@@ -57,6 +57,32 @@ describe('getAppealDetails', () => {
 });
 
 describe('resolveEntityAppeal — resolved notification key', () => {
+  it("writes the moderator's reason and note in the statement that closes the appeal", async () => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([]);
+    await resolveEntityAppeal({
+      ids: [9],
+      entityType: EntityType.Model,
+      status: AppealStatus.Rejected,
+      resolvedReason: 'flag-confirmed',
+      internalNotes: 'seen it',
+      userId: 3,
+    });
+    await resolveEntityAppeal({
+      ids: [9],
+      entityType: EntityType.Model,
+      status: AppealStatus.Approved,
+      userId: 3,
+    });
+
+    const [ruled, system] = dbMock.dbWrite.appeal.updateManyAndReturn.mock.calls.map(
+      ([arg]) => (arg as { data: Record<string, unknown> }).data
+    );
+    expect(ruled).toMatchObject({ resolvedReason: 'flag-confirmed', internalNotes: 'seen it' });
+    // Prisma leaves an undefined field untouched, so a system close writes neither column.
+    expect(system.resolvedReason).toBeUndefined();
+    expect(system.internalNotes).toBeUndefined();
+  });
+
   it('is unique per appeal request, so a reopened appeal notifies again', async () => {
     const first = new Date('2026-09-01T00:00:00Z');
     const second = new Date('2026-09-20T00:00:00Z');

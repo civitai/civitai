@@ -1,6 +1,8 @@
 import { createContext, useContext, useMemo, useRef } from 'react';
 import { RemixGalleryBatchProvider } from '~/components/RemixGallery/RemixGalleryBatchProvider';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
+import { StorylineBatchProvider } from '~/components/Storyline/StorylineBatchProvider';
+import { uniquePostIds } from '~/components/Storyline/storyline-mode.utils';
 import type { ImageGetInfinite } from '~/types/router';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { JudgingCategory } from '~/server/games/daily-challenge/daily-challenge-scoring';
@@ -98,11 +100,14 @@ export function ImagesProvider({
   // renders, and reading it here would leave the batch fetching whatever the
   // first render happened to see.
   const imageIds = useMemo(() => (images ?? []).map((image) => image.id), [images]);
+  const postIds = useMemo(() => uniquePostIds(images), [images]);
 
   return (
     <ImagesContext.Provider value={state}>
       <StickerPlacementBatchProvider imageIds={imageIds} alwaysFetch={revealStickers}>
-        <RemixGalleryBatchProvider imageIds={imageIds}>{children}</RemixGalleryBatchProvider>
+        <RemixGalleryBatchProvider imageIds={imageIds}>
+          <StorylineBatchProvider postIds={postIds}>{children}</StorylineBatchProvider>
+        </RemixGalleryBatchProvider>
       </StickerPlacementBatchProvider>
     </ImagesContext.Provider>
   );

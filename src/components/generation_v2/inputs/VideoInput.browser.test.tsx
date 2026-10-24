@@ -193,8 +193,8 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
     // the form value via onChange. width/height come from getVideoData (the
     // mocked video element, 1280x720), NOT from serverMetadata's width/height —
     // so we feed a faithful full shape but assert dimensions resolve from the
-    // element. duration runs through the REAL `@civitai/client` TimeSpan (it is
-    // NOT mocked in the component project — the @civitai/client mock lives only
+    // element. duration runs through the REAL `@civitai/orchestration-client` TimeSpan (it is
+    // NOT mocked in the component project — the @civitai/orchestration-client mock lives only
     // in the unit setup). TimeSpan parses .NET `HH:MM:SS.ticks`, so '00:00:02.0'
     // -> totalSeconds 2; note a tick-less '00:00:02' parses to 0, so the real
     // wire format must carry fractional ticks for this branch to be non-zero.

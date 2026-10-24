@@ -1,25 +1,6 @@
 import { Button, Menu } from '@mantine/core';
-import {
-  IconBook,
-  IconBrandDiscord,
-  IconBug,
-  IconLifebuoy,
-  IconMessageChatbot,
-  IconQuestionMark,
-} from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
-import { useState } from 'react';
-import { useAssistantAvailable } from '~/components/Assistant/useAssistantAvailable';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { SUPPORT_LINKS } from '~/components/Support/support.constants';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
-import { useAssistantPanelStore } from '~/store/assistant-panel.store';
-import { trpc } from '~/utils/trpc';
-
-const FeedbackDrawer = dynamic(() => import('~/components/Feedback/FeedbackDrawer'), {
-  ssr: false,
-});
+import React, { useState } from 'react';
+import { useSupportMenuItems } from '~/components/Support/useSupportMenuItems';
 
 const ICON_SIZE = 16;
 
@@ -33,20 +14,8 @@ const ICON_SIZE = 16;
  * chase. The modal itself is untouched and still serves `/support`.
  */
 export function SupportMenu() {
-  const currentUser = useCurrentUser();
   const [opened, setOpened] = useState(false);
-
-  // Asked only once the menu is open, and only for a signed-in viewer: the panel
-  // cannot accept a submission without a session, so an anonymous viewer's answer
-  // could not change what this renders.
-  const { data: bugReportArea } = trpc.feedback.getArea.useQuery(
-    { area: SITE_BUG_REPORT_AREA },
-    { enabled: opened && !!currentUser }
-  );
-  const canReportInProduct = !!currentUser && !!bugReportArea?.enabled;
-  // The chat used to be the right-hand column of the support modal. It has its own
-  // launcher beside this button, but the modal is gone, so the menu keeps a way in.
-  const assistant = useAssistantAvailable();
+  const items = useSupportMenuItems({ opened });
 
   return (
     <Menu
@@ -66,72 +35,26 @@ export function SupportMenu() {
         </Button>
       </Menu.Target>
       <Menu.Dropdown>
-        {canReportInProduct ? (
-          <Menu.Item
-            leftSection={<IconBug size={ICON_SIZE} />}
-            onClick={() => dialogStore.trigger({ component: FeedbackDrawer })}
-          >
-            Report a bug
-          </Menu.Item>
-        ) : (
-          // No session, or the area is not collecting: the ticket portal is the only
-          // honest destination left. Shown rather than hidden so the menu never
-          // silently loses its bug path.
-          <Menu.Item
-            component="a"
-            href={SUPPORT_LINKS.bugTicket}
-            target="_blank"
-            rel="nofollow noreferrer"
-            leftSection={<IconBug size={ICON_SIZE} />}
-          >
-            Report a bug
-          </Menu.Item>
-        )}
-        <Menu.Item
-          component="a"
-          href={SUPPORT_LINKS.educationHub}
-          target="_blank"
-          rel="nofollow noreferrer"
-          leftSection={<IconBook size={ICON_SIZE} />}
-        >
-          Education Hub
-        </Menu.Item>
-        <Menu.Item
-          component="a"
-          href={SUPPORT_LINKS.faq}
-          target="_blank"
-          rel="nofollow noreferrer"
-          leftSection={<IconQuestionMark size={ICON_SIZE} />}
-        >
-          FAQ
-        </Menu.Item>
-        <Menu.Item
-          component="a"
-          href={SUPPORT_LINKS.discord}
-          target="_blank"
-          rel="nofollow noreferrer"
-          leftSection={<IconBrandDiscord size={ICON_SIZE} />}
-        >
-          Discord Community
-        </Menu.Item>
-        {assistant && (
-          <Menu.Item
-            leftSection={<IconMessageChatbot size={ICON_SIZE} />}
-            onClick={() => useAssistantPanelStore.setState({ opened: true })}
-          >
-            Get help fast
-          </Menu.Item>
-        )}
-        <Menu.Divider />
-        <Menu.Item
-          component="a"
-          href={SUPPORT_LINKS.portal}
-          target="_blank"
-          rel="nofollow noreferrer"
-          leftSection={<IconLifebuoy size={ICON_SIZE} />}
-        >
-          Support Portal
-        </Menu.Item>
+        {items.map((item) => (
+          <React.Fragment key={item.id}>
+            {item.id === 'support-portal' && <Menu.Divider />}
+            {item.href ? (
+              <Menu.Item
+                component="a"
+                href={item.href}
+                target="_blank"
+                rel="nofollow noreferrer"
+                leftSection={<item.icon size={ICON_SIZE} />}
+              >
+                {item.label}
+              </Menu.Item>
+            ) : (
+              <Menu.Item leftSection={<item.icon size={ICON_SIZE} />} onClick={item.onClick}>
+                {item.label}
+              </Menu.Item>
+            )}
+          </React.Fragment>
+        ))}
       </Menu.Dropdown>
     </Menu>
   );

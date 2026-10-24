@@ -3,7 +3,9 @@ import {
   type MissingAsset,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { listingAssetAudience } from '~/shared/utils/listing-media-split';
 import {
+  assetRating,
   MATURE_STORE_HOST,
   SFW_STORE_HOST,
   summarizeListingRating,
@@ -37,6 +39,8 @@ export type ListingAssetScan = {
   kind: 'icon' | 'cover' | 'screenshot';
   /** `scanned` (clean), `pending` (still scanning), `blocked` (prohibited content). */
   status: 'scanned' | 'pending' | 'blocked';
+  /** The image's detected level; feeds the civitai.com media problems. Absent ⇒ none of those. */
+  nsfwLevel?: number | null;
 };
 
 /**
@@ -111,7 +115,8 @@ export type ListingProblemCode =
   | 'empty-category'
   | 'blocked-media'
   | 'scanning-media'
-  | 'hidden-mature-rating';
+  | 'hidden-mature-rating'
+  | 'sfw-slot-mature';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
@@ -239,8 +244,9 @@ function isEmpty(value: string | null | undefined): boolean {
 /**
  * Enumerate a listing's advisory problems. Never throws. Order is stable: assets
  * (icon → cover → screenshots, from the shared gate), empty text fields (description →
- * tagline → category), media scans (blocked, then pending), then the hidden-rating
- * notice. Returns `{ problems: [] }` when none apply.
+ * tagline → category), media scans (blocked, then pending), the hidden-rating notice,
+ * then the civitai.com media problems (icon → cover). Returns
+ * `{ problems: [] }` when none apply.
  */
 export function computeListingProblems(listing: ListingProblemInput): ListingProblemsResult {
   const problems: ListingProblem[] = [];
@@ -313,7 +319,47 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
   const hidden = hiddenMatureRatingLabel(listing);
   if (hidden) problems.push({ code: 'hidden-mature-rating', label: hidden, severity: 'advisory' });
 
+  problems.push(...comMediaProblems(listing, scans));
+
   return { problems };
+}
+
+/**
+ * A live listing still shown on civitai.com whose icon or cover is rated above what
+ * civitai.com shows for its rating: the store there falls back past it (a placeholder icon,
+ * another image as cover), and only civitai.red shows it. Advisory — the listing stays listed
+ * either way. Screenshots above the rating raise nothing: they are hidden per image on
+ * civitai.com and nothing stands in for them.
+ */
+function comMediaProblems(
+  listing: ListingProblemInput,
+  scans: ListingAssetScan[]
+): ListingProblem[] {
+  if (listing.status !== 'approved') return [];
+  const { current } = summarizeListingRating({
+    declaredRating: listing.declaredContentRating,
+    listingRating: listing.contentRating,
+  });
+  if (current.hiddenOnSfw) return [];
+  const redOnly = scans.filter(
+    (s) => listingAssetAudience(s.nsfwLevel, listing.contentRating) === 'red-only'
+  );
+  const out: ListingProblem[] = [];
+  for (const kind of ['icon', 'cover'] as const) {
+    const asset = redOnly.find((s) => s.kind === kind);
+    if (!asset) continue;
+    const rating = assetRating(asset.nsfwLevel);
+    out.push({
+      code: 'sfw-slot-mature',
+      label: `Your ${kind} is rated ${
+        rating ? offsiteContentRatingLabel(rating) : 'higher'
+      }, above this listing's rating, so ${SFW_STORE_HOST} shows ${
+        kind === 'icon' ? 'a placeholder' : 'another image'
+      } instead (${MATURE_STORE_HOST} still shows it). Replace it with an image within the listing's rating.`,
+      severity: 'advisory',
+    });
+  }
+  return out;
 }
 
 /**

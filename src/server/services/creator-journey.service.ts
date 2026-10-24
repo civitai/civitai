@@ -14,7 +14,11 @@ import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
-import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import {
+  creatorAggregateScoreFromMeta,
+  creatorScoreFromMeta,
+  creatorScoreSplitFromMeta,
+} from '~/shared/utils/creator-score';
 import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
 import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
 import {
@@ -376,7 +380,12 @@ export async function getProfileAchievements({
   const [user, rows] = await Promise.all([
     dbRead.user.findUnique({
       where: { id: userId },
-      select: { bannedAt: true, deletedAt: true, profile: { select: { privacySettings: true } } },
+      select: {
+        bannedAt: true,
+        deletedAt: true,
+        meta: true,
+        profile: { select: { privacySettings: true } },
+      },
     }),
     dbRead.userCreatorMilestone.findMany({
       where: { userId },
@@ -400,7 +409,8 @@ export async function getProfileAchievements({
       orderBy: [{ achievedAt: 'desc' }, { milestoneKey: 'asc' }],
     }),
   ]);
-  if (!user || user.bannedAt || user.deletedAt) return { tiers: [], achievements: [] };
+  if (!user || user.bannedAt || user.deletedAt)
+    return { tiers: [], achievements: [], scoreSplit: null };
 
   const privacy = user.profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   const isOwner = viewerId === userId;
@@ -439,7 +449,10 @@ export async function getProfileAchievements({
       };
     });
 
-  return { tiers, achievements };
+  const scoreSplit =
+    tiers.length && privacy?.showScoreSplit !== false ? creatorScoreSplitFromMeta(user.meta) : null;
+
+  return { tiers, achievements, scoreSplit };
 }
 
 /**

@@ -1,6 +1,6 @@
 /** HiDream handler for the form-graph lane — through hidream.config. */
 
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import type { ComfyHiDreamI1CreateImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';

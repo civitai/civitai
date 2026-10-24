@@ -237,6 +237,35 @@ describe('persistScoreBatch alerts staff to a new Legend', () => {
     expect(ctx.tierGrantErrors).toEqual([]);
   });
 
+  it('alerts a Mythic crossing on its own, beside the Legend one it implies', async () => {
+    const mythicCrossing = { ...legendCrossing, milestoneKey: 'score:mythic', name: 'Mythic' };
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing, mythicCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    const alerts = (mocks.createNotification.mock.calls as unknown as [{ type: string }][])
+      .map(([n]) => n)
+      .filter((n) => n.type.endsWith('-reached-staff'));
+    expect(alerts).toEqual([
+      expect.objectContaining({
+        type: 'creator-legend-reached-staff',
+        key: 'creator-legend-reached-staff:7',
+      }),
+      expect.objectContaining({
+        type: 'creator-mythic-reached-staff',
+        key: 'creator-mythic-reached-staff:7',
+        userIds: [1, 2],
+        details: { userId: 7, username: 'newlegend' },
+      }),
+    ]);
+  });
+
+  it('renders a Mythic alert that names the creator and links to their profile', () => {
+    const prepare = creatorMilestoneNotifications['creator-mythic-reached-staff'].prepareMessage;
+    expect(prepare({ details: { userId: 7, username: 'newmythic' } } as never)).toEqual({
+      message: 'newmythic just became a Mythic. Send them a note?',
+      url: '/user/newmythic',
+    });
+  });
+
   it('renders a message that names the Legend and links to their profile', () => {
     const prepare = creatorMilestoneNotifications['creator-legend-reached-staff'].prepareMessage;
     expect(prepare({ details: { userId: 7, username: 'newlegend' } } as never)).toEqual({

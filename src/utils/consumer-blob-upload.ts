@@ -1,4 +1,7 @@
-import type { Blob as OrchestratorBlob, ConsumerBlobPresignResponse } from '@civitai/client';
+import type {
+  Blob as OrchestratorBlob,
+  ConsumerBlobPresignResponse,
+} from '@civitai/orchestration-client';
 import { reportApplicationError } from '~/utils/application-error';
 import type { UploadPartError } from '~/utils/upload-retry';
 import {
@@ -10,13 +13,18 @@ import {
 
 export type UploadConsumerBlobResponse = OrchestratorBlob;
 
-const MAX_UPLOAD_SIZE = 64 * 1024 * 1024; // 64MB
-const SUPPORTED_CONTENT_TYPES = [
+export const CONSUMER_BLOB_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+// The orchestrator's own allowlist, less `image/gif`, which no caller here uploads.
+export const CONSUMER_BLOB_CONTENT_TYPES = [
   'image/jpeg',
   'image/png',
   'image/webp',
   'video/mp4',
   'video/webm',
+  'audio/mpeg',
+  'audio/webm',
+  'audio/wav',
+  'audio/x-wav',
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
 // Silence allowed after the body is sent. Long because the orchestrator processes the media inside
@@ -38,7 +46,7 @@ const PRESIGN_TIMEOUT_KIND = 'presign-timeout';
 /** Shown when an upload is refused because the user is signed out. */
 export const SIGN_IN_TO_UPLOAD_MESSAGE = 'Sign in to upload images.';
 
-type SupportedContentType = (typeof SUPPORTED_CONTENT_TYPES)[number];
+type SupportedContentType = (typeof CONSUMER_BLOB_CONTENT_TYPES)[number];
 
 /** `kind` is built only from fixed strings and integer statuses, so it is safe to log as-is. */
 export class ConsumerBlobUploadError extends Error {
@@ -211,16 +219,16 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
  * @throws Error if file exceeds 64MB, has unsupported content type, or the upload fails
  */
 export async function uploadConsumerBlob(data: Blob | File): Promise<UploadConsumerBlobResponse> {
-  if (data.size > MAX_UPLOAD_SIZE) {
+  if (data.size > CONSUMER_BLOB_MAX_UPLOAD_BYTES) {
     throw new Error(`File size exceeds maximum of 64MB`);
   }
 
   const contentType = data.type as SupportedContentType;
-  if (!SUPPORTED_CONTENT_TYPES.includes(contentType)) {
+  if (!CONSUMER_BLOB_CONTENT_TYPES.includes(contentType)) {
     throw new Error(
       `Unsupported content type: ${
         data.type || 'unknown'
-      }. Supported types: ${SUPPORTED_CONTENT_TYPES.join(', ')}`
+      }. Supported types: ${CONSUMER_BLOB_CONTENT_TYPES.join(', ')}`
     );
   }
 

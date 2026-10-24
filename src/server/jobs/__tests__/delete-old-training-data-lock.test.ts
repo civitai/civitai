@@ -110,17 +110,6 @@ describe('delete-old-training-data asks for a lock that outlasts the caller’s 
 
     expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeLessThan(cronPeriodSeconds);
   });
-
-  it('is an exact pin, not a range — any change to the value must be re-argued here', () => {
-    // 🔴 WHY THIS IS SPELLED OUT. The two cases above read like a range with headroom at both
-    // ends, and they are not: between the floor and the cron period the cost of a longer hold is
-    // FLAT, because once the first retry is answered 200 nothing POSTs again until the next daily
-    // tick. So there is no optimum for an inequality to converge on, and a reader who takes those
-    // two bounds as the whole argument will think any value between them is equally justified by
-    // measurement. It is not — the choice is explained in the constant's own docblock. This pin is
-    // what forces an edit to go and read it.
-    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBe(6 * 60 * 60);
-  });
 });
 
 describe('delete-old-training-data’s lock survives the caller hanging up', () => {

@@ -23,6 +23,7 @@ import {
   PLACEMENT_PRICE_STEP,
   placementPriceUsable,
   placementPriceTrack,
+  placementSurfaceAllowsZeroPrice,
   placementSurfaces,
   placementTransactionId,
   resolveHostDeclineFeePercent,
@@ -259,7 +260,7 @@ describe('declineFeeAmount', () => {
 });
 
 describe('the host decline fee', () => {
-  it('is fixed at 30% for stickers and remixes, and adjustable for promotions', () => {
+  it('is fixed at 30% for stickers, remixes and storylines, and adjustable for promotions', () => {
     expect(
       Object.fromEntries(
         placementSurfaces.map((surface) => [
@@ -272,6 +273,7 @@ describe('the host decline fee', () => {
       remixGallery: [false, 0.3],
       galleryPromotion: [true, 0],
       modelPromotion: [true, 0],
+      storyline: [false, 0.3],
     });
   });
 
@@ -402,6 +404,14 @@ describe('space resolution', () => {
       // `effectivePlacementPrice(0, cap)` is 0 rather than null, so the space
       // reads open, `canPlace` is true, and the escrow short-circuits: free
       // placements on every creator's work, platform-wide, by default.
+      //
+      // Exception: a zero-priceable surface defaults to free on purpose; its target is opt-in,
+      // since a continuation needs a storyline chapter to continue.
+      if (placementSurfaceAllowsZeroPrice(surface)) {
+        expect(defaultPrice, `${surface} defaults to charging`).toBe(0);
+        expect(defaultMode, `${surface} defaults to accepting without review`).toBe('review');
+        continue;
+      }
       expect(defaultPrice, `${surface} defaults to free placements`).toBeGreaterThan(0);
 
       // A default of `auto` removes the review step for every creator who never
@@ -529,7 +539,35 @@ describe('the surface table', () => {
       'modelPromotion',
       'remixGallery',
       'sticker',
+      'storyline',
     ]);
+  });
+
+  /**
+   * 🔴 Only the storyline surface may be priced at zero. Elsewhere the floor is the spam gate and
+   * their free tier is a deliberately scarce exception to it; a zero floor would allow unlimited
+   * free submissions with no allowance or slot cap. Pinned by value, so moving any floor is a
+   * deliberate edit here.
+   */
+  it('keeps the price floor on every surface that has one', () => {
+    expect(
+      Object.fromEntries(
+        placementSurfaces.map((surface) => [surface, PLACEMENT_SURFACES[surface].serverMinPrice])
+      )
+    ).toEqual({
+      sticker: 50,
+      remixGallery: 50,
+      galleryPromotion: 50,
+      modelPromotion: 50,
+      storyline: 0,
+    });
+    expect(placementSurfaces.filter(placementSurfaceAllowsZeroPrice)).toEqual(['storyline']);
+  });
+
+  // The free path refuses these surfaces, so the resolver must not advertise a free slot on one.
+  it('gives a zero-priced surface no free slots by default', () => {
+    for (const surface of placementSurfaces.filter(placementSurfaceAllowsZeroPrice))
+      expect(PLACEMENT_SURFACES[surface].defaultFreeSlots).toBe(0);
   });
 
   it('gives every surface a usable decline rate and expiry', () => {

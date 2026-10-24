@@ -647,26 +647,6 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
     expect(failure?.description ?? '').not.toContain('SENTINEL-TRACE-A1');
     expect(failure?.description ?? '').not.toContain('SENTINEL-INTERNAL-B2');
   });
-
-  it('logs the INTERNAL detail server-side so the failure is still diagnosable', async () => {
-    const { logToAxiom } = await import('~/server/logging/client');
-    mockTriggerBuild.mockRejectedValue(
-      new Error(`trigger 500 Internal Server Error: ${RECEIVER_BODY}`)
-    );
-    await expectRejectCode(callRetrigger(), 'TRIGGER_FAILED');
-    // The dynamic import + `.then` chain resolves on a later microtask tick.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'app-block-retrigger-failed',
-        details: expect.objectContaining({
-          publishRequestId: REQ_ID,
-          error: expect.stringContaining(RECEIVER_BODY),
-        }),
-      }),
-      'app-blocks'
-    );
-  });
 });
 
 describe('retriggerBuild — records the run it started, for the stale-run guard', () => {

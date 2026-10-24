@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import {
   classifyQuoteFailure,
+  quoteFailureCause,
   quoteFailureLogLevel,
   safeQuoteReason,
+  unquotedStepEstimateRefusal,
   unquotedTrainingRefusal,
+  unquotedWorkflowEstimateRefusal,
 } from '~/server/services/blocks/pass-through-quote-failure';
 import {
   annotateOrchestratorMissingBlob,
@@ -12,6 +15,9 @@ import {
 } from '~/server/services/orchestrator/submit-failure';
 
 const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
+const REJECTED_NO_REASON =
+  'Training needs a price quote and the orchestrator rejected the request; check the step ' +
+  'inputs and references (retrying the same body will not help).';
 const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
 const FOREIGN_KEY = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
 const CALLER_TEXT = JSON.stringify({ trainingData: { items: [{ air: OWN_KEY }] } });
@@ -118,9 +124,12 @@ describe('what a block receives for a failed training quote', () => {
     ['an over-long message', `Epochs is invalid. ${'x '.repeat(200)}`],
     ['too many messages', ['a.', 'b.', 'c.', 'd.', 'e.', 'f.'].join(',\n')],
     ['an empty message', ''],
-  ])('a rejection carrying %s keeps the generic message', (_name, message) => {
+  ])('a rejection carrying %s forwards none of it', (_name, message) => {
     const err = orchestratorError('BAD_REQUEST', message, 400);
-    expect(refusalFor(err)).toEqual({ error: GENERIC, errorCode: 'training-quote-rejected' });
+    expect(refusalFor(err)).toEqual({
+      error: REJECTED_NO_REASON,
+      errorCode: 'training-quote-rejected',
+    });
   });
 
   it('a blob the orchestrator says is gone is a rejection with a host-written sentence', () => {
@@ -139,9 +148,72 @@ describe('what a block receives for a failed training quote', () => {
 
   it('an unpriced answer has its own code', () => {
     expect(unquotedTrainingRefusal({ kind: 'unpriced' })).toEqual({
-      error: GENERIC,
+      error: 'Training needs a price quote and the orchestrator answered without one.',
       errorCode: 'training-quote-unpriced',
     });
+  });
+});
+
+describe('what a block receives for a registered-step estimate with no quote', () => {
+  it.each([
+    [
+      { kind: 'rejected', reason: 'Epochs must be between 1 and 20.' },
+      'step_quote_rejected',
+      'No price quote for this step: the orchestrator rejected the request: Epochs must be between 1 and 20.',
+    ],
+    [
+      { kind: 'rejected' },
+      'step_quote_rejected',
+      'No price quote for this step: the orchestrator rejected the request; check the step ' +
+        'inputs and references (retrying the same body will not help)',
+    ],
+    [
+      { kind: 'unavailable' },
+      'step_quote_unavailable',
+      'No price quote for this step: none could be obtained; try again',
+    ],
+    [
+      { kind: 'unpriced' },
+      'step_quote_unpriced',
+      'No price quote for this step: the orchestrator answered without one',
+    ],
+  ] as const)('%o → %s', (failure, errorCode, error) => {
+    expect(unquotedStepEstimateRefusal(failure)).toEqual({ error, errorCode });
+  });
+});
+
+describe('what a block receives for a workflow estimate with no quote', () => {
+  it.each([
+    [
+      { kind: 'rejected', reason: 'Epochs must be between 1 and 20.' },
+      'workflow_quote_rejected',
+      'No price quote for this workflow: the orchestrator rejected the request: Epochs must be between 1 and 20.',
+    ],
+    [
+      { kind: 'rejected' },
+      'workflow_quote_rejected',
+      'No price quote for this workflow: the orchestrator rejected the request; check the step ' +
+        'inputs and references (retrying the same body will not help)',
+    ],
+    [
+      { kind: 'unavailable' },
+      'workflow_quote_unavailable',
+      'No price quote for this workflow: none could be obtained; try again',
+    ],
+    [
+      { kind: 'unpriced' },
+      'workflow_quote_unpriced',
+      'No price quote for this workflow: the orchestrator answered without one',
+    ],
+  ] as const)('%o → %s', (failure, errorCode, error) => {
+    expect(unquotedWorkflowEstimateRefusal(failure)).toEqual({ error, errorCode });
+  });
+
+  it('only an unavailable quote is told to try again', () => {
+    const retryable = (['rejected', 'unavailable', 'unpriced'] as const).filter((kind) =>
+      quoteFailureCause({ kind }).includes('try again')
+    );
+    expect(retryable).toEqual(['unavailable']);
   });
 });
 

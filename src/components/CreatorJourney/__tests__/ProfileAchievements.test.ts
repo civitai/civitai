@@ -288,8 +288,8 @@ describe('achievements tab', () => {
       // The leading N is the badge's fallback hexagon: no art in this fixture.
       'NCreator Score tierNovaEarned before launch'
     );
-    const current = [...strip.children].filter((rung) =>
-      rung.getAttribute('aria-current') === 'true'
+    const current = [...strip.children].filter(
+      (rung) => rung.getAttribute('aria-current') === 'true'
     );
     expect(current.map((rung) => rung.getAttribute('aria-label'))).toEqual([
       'Nova: Earned before launch',
@@ -319,6 +319,36 @@ describe('achievements tab', () => {
     );
     expect(greyed).toEqual([false, false, false, true]);
     expect(grids(el)).toHaveLength(1);
+  });
+
+  it('shows the score split under the ladder, as shares, leaving out empty categories', () => {
+    mocks.viewer = null;
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: { ...data, scoreSplit: { models: 57, images: 24, articles: 0, users: 19 } },
+        userId: OWNER,
+      })
+    );
+    const split = el.querySelector<HTMLElement>('[data-testid="score-split"]') as HTMLElement;
+    expect(split.textContent).toBe(
+      'Where this Creator Score comes fromModels 57%Images 24%Followers 19%'
+    );
+    expect(split.parentElement?.querySelector('[data-tier-ladder]')).not.toBeNull();
+    const ladderBand = el.querySelector('[data-tier-ladder]') as HTMLElement;
+    expect(
+      ladderBand.compareDocumentPosition(split) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('shows no score split when the server sends none', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: { ...data, scoreSplit: null },
+        userId: OWNER,
+      })
+    );
+    expect(el.querySelector('[data-tier-ladder]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="score-split"]')).toBeNull();
   });
 
   it('shows the held tiers on the ladder while the public ladder loads', () => {
@@ -856,9 +886,10 @@ describe('ladder rungs', () => {
     const [spark, blaze] = el.querySelectorAll<HTMLElement>('[data-tier-ladder] > button');
     expect(spark.getAttribute('aria-label')).toBe('Spark: Reached');
     expect(spark.firstElementChild?.className.split(' ')).not.toContain('grayscale');
-    // The creator hid this badge: the rung says the score passed it without drawing the art.
-    expect(spark.querySelector('img')).toBeNull();
-    expect(blaze.querySelector('img')).not.toBeNull();
+    // The creator hid this badge, but its art is the public ladder's: a reached rung draws it, not a
+    // lettered placeholder.
+    expect(spark.querySelector('img')?.getAttribute('src')).toMatch(/^spark-art\//);
+    expect(blaze.querySelector('img')?.getAttribute('src')).toMatch(/^own-art\//);
   });
 
   it('keeps a held tier the ladder does not list, after the ladder', () => {

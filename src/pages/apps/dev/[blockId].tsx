@@ -1,5 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
+import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
 import { Meta } from '~/components/Meta/Meta';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -110,20 +113,64 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   },
 });
 
-export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFrame) {
+/**
+ * The host this document's CSP lets it frame. It is fixed when the document is loaded, so it is
+ * read from the document's own data, never from props, which client-side navigation replaces.
+ */
+function documentFrameHost(propsHost: string | null): string | null {
+  if (typeof window === 'undefined') return propsHost;
+  const doc = (window as { __NEXT_DATA__?: { page?: string; props?: { pageProps?: unknown } } })
+    .__NEXT_DATA__;
+  // Loaded as another page, the document carries no route-scoped CSP to conflict with.
+  if (doc?.page !== '/apps/dev/[blockId]') return null;
+  const host = (doc.props?.pageProps as { host?: unknown } | undefined)?.host;
+  return typeof host === 'string' ? host : null;
+}
+
+/**
+ * The scaffold's `dev:tunnel` script serves on the port `civitai app dev-tunnel` tunnels by default,
+ * and sends the headers this page needs to frame the app.
+ */
+const DEV_TUNNEL_COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
+
+export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
+  const router = useRouter();
+  // Props naming a host other than the one this document may frame (the tunnel restarted, or
+  // this page was reached client-side) need a fresh document to frame it.
+  const [servedHost] = useState(() => documentFrameHost(host));
+  const hostChanged = !!servedHost && !!host && host !== servedHost;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  useEffect(() => {
+    if (hostChanged) routerRef.current.reload();
+  }, [hostChanged]);
+
   return (
     <>
       <Meta title={`${appName} — Dev tunnel — Civitai Apps`} deIndex />
       <Box style={{ width: '100%' }}>
-        {!iframeSrc ? (
+        {hostChanged ? null : dnsPending ? (
+          <Box style={{ height: '60vh' }}>
+            <DevTunnelDnsGate
+              key={blockId}
+              blockId={blockId}
+              // Re-runs the server props, which sign the entry URL once the host resolves.
+              onSettled={() => router.replace(router.asPath, undefined, { scroll: false })}
+            />
+          </Box>
+        ) : !iframeSrc ? (
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
-              Start your local dev server and open a tunnel for <Code>{blockId}</Code>, then reload
-              this page:
+              In your app&apos;s folder, start the dev server in one terminal and open a tunnel for{' '}
+              <Code>{blockId}</Code> in another, then reload this page:
             </Text>
-            <Code block>civitai app dev:tunnel</Code>
+            <Code block>{DEV_TUNNEL_COMMANDS}</Code>
+            <Text size="sm">
+              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: it serves on the
+              port the tunnel uses and sends the headers this page needs to show your app.
+            </Text>
             <Alert color="yellow" variant="light">
               This page renders your LOCAL app inside the real Civitai host. Only you can see it —
               the tunnel is bound to your account.
@@ -131,9 +178,14 @@ export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFram
           </Stack>
         ) : (
           <DevTunnelBlockHost
+            // A freshly signed entry URL is a fresh mount, so the host re-runs its handshake.
+            key={iframeSrc}
             {...app}
             iframeSrc={iframeSrc}
             fit="viewport"
+            // The app reloaded itself (Vite live reload): re-run the server props in place,
+            // as the DNS gate does, for a freshly signed entry URL.
+            onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.
@@ -144,8 +196,11 @@ export default function DevTunnelPage({ iframeSrc, host, ...app }: DevTunnelFram
                   in the dev tunnel — it may be suspended, pending review, or not owned by your
                   account. If you just started the tunnel, reload the page.
                 </Alert>
-                <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
-                <Code block>civitai app dev:tunnel</Code>
+                <Text size="sm">
+                  Restart your tunnel (Ctrl-C, then run it again) and reload if the problem
+                  persists:
+                </Text>
+                <Code block>civitai app dev-tunnel</Code>
               </Stack>
             }
           />

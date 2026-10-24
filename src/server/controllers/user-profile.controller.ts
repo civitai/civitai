@@ -1,4 +1,4 @@
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview,
@@ -128,7 +128,7 @@ export const updateUserProfileHandler = async ({
       domain: ctx.domain,
     });
 
-    purgeCache({ tags: [`user-creator-${userId}`] }).catch();
+    await bustUserCreator(userId);
 
     return user;
   } catch (error) {
@@ -172,7 +172,7 @@ export const addEntityToShowcaseHandler = async ({
       showcaseItems: updatedShowcaseItems,
     });
 
-    purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
+    await bustUserCreator(ctx.user.id);
 
     return result;
   } catch (error) {

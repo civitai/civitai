@@ -3,8 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `blocks.persistAppUploadImage` — the server half of `OPEN_IMAGE_UPLOAD { bytes }`. It persists
  * an app's own upload with the `blockUploadedAppId` stamp, so it is gated as a post: the shared
- * post preamble and page tokens only. It also takes the upload's one per-install publish-bucket
- * charge, before the persist, so a refused upload creates no Image row.
+ * post preamble and page tokens only. It also takes the upload's ONE charge, from the app-wide
+ * upload bucket keyed on `appId`, before the persist, so a refused upload creates no Image row.
+ *
+ * The limiter is a mock here, so these cases see only WHICH bucket is charged and with what.
+ * That viewers and installs of one app really share one allowance, and that an upload takes
+ * nothing from the per-install publish bucket, is driven through the real limiter in
+ * `blocks.router.persistAppUploadImage.appBucket.test.ts`.
  *
  * Every refusal also asserts the persist never ran, so it cannot be credited to a later gate.
  */
@@ -15,6 +20,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksPostCreationEnabled,
   mockGetSessionUser,
+  mockCheckUploadAppRate,
   mockCheckPublishRate,
   mockCheckCatalogRate,
   mockPersistUpload,
@@ -24,6 +30,7 @@ const {
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsAppBlocksPostCreationEnabled: vi.fn(),
   mockGetSessionUser: vi.fn(),
+  mockCheckUploadAppRate: vi.fn(),
   mockCheckPublishRate: vi.fn(),
   mockCheckCatalogRate: vi.fn(),
   mockPersistUpload: vi.fn(),
@@ -49,6 +56,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockPostRateLimit: vi.fn(),
   checkBlockPostAppRateLimit: vi.fn(),
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
+  checkBlockUploadAppRateLimit: (...a: unknown[]) => mockCheckUploadAppRate(...a),
 }));
 vi.mock('~/server/services/blocks/block-image-upload.service', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -111,6 +119,7 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockIsAppBlocksPostCreationEnabled.mockResolvedValue(true);
   mockGetSessionUser.mockResolvedValue({ id: VIEWER_ID });
+  mockCheckUploadAppRate.mockResolvedValue({ allowed: true });
   mockCheckPublishRate.mockResolvedValue({ allowed: true });
   mockCheckCatalogRate.mockResolvedValue({ allowed: true });
   mockPersistUpload.mockResolvedValue({ imageId: 777 });
@@ -126,17 +135,33 @@ describe('blocks.persistAppUploadImage', () => {
     });
   });
 
-  it('charges the install’s publish bucket exactly once, by one token, and no other bucket', async () => {
+  it('charges the app’s upload bucket exactly once, and not the publish or catalog bucket', async () => {
     await call();
-    expect(mockCheckPublishRate.mock.calls).toEqual([['page_apb_alpha', 1]]);
+    expect(mockCheckUploadAppRate.mock.calls).toEqual([['appblk-alpha']]);
+    // Per install, so shared by every viewer of a page app.
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
     expect(mockCheckCatalogRate).not.toHaveBeenCalled();
   });
 
-  it('a publish-bucket refusal returns TOO_MANY_REQUESTS and creates no Image row', async () => {
-    mockCheckPublishRate.mockResolvedValue({ allowed: false });
+  it('the charge follows the token’s appId, not the install or the viewer', async () => {
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(
+      claims({
+        sub: `user:${OTHER_USER_ID}`,
+        appId: 'appblk-beta',
+        appBlockId: 'apb_beta',
+        blockInstanceId: 'page_apb_beta',
+      })
+    );
+    mockGetSessionUser.mockResolvedValue({ id: OTHER_USER_ID });
+    await call({}, ctx({ id: OTHER_USER_ID }));
+    expect(mockCheckUploadAppRate.mock.calls).toEqual([['appblk-beta']]);
+  });
+
+  it('a refusal by the app’s bucket returns TOO_MANY_REQUESTS with its message and creates no Image row', async () => {
+    mockCheckUploadAppRate.mockResolvedValue({ allowed: false });
     await expect(call()).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
-      message: 'Rate limit exceeded, please retry shortly.',
+      message: 'This app is handling too many uploads right now, please retry shortly.',
     });
     // `persistBlockUploadImage` is what calls `createImage`; it never ran.
     expect(mockPersistUpload).not.toHaveBeenCalled();
@@ -144,17 +169,17 @@ describe('blocks.persistAppUploadImage', () => {
 
   it('charges the bucket BEFORE the persist, never after', async () => {
     await call();
-    expect(mockCheckPublishRate.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockCheckUploadAppRate.mock.invocationCallOrder[0]).toBeLessThan(
       mockPersistUpload.mock.invocationCallOrder[0]
     );
   });
 
-  it('a non-page token is refused BEFORE the publish bucket is charged', async () => {
+  it('a non-page token is refused BEFORE the upload bucket is charged', async () => {
     mockAuthorizeBlockBridgeToken.mockResolvedValue(
       claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
     );
     await call().catch(() => undefined);
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockCheckUploadAppRate).not.toHaveBeenCalled();
   });
 
   it('never takes the stamped appId from the request body', async () => {
@@ -190,7 +215,7 @@ describe('blocks.persistAppUploadImage', () => {
   ])('refuses %s, and never charges the bucket or persists', async (_label, arrange, expected) => {
     arrange();
     await expect(call()).rejects.toMatchObject(expected);
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockCheckUploadAppRate).not.toHaveBeenCalled();
     expect(mockPersistUpload).not.toHaveBeenCalled();
   });
 
@@ -199,7 +224,7 @@ describe('blocks.persistAppUploadImage', () => {
       code: 'FORBIDDEN',
       message: 'this app session belongs to a different account; reload the page to continue',
     });
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockCheckUploadAppRate).not.toHaveBeenCalled();
     expect(mockPersistUpload).not.toHaveBeenCalled();
   });
 });

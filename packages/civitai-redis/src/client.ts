@@ -13,6 +13,7 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -22,6 +23,11 @@ import {
   resetClusterInflight,
 } from './cluster-inflight';
 import { decSysInflight, getSysInflight, incSysInflight, resetSysInflight } from './sys-inflight';
+import {
+  countSysTimeoutsWithoutSuccess,
+  createSysTimeoutRecord,
+  resetSysTimeouts,
+} from './sys-timeouts';
 import {
   countClusterDeadlineHits,
   recordClusterCommandSettle,
@@ -35,6 +41,29 @@ export type { RedisConfig } from './env';
 export type RedisLogFn = (message: string, ...args: unknown[]) => void;
 /** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
 export type RedisFailoverResolver = (context: Record<string, string>) => Promise<boolean>;
+
+/**
+ * node-redis 6 changed three client defaults that this package depends on. Every client it builds
+ * pins the 5.x behaviour back for these three. What the pins do NOT restore: object-like replies
+ * (`hGetAll`, `xRange` message objects, `CONFIG GET`, …) are plain `{}` objects, not
+ * `Object.create(null)`, so a hash field named `__proto__` is dropped and a lookup of an absent
+ * `constructor`/`toString` returns the inherited function:
+ *  - RESP: 6.0 defaults to RESP3, which changes reply shapes (hGetAll, xRange, multi().exec(), Lua
+ *    replies, Buffer type mapping) and, through `maintNotifications: 'auto'`, relaxes socket and
+ *    command timeouts during server maintenance pushes. RESP3 is a separate change.
+ *  - command timeout: 6.0 rejects any command still UNWRITTEN after 5000 ms (the timer is cleared
+ *    once the command is written, so a slow reply is never cut). Our own deadlines must
+ *    fire first and alone: the cluster deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) and the sys
+ *    backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) feed the self-heal watchdogs, which a 5 s rejection of a
+ *    different error class would starve. @redis/client 6.3.0 builds its defaults as
+ *    `{ timeout: 5000, ...options.commandOptions }` and arms a timer only `if (timeout)`
+ *    (client/commands-queue.js), so an explicit `timeout: undefined` restores "none".
+ *  - TCP keepalive: 6.0 waits 30 s before the first probe (5 s in 5.x), which slows the detection of
+ *    a silently dead peer.
+ */
+export const REDIS_RESP_VERSION = 2 as const;
+export const REDIS_NO_COMMAND_TIMEOUT = { timeout: undefined };
+export const REDIS_KEEPALIVE_INITIAL_DELAY_MS = 5000;
 
 // inlined — was slugit from ~/utils/string-helpers
 const slugit = (value: string) => slugify(value, { lower: true, strict: true });
@@ -575,6 +604,57 @@ function startClusterSelfHeal(
 /** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
 const lateSysReconnects = new WeakSet<object>();
 
+/** Sys clients with a connect() retry pending (see connectSysClient). */
+const sysConnectRetries = new WeakSet<object>();
+
+/**
+ * `client.connect()` for a sys base client and, while it rejects and leaves the client CLOSED,
+ * connect() again in the background with backoff until one succeeds.
+ *
+ * WHY (node-redis 6): RedisSentinel's connect() gives up after `maxCommandRediscovers` failed
+ * discovery passes (each pass fails on a master connection's first error since 6.2.0) and then
+ * destroys the client (@redis/client 6.3.0 sentinel/index.js, RedisSentinelInternal.connect).
+ * Nothing reopens it: every command then fails at once, so the sys watchdog, which triggers on
+ * commands piling up, never fires again and the client stays down until the process restarts. A
+ * connect() overlapping a master outage with no failover (the Sentinel still naming the master)
+ * longer than those passes ends that way: at startup, or in a self-heal's reconnect.
+ *
+ * Settles with the FIRST attempt, so callers that bound it behave as before. One retry is pending
+ * per client at a time, and retrying stops once the client is open again (someone else connected
+ * it). Exported (with an injectable backoff) for tests.
+ */
+export function connectSysClient(
+  client: { connect: () => unknown; isOpen?: boolean },
+  delayMs: (attempt: number) => number = reconnectDelayMs
+): Promise<unknown> {
+  const attempt = (n: number): Promise<unknown> => {
+    const p = Promise.resolve().then(() => client.connect());
+    p.catch((err: unknown) => {
+      if (n > 0) {
+        log(
+          `Redis sys connect() retry ${n} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+      if (client.isOpen !== false || sysConnectRetries.has(client)) return;
+      sysConnectRetries.add(client);
+      const timer = setTimeout(() => {
+        sysConnectRetries.delete(client);
+        if (client.isOpen !== false) return;
+        attempt(n + 1).then(
+          // A destroy() racing the attempt (a self-heal) also resolves it, with the client closed.
+          () => client.isOpen !== false && log(`Redis sys client connected on retry ${n + 1}`),
+          () => undefined
+        );
+      }, delayMs(n + 1));
+      timer.unref?.();
+    });
+    return p;
+  };
+  return attempt(0);
+}
+
 /**
  * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
  * the OTHER node-redis client (incident 2026-07-03). A sentinel flap orphaned in-flight commands
@@ -681,11 +761,12 @@ export async function forceSysReconnect(
       // after connect(). RedisSentinel (5.8.3, reserveClient) takes a reserved lease from a pool of
       // masterPoolSize (2) on every connect() and destroy() never returns it, so from a client's
       // second reconnect on, connect() can wait forever on that pool even though the client works;
-      // holding the guard across connect() would skip this client in every later heal.
+      // holding the guard across connect() would skip this client in every later heal. (6.3.0's
+      // destroy() returns the reserved lease, but a connect() can still outlast the step.)
       void pending
         .catch(() => undefined)
         .finally(() => lateSysReconnects.delete(client))
-        .then(() => client.connect())
+        .then(() => connectSysClient(client))
         .then(
           () => log('Sys self-heal: reconnected after a late teardown'),
           (err: unknown) =>
@@ -699,13 +780,14 @@ export async function forceSysReconnect(
     }
     try {
       await withTimeout(
-        Promise.resolve(client.connect()),
+        connectSysClient(client),
         stepTimeoutMs,
         `connect() did not settle within ${stepTimeoutMs}ms`
       );
     } catch (err) {
-      // Non-fatal: node-redis keeps retrying the connection in the background via its
-      // reconnectStrategy, and the watchdog re-arms after the cooldown.
+      // Non-fatal: a connect() that timed out keeps running, and one that failed and left the
+      // client closed is retried in the background (connectSysClient). The watchdog re-arms after
+      // the cooldown.
       log(
         `Sys self-heal: reconnect() threw (background retry continues): ${
           err instanceof Error ? err.message : String(err)
@@ -715,46 +797,77 @@ export async function forceSysReconnect(
   }
 }
 
+/** The config fields the sys self-heal watchdog reads. */
+export type SysSelfHealSettings = Pick<
+  RedisConfig,
+  | 'sysSelfHealEnabled'
+  | 'sysSelfHealInflightThreshold'
+  | 'sysSelfHealSustainedMs'
+  | 'sysSelfHealCooldownMs'
+  | 'sysSelfHealReconnectJitterMs'
+  | 'sysSelfHealTimeoutThreshold'
+  | 'sysSelfHealTimeoutWindowMs'
+>;
+
 /**
- * Start the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
+ * Build the sys (sysRedis / Sentinel) self-heal watchdog — the mirror of startClusterSelfHeal for
  * the OTHER node-redis client. REUSES the generic ClusterSelfHealWatchdog (it's client-agnostic:
- * a config + injected getInflight/reconnect/onReconnect). The DEADLINE-hit trigger is left OFF
- * (deadlineHitThreshold 0, no getDeadlineHits dep) — the incident wedge climbs inflight
- * monotonically, so the sustained-inflight path is the only trigger. 🔴 That only holds while the
- * sys per-command backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) is LONGER than the sustained window and
- * the in-flight cap is ABOVE the inflight threshold: a shorter deadline drains inflight into a
- * sawtooth before the window fills (exactly how the cluster watchdog went blind), and a lower cap
- * keeps inflight under the threshold. env.ts refuses both configurations.
- * REDIS_SYS_SELFHEAL_ENABLED=false disables it entirely. Started once per process (guarded by
- * sysSelfHealInterval).
+ * a config + injected getInflight/getDeadlineHits/reconnect/onReconnect), so both triggers share
+ * one cooldown, one single-flight guard, one jitter and one reconnect path (forceSysReconnect).
+ *
+ * TWO TRIGGERS:
+ *  - SUSTAINED INFLIGHT (incident 2026-07-03): the wedge climbs inflight monotonically. 🔴 That
+ *    only holds while the sys per-command backstop (REDIS_SYS_COMMAND_TIMEOUT_MS) is LONGER than
+ *    the sustained window and the in-flight cap is ABOVE the inflight threshold: a shorter deadline
+ *    drains inflight into a sawtooth before the window fills (exactly how the cluster watchdog went
+ *    blind), and a lower cap keeps inflight under the threshold. env.ts refuses both.
+ *  - TIMEOUT RATE (2026-10-18), via the watchdog's deadline-hit slot: at least
+ *    REDIS_SYS_SELFHEAL_TIMEOUT_THRESHOLD backstop timeouts within
+ *    REDIS_SYS_SELFHEAL_TIMEOUT_WINDOW_MS with NO successful sys command in that window
+ *    (./sys-timeouts): what heals a wedged low-traffic app, whose in-flight count never gets near
+ *    the threshold. Reported as trigger="deadline".
+ *
+ * startSysSelfHeal passes the module config.
  */
-function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
-  const watchdog = new ClusterSelfHealWatchdog(
+export function createSysSelfHealWatchdog(
+  sysClients: any[],
+  settings: SysSelfHealSettings
+): ClusterSelfHealWatchdog {
+  return new ClusterSelfHealWatchdog(
     {
-      enabled: config.sysSelfHealEnabled,
-      inflightThreshold: config.sysSelfHealInflightThreshold,
-      sustainedMs: config.sysSelfHealSustainedMs,
-      cooldownMs: config.sysSelfHealCooldownMs,
-      // No slow-settle recording on sys (see instrumentCommands) → no deadline-hit path.
-      deadlineHitThreshold: 0,
-      deadlineHitWindowMs: 0,
-      reconnectJitterMs: config.sysSelfHealReconnectJitterMs,
+      enabled: settings.sysSelfHealEnabled,
+      inflightThreshold: settings.sysSelfHealInflightThreshold,
+      sustainedMs: settings.sysSelfHealSustainedMs,
+      cooldownMs: settings.sysSelfHealCooldownMs,
+      deadlineHitThreshold: settings.sysSelfHealTimeoutThreshold,
+      deadlineHitWindowMs: settings.sysSelfHealTimeoutWindowMs,
+      reconnectJitterMs: settings.sysSelfHealReconnectJitterMs,
       label: 'Sys',
     },
     {
       getInflight: () => getSysInflight(),
-      // getDeadlineHits intentionally omitted (deadline-hit trigger inert for the sys client).
+      getDeadlineHits: (windowMs: number) => countSysTimeoutsWithoutSuccess(windowMs),
+      resetDeadlineHits: () => resetSysTimeouts(),
       reconnect: () => forceSysReconnect(sysClients),
       log,
       onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
         // client="sys" label so a rising series confirms the SENTINEL client healed (vs cluster).
         getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger, client: 'sys' });
         log(
-          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, clients=${sysClients.length}]`
+          `Sys self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${settings.sysSelfHealInflightThreshold}, sustainedMs=${settings.sysSelfHealSustainedMs}, timeoutThreshold=${settings.sysSelfHealTimeoutThreshold}, timeoutWindowMs=${settings.sysSelfHealTimeoutWindowMs}, clients=${sysClients.length}]`
         );
       },
     }
   );
+}
+
+/**
+ * Start the sys self-heal watchdog (createSysSelfHealWatchdog with the module config) on
+ * REDIS_SYS_SELFHEAL_CHECK_INTERVAL_MS. REDIS_SYS_SELFHEAL_ENABLED=false disables it entirely.
+ * Started once per process (guarded by sysSelfHealInterval).
+ */
+function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
+  const watchdog = createSysSelfHealWatchdog(sysClients, config);
 
   if (!config.sysSelfHealEnabled) {
     log('Sys self-heal watchdog DISABLED (REDIS_SYS_SELFHEAL_ENABLED=false)');
@@ -764,6 +877,11 @@ function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
   const interval = Math.max(250, config.sysSelfHealCheckIntervalMs);
   sysSelfHealInterval = setInterval(() => {
     try {
+      // Publish what the timeout-rate trigger SEES before ticking (as the cluster watchdog does).
+      getRedisMetrics()?.redisSelfHealDeadlineHitsWindow?.set(
+        { client: 'sys' },
+        countSysTimeoutsWithoutSuccess(config.sysSelfHealTimeoutWindowMs)
+      );
       watchdog.tick();
     } catch (err) {
       log(`Sys self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
@@ -772,7 +890,7 @@ function startSysSelfHeal(sysClients: any[]): ClusterSelfHealWatchdog {
   // Don't keep the event loop alive for the watchdog on a graceful process exit.
   sysSelfHealInterval.unref?.();
   log(
-    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
+    `Sys self-heal watchdog ENABLED [inflightThreshold=${config.sysSelfHealInflightThreshold}, sustainedMs=${config.sysSelfHealSustainedMs}, timeoutThreshold=${config.sysSelfHealTimeoutThreshold}, timeoutWindowMs=${config.sysSelfHealTimeoutWindowMs}, reconnectJitterMs=${config.sysSelfHealReconnectJitterMs}, cooldownMs=${config.sysSelfHealCooldownMs}, checkMs=${interval}, clients=${sysClients.length}]`
   );
   return watchdog;
 }
@@ -849,7 +967,8 @@ export type RedisMetricsBridge = {
   // The watchdog's OWN observation: the in-process slow-settle count it samples each tick (the
   // deadline-hit window). Exposed so we can SEE what the watchdog sees, distinct from the
   // redis_command_duration histogram — diagnosing the 2026-07-06 wedge was hard precisely because
-  // this was invisible. Set each watchdog tick (client="cluster").
+  // this was invisible. Set each watchdog tick (client="cluster"; client="sys" carries the sys
+  // timeout-rate trigger's count).
   redisSelfHealDeadlineHitsWindow?: { set: (labels: { client: string }, value: number) => void };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
@@ -991,24 +1110,39 @@ export function attachSysSentinelListeners(
       })
       .inc();
   });
-  client.on('client-error', (event: any) => {
-    const { type: eventType, node, error } = event ?? {};
-    const host = node?.host ?? '?';
-    const port = node?.port ?? '?';
+  // Sub-client errors arrive as `error` (passthroughClientErrorEvents: true). RedisSentinel never
+  // re-emits its internal `client-error` event, so a `client-error` listener here would see nothing.
+  client.on('error', (err: unknown) => {
+    const sub = sentinelSubClientError(err);
+    if (!sub) return; // any other error is logged by getBaseClient's generic listener
     ctx.log(
-      `Redis sentinel sub-client error [type=${
-        eventType ?? 'unknown'
-      }, host=${host}, port=${port}]`,
-      error ?? event
+      `Redis sentinel sub-client error [type=${sub.type}, host=${sub.host}, port=${sub.port}]`,
+      sub.error
     );
-    ctx.errorCounter
-      .labels({
-        type: String(eventType ?? 'unknown'),
-        host: String(host),
-        deployment: ctx.deployment,
-      })
-      .inc();
+    ctx.errorCounter.labels({ type: sub.type, host: sub.host, deployment: ctx.deployment }).inc();
   });
+}
+
+/**
+ * The error of one of a RedisSentinel's own connections (master, replica or Sentinel), as it
+ * forwards it with `passthroughClientErrorEvents: true`. @redis/client 6.3.0 (sentinel/index.js
+ * `transform`) wraps it as `new Error(`${Kind} Client (${host}:${port}): ${message}`, { cause })`
+ * with Kind one of Master, Replica, Sentinel. Returns undefined for any other error.
+ */
+export function sentinelSubClientError(
+  err: unknown
+):
+  | { type: 'MASTER' | 'REPLICA' | 'SENTINEL'; host: string; port: string; error: unknown }
+  | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const m = /^(Master|Replica|Sentinel) Client \((.+):(\d+)\): /.exec(err.message);
+  if (!m) return undefined;
+  return {
+    type: m[1].toUpperCase() as 'MASTER' | 'REPLICA' | 'SENTINEL',
+    host: m[2],
+    port: m[3],
+    error: err.cause ?? err,
+  };
 }
 
 /**
@@ -1030,6 +1164,91 @@ export interface InstrumentCommandsOptions {
 }
 
 /**
+ * The per-command bookkeeping every instrumented command shares — the ONE place it lives, so a
+ * routed command (instrumentCommands) and a pipelined batch (trackClusterCommands) cannot drift.
+ * Counts `count` commands as started now, and returns `done`, which settles all of them.
+ */
+function startCommandAccounting(
+  clientLabel: 'cluster' | 'sys',
+  count: number,
+  slowCommandMs: number
+): () => void {
+  const labels = { client: clientLabel } as const;
+  // Capture the metric handles ONCE so inc/dec stay balanced even if the app's prom module loads
+  // mid-flight (a dec without its inc would drive the gauge negative).
+  const metrics = getRedisMetrics();
+  for (let i = 0; i < count; i++) {
+    metrics?.redisCommandsInflight.inc(labels);
+    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
+    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
+    if (clientLabel === 'cluster') incClusterInflight();
+    else incSysInflight();
+  }
+  const start = Date.now();
+  let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
+  return () => {
+    const durationMs = Date.now() - start;
+    if (!dec) {
+      // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
+      // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+      // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
+      // is what keeps the counter accurate post-heal so the watchdog can re-arm.
+      for (let i = 0; i < count; i++) {
+        if (clientLabel === 'cluster') decClusterInflight();
+        else decSysInflight();
+      }
+      dec = true;
+    }
+    for (let i = 0; i < count; i++) {
+      metrics?.redisCommandsInflight.dec(labels);
+      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
+      // brotli-decompress on the compress-aware paths), which runs afterwards in
+      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
+      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
+      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
+      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
+      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
+      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
+      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
+      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
+      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
+      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
+      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
+      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
+      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
+      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
+    }
+  };
+}
+
+/**
+ * Account a batch of `count` CLUSTER commands that is sent outside `_execute` (the pipelined
+ * multi-key GET talks to a node client directly, so instrumentCommands never sees it) exactly as
+ * `count` separate commands would be: `count` on the inflight gauge and on the self-heal inflight
+ * counter while it runs, one deadline over the batch, and on settle `count` duration samples and
+ * `count` slow-settle observations. So a stuck 200-key read still looks like 200 stuck commands
+ * to the wedge signals.
+ *
+ * Exported (with injectable `opts`) for tests.
+ */
+export function trackClusterCommands<T>(
+  count: number,
+  run: () => Promise<T>,
+  opts: { deadlineMs?: number; slowCommandMs?: number } = {}
+): Promise<T> {
+  const deadlineMs = opts.deadlineMs ?? config?.clusterCommandTimeoutMs ?? 0;
+  const slowCommandMs = opts.slowCommandMs ?? config?.clusterSelfHealSlowCommandMs ?? 0;
+  const done = startCommandAccounting('cluster', count, slowCommandMs);
+  let executed: Promise<T>;
+  try {
+    executed = run();
+  } catch (err) {
+    executed = Promise.reject(err);
+  }
+  return withCommandDeadline(executed, deadlineMs).finally(done);
+}
+
+/**
  * Wrap the per-client command chokepoint so EVERY command is counted in the inflight gauge
  * and timed. The chokepoint differs by kind: SINGLE client -> `sendCommand`; CLUSTER client
  * -> `_execute` (typed methods route through it, not the top-level sendCommand). The cluster
@@ -1047,7 +1266,6 @@ export function instrumentCommands(
 ) {
   const self = client?._self ?? client;
   if (!self) return;
-  const labels = { client: clientLabel } as const;
   // Detect the real chokepoint by capability: a 'cache' client is a CLUSTER (wrap `_execute`)
   // only when REDIS_CLUSTER is on; otherwise it's a plain single client (wrap `sendCommand`).
   const isClusterClient = typeof self._execute === 'function';
@@ -1081,51 +1299,15 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysDeadlineMs ?? config?.sysCommandTimeoutMs ?? 0 : 0;
   const sysInflightCap =
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
+  // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
+  const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
         new Error(`sysRedis in-flight cap reached (${sysInflightCap}); command rejected`)
       );
     }
-    // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
-    // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
-    const metrics = getRedisMetrics();
-    metrics?.redisCommandsInflight.inc(labels);
-    // Mirror the gauge into the local counter the self-heal watchdog samples. Each client kind
-    // has its OWN floored counter (cluster / sys) so its watchdog can sample it without a prom dep.
-    if (clientLabel === 'cluster') incClusterInflight();
-    else incSysInflight();
-    const start = Date.now();
-    let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
-    const done = () => {
-      const durationMs = Date.now() - start;
-      if (!dec) {
-        // FLOORED decrement (dec{Cluster,Sys}Inflight clamp at 0). The per-closure `dec` guard
-        // above only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
-        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The floor
-        // is what keeps the counter accurate post-heal so the watchdog can re-arm.
-        if (clientLabel === 'cluster') decClusterInflight();
-        else decSysInflight();
-        dec = true;
-      }
-      metrics?.redisCommandsInflight.dec(labels);
-      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
-      // brotli-decompress on the compress-aware paths), which runs afterwards in
-      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
-      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
-      metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
-      // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
-      // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
-      // the duration histogram above. This is the 2026-07-06 fix: it REPLACES the old
-      // withCommandDeadline.onTimeout recorder, which fired only when the 15s deadline REAPED a
-      // still-hanging command. During that fleet wedge the slow cluster commands settled on their
-      // own past the deadline (~29s), so onTimeout never fired and the deadline-hit trigger stayed
-      // silent while the histogram plainly showed ~4/s > 15s commands. Recording at settle time is
-      // sawtooth-immune (a rate of slow settles, not an inflight level) and covers BOTH wedge
-      // shapes: a deadline-reaped orphan settles at ~deadlineMs, a self-settling command at ~29s —
-      // both >= the slow threshold. sysRedis (single-node) is deliberately untouched (#2556/#2586).
-      if (clientLabel === 'cluster') recordClusterCommandSettle(durationMs, slowCommandMs);
-    };
+    const done = startCommandAccounting(clientLabel, 1, slowCommandMs);
 
     // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
     // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
@@ -1173,10 +1355,23 @@ export function instrumentCommands(
     // LONGER sourced from this deadline's reap (onTimeout) — done() records it from the observed
     // settle duration instead (see the recordClusterCommandSettle call above), so the trigger
     // fires whether or not the deadline actually reaps the command (2026-07-06 fix).
+    // Sys self-heal TIMEOUT-RATE signal (./sys-timeouts): the backstop records each timeout it
+    // fires, and every command whose underlying call fulfils — even after its caller was released —
+    // records a success, which holds the trigger off.
+    if (sysTimeouts)
+      executed.then(
+        () => sysTimeouts.recordSuccess(),
+        () => undefined
+      );
     const settled = wrapWithDeadline
       ? withCommandDeadline(executed, deadlineMs)
       : sysDeadlineMs > 0
-      ? withTimeout(executed, sysDeadlineMs, `sysRedis command timed out after ${sysDeadlineMs}ms`)
+      ? withTimeout(
+          executed,
+          sysDeadlineMs,
+          `sysRedis command timed out after ${sysDeadlineMs}ms`,
+          () => sysTimeouts?.recordTimeout()
+        )
       : executed;
     return settled.finally(done);
   };
@@ -1243,6 +1438,8 @@ function getBaseClient(type: 'cache' | 'system') {
           return reconnectDelayMs(retries);
         },
     connectTimeout: config.timeout,
+    // node-redis 5.x default (6.x waits 30 s); see REDIS_KEEPALIVE_INITIAL_DELAY_MS.
+    keepAliveInitialDelay: REDIS_KEEPALIVE_INITIAL_DELAY_MS,
     // Socket-level inactivity guard (node-redis -> net.Socket.setTimeout): an IDLE timer reset
     // by any read/write. On a SILENT half-open the in-flight command is parked and blocks every
     // write incl. the keepalive PING, so the timer runs to completion and tears the dead socket
@@ -1277,7 +1474,16 @@ function getBaseClient(type: 'cache' | 'system') {
           const [host, port] = hp.trim().split(':');
           return { host, port: parseInt(port ?? '26379', 10) };
         }),
+        // Sentinel-level: RedisSentinel passes its RESP to the master/replica/Sentinel connections
+        // it opens, and its commandOptions to every command (6.x accepts neither inside
+        // nodeClientOptions/sentinelClientOptions).
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         nodeClientOptions: {
+          // RESP again for the pub/sub connection: RedisSentinel builds it from nodeClientOptions
+          // alone (sentinel/pub-sub-proxy.js), without the Sentinel-level RESP. The option type
+          // omits RESP here, hence the spread.
+          ...{ RESP: REDIS_RESP_VERSION },
           // Reuse the password already extracted from REDIS_SYS_URL.
           password: authConfig.password,
           socket: socketConfig,
@@ -1291,8 +1497,11 @@ function getBaseClient(type: 'cache' | 'system') {
         masterPoolSize: 2,
         replicaPoolSize: 0,
         scanInterval: 10_000,
-        // Keep sub-client errors local; we surface them via the client-error listener instead.
-        passthroughClientErrorEvents: false,
+        // Forward each master/replica/Sentinel connection's errors as an `error` on this client.
+        // RedisSentinel never re-emits its internal `client-error` event (6.3.0 forwards only
+        // error/connect/ready/reconnecting/end/topology-change), so this is the only way those
+        // errors reach us; attachSysSentinelListeners counts them (see sentinelSubClientError).
+        passthroughClientErrorEvents: true,
         // reserveClient: true pins ONE master lease at connect() (#reservedClientInfo) and routes
         // every master command through it, fully bypassing node-redis's racy shared-lease path:
         //   this.#masterClientInfo ??= await this.#internal.getClientLease();
@@ -1301,8 +1510,8 @@ function getBaseClient(type: 'cache' | 'system') {
         // call getClientLease(). Extra leases orphan (release guard uses `===`, so only the last
         // writer's lease is ever returned) and pin pool slots → with masterPoolSize:2 the pool
         // exhausts and any code needing a fresh master lease hangs (deadlock). This bug is present
-        // and UNFIXED upstream through at least node-redis 6.1.0 (verified byte-identical in
-        // 5.8.3 / 5.12.1 / 6.1.0) — it is version-independent, so pinning the reserved client is the
+        // and UNFIXED upstream through at least node-redis 6.3.0 (the same `??=` in 5.8.3 / 5.12.1 /
+        // 6.1.0 / 6.3.0 `_execute`) — it is version-independent, so pinning the reserved client is the
         // durable sidestep. The reserved lease is just an integer index into the master pool, which
         // transform() rebuilds IN PLACE (same ids) on a switch-master, so it repoints to the new
         // master on failover — no failover regression, and zero net connection delta (the pool still
@@ -1313,6 +1522,12 @@ function getBaseClient(type: 'cache' | 'system') {
     ? createCluster({
         // Use multiple root nodes for redundant topology discovery
         rootNodes: parseClusterNodes(connectionUrl),
+        // Cluster-level, not in `defaults`: RedisCluster hands its OWN `RESP` to every node
+        // connection, overriding `defaults` (cluster/cluster-slots.js #createClient), and passes
+        // its commandOptions with every routed command. A command sent on a node connection
+        // directly (cluster-pipelined-get) carries REDIS_NO_COMMAND_TIMEOUT itself.
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         defaults: {
           ...authConfig,
           socket: socketConfig,
@@ -1324,6 +1539,8 @@ function getBaseClient(type: 'cache' | 'system') {
       })
     : createClient({
         url: connectionUrl,
+        RESP: REDIS_RESP_VERSION,
+        commandOptions: { ...REDIS_NO_COMMAND_TIMEOUT },
         ...authConfig,
         socket: socketConfig,
         pingInterval,
@@ -1358,7 +1575,11 @@ function getBaseClient(type: 'cache' | 'system') {
   }
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
-  baseClient.on('error', (err: Error) => log(`Redis Error (${type})`, err));
+  baseClient.on('error', (err: Error) => {
+    // A Sentinel connection's own error is logged (and counted) by attachSysSentinelListeners.
+    if (isSysSentinel && sentinelSubClientError(err)) return;
+    log(`Redis Error (${type})`, err);
+  });
   baseClient.on('connect', () => log(`Redis connected (${type})`));
   baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
   baseClient.on('ready', () => log(`Redis ready! (${type})`));
@@ -1389,10 +1610,11 @@ function getBaseClient(type: 'cache' | 'system') {
       }`
     );
 
-    // Node-failure rediscovery. node-redis 5 emits no per-node events on the cluster client (the
-    // `node-error` / `node-disconnect` listeners that used to sit here never fired: node clients
-    // are created with their own `.on('error', console.error)`). The working hook is the
-    // per-node reconnect strategy in socketConfig above, which needs the client to rediscover on.
+    // Node-failure rediscovery. node-redis 5 emitted no per-node events on the cluster client (the
+    // `node-error` / `node-disconnect` listeners that used to sit here never fired). 6.x does emit
+    // them, with a frozen `{ host, port }` payload rather than the node object, but nothing listens:
+    // the working hook is the per-node reconnect strategy in socketConfig above, which needs the
+    // client to rediscover on.
     // NOT gated on the enhanced-failover flag: it only acts on node connection failures, is
     // throttled to one rediscover a second, and the flag-gated listeners it replaces were inert.
     // It has its own off switch, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED.
@@ -1503,8 +1725,8 @@ function getBaseClient(type: 'cache' | 'system') {
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
   log(`Calling connect() for ${type} (single) client...`);
-  baseClient
-    .connect()
+  // sys: a connect() that gives up and closes the client (RedisSentinel on node-redis 6) is retried.
+  (isSystem ? connectSysClient(baseClient) : baseClient.connect())
     .then(() => {
       log(`${type} single client connected`);
     })
@@ -1547,8 +1769,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // cheap shared derivation — their `withTypeMapping` is side-effect-free, and a cluster client is
   // many sockets, so a second one would double them for no benefit.
   //
-  // TODO(upstream): file the RedisSentinel._commandOptionsProxy shared-`_self` mutation bug with
-  // node-redis — the correct behavior mirrors RedisClient (proxy-local `_commandOptions`).
+  // @redis/client 6.3.0 fixed the defect upstream: RedisSentinel._commandOptionsProxy now sets a
+  // proxy-local `_commandOptions` (sentinel-buffer-poisoning.test.ts pins it). The dedicated base
+  // is kept for now; with 6.x it is one extra sysRedis connection, not a correctness need.
   const isSysSentinel = type === 'system' && !!config.sysSentinels;
   let bufferClient: CustomRedisClient<K>;
   // Hoisted so the sys self-heal watchdog below can reconnect this dedicated Buffer-mode base
@@ -1626,6 +1849,25 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
+  // Raw multi-key read behind packed.mGet. On the cache CLUSTER the GETs are grouped by owning
+  // master and written to that node's connection together (./cluster-pipelined-get) instead of
+  // one routed GET per key; anywhere else, and with REDIS_CLUSTER_BATCHED_GET_ENABLED=false, it is
+  // the original per-key GETs. The pipelined GETs bypass `_execute`, so trackClusterCommands
+  // accounts each batch as its key count in the inflight, deadline and duration signals; any key
+  // re-read on its own goes through bufferClient as before.
+  const batchedGet =
+    type === 'cache' && config.cluster && config.clusterBatchedGetEnabled !== false
+      ? createClusterPipelinedGet({
+          get: (key) => bufferClient.get<Buffer>(key as K),
+          cluster: (client as any)._self ?? client,
+          typeMapping: { [RESP_TYPES.BLOB_STRING]: Buffer },
+          track: (count, run) => trackClusterCommands(count, run),
+          log,
+        })
+      : undefined;
+  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> =>
+    batchedGet ? batchedGet(keys) : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+
   client.packed = {
     async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
@@ -1639,9 +1881,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       return safeUnpack<T>(result, () => client.unlink(key));
     },
 
-    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
+    // Not a native MGET (CROSSSLOT on a cluster): see getBuffers above.
     async mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]> {
-      const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+      const results = await getBuffers(keys);
       // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
       // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
       // compressed writer that could not opt its mGet in would corrupt every read.
@@ -1798,7 +2040,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       const masters = await baseClient.masters;
       for (const master of masters) {
         const nodeClient = await baseClient.nodeClient(master);
-        yield* nodeClient.scanIterator(options);
+        // A node connection carries node-redis 6's 5 s command timeout (the cluster's
+        // commandOptions reach routed commands only); keep SCAN pages unbounded, as in 5.x.
+        yield* nodeClient.withCommandOptions({ ...REDIS_NO_COMMAND_TIMEOUT }).scanIterator(options);
       }
     } else {
       // Single node mode: use original native scanIterator
@@ -1806,7 +2050,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
-  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually. (packed.mGet pipelines per master
+  // via ./cluster-pipelined-get; this string-mode wrapper has no hot caller and stays per-key.)
   const originalMGet = baseClient.mGet?.bind(baseClient);
   client.mGet = async function (...args: any[]): Promise<any> {
     const keys = args[0] as K[];
@@ -1836,11 +2081,13 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
   // Start the sys (sysRedis / Sentinel) self-heal watchdog ONCE per process (incident 2026-07-03),
   // mirroring the cluster watchdog started in getBaseClient's cluster connect() callback. It
-  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged: the
-  // serving `client` always, plus the dedicated Buffer-mode base on the sentinel path (both feed
-  // the counter). The watchdog only samples a counter + reconnects on a wedge, so starting it here
-  // (before the background connect() settles) is safe. Guarded by sysSelfHealInterval so re-entry /
-  // the buffer-base build can't stack a second interval.
+  // reconnects ALL sys base connections when the aggregate sys inflight counter stays wedged or
+  // sys commands keep timing out with no success (the timeout-rate trigger): the serving `client`
+  // always, plus the dedicated Buffer-mode base on the sentinel path (both feed both signals). It
+  // is started here, before the background connect() settles, so it also watches the first
+  // connect: a first connect that leaves sys commands timing out before any has succeeded can
+  // trigger a reconnect (./sys-timeouts, "BEFORE THE FIRST SUCCESS"). Guarded by
+  // sysSelfHealInterval so re-entry / the buffer-base build can't stack a second interval.
   //
   // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
@@ -2072,6 +2319,20 @@ export const REDIS_SYS_KEYS = {
      */
     APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
     /**
+     * FORKABLE APPS — one server-side fork session per fork slug, keyed
+     * `system:blocks:fork-session:${forkSlug}`. JSON: who forked, the parent block and the
+     * approved parent commit, the parent listing, and the seed handed to the sandbox service.
+     * Written `SET NX` (the write is also the slug's reservation), TTL 30 days. The ONLY
+     * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
+     */
+    FORK_SESSION: 'system:blocks:fork-session',
+    /**
+     * FORKABLE APPS — per-user fork-start counters, keyed
+     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
+     * MULTI (always created with its TTL); fail-closed on a redis error.
+     */
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2168,14 +2429,22 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
-    /** App Blocks `kind:'training'` dataset handle; see block-training-dataset.service. */
-    TRAINING_DATASET: 'system:blocks:training-dataset',
+    /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
+    TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
     TRAINING_QUOTE: 'system:blocks:training-quote',
+    /**
+     * App Blocks confirmed pass-through STEP quote (a fixed price above the token's
+     * per-call budget); claimed exactly once (GETDEL) by the submit. See
+     * block-quote-grant.service.
+     */
+    STEP_QUOTE: 'system:blocks:step-quote',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
+    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
+    REPEATS: 'download:repeats',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -2239,6 +2508,11 @@ export const REDIS_SYS_KEYS = {
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
+  SITE_ALERTS: {
+    // Hash of alert id → JSON alert. The alerts version is a field of CLIENT, not of this hash.
+    ALERTS: 'system:site-alerts',
+    SEQ: 'system:site-alerts:seq',
+  },
   SYSTEM: {
     FEATURES: 'system:features',
     PERMISSIONS: 'system:permissions',
@@ -2274,6 +2548,10 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
+    // process per TTL for all of them; `:<version>:lock` elects that process. See
+    // src/server/prom/ingestion-gauge-store.ts.
+    IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2353,6 +2631,20 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // Hash: field = creator userId, value = JSON { through, spent }: Buzz the creator paid other
+    // users from the bankable cutover up to `through`, a settled UTC day boundary. Only later days
+    // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
+    BANKABLE_SPENT: 'creator-program:bankable-spent',
+    // String, Buzz. The smallest two-way amount between a creator and one user that the
+    // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
+    // (`readMinimum`).
+    COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
+    // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
+    // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
+    // and only new volume after that is filed again. No TTL.
+    COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
+    PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2490,11 +2782,29 @@ export const REDIS_SYS_KEYS = {
      */
     MODES: 'system:text-scan:modes',
     /*
+      Use: per-entity-type rollout of the web-search pass (text-scan harness `putWebSearchModes`).
+        Model only; a missing field is off, and the effective mode never exceeds the MODES one.
+      Structure: hset, field = entity type ("Model"), value = json { "shadow": 0-100, "active": 0-100 }
+     */
+    WEB_SEARCH: 'system:text-scan:web-search',
+    /*
+      Use: per-label switch for what a poi/minor detection does once the scan can act. A field set to
+        "review" holds the detection for a moderator; a missing field is auto (flag immediately).
+      Structure: hset, field = label ("minor" | "poi"), value = "review" (auto = field deleted)
+     */
+    LABEL_MODES: 'system:text-scan:label-modes',
+    /*
       Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
         Clavata job skips them only while the `text-scan` Flipt kill switch is on.
       Structure: set of Clavata keys
      */
     CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
+    /*
+      Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
+        (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
+      Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
+     */
+    REDETECTION_LOCK: 'system:text-scan:redetection-lock',
   },
   CONTENT: {
     /*
@@ -2509,6 +2819,11 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Delivery ids already handled by the HQ task webhook — `webhooks:hq:processed:${webhookId}`.
+    HQ_PROCESSED: 'webhooks:hq:processed',
+    // Civitai AIR checkouts already sent to AIR — `webhooks:stripe:air-notified:${checkoutSessionId}`.
+    STRIPE_AIR_NOTIFIED: 'webhooks:stripe:air-notified',
+    MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
     IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
@@ -2647,6 +2962,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // suggestions — omitting it let one prompt's entry be reused across limits.
     JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
+    // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
+    // download routes check. See download-blocklist.service.ts.
+    DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -2693,7 +3011,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
-      MODELS: 'packed:caches:mod-rules:models',
+      MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
@@ -2733,6 +3051,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // Readers' latest choice per way on from one storyline chapter: `<prefix>:<chapterId>`.
+    // Rewritten on each choice. See storyline.service.
+    STORYLINE_FORK_COUNTS: 'packed:caches:storyline-fork-counts',
     // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
     // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
     // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
@@ -2775,6 +3096,17 @@ const REDIS_KEYS_UNPREFIXED = {
     // only delays a brand-new epoch becoming generatable. See
     // `validateRawAirResources` in orchestration-new.service.
     TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
+    // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
+    // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
+    // session refresh. See user-creator.service.
+    USER_CREATOR: 'packed:caches:user-creator',
+    // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
+    // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
+    // revocation. See src/server/auth/api-key-principal-cache.ts.
+    API_KEY_PRINCIPAL: 'packed:caches:api-key-principal',
+    // `<prefix>:<apiKeyId>` — set-if-absent marker that lets one request per key per hour write
+    // `ApiKey.lastUsedAt`. Plain string value.
+    API_KEY_LAST_USED: 'caches:api-key-last-used',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -2802,6 +3134,8 @@ const REDIS_KEYS_UNPREFIXED = {
       BASE: 'packed:trpc:limit',
       KEYS: 'packed:trpc:limit:keys',
     },
+    // `<bucket>:<userId>` sorted sets of in-flight request slots (`inFlightLimit`).
+    IN_FLIGHT: 'trpc:in-flight',
   },
   MODEL: {
     GALLERY_SETTINGS: 'model:gallery-settings',

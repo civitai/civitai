@@ -20,7 +20,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // reprocess-scan imports the real model-file-scan.service for normalizeScanHashes. That module's
 // import graph reaches clickhouse/redis/search-index/flipt at load time; stub the edges so the
 // helper under test is the only real code in the path.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', async () => ({
+  ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: vi.fn(),
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),
@@ -46,9 +47,13 @@ vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: vi.fn(),
   MINOR_HASH_FILE_TYPE: 'Model',
 }));
+vi.mock('~/server/services/poi-hash.service', () => ({ checkPoiHashOnScan: vi.fn() }));
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(true),
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    POI_HASH_AUTO_FLAG: 'poi-hash-auto-flag',
+  },
 }));
 
 // ModEndpoint wraps the handler in a moderator session check. Unwrap it — this file is about the

@@ -47,8 +47,17 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => React.createElement('img', { 'data-src': src }),
 }));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
 vi.mock('~/components/Metrics/AnimatedCount', () => ({
-  AnimatedCount: ({ value }: { value: number }) => React.createElement('span', null, value),
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
 }));
 vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
@@ -159,8 +168,15 @@ describe('hero team block (A6)', () => {
     const el = hero({ team: 'Blue', rank: 2, teamPoints: 10512, points: 140 });
     const block = el.querySelector('[data-testid="hero-team"]') as HTMLElement;
     expect(srcs(block)).toEqual(['hat-blue']);
-    expect(block.textContent).toBe("You're onTeam BlueRank#2Team points10512Your hats140");
+    expect(block.textContent).toBe("You're onTeam BlueRank#2Team points10,512Your hats140");
     expect(el.textContent).not.toContain('Join and get your free hat');
+  });
+
+  // Abbreviated, a live +1 or +5 would not change what the viewer reads.
+  it('shows team and hat points in full, not abbreviated', () => {
+    const el = hero({ team: 'Blue', rank: 2, teamPoints: 9999999, points: 999999 });
+    const block = el.querySelector('[data-testid="hero-team"]') as HTMLElement;
+    expect(block.textContent).toBe("You're onTeam BlueRank#2Team points9,999,999Your hats999,999");
   });
 
   // Ellie review (2026-10-09): a medium-opacity background, so the hero art doesn't show through.

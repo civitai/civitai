@@ -3,8 +3,11 @@ import {
   PLATFORM_INTERNAL_STEP_TYPES,
   PlatformInternalStepTypeError,
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isPlatformInternalStepType,
+  isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
+import { isTrainingStepType } from '~/server/services/blocks/steps/output';
 import { assertStepInvariants, listRegisteredSteps } from '~/server/services/blocks/steps';
 
 /**
@@ -254,5 +257,26 @@ describe('orchestrator denylist — case normalization', () => {
       expect((e as PlatformInternalStepTypeError).stepType).toBe('XGuardModeration');
       expect((e as Error).message).toContain('XGuardModeration');
     }
+  });
+});
+
+describe('isTrainingStepTypeIgnoringCase', () => {
+  it.each(['training', 'Training', 'TRAINING', 'imageResourceTraining', 'IMAGERESOURCETRAINING'])(
+    'matches %s',
+    (t) => {
+      expect(isTrainingStepTypeIgnoringCase(t)).toBe(true);
+    }
+  );
+
+  it.each(['trainingPreview', 'train', 'polyGen', '', ' training'])('does not match %j', (t) => {
+    expect(isTrainingStepTypeIgnoringCase(t)).toBe(false);
+  });
+
+  it('uses the SAME fold as the denylist, and the exact predicate is unchanged', () => {
+    expect(foldStepTypeCase('XGuardModeration')).toBe('xguardmoderation');
+    expect(isPlatformInternalStepType('XGUARDMODERATION')).toBe(true);
+    // `isTrainingStepType` stays exact: it reads a `$type` the orchestrator returned.
+    expect(isTrainingStepType('training')).toBe(true);
+    expect(isTrainingStepType('Training')).toBe(false);
   });
 });

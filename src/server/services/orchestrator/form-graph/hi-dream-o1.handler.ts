@@ -6,7 +6,7 @@ import type {
   ComfyHiDreamO1DevEditImageGenInput,
   ComfyHiDreamO1EditImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { hiDreamO1VersionIds } from '~/shared/form-graph/generation/image/hi-dream-o1.graph';
 import { defineHandler } from '../handlers/handler-factory';

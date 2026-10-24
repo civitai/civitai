@@ -1,6 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
+/** The house retry metadata for a refusal that may be retried in `retryAfterSeconds`. */
+export function rateLimitMetaFor(retryAfterSeconds: number): RateLimitMeta {
+  return {
+    retryAfterSeconds,
+    retryAt: new Date(Date.now() + retryAfterSeconds * 1000).toISOString(),
+  };
+}
+
 /**
  * Throws the TOO_MANY_REQUESTS refusal for a shared-storage write, carrying the retry
  * metadata as `cause.rateLimit`, with `retryAt` derived here as now + `retryAfterSeconds`.
@@ -8,10 +16,7 @@ import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
  * REST body + `Retry-After`; `message` is the caller's prose.
  */
 export function throwSharedRateLimited(rl: { retryAfterSeconds: number }, message: string): never {
-  const rateLimit: RateLimitMeta = {
-    retryAfterSeconds: rl.retryAfterSeconds,
-    retryAt: new Date(Date.now() + rl.retryAfterSeconds * 1000).toISOString(),
-  };
+  const rateLimit = rateLimitMetaFor(rl.retryAfterSeconds);
   throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message, cause: { rateLimit } });
 }
 

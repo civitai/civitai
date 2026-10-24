@@ -9,6 +9,7 @@ import {
   serializeTrainImageIds,
   timedCoocQuery,
   type CoocRawQuery,
+  type CoocTxRunner,
 } from './build';
 import { CheckpointAttachAccumulator, encodeCheckpointAttachSection } from './checkpoint-attach';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
@@ -77,16 +78,16 @@ export type CoocBuildSummary = {
 };
 
 /**
- * The draw's replica reads, each capped at `COOC_STATEMENT_TIMEOUT_MS`. The interactive transaction
- * gets headroom over the statement cap, so the database's cancellation, not Prisma's, ends a slow
- * statement.
+ * One replica transaction per statement, for statements capped at `COOC_STATEMENT_TIMEOUT_MS`. The
+ * interactive transaction gets headroom over the statement cap, so the database's cancellation, not
+ * Prisma's, ends a slow statement.
  */
+export const coocReplicaRunner: CoocTxRunner = (fn) =>
+  dbRead.$transaction(fn, { maxWait: 30_000, timeout: COOC_STATEMENT_TIMEOUT_MS + 30_000 });
+
+/** The draw's replica reads, each capped at `COOC_STATEMENT_TIMEOUT_MS`. */
 export function coocReplicaQuery(): CoocRawQuery {
-  return timedCoocQuery(
-    (fn) =>
-      dbRead.$transaction(fn, { maxWait: 30_000, timeout: COOC_STATEMENT_TIMEOUT_MS + 30_000 }),
-    COOC_STATEMENT_TIMEOUT_MS
-  );
+  return timedCoocQuery(coocReplicaRunner, COOC_STATEMENT_TIMEOUT_MS);
 }
 
 /**

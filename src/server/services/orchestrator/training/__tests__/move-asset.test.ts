@@ -9,15 +9,21 @@ import type * as S3Utils from '~/utils/s3-utils';
  * ownership check and the source-run check run for real.
  */
 
-const { mockGetWorkflow, mockGetToken, mockGetPutUrl, mockUploadDone, mockCopyAsset } = vi.hoisted(
-  () => ({
-    mockGetWorkflow: vi.fn(),
-    mockGetToken: vi.fn(),
-    mockGetPutUrl: vi.fn(),
-    mockUploadDone: vi.fn(),
-    mockCopyAsset: vi.fn(),
-  })
-);
+const {
+  mockGetWorkflow,
+  mockGetToken,
+  mockGetPutUrl,
+  mockUploadDone,
+  mockCopyAsset,
+  mockGetCaller,
+} = vi.hoisted(() => ({
+  mockGetWorkflow: vi.fn(),
+  mockGetToken: vi.fn(),
+  mockGetPutUrl: vi.fn(),
+  mockUploadDone: vi.fn(),
+  mockCopyAsset: vi.fn(),
+  mockGetCaller: vi.fn(),
+}));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
@@ -40,10 +46,10 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   getS3Client: vi.fn(),
 }));
 vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
-  getOrchestratorCaller: () => ({ copyAsset: mockCopyAsset }),
+  getOrchestratorCaller: mockGetCaller,
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { moveAsset } from '~/server/services/orchestrator/training/move-asset';
@@ -71,9 +77,12 @@ function dbVersion({
   ownerId = OWNER,
   trainingResults = { version: 2, workflowId: WORKFLOW_ID } as unknown,
   meta = null as unknown,
+  status = 'Draft',
 } = {}) {
   return {
     meta,
+    status,
+    trainingStatus: 'InReview',
     model: { userId: ownerId },
     files: [{ metadata: trainingResults ? { trainingResults } : {} }],
   };
@@ -156,6 +165,15 @@ const legacyResults = {
 
 const fetchMock = vi.fn();
 
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The storage url a copy lands at: the asset name with a unique token before its extension. */
+const copiedTo = (base: string, tail: string) =>
+  new RegExp(
+    `^${escape(`https://storage.example/modelVersion/${VERSION_ID}/${base}.`)}[^./?]{8}${escape(
+      tail
+    )}$`
+  );
+
 function expectNothingCopied() {
   expect(fetchMock).not.toHaveBeenCalled();
   expect(mockGetPutUrl).not.toHaveBeenCalled();
@@ -168,6 +186,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   mockFindUnique.mockResolvedValue(dbVersion() as never);
   mockGetToken.mockResolvedValue('owner-token');
+  mockGetCaller.mockReturnValue({ copyAsset: mockCopyAsset });
   mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
   mockGetPutUrl.mockImplementation(async (key: string) => ({
     url: `https://storage.example/${key}?signed=1`,
@@ -192,13 +211,15 @@ beforeEach(() => {
 describe('training.moveAsset — approved checkpoint of an owned run', () => {
   it('copies the run’s own URL for an approved epoch checkpoint of the version owner’s run', async () => {
     await expect(move()).resolves.toEqual({
-      newUrl: `https://storage.example/modelVersion/${VERSION_ID}/${EPOCH_2}.safetensors`,
+      newUrl: expect.stringMatching(copiedTo(`${EPOCH_2}`, '.safetensors')),
       fileSize: 7,
     });
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { id: VERSION_ID },
       select: {
         meta: true,
+        status: true,
+        trainingStatus: true,
         model: { select: { userId: true } },
         files: { where: { type: 'Training Data' }, select: { metadata: true } },
       },
@@ -262,7 +283,44 @@ describe('training.moveAsset — target version', () => {
   });
 });
 
-describe('training.moveAsset — pre-workflow job asset URL', () => {
+/**
+ * Decision (2026-10-18): a published version keeps its files, and a checkpoint copy is what an epoch
+ * pick writes first. The refusal must come before the copy, or the copy lands even though the file
+ * update after it is refused.
+ */
+describe('training.moveAsset — a published version keeps its files', () => {
+  it.each(['Published', 'Unpublished'])('copies nothing into a %s version', async (status) => {
+    mockFindUnique.mockResolvedValue(dbVersion({ status }) as never);
+    await expect(move()).rejects.toThrow('This version has been published');
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expectNothingCopied();
+  });
+
+  it('refuses a moderator too', async () => {
+    mockFindUnique.mockResolvedValue(dbVersion({ status: 'Published' }) as never);
+    await expect(move({ userId: MODERATOR, isModerator: true })).rejects.toThrow(
+      'This version has been published'
+    );
+    expectNothingCopied();
+  });
+});
+
+// The same asset name comes back (picking an epoch again, a later run's `run_000001`), and a copy
+// that reused its key would overwrite the object behind an existing file record.
+describe('training.moveAsset — unique asset key', () => {
+  it('copies the same checkpoint twice to two distinct keys', async () => {
+    const first = await move();
+    const second = await move();
+
+    expect(first.newUrl).toMatch(copiedTo(EPOCH_2, '.safetensors'));
+    expect(second.newUrl).toMatch(copiedTo(EPOCH_2, '.safetensors'));
+    expect(second.newUrl).not.toBe(first.newUrl);
+    const keys = mockGetPutUrl.mock.calls.map(([key]) => key);
+    expect(new Set(keys).size).toBe(2);
+  });
+});
+
+describe('training.moveAsset — job asset URL of a pre-workflow run', () => {
   it('refuses a non-owner before anything else', async () => {
     await expect(move({ url: JOB_URL, userId: STRANGER })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
@@ -284,6 +342,128 @@ describe('training.moveAsset — pre-workflow job asset URL', () => {
       expectNothingCopied();
     }
   );
+});
+
+const RUN_JOB = '48340894-ba9f-48b5-a0ed-690019cf3240';
+const runJobUrl = (asset: string) => jobUrl(RUN_JOB, asset);
+const RUN_SUBMITTED_AT = '2026-10-06T03:50:55.000Z';
+
+/** A workflow run that recorded its epochs as job-asset URLs rather than blob URLs. */
+function jobAssetRun(
+  stepType: 'training' | 'imageResourceTraining',
+  moderationStatus = 'approved'
+) {
+  const epochs =
+    stepType === 'training'
+      ? [
+          { epochNumber: 1, model: { id: 'E1', url: runJobUrl('run_000001.safetensors') } },
+          {
+            epochNumber: 2,
+            model: { id: 'E2', url: runJobUrl('run_000002.safetensors'), available: false },
+          },
+        ]
+      : [{ epochNumber: 1, blobUrl: runJobUrl('run_000001.safetensors') }];
+  return {
+    id: WORKFLOW_ID,
+    steps: [{ $type: stepType, output: { moderationStatus, epochs } }],
+  } as unknown as Workflow;
+}
+
+describe('training.moveAsset — workflow run whose epochs are job asset URLs', () => {
+  beforeEach(() => {
+    mockFindUnique.mockResolvedValue(
+      dbVersion({
+        trainingResults: { version: 2, workflowId: WORKFLOW_ID, submittedAt: RUN_SUBMITTED_AT },
+      }) as never
+    );
+  });
+
+  describe.each(['training', 'imageResourceTraining'] as const)('%s step', (stepType) => {
+    it.each([
+      ['the owner', OWNER, false],
+      ['a moderator', MODERATOR, true],
+    ])('lets %s copy a finished checkpoint through the orchestrator', async (_l, userId, mod) => {
+      mockGetWorkflow.mockResolvedValue(jobAssetRun(stepType));
+      await expect(
+        move({ url: runJobUrl('run_000001.safetensors'), userId, isModerator: mod })
+      ).resolves.toEqual({
+        newUrl: expect.stringMatching(copiedTo('run_000001', '.safetensors')),
+        fileSize: 9,
+      });
+      expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, { bypassCache: mod });
+      expect(mockGetCaller).toHaveBeenCalledWith(new Date(RUN_SUBMITTED_AT));
+      expect(mockCopyAsset).toHaveBeenCalledWith({
+        payload: {
+          jobId: RUN_JOB,
+          assetName: 'run_000001.safetensors',
+          destinationUri: expect.stringMatching(copiedTo('run_000001', '.safetensors?signed=1')),
+        },
+        queryParams: { wait: true },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the run is not approved', async () => {
+      mockGetWorkflow.mockResolvedValue(jobAssetRun(stepType, 'rejected'));
+      await expect(move({ url: runJobUrl('run_000001.safetensors') })).rejects.toThrow(
+        NOT_APPROVED
+      );
+      expectNothingCopied();
+    });
+  });
+
+  it.each([
+    ['another job’s asset of the same name', jobUrl(JOB, 'run_000001.safetensors')],
+    ['an asset of the run’s job that is no epoch', runJobUrl('training_data.zip')],
+    ['an epoch checkpoint that is not finished', runJobUrl('run_000002.safetensors')],
+  ])('refuses %s', async (_label, url) => {
+    mockGetWorkflow.mockResolvedValue(jobAssetRun('training'));
+    await expect(move({ url })).rejects.toThrow(NOT_A_CHECKPOINT);
+    expectNothingCopied();
+  });
+
+  it('refuses a stranger before reading the run', async () => {
+    mockGetWorkflow.mockResolvedValue(jobAssetRun('training'));
+    await expect(
+      move({ url: runJobUrl('run_000001.safetensors'), userId: STRANGER })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expectNothingCopied();
+  });
+
+  it.each([
+    ['a rate-limited copy', { ok: false, status: 429 }, { code: 'TOO_MANY_REQUESTS' }],
+    [
+      'an unreachable copy service',
+      { ok: false, status: 502 },
+      { message: expect.stringMatching(/couldn't reach the training service/) },
+    ],
+    [
+      'a copy job that did not succeed, even one claiming the file was found',
+      {
+        ok: true,
+        status: 200,
+        data: { jobs: [{ lastEvent: { type: 'Failed' }, result: { found: true, fileSize: 9 } }] },
+      },
+      { message: expect.stringMatching(/couldn't be transferred to your model/) },
+    ],
+  ])('refuses %s instead of returning a URL', async (_label, response, error) => {
+    mockGetWorkflow.mockResolvedValue(jobAssetRun('training'));
+    mockCopyAsset.mockResolvedValue(response);
+    await expect(move({ url: runJobUrl('run_000001.safetensors') })).rejects.toMatchObject(error);
+  });
+
+  it('reports a copy the orchestrator could not find', async () => {
+    mockGetWorkflow.mockResolvedValue(jobAssetRun('training'));
+    mockCopyAsset.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { jobs: [{ lastEvent: { type: 'Succeeded' }, result: { found: false } }] },
+    });
+    await expect(move({ url: runJobUrl('run_000001.safetensors') })).rejects.toThrow(
+      /couldn't find the training file/
+    );
+  });
 });
 
 describe('training.moveAsset — source run', () => {

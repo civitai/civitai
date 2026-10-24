@@ -131,13 +131,7 @@ beforeEach(() => {
   dbMock.dbRead.blurb.findMany.mockResolvedValue([]);
   dbMock.dbWrite.blurbReference.deleteMany.mockResolvedValue({ count: 0 });
   dbMock.dbWrite.blurbReference.upsert.mockResolvedValue({});
-  dbMock.dbRead.model.findUnique.mockResolvedValue(storedModel);
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({
-    name: storedModel.name,
-    nsfw: false,
-    lockedProperties: [],
-    meta: null,
-  });
+  dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel);
   dbMock.dbWrite.model.update.mockResolvedValue({
     id: MODEL_ID,
     name: 'A model',

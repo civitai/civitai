@@ -1,7 +1,15 @@
 import { Anchor, Card, Collapse, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
-import { IconArrowRight, IconChevronDown, IconCircleCheck, IconLock } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconChevronDown,
+  IconCircleCheck,
+  IconHelpCircle,
+  IconLock,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import { useDisclosure } from '@mantine/hooks';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplainer';
@@ -9,6 +17,12 @@ import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
+import {
+  DISCORD_CLAIM_PARAM,
+  discordClaimGuideFromQuery,
+  discordRoleRewards,
+} from '~/components/CreatorJourney/discord-claim-guide';
+import { openDiscordClaimGuide } from '~/components/CreatorJourney/DiscordClaimGuideModal';
 import {
   LinkedText,
   rewardLinks,
@@ -21,6 +35,7 @@ import {
   UnhideToShareHint,
 } from '~/components/CreatorJourney/MilestoneShareButton';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { RemovedImagesList } from '~/components/CreatorJourney/RemovedImagesList';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
 import {
@@ -59,6 +74,7 @@ const accentOf = (tier: CreatorScoreTier | null | undefined) =>
 export function CreatorJourney() {
   const { data, isLoading } = trpc.creatorJourney.getMine.useQuery();
   const currentUser = useCurrentUser();
+  useDiscordClaimGuideLink();
 
   if (isLoading || !data)
     return (
@@ -68,6 +84,25 @@ export function CreatorJourney() {
     );
 
   return <CreatorJourneyView journey={data} username={currentUser?.username ?? undefined} />;
+}
+
+function useDiscordClaimGuideLink() {
+  const router = useRouter();
+  const tier = router.isReady
+    ? discordClaimGuideFromQuery(router.query[DISCORD_CLAIM_PARAM])
+    : null;
+
+  useEffect(() => {
+    if (!tier) return;
+    openDiscordClaimGuide(tier, () => {
+      // Drop the param on close, or a reload opens the guide again.
+      const query = { ...router.query };
+      delete query[DISCORD_CLAIM_PARAM];
+      router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    });
+    // Keyed on the tier alone: a new `router` object must not reopen the guide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier]);
 }
 
 export function CreatorJourneyView({ journey, username }: { journey: Journey; username?: string }) {
@@ -189,6 +224,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
           Where Your Score Comes From
         </Title>
         <UserScoreDisplay scores={journey.scores?.breakdown} abbreviate={false} showReports owner />
+        {(journey.scores?.breakdown?.reportsAgainst ?? 0) < 0 && <RemovedImagesList />}
         <ScoreExplainerToggle />
       </Stack>
 
@@ -437,6 +473,7 @@ function LadderRung({
   const accent = accentOf(rung.tier);
   const state: BadgeState = badgeEarned ? 'earned' : isNext ? 'next' : 'locked';
   const rewards = rungRewards(rung);
+  const discordReward = rung.tier ? discordRoleRewards[rung.tier.key] : undefined;
   const unlockGroups = groupCreatorScoreUnlocks(rung.unlocks);
 
   return (
@@ -513,6 +550,21 @@ function LadderRung({
             {rewards.map((reward) => (
               <UnlockItem key={reward} unlocked={badgeEarned}>
                 <LinkedText text={reward} links={rewardLinks(username)} />
+                {reward === discordReward?.line && (
+                  <>
+                    {' '}
+                    <Anchor
+                      component="button"
+                      type="button"
+                      inherit
+                      className="whitespace-nowrap"
+                      onClick={() => openDiscordClaimGuide(discordReward.tier)}
+                    >
+                      <IconHelpCircle size={14} className="mr-0.5 inline align-[-2px]" />
+                      How to claim
+                    </Anchor>
+                  </>
+                )}
               </UnlockItem>
             ))}
             {unlockGroups.map((group, index) => {

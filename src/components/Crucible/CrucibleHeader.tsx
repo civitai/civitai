@@ -1,5 +1,5 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
-import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
+import { IconArrowLeft, IconSwords, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
@@ -55,14 +55,21 @@ export type CrucibleHeaderData = {
     entries: number;
   };
   paidEntryCount: number;
+  entrantCount: number;
 };
 
 type CrucibleHeaderProps = {
   crucible: CrucibleHeaderData;
+  /** The entries the viewer can see listed; the raw `_count.entries` also counts hidden ones. */
+  entryCount?: number;
   className?: string;
 };
 
-export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
+export function CrucibleHeader({
+  crucible,
+  entryCount: listedCount,
+  className,
+}: CrucibleHeaderProps) {
   const {
     name,
     description,
@@ -79,8 +86,9 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     heroImage,
     _count,
     paidEntryCount,
+    entrantCount,
   } = crucible;
-  const entryCount = _count.entries ?? 0;
+  const entryCount = listedCount ?? _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
   const currentUser = useCurrentUser();
@@ -233,9 +241,16 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <IconUsers size={18} className="text-dimmed" />
+              <IconSwords size={18} className="text-dimmed" />
               <Text size="sm" fw={600} c="white">
                 {numberWithCommas(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+              </Text>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <IconUsers size={18} className="text-dimmed" />
+              <Text size="sm" fw={600} c="white">
+                {numberWithCommas(entrantCount)} {entrantCount === 1 ? 'entrant' : 'entrants'}
               </Text>
             </div>
 

@@ -55,6 +55,8 @@ export const privacySettingsSchema = z.object({
   showFollowing: z.boolean().optional(),
   showRating: z.boolean().optional(),
   showBadges: z.boolean().optional(),
+  // Default on: shown unless explicitly false.
+  showScoreSplit: z.boolean().optional(),
   // Ordered cosmetic ids of badges the user pinned to the top of their profile.
   highlightedBadgeIds: z.array(z.number()).optional(),
   // Cosmetic ids of badges the user chose not to display on their profile.

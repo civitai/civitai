@@ -60,7 +60,9 @@
   <div class="flex flex-col gap-1">
     <Label for="feedback-area" class="text-xs text-dark-2">Area</Label>
     <Select.Root type="single" bind:value={() => area, (v) => applyArea(v ?? '')}>
-      <Select.Trigger id="feedback-area" class="w-72">{areaLabel}</Select.Trigger>
+      <Select.Trigger id="feedback-area" class="w-72 max-w-full">
+        <span class="min-w-0 truncate">{areaLabel}</span>
+      </Select.Trigger>
       <Select.Content>
         <Select.Item value="">{FEEDBACK_ANY_AREA_LABEL}</Select.Item>
         {#each areaOptions as option (option)}

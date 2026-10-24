@@ -1,15 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The real module imports `$app/server`, which only exists inside SvelteKit.
-vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
+vi.mock('../user-actions.service', () => ({
+  callModEndpoint: vi.fn(),
+  callModEndpointAs: vi.fn(),
+}));
 
-const { callModEndpoint } = await import('../user-actions.service');
+const { callModEndpoint, callModEndpointAs } = await import('../user-actions.service');
 const { restErrorReason } = await import('../rest-error-reason');
-const { LabHarnessError, composeEntities, getPrompts, scanTexts } = await import(
-  '../text-scan-lab/harness-client'
-);
+const {
+  LabHarnessError,
+  StalePromptError,
+  composeEntities,
+  getPrompts,
+  isRefused,
+  isRejected,
+  putPrompt,
+  quoteTexts,
+  scanTexts,
+} = await import('../text-scan-lab/harness-client');
 
 const call = vi.mocked(callModEndpoint);
+const callAs = vi.mocked(callModEndpointAs);
 
 const texts = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
@@ -30,6 +42,7 @@ const scannedOk = (key: string) => ({
 
 beforeEach(() => {
   call.mockReset();
+  callAs.mockReset();
 });
 
 describe('scanTexts', () => {
@@ -41,7 +54,7 @@ describe('scanTexts', () => {
       },
     }));
 
-    const results = await scanTexts('Model', texts(20));
+    const { results } = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
     expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([8, 8, 4]);
@@ -96,10 +109,10 @@ describe('scanTexts', () => {
       },
     });
 
-    const results = await scanTexts(
+    const { results } = await scanTexts(
       'Model',
       ['a', 'b', 'c', 'd'].map((key) => ({ key, fields: [{ heading: 'Name', text: key }] })),
-      { base: 'BASE PROMPT' }
+      { prompts: { base: 'BASE PROMPT' } }
     );
 
     expect(results).toEqual([
@@ -135,7 +148,7 @@ describe('scanTexts', () => {
       reason: 'promptOverrides.base: empty prompt',
     });
 
-    const scan = scanTexts('Model', texts(1), { base: ' ' });
+    const scan = scanTexts('Model', texts(1), { prompts: { base: ' ' } });
     await expect(scan).rejects.toBeInstanceOf(LabHarnessError);
     await expect(scan).rejects.toThrow('promptOverrides.base: empty prompt');
   });
@@ -147,6 +160,18 @@ describe('scanTexts', () => {
     call.mockResolvedValue({ ok: false, ...failure });
     await expect(scanTexts('Model', texts(25))).rejects.toThrow(failure.error);
     expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('records per-text errors for a 422 on the first chunk instead of throwing (invalid, not refused)', async () => {
+    call.mockResolvedValue({ ok: false, status: 422, error: 'Text-scan scan returned 422.' });
+
+    const { results } = await scanTexts('Model', texts(2));
+
+    expect(isRefused({ ok: false, status: 422, error: 'x' })).toBe(false);
+    expect(isRejected({ ok: false, status: 422, error: 'x' })).toBe(true);
+    expect(results).toEqual(
+      texts(2).map(({ key }) => ({ key, ok: false, error: 'Text-scan scan returned 422.' }))
+    );
   });
 
   it('turns a failed chunk into per-text errors and keeps scanning', async () => {
@@ -163,7 +188,7 @@ describe('scanTexts', () => {
       .mockResolvedValueOnce({ ok: false, error: 'Text-scan scan returned 502.', status: 502 })
       .mockResolvedValueOnce(ok(4, 16));
 
-    const results = await scanTexts('Model', texts(20));
+    const { results } = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
     expect(results.map((r) => r.key)).toEqual(texts(20).map((t) => t.key));
@@ -184,7 +209,7 @@ describe('scanTexts', () => {
       })
       .mockResolvedValueOnce({ ok: false, status: 401, error: 'Text-scan scan: sign in again' });
 
-    const results = await scanTexts('Model', texts(16));
+    const { results } = await scanTexts('Model', texts(16));
 
     expect(results.filter((r) => r.ok)).toHaveLength(8);
     expect(results[8]).toEqual({ key: 't8', ok: false, error: 'Text-scan scan: sign in again' });
@@ -192,7 +217,7 @@ describe('scanTexts', () => {
 });
 
 describe('harness limits', () => {
-  const huge = (key: string, n = 200_001) => ({
+  const huge = (key: string, n = 600_001) => ({
     key,
     fields: [{ heading: 'Description', text: 'x'.repeat(n) }],
   });
@@ -207,7 +232,7 @@ describe('harness limits', () => {
       body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
     }));
 
-    const results = await scanTexts('Model', [
+    const { results } = await scanTexts('Model', [
       ...texts(2),
       huge('big'),
       manyFields('wide'),
@@ -221,7 +246,7 @@ describe('harness limits', () => {
     expect(results.map((r) => r.key)).toEqual(['t0', 't1', 'big', 'wide', 't2']);
     expect(results[2]).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/^too large: 1 fields \/ 200001 chars/),
+      error: expect.stringMatching(/^too large: 1 fields \/ 600001 chars/),
     });
     expect(results[3]).toMatchObject({
       ok: false,
@@ -239,6 +264,28 @@ describe('harness limits', () => {
       Array.from({ length: 6 }, (_, i) => huge(`h${i}`, 190_000))
     );
     expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([5, 1]);
+  });
+
+  it('passes the segment count of a segmented scan through', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [{ ...scannedOk('a'), segments: 3 }] } });
+    const {
+      results: [result],
+    } = await scanTexts(
+      'Model',
+      texts(1).map((t) => ({ ...t, key: 'a' }))
+    );
+    expect(result).toMatchObject({ key: 'a', ok: true, segments: 3 });
+  });
+
+  it('omits segments for a single-segment scan', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [{ ...scannedOk('a'), segments: 1 }] } });
+    const {
+      results: [result],
+    } = await scanTexts(
+      'Model',
+      texts(1).map((t) => ({ ...t, key: 'a' }))
+    );
+    expect(result).not.toHaveProperty('segments');
   });
 
   it('calls pasted text "your text" in a refusal', async () => {
@@ -261,7 +308,7 @@ describe('harness limits', () => {
         error: 'Invalid request: texts.1.fields: Too big',
       });
 
-    const results = await scanTexts('Model', texts(16));
+    const { results } = await scanTexts('Model', texts(16));
 
     expect(results[9]).toEqual({
       key: 't9',
@@ -294,7 +341,7 @@ describe('getPrompts / composeEntities', () => {
   it('passes the history key through and returns the body', async () => {
     const body = {
       active: { base: { id: 1, key: 'base', content: 'BASE PROMPT' } },
-      config: { model: 'm', maxInputChars: 1000, thinking: false },
+      config: { model: 'm', maxInputChars: 1000, maxSegments: 10, thinking: false },
     };
     call.mockResolvedValue({ ok: true, body });
 
@@ -387,6 +434,191 @@ describe('restErrorReason', () => {
     const issues = Array.from({ length: 7 }, (_, i) => ({ path: ['f', i], message: 'bad' }));
     expect(restErrorReason({ error: 'Invalid request', issues }, 400)).toBe(
       'Invalid request: f.0: bad; f.1: bad; f.2: bad; f.3: bad; f.4: bad (+2 more)'
+    );
+  });
+});
+
+describe('scanTexts — what a run sent', () => {
+  it('takes the system prompt from the first chunk that has one', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: {
+        results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)),
+        system: 'SYSTEM',
+      },
+    }));
+    const run = await scanTexts('Model', texts(10));
+    expect(run.system).toBe('SYSTEM');
+    expect(run.results[0]).toMatchObject({ ok: true });
+  });
+
+  it('never sends rule overrides: they only exist for the literal Model rules try', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+    }));
+    await scanTexts('Model', texts(1), { prompts: { base: 'B' } });
+    expect(call.mock.calls[0][1]).toMatchObject({ promptOverrides: { base: 'B' } });
+    expect(call.mock.calls[0][1]).not.toHaveProperty('ruleOverrides');
+  });
+
+  it('reads a run without a system prompt as having none', async () => {
+    call.mockResolvedValue({ ok: true, body: { results: [scannedOk('t0')] } });
+    expect(await scanTexts('Model', texts(1))).toMatchObject({ system: null });
+  });
+});
+
+describe('putPrompt', () => {
+  it('sends a note only when there is one, and the base version as given', async () => {
+    call.mockResolvedValue({ ok: true, body: { id: 4, key: 'base' } });
+    await putPrompt('base', 'X', { baseId: null });
+    await putPrompt('base', 'X', { note: 'why', baseId: 3 });
+    expect(call.mock.calls.map((c) => c[1])).toEqual([
+      { action: 'putPrompt', key: 'base', content: 'X', baseId: null },
+      { action: 'putPrompt', key: 'base', content: 'X', note: 'why', baseId: 3 },
+    ]);
+  });
+
+  it('turns a 409 into StalePromptError and anything else into LabHarnessError', async () => {
+    call.mockResolvedValueOnce({ ok: false, status: 409, error: 'x: newer', reason: 'newer' });
+    await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(StalePromptError);
+    call.mockResolvedValueOnce({ ok: false, status: 500, error: 'boom' });
+    await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(LabHarnessError);
+  });
+
+  it('marks a 4xx or never-sent failure as refused, and a 5xx as not known', async () => {
+    const refusedOf = async () =>
+      putPrompt('base', 'X', { baseId: 3 }).catch(
+        (e: InstanceType<typeof LabHarnessError>) => e.refused
+      );
+    call.mockResolvedValueOnce({ ok: false, status: 400, error: 'bad' });
+    expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, status: 422, error: 'invalid' });
+    expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, requestNeverSent: true, error: 'no session' });
+    expect(await refusedOf()).toBe(true);
+    call.mockResolvedValueOnce({ ok: false, status: 502, error: 'down' });
+    expect(await refusedOf()).toBe(false);
+  });
+});
+
+describe('isRefused', () => {
+  it.each([
+    [{ ok: false, error: 'x', requestNeverSent: true }, true],
+    [{ ok: false, error: 'x', status: 400 }, true],
+    [{ ok: false, error: 'x', status: 401 }, true],
+    [{ ok: false, error: 'x', status: 403 }, true],
+    [{ ok: false, error: 'x', status: 404 }, false],
+    [{ ok: false, error: 'x', status: 409 }, false],
+    [{ ok: false, error: 'x', status: 502 }, false],
+    [{ ok: false, error: 'x' }, false],
+    [{ ok: true, body: {} }, false],
+  ] as const)('%o -> %s', (result, expected) => {
+    expect(isRefused(result as never)).toBe(expected);
+  });
+});
+
+describe('isRejected', () => {
+  it.each([
+    [{ ok: false, error: 'x', requestNeverSent: true }, true],
+    [{ ok: false, error: 'x', status: 404 }, true],
+    [{ ok: false, error: 'x', status: 422 }, true],
+    [{ ok: false, error: 'x', status: 502 }, false],
+    [{ ok: false, error: 'x' }, false],
+    [{ ok: true, body: {} }, false],
+  ] as const)('%o -> %s', (result, expected) => {
+    expect(isRejected(result as never)).toBe(expected);
+  });
+});
+
+describe('explicit credentials', () => {
+  const okScan = async (_cookie: string, _path: string, body: Record<string, unknown>) => ({
+    ok: true as const,
+    body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+  });
+
+  it('sends a given credential through callModEndpointAs, never the request session', async () => {
+    callAs.mockImplementation(okScan);
+    const { results } = await scanTexts('Model', texts(2), {}, 'civ-token=synthetic');
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe('civ-token=synthetic');
+    expect(callAs.mock.calls[0][1]).toBe('text-scan');
+  });
+
+  it('composes entities with a given credential', async () => {
+    callAs.mockResolvedValue({ ok: true, body: { results: [] } });
+    await composeEntities('Model', [1], 'civ-token=synthetic');
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe('civ-token=synthetic');
+  });
+
+  it.each([
+    {
+      requestNeverSent: true,
+      noSession: true as const,
+      error: 'Text-scan scan failed: no session to forward.',
+    },
+    { status: 401, error: 'Text-scan scan: sign in again' },
+    { status: 403, error: 'Text-scan scan: missing permission' },
+  ])('marks a first-request auth refusal (%o)', async (failure) => {
+    call.mockResolvedValue({ ok: false, ...failure });
+    const error = await scanTexts('Model', texts(1)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LabHarnessError);
+    expect((error as InstanceType<typeof LabHarnessError>).authRefused).toBe(true);
+  });
+
+  it('does not mark a first-request validation refusal as an auth refusal', async () => {
+    call.mockResolvedValue({ ok: false, status: 400, error: 'Text-scan scan: bad request' });
+    const error = await scanTexts('Model', texts(1)).catch((e: unknown) => e);
+    expect((error as InstanceType<typeof LabHarnessError>).authRefused).toBe(false);
+  });
+
+  it('flags a run whose later request was refused for auth', async () => {
+    call
+      .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
+      .mockResolvedValueOnce({ ok: false, status: 401, error: 'Text-scan scan: sign in again' });
+    const run = await scanTexts('Model', texts(16));
+    expect(run.authRefused).toBe(true);
+  });
+
+  it('does not flag a run whose later request failed for another reason', async () => {
+    call
+      .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
+      .mockResolvedValueOnce({ ok: false, status: 502, error: 'Text-scan scan returned 502.' });
+    const run = await scanTexts('Model', texts(16));
+    expect(run.authRefused).toBeUndefined();
+  });
+});
+
+describe('quoteTexts', () => {
+  const credential = 'civ-token=synthetic';
+
+  it('prices texts at concurrency 8 under the given credential, sending prompt overrides only when there are some', async () => {
+    callAs.mockResolvedValue({ ok: true, body: { count: 2, quoted: 2, maxCostTotal: 1 } });
+    expect(await quoteTexts('CommentV2', texts(2), undefined, credential)).toEqual({
+      count: 2,
+      quoted: 2,
+      maxCostTotal: 1,
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(callAs.mock.calls[0][0]).toBe(credential);
+    expect(callAs.mock.calls[0][2]).toEqual({
+      action: 'quoteTexts',
+      entityType: 'CommentV2',
+      texts: texts(2),
+      concurrency: 8,
+    });
+    await quoteTexts('CommentV2', texts(1), { 'label:scam': 'synthetic draft' }, credential);
+    expect(callAs.mock.calls[1][2]).toMatchObject({
+      promptOverrides: { 'label:scam': 'synthetic draft' },
+    });
+  });
+
+  it('throws LabHarnessError when the harness refuses', async () => {
+    callAs.mockResolvedValue({ ok: false, error: 'Text-scan quote returned 400.', status: 400 });
+    await expect(quoteTexts('CommentV2', texts(1), undefined, credential)).rejects.toBeInstanceOf(
+      LabHarnessError
     );
   });
 });

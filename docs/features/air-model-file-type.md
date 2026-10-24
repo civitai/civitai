@@ -30,7 +30,7 @@ addition to) the `ModelType`. This doc enumerates both vocabularies and the bloc
 | **Produced** | [`stringifyAIR`](../../src/shared/utils/air.ts) | `type: ModelType` → `typeUrnMap[type] ?? 'unknown'` |
 | Generation panel | [`generation.service.ts` `bringItAllTogether`](../../src/server/services/generation/generation.service.ts) | passes `type: resource.model.type` plus the type of the file `getGenerationFile` chooses |
 | Version → AIR | [`resource-air.ts`](../../src/server/utils/resource-air.ts) (`modelVersionToAir`) | passes the model type plus the file `getGenerationFile` chooses; that file's type can override the segment (`fileTypeUrnMap`) |
-| File scanning | [`orchestrator.service.ts`](../../src/server/services/orchestrator/orchestrator.service.ts) | passes `type: modelType` |
+| File scanning | [`model-file-scan-air.ts`](../../src/shared/utils/model-file-scan-air.ts) | passes `type: modelType`, no file kind, pinned `@<version>+<fileId>`; the scan submit and the failed-scan bust both build it here so the busted string matches the cached one |
 | Public API | `src/pages/api/v1/model-versions/[id].ts`, `.../mini/[id].ts` | emit AIR in responses |
 | Display | [`ModelURN.tsx`](../../src/components/Model/ModelURN/ModelURN.tsx) | user-facing URN on model pages |
 | **Consumed** | [`comfy.utils.ts`](../../src/server/services/orchestrator/comfy/comfy.utils.ts) | branches on `parsedAir.type === 'checkpoint' \| 'vae' \| 'embedding'` and `LORA_TYPES.includes(...)` |
@@ -206,19 +206,19 @@ ComfyUI-GGUF custom node, not core).
 
 ## How the orchestrator actually routes *(answers Open Question 1)*
 
-Investigated `@civitai/client` **v0.2.0-beta.76** (`node_modules/@civitai/client/dist`). The
+Investigated `@civitai/orchestration-client` **v0.2.0-beta.76** (`node_modules/@civitai/orchestration-client/dist`). The
 finding reframes the problem: **the AIR `type` segment is mostly *not* how resources get routed.**
 
 ### 1. The `Air` class treats `type` as a free-form string — no enum, no validation
 
-[`dist/utils/Air.js`](../../node_modules/@civitai/client/dist/utils/Air.js) is a single regex
+[`dist/utils/Air.js`](../../node_modules/@civitai/orchestration-client/dist/utils/Air.js) is a single regex
 where `type` is just `[a-zA-Z0-9_\-\/]+`. `parse` / `parseSafe` / `stringify` / `isAir` never
 enumerate or check the type value. So the client will happily emit `textencoder`, `diffusionmodel`,
 or anything else — **the client is not a blocker; it won't reject new type strings.**
 
 ### 2. Orchestrator step inputs route by **named slot**, not by the AIR type
 
-The typed inputs in [`dist/generated/types.gen.d.ts`](../../node_modules/@civitai/client/dist/generated/types.gen.d.ts)
+The typed inputs in [`dist/generated/types.gen.d.ts`](../../node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts)
 expose explicit slots, and a resource object carries **only `air` (+ `strength`)** — there is no
 `type` field on the resource for routing:
 
@@ -272,7 +272,7 @@ ecosystem inputs named slots to route them into.
 > **Still open (server-side, not visible in the client):** when the orchestrator resolves an AIR
 > placed in `loras`, does it trust the AIR `type` segment or re-resolve the
 > resource via the Civitai API and read its real type? The full package scan (v0.2.0-beta.76) found
-> **no** type enum/validation anywhere in `@civitai/client` and **no** resource field other than
+> **no** type enum/validation anywhere in `@civitai/orchestration-client` and **no** resource field other than
 > `air` (+ `strength`) — strong evidence the orchestrator resolves the AIR opaquely server-side and
 > does **not** branch on the segment. But that's an inference from the client surface, not a
 > guarantee; confirm with the orchestrator team before relying on it. Note the segment is *also*

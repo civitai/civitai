@@ -8,7 +8,7 @@ import {
 
 registerTextScanProfile({
   entityType: 'CommentV2',
-  labels: ['scam'],
+  labels: ['scam', 'csam'],
   load: async (ids) => {
     const rows = await dbWrite.commentV2.findMany({
       where: { id: { in: ids } },

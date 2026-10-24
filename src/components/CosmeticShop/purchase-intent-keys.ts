@@ -41,8 +41,9 @@ export const usePurchaseIntentKeyStore = create<PurchaseIntentKeyStore>((set, ge
 /**
  * Sends a purchase under the item's intent key. The key is released when the
  * intent ends: on success, when the purchase was already completed under it, or
- * when the server declined (a 4xx: nothing was charged). Any other failure may
- * have charged, so the key is held and the next press is the same intent.
+ * when the server declined (a 4xx other than 408 and 429: nothing was charged).
+ * Any other failure may have charged, so the key is held and the next press is
+ * the same intent.
  *
  * A caller that brings its own key keeps full control of it.
  */

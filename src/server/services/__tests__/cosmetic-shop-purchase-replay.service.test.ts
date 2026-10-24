@@ -16,6 +16,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
+    txShopItemUpdate: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
@@ -26,6 +27,8 @@ const { mocks } = vi.hoisted(() => ({
     listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
+    executeRaw: vi.fn(),
+    txUserCosmeticFindFirst: vi.fn(),
   },
 }));
 
@@ -60,6 +63,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE, runPurchaseChecks } from '../shop-purchase-charge';
+import { ITEM_HOLDER_LOCK_CLASS } from '../item-holder-lock';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -77,20 +81,40 @@ dbMock.dbWrite.cosmeticShopItem.update.mockImplementation(fwd(mocks.shopItemUpda
 dbMock.dbWrite.userCosmetic.findFirst.mockImplementation(fwd(mocks.userCosmeticFindFirst));
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation(fwd(mocks.purchasesUpdate));
 let claims = shopPurchaseClaimFake();
-dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  claims.rollbackOnThrow(() =>
+// rawOn[i] is the transaction, and the transactions committed by then, of mocks.executeRaw call i.
+let txSeq = 0;
+let committed: number[] = [];
+let rawOn: { tx: number; committed: number[] }[] = [];
+dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+  const tx = ++txSeq;
+  const result = await claims.rollbackOnThrow(() =>
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-      userCosmetic: { create: mocks.userCosmeticCreate },
+      // Unused by the code; here so a regression back to a Prisma update is caught, not a TypeError.
+      cosmeticShopItem: { update: mocks.txShopItemUpdate },
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: mocks.txUserCosmeticFindFirst },
       cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: (...a: unknown[]) => {
+        rawOn.push({ tx, committed: [...committed] });
+        return mocks.executeRaw(...a);
+      },
     })
-  )
-);
+  );
+  committed.push(tx);
+  return result;
+});
+const isRaw = (call: unknown[], text: string) => (call[0] as string[]).join('?').includes(text);
 
 // The shape the real buzz client hands back: buzz.service's mapError wraps the
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
 const ledgerError = (status: number, code: 'BAD_REQUEST' | 'INTERNAL_SERVER_ERROR') =>
   new TRPCError({ code, message: 'ledger', cause: new BuzzApiError(status, 'ledger') });
+const lockTimeout = () =>
+  new Prisma.PrismaClientKnownRequestError('canceling statement due to lock timeout', {
+    code: 'P2010',
+    clientVersion: 'test',
+    meta: { code: '55P03' },
+  });
 const stateUnknownLogs = () =>
   loggingMock.logToAxiom.mock.calls
     .map(([arg]) => arg as Record<string, unknown>)
@@ -208,6 +232,9 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     loggingMock.logToAxiom.mockReset();
+    txSeq = 0;
+    committed = [];
+    rawOn = [];
     mocks.shopItemFindUnique.mockResolvedValue(row);
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
     claims = installShopPurchaseClaimFake();
@@ -230,6 +257,162 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
     expect(claims.rows.get(TX)?.status).toBe('paid');
+  });
+
+  // Deliberately NOT on the grant transaction (see countShopItemSaleAfterGrant): a queue on the
+  // listing row there holds each buyer's lock and pushes paid grants toward a refund.
+  it('counts the sale once the grant has committed and the creator is paid', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    const calls = mocks.executeRaw.mock.calls;
+    const lockAt = calls.findIndex((c) => isRaw(c, 'pg_advisory_xact_lock'));
+    expect(lockAt).toBeGreaterThanOrEqual(0);
+    const grantTx = rawOn[lockAt].tx;
+    const countAt = calls.flatMap((c, i) =>
+      isRaw(c, 'UPDATE "CosmeticShopItem"') && c.includes(SHOP_ITEM_ID) ? [i] : []
+    );
+    expect(countAt).toHaveLength(1);
+    expect(rawOn[countAt[0]].tx).not.toBe(grantTx);
+    expect(rawOn[countAt[0]].committed).toContain(grantTx);
+    expect(mocks.executeRaw.mock.invocationCallOrder[countAt[0]]).toBeGreaterThan(
+      mocks.createBuzzTransaction.mock.invocationCallOrder[0]
+    );
+    expect(mocks.txShopItemUpdate).not.toHaveBeenCalled();
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
+  // Any failure, not only a lock timeout: here a rethrow reaches the refund path and fails a granted sale.
+  it.each([
+    ['a lock timeout', lockTimeout],
+    ['a dropped connection', () => new Error('Connection terminated unexpectedly')],
+  ])('completes the purchase when the sale cannot be counted (%s)', async (_label, failure) => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.executeRaw.mockImplementation(async (...a: unknown[]) => {
+      if (isRaw(a, 'UPDATE "CosmeticShopItem"')) throw failure();
+      return 1;
+    });
+
+    await purchase();
+
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.status).toBe('paid');
+    expect(mocks.createBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts no sale for a purchase whose grant rolled back and was refunded', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.txUserCosmeticFindFirst.mockResolvedValue({ userId: BUYER_ID });
+
+    await expect(purchase()).rejects.toThrow('Failed to purchase cosmetic');
+
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.executeRaw.mock.calls.filter((c) => isRaw(c, 'UPDATE "CosmeticShopItem"'))
+    ).toEqual([]);
+  });
+
+  // Counting can fail after the grant, so the counter can lag the rows; stock must still follow the rows.
+  it('refuses as sold out on the purchase rows when the stored counter lags them', async () => {
+    // Chargeable, so stock read from the counter would go on to charge rather than throw elsewhere.
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      availableQuantity: 2,
+      meta: { ...row.meta, purchases: 1 },
+      _count: { purchases: 2 },
+    });
+
+    await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('a sold-out refusal corrects only the sale count, not the rest of meta', async () => {
+    // Oversold, so the counted total (3) differs from the quantity, the id and the buyer; meta has
+    // no purchases key, so it disagrees with the count.
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      availableQuantity: 2,
+      _count: { purchases: 3 },
+    });
+    dbMock.dbWrite.$executeRaw.mockClear();
+
+    await expect(purchase()).rejects.toThrow('This cosmetic is out of stock');
+
+    const corrected = dbMock.dbWrite.$executeRaw.mock.calls
+      .filter(([strings]: unknown[]) =>
+        (strings as string[]).join('?').includes('UPDATE "CosmeticShopItem"')
+      )
+      .map((call: unknown[]) => Prisma.sql(...(call as Parameters<typeof Prisma.sql>)).values);
+    expect(corrected).toEqual([[3, SHOP_ITEM_ID]]);
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+
+  // A mystery box open decides "not owned" from a read under this lock; a grant that skips it
+  // can land between that read and the box's grant (item-holder-lock.ts).
+  // The pre-charge ownership check runs outside the lock; a box open can grant the cosmetic while
+  // the charge is in flight. Re-checked under the lock, it refunds instead of granting a second one.
+  it('refunds a single-ownership purchase whose cosmetic was granted while charging', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
+    mocks.txUserCosmeticFindFirst.mockResolvedValue({ userId: BUYER_ID });
+
+    await expect(purchase()).rejects.toThrow('Failed to purchase cosmetic');
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: BUYER_ID, cosmeticId: row.cosmeticId } })
+    );
+    expect(mocks.userCosmeticCreate).not.toHaveBeenCalled();
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    expect(claims.rows.get(TX)?.status).toBe('refunded');
+  });
+
+  it('grants a single-ownership purchase still unowned under the lock (control)', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, type: 'Badge' },
+    });
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.txUserCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchase();
+
+    expect(mocks.txUserCosmeticFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
+  it("takes the buyer's grant lock in the grant transaction, before granting", async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    // The sale counter and the lock's own timeout also go through executeRaw, so find the lock.
+    const lockAt = mocks.executeRaw.mock.calls.flatMap(([strings], i) =>
+      (strings as string[]).join('').includes('pg_advisory_xact_lock') ? [i] : []
+    );
+    expect(lockAt).toHaveLength(1);
+    const [sql, lockClass, lockedUser] = mocks.executeRaw.mock.calls[lockAt[0]] as [
+      readonly string[],
+      number,
+      number
+    ];
+    expect(sql.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, ?::int)');
+    expect(lockClass).toBe(ITEM_HOLDER_LOCK_CLASS);
+    expect(lockedUser).toBe(BUYER_ID);
+    expect(mocks.executeRaw.mock.invocationCallOrder[lockAt[0]]).toBeLessThan(
+      mocks.userCosmeticCreate.mock.invocationCallOrder[0]
+    );
   });
 
   it('claims the purchase before any money moves', async () => {

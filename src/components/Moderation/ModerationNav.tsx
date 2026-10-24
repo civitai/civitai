@@ -33,6 +33,7 @@ export function ModerationNav() {
           href: '/moderator/service-status',
           hidden: !features.serviceStatus,
         },
+        { label: 'Site Alerts', href: '/moderator/site-alerts' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',
@@ -49,7 +50,7 @@ export function ModerationNav() {
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Minor Hash Matches', href: '/moderator/minor-hash-matches' },
-        { label: 'Model Flag Appeals', href: '/moderator/minor-hash-matches?tab=appeals' },
+        { label: 'Model Flag Appeals', href: '/moderator/minor-hash-matches/appeals' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Creator Shop Review',

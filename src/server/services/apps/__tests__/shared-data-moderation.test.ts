@@ -80,6 +80,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFindBlocked.mockResolvedValue([]);
   mockIsFlipt.mockResolvedValue(false);
+  // `clearAllMocks` keeps implementations; a case that overrides the insert must not leak.
+  mockInsert.mockResolvedValue(undefined);
   clickhouseBox.client = { insert: mockInsert };
 });
 
@@ -392,6 +394,10 @@ describe('scanSharedData / scanCounterKey', () => {
   });
 });
 
+/** The insert calls made into one table, in call order. */
+const insertsInto = (table: string) =>
+  mockInsert.mock.calls.map(([args]) => args).filter((args) => args.table === table);
+
 describe('recording', () => {
   const ctx = {
     appBlockId: 'apb_one',
@@ -405,9 +411,9 @@ describe('recording', () => {
     const long = `${MINOR} ${'é'.repeat(800)}`;
     const scan = await scanSharedData({ notes: long });
     await recordSharedDataScan(scan, ctx);
-    expect(mockInsert).toHaveBeenCalledTimes(1);
-    const { table, values, format } = mockInsert.mock.calls[0][0];
-    expect(table).toBe(SHARED_DATA_HITS_TABLE);
+    const hitInserts = insertsInto(SHARED_DATA_HITS_TABLE);
+    expect(hitInserts).toHaveLength(1);
+    const { values, format } = hitInserts[0];
     expect(format).toBe('JSONEachRow');
     const row = (values as Array<Record<string, unknown>>).find((r) => r.category === 'minor')!;
     expect(row).toMatchObject({
@@ -562,9 +568,9 @@ describe('recording', () => {
     for (const text of [MINOR, 'emma watson', 'clean']) expect(serialized).not.toContain(text);
   });
 
-  it('a scan with no hits still emits the denominator, and writes no rows', async () => {
+  it('a scan with no hits still emits the denominator event, and writes no HIT rows', async () => {
     await recordSharedDataScan({ leafCount: 4, overflow: null, hits: [] }, ctx);
-    expect(mockInsert).not.toHaveBeenCalled();
+    expect(insertsInto(SHARED_DATA_HITS_TABLE)).toEqual([]);
     expect(mockLog).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'app-blocks-shared-data-moderation-scan',
@@ -625,6 +631,196 @@ describe('recording', () => {
     expect(truncateUtf8('aé', 2)).toBe('a');
     expect(truncateUtf8('🙂🙂', 5)).toBe('🙂');
     expect(truncateUtf8('short', 1024)).toBe('short');
+  });
+});
+
+describe('denominator — one ClickHouse row per scanned write', () => {
+  // Pinned as a literal: the table name is a contract with the hand-applied DDL.
+  const SCANS = 'appBlocksSharedDataScans';
+  // Distinctive, so a column carrying any of it is found by substring.
+  const KEY = 'zqvx-rowkey-7c1';
+  const TEXT = 'zqvx-leaf-text-3e9';
+  const PATH = 'zqvx-object-key-b42';
+  const ctx = {
+    appBlockId: 'apb_one',
+    rowKey: KEY,
+    surface: 'update' as const,
+    mode: 'shadow' as const,
+    blocked: false,
+  };
+  const TIME = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/;
+
+  /**
+   * A hand-built scan whose per-category counts are pairwise DISTINCT (1..6) and distinct from
+   * leafCount and hitCount, so a column wired to the wrong count cannot pass. Every hit carries
+   * the distinctive text in its leaf, path and matched term.
+   */
+  const COUNTS = { minor: 1, poi: 2, link: 3, pattern: 4, audit_regex: 5, overflow: 6 } as const;
+  const richScan = (): SharedTextScan => ({
+    leafCount: 37,
+    overflow: 'leaf_length',
+    hits: Object.entries(COUNTS).flatMap(([category, n]) =>
+      Array.from({ length: n }, (_, i) => ({
+        category: category as keyof typeof COUNTS,
+        matched: `${TEXT}-${i}`,
+        label: category,
+        leaf: leaf(`${TEXT} ${i}`, `${PATH}/${i}`),
+      }))
+    ),
+  });
+
+  it('a scan with ZERO hits inserts exactly one denominator row and no hit rows', async () => {
+    await recordSharedDataScan({ leafCount: 4, overflow: null, hits: [] }, ctx);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(insertsInto(SHARED_DATA_HITS_TABLE)).toEqual([]);
+    const [insert] = insertsInto(SCANS);
+    expect(insert.format).toBe('JSONEachRow');
+    // Exact, so a null overflow is pinned to '' (the column is not Nullable).
+    expect(insert.values).toEqual([
+      {
+        time: expect.stringMatching(TIME),
+        appBlockId: 'apb_one',
+        surface: 'update',
+        mode: 'shadow',
+        blocked: 0,
+        leafCount: 4,
+        hitCount: 0,
+        minor: 0,
+        poi: 0,
+        link: 0,
+        pattern: 0,
+        audit_regex: 0,
+        overflow: 0,
+        overflowKind: '',
+      },
+    ]);
+  });
+
+  it('a throw while BUILDING rows is logged and swallowed like a failed insert', async () => {
+    // A leaf whose path segments cannot be read: the enforce-mode path builder throws.
+    const bad = {
+      raw: TEXT,
+      path: PATH,
+      kind: 'value' as const,
+      get segments(): string[] {
+        throw new RangeError(`unreadable ${TEXT}`);
+      },
+    };
+    const scan: SharedTextScan = {
+      leafCount: 1,
+      overflow: null,
+      hits: [{ category: 'minor', matched: 'minor', label: 'minor', leaf: bad }],
+    };
+    await expect(
+      recordSharedDataScan(scan, { ...ctx, mode: 'enforce', blocked: true })
+    ).resolves.toBeUndefined();
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-shared-data-moderation-record-failed',
+        table: SHARED_DATA_HITS_TABLE,
+        error: 'RangeError',
+      }),
+      'block-audit'
+    );
+    // ...the error's message (which quotes the leaf) is not logged...
+    expect(JSON.stringify(mockLog.mock.calls)).not.toContain(TEXT);
+    // ...and the denominator row still lands.
+    expect(insertsInto(SCANS)).toHaveLength(1);
+  });
+
+  it('🔴 the denominator row is EXACTLY the count-only column set — no user text in any column', async () => {
+    await recordSharedDataScan(richScan(), ctx);
+    const [scans] = insertsInto(SCANS);
+    expect(scans.values).toEqual([
+      {
+        time: expect.stringMatching(TIME),
+        appBlockId: 'apb_one',
+        surface: 'update',
+        mode: 'shadow',
+        blocked: 0,
+        leafCount: 37,
+        hitCount: 21,
+        minor: 1,
+        poi: 2,
+        link: 3,
+        pattern: 4,
+        audit_regex: 5,
+        overflow: 6,
+        overflowKind: 'leaf_length',
+      },
+    ]);
+    const serialized = JSON.stringify(scans.values);
+    for (const text of [KEY, TEXT, PATH, 'zqvx']) expect(serialized).not.toContain(text);
+    // Positive control: the SAME scan's shadow-mode hit rows do carry that text, so the fixture
+    // can be seen when it is there.
+    expect(JSON.stringify(insertsInto(SHARED_DATA_HITS_TABLE)[0].values)).toContain(TEXT);
+  });
+
+  it('an ENFORCE-rejected write records blocked = 1 (and an unblocked enforce write 0)', async () => {
+    await recordSharedDataScan(richScan(), { ...ctx, mode: 'enforce', blocked: true });
+    await recordSharedDataScan(
+      { leafCount: 2, overflow: null, hits: [] },
+      { ...ctx, mode: 'enforce', blocked: false }
+    );
+    expect(insertsInto(SCANS).map((c) => c.values[0])).toEqual([
+      expect.objectContaining({ mode: 'enforce', blocked: 1, hitCount: 21 }),
+      expect.objectContaining({ mode: 'enforce', blocked: 0, hitCount: 0 }),
+    ]);
+  });
+
+  it('a failed denominator insert is logged by error NAME and swallowed; the hit rows still land', async () => {
+    mockInsert.mockImplementation(async ({ table }) => {
+      if (table === SCANS) throw new TypeError(`rejected row ${TEXT}`);
+    });
+    await expect(recordSharedDataScan(richScan(), ctx)).resolves.toBeUndefined();
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-shared-data-moderation-record-failed',
+        table: SCANS,
+        appBlockId: 'apb_one',
+        error: 'TypeError',
+      }),
+      'block-audit'
+    );
+    expect(insertsInto(SHARED_DATA_HITS_TABLE)).toHaveLength(1);
+    expect(JSON.stringify(mockLog.mock.calls)).not.toContain(TEXT);
+  });
+
+  it('a failed HIT insert does not cost the denominator row', async () => {
+    mockInsert.mockImplementation(async ({ table }) => {
+      if (table === SHARED_DATA_HITS_TABLE) throw new Error('boom');
+    });
+    await expect(recordSharedDataScan(richScan(), ctx)).resolves.toBeUndefined();
+    expect(insertsInto(SCANS)).toHaveLength(1);
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-shared-data-moderation-record-failed',
+        table: SHARED_DATA_HITS_TABLE,
+      }),
+      'block-audit'
+    );
+  });
+
+  it('with no ClickHouse client nothing is inserted and nothing fails', async () => {
+    clickhouseBox.client = undefined;
+    await expect(recordSharedDataScan(richScan(), ctx)).resolves.toBeUndefined();
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockLog.mock.calls.filter(([p]) => (p as { type?: string }).type === 'error')).toEqual(
+      []
+    );
+  });
+
+  it('SHADOW: the denominator row is written after the write, for a clean scan too', async () => {
+    const run = vi.fn(async () => ({ leafCount: 3, overflow: null, hits: [] } as SharedTextScan));
+    scheduleSharedDataShadow(run, { appBlockId: 'apb_one', rowKey: KEY, surface: 'counter' });
+    expect(mockInsert).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(insertsInto(SCANS)).toHaveLength(1));
+    expect(insertsInto(SCANS)[0].values[0]).toMatchObject({
+      surface: 'counter',
+      mode: 'shadow',
+      blocked: 0,
+      leafCount: 3,
+    });
   });
 });
 

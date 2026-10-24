@@ -5,6 +5,7 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   poi: 'Real person',
   minor: 'Minor',
   scam: 'Scam / phishing',
+  csam: 'CSAM',
 };
 
 export const promptKeyName = (key: PromptKey): string =>
@@ -52,6 +53,7 @@ const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string 
   poi: { yes: 'Names a real person', no: 'No real person' },
   minor: { yes: 'Involves a minor', no: 'No minor' },
   scam: { yes: 'Scam', no: 'Not a scam' },
+  csam: { yes: 'Sexualised minor', no: 'No sexualised minor' },
 };
 
 /** `neutral`: a rating is information, not a finding. */
