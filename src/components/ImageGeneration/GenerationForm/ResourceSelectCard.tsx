@@ -37,6 +37,7 @@ import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemo
 import { strengthSliderBounds, getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { getResourceSfwOnlyMessage } from '~/components/SfwOnlyBadge/sfw-only.utils';
 import { getModelUrl } from '~/utils/string-helpers';
 
 /**
@@ -114,6 +115,7 @@ function CheckpointInfo({
   const hasSubstitute = unavailable && resource.substitute?.canGenerate === true;
   const { domain } = useAppContext();
   const showLink = shouldShowModelLink(resource);
+  const sfwOnlyMessage = domain.green ? undefined : getResourceSfwOnlyMessage(resource);
 
   return (
     <Group
@@ -178,7 +180,7 @@ function CheckpointInfo({
                 {resource.model.name}
               </Text>
             )}
-            {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
+            {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow>
                 <HoverCard.Target>
                   <LegacyActionIcon size={18} color="green.5" variant="filled">
@@ -186,7 +188,7 @@ function CheckpointInfo({
                   </LegacyActionIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                  <Text size="sm">{sfwOnlyMessage}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
@@ -261,6 +263,7 @@ function ResourceInfoCard({
   const hasSubstitute = unavailable && resource.substitute?.canGenerate === true;
   const { domain } = useAppContext();
   const showLink = shouldShowModelLink(resource);
+  const sfwOnlyMessage = domain.green ? undefined : getResourceSfwOnlyMessage(resource);
 
   return (
     <Group
@@ -304,7 +307,7 @@ function ResourceInfoCard({
                 {resource.model.name}
               </Text>
             )}
-            {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
+            {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow>
                 <HoverCard.Target>
                   <LegacyActionIcon size={18} color="green.5" variant="filled">
@@ -312,7 +315,7 @@ function ResourceInfoCard({
                   </LegacyActionIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                  <Text size="sm">{sfwOnlyMessage}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}

@@ -240,27 +240,13 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
     expect(data.meta.purchases).toBe(STORED_PURCHASES);
   });
 
-  it('still saves the rest of the meta the moderator edited', async () => {
-    await upsert({ meta: { purchases: 99, acceptsBlueBuzz: true } });
+  // The payees are the only meta this form edits; the rest of its copy is stale by the time it
+  // saves, so it is not written (see cosmetic-shop-upsert-lock.service.test.ts).
+  it('still saves the payees the moderator edited', async () => {
+    await upsert({ meta: { purchases: 99, paidToUserIds: [5] } });
 
     const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls[0][0];
-    expect(data.meta.acceptsBlueBuzz).toBe(true);
-  });
-
-  /**
-   * A fast second signal, NOT the gate. Dropping `meta: true` from the select is
-   * already a compile error — Prisma narrows the row to the select, so
-   * `existingItem.meta` stops existing and the read is `TS2339` on a named line.
-   * This just fails in a second rather than after a typecheck, and says why.
-   *
-   * It would stop covering anything if that select's typing were ever loosened —
-   * a hand-written type, an `as` cast, a widened shared constant — because a
-   * mock hands back whatever the fixture says regardless of what was asked for.
-   */
-  it('asks the database for the stored meta it preserves', async () => {
-    await upsert({ meta: { purchases: 99 } });
-
-    expect(dbMock.dbWrite.cosmeticShopItem.findUnique.mock.calls[0][0].select.meta).toBe(true);
+    expect(data.meta.paidToUserIds).toEqual([5]);
   });
 
   /**

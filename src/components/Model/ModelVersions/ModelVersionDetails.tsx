@@ -144,6 +144,7 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -1598,22 +1599,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   {/* Base Model */}
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Base Model</span>
-                    <Text size="sm">
-                      {ecosystemSeoPage ? (
-                        <Anchor
-                          component={Link}
-                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
-                          inherit
-                        >
-                          {version.baseModel}
-                        </Anchor>
-                      ) : (
-                        version.baseModel
-                      )}{' '}
-                      {version.baseModelType && version.baseModelType !== 'Standard'
-                        ? version.baseModelType
-                        : ''}
-                    </Text>
+                    <Group gap={6} wrap="nowrap">
+                      <Text size="sm">
+                        {ecosystemSeoPage ? (
+                          <Anchor
+                            component={Link}
+                            href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                            inherit
+                          >
+                            {version.baseModel}
+                          </Anchor>
+                        ) : (
+                          version.baseModel
+                        )}{' '}
+                        {version.baseModelType && version.baseModelType !== 'Standard'
+                          ? version.baseModelType
+                          : ''}
+                      </Text>
+                      <SfwOnlyBadge baseModel={version.baseModel} />
+                    </Group>
                   </div>
                   {/* Training */}
                   {(!!version.steps || !!version.epochs) && (
