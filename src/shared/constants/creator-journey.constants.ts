@@ -44,8 +44,8 @@ export const SCORE_TIERS = [
   { slug: 'star', accent: '#4dabf7' },
   { slug: 'supernova', accent: '#ae3ec9' },
   { slug: 'legend', accent: '#e9c46a' },
-  // Placeholder until the Mythic art lands; resample it from the plate then.
-  { slug: 'mythic', accent: '#22b8cf' },
+  // The Mythic card glow and Discord role color, matching the copper plate; Flame shares it.
+  { slug: 'mythic', accent: '#f76707' },
 ] as const;
 
 export type ScoreTierSlug = (typeof SCORE_TIERS)[number]['slug'];

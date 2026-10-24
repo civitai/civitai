@@ -64,6 +64,8 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { requestServableLevels } from '~/server/utils/browsing-level';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import {
@@ -72,6 +74,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
 } from '~/shared/utils/prisma/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 
@@ -178,7 +181,10 @@ export const getAllUserCollectionsHandler = async ({
     const [collections, counts] = await Promise.all([
       getUserCollectionsWithPermissions({ input: { ...input, userId: user.id } }),
       input.withPendingReviewCounts
-        ? getPendingCollectionReviewCounts({ userId: user.id }).catch(() => ({
+        ? getPendingCollectionReviewCounts({
+            userId: user.id,
+            levels: requestServableLevels(ctx),
+          }).catch(() => ({
             total: 0,
             byCollection: {} as Record<number, number>,
           }))
@@ -219,6 +225,7 @@ export const getCollectionByIdHandler = async ({
         permissions,
         collaborators: [] as Collaborator[],
         pendingReviewCount: 0,
+        redPendingReviewCount: 0,
       };
     }
 
@@ -239,9 +246,22 @@ export const getCollectionByIdHandler = async ({
         })
       : [];
 
-    const pendingReviewCount = permissions.manage ? await getPendingReviewCount(collection.id) : 0;
+    // What only civitai.red can show, for the empty .com queue to point at. Computed whether or not
+    // the .com queue is empty now: reviewing its items leaves this number unchanged, so the cached
+    // value is still right once the manager has cleared them. Not for a restricted region, where
+    // civitai.red would hide the same items.
+    const pointToRed = ctx.features.isGreen && !!ctx.req && !isRegionRestricted(getRegion(ctx.req));
+    const [pendingReviewCount, allLevelsPendingReviewCount] = permissions.manage
+      ? await Promise.all([
+          getPendingReviewCount(collection.id, requestServableLevels(ctx)),
+          pointToRed ? getPendingReviewCount(collection.id, allBrowsingLevelsFlag) : 0,
+        ])
+      : [0, 0];
+    const redPendingReviewCount = pointToRed
+      ? Math.max(0, allLevelsPendingReviewCount - pendingReviewCount)
+      : 0;
 
-    return { collection, permissions, collaborators, pendingReviewCount };
+    return { collection, permissions, collaborators, pendingReviewCount, redPendingReviewCount };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

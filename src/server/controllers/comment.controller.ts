@@ -400,6 +400,7 @@ export const setTosViolationHandler = async ({
       id: updatedComment.id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(

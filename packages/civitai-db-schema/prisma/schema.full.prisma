@@ -10620,8 +10620,14 @@ model ServiceDealFile {
   /// Set when preview processing last started, so a crashed worker's file is picked up again.
   processingAt   DateTime?
   scanStatus     ServiceDealFileScanStatus @default(Pending)
-  /// The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+  /// The malware scanner's own verdict; `scanStatus` can pass only once this has.
   malwareScanStatus ServiceDealFileScanStatus @default(Pending)
+  /// The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+  malwareScanWorkflowId  String?
+  /// When the file was first handed to the scan; the give-up window runs from here.
+  malwareScanStartedAt   DateTime?
+  malwareScanSubmittedAt DateTime?
+  malwareScanAttempts    Int       @default(0)
   /// Set once the file's contents have been listed and checked (a zip unpacked, an image read).
   unpackedAt     DateTime?
   /// What a buyer downloads: for a zip, an archive the server built from the entries it checked

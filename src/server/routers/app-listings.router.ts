@@ -15,9 +15,11 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  getForkSessionSchema,
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  startForkSchema,
   type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
@@ -2132,6 +2134,42 @@ export const appListingsRouter = router({
         redCapable,
       });
     }),
+
+  /**
+   * FORK — start a fork of a listing for the caller: picks the fork's slug, records the server-side
+   * fork session (the ONLY source of the fork's provenance) and returns the seed the App Assistant
+   * page hands to the sandbox service. Every gate lives in `startAppFork` (App Assistant access,
+   * the `app-blocks-fork` flag, a publicly visible and forkable parent with an approved commit,
+   * the per-user rate limit); the store scope comes from the same middleware every store read uses.
+   */
+  startFork: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .input(startForkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { scope } = applyStoreGates(ctx, 'trpc-fork-start');
+      const { startAppFork } = await import('~/server/services/blocks/app-fork-start.service');
+      return startAppFork({
+        user: ctx.user,
+        listingId: input.listingId,
+        scope,
+        redCapable: isRedCapableRequest(ctx),
+        req: ctx.req,
+      });
+    }),
+
+  /**
+   * FORK — the caller's own fork session by slug, for the App Assistant page (`?fork=<slug>`).
+   * `null` for a slug that is not the caller's, missing or expired; `seed: null` once the seed URL
+   * has expired. Behind the same rollout flag as `startFork`.
+   */
+  getForkSession: protectedProcedure.input(getForkSessionSchema).query(async ({ ctx, input }) => {
+    const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+    const { getForkSessionForUser } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    return getForkSessionForUser({ userId: ctx.user.id, forkSlug: input.forkSlug });
+  }),
 
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
